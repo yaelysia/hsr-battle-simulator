@@ -859,6 +859,7 @@ class TBGDLowering:
             combatant_profiles=[],
             monster_data_cards=(),
             timeline_rules=self._lower_timeline_rules(),
+            monster_rank_scores={},
         )
         issues = _owned_combatant_projection_build_issues(
             servant_rows=servant_rows,
@@ -1606,6 +1607,7 @@ class TBGDLowering:
             max_records_per_table=self.limits.max_records_per_table,
         )
         monster_data_cards = monster_cards.monster_data_cards
+        monster_rank_scores = self._monster_rank_scores()
         summon_unit_definitions = self._lower_summon_unit_definitions()
         passive_mechanism_slots = list(monster_cards.passive_mechanism_slots)
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
@@ -1892,6 +1894,7 @@ class TBGDLowering:
             combatant_profiles=combatant_profiles,
             monster_data_cards=monster_data_cards,
             timeline_rules=timeline_rules,
+            monster_rank_scores=monster_rank_scores,
         )
         ability_tasks = _admit_summon_monster_ability_tasks(
             ability_tasks,
@@ -1924,6 +1927,13 @@ class TBGDLowering:
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
+        from .target_source import close_target_expression_language
+
+        target_language_definitions = self._strict_target_language_definitions()
+        target_expressions = [
+            close_target_expression_language(expression, target_language_definitions)
+            for expression in target_expressions
+        ]
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -2020,6 +2030,7 @@ class TBGDLowering:
             metadata={
                 "source": "turnbasedgamedata-main",
                 "lowering": "tbgd_first_v0_200",
+                "monster_rank_scores": monster_rank_scores,
                 "character_ability_source_graph": {
                     "catalog_id": character_ability_source_graph_catalog.catalog_id,
                     "snapshot_id": character_ability_source_graph_catalog.snapshot_id,
@@ -2161,6 +2172,23 @@ class TBGDLowering:
     def _lower_timeline_rules(self) -> list[TimelineRuleIR]:
         return list(build_engine_rule_registry().timeline_rules)
 
+    def _monster_rank_scores(self) -> dict[str, JSONValue]:
+        relative = "Config/GlobalConfig/GameCoreConstValue.json"
+        raw = json.loads((self.tbgd_root / relative).read_text(encoding="utf-8"))
+        table = raw.get("MonsterRankScore") if isinstance(raw, dict) else None
+        if not isinstance(table, dict) or not table:
+            raise ValueError("MonsterRankScore source table is missing")
+        scores: dict[str, JSONValue] = {}
+        for rank, entry in sorted(table.items()):
+            value = entry.get("Value") if isinstance(entry, dict) else None
+            if not isinstance(rank, str) or not rank or isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("MonsterRankScore source table is malformed")
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError("MonsterRankScore contains a non-finite score")
+            scores[rank] = numeric
+        return scores
+
     def _lower_resource_rules(self) -> list[ResourceRuleIR]:
         return list(build_engine_rule_registry().resource_rules)
 
@@ -2173,35 +2201,30 @@ class TBGDLowering:
     def _lower_shield_priority_rules(self) -> list[ShieldPriorityRuleIR]:
         return list(build_engine_rule_registry().shield_priority_rules)
 
-    def _lower_global_target_expressions(self) -> list[TargetExpressionIR]:
-        alias_relative = "Config/GlobalConfig/TargetAliasConfig.json"
-        alias_path = self.tbgd_root / alias_relative
-        alias_config = _json_object_from_path(alias_path)
-        alias_dict = alias_config.get("AliasDict") if isinstance(alias_config.get("AliasDict"), dict) else {}
-        expressions: list[TargetExpressionIR] = []
-        for alias, raw in sorted(alias_dict.items()):
-            if not isinstance(alias, str) or not isinstance(raw, dict):
-                continue
-            source = IRSource(
-                source_path=alias_relative,
-                raw_type="TargetAliasConfig.AliasDict",
-                raw_id=alias,
-                evidence={
-                    "source_path": alias_relative,
-                    "target_config_path": alias_relative,
-                    "alias": alias,
-                    "json_path": f"$.AliasDict.{alias}",
-                },
+    def _lower_global_target_expressions(
+        self,
+        snapshot: CharacterAbilityRawSnapshot | None = None,
+    ) -> list[TargetExpressionIR]:
+        return [
+            definition.expression
+            for definition in self._strict_target_language_definitions(snapshot)
+        ]
+
+    def _strict_target_language_definitions(
+        self,
+        snapshot: CharacterAbilityRawSnapshot | None = None,
+    ) -> tuple[Any, ...]:
+        cached = getattr(self, "_target_language_definition_cache", None)
+        if cached is None:
+            from .target_source import build_target_language_definitions
+
+            snapshot = snapshot or getattr(self, "_character_ability_raw_snapshot", None)
+            cached = build_target_language_definitions(
+                self.tbgd_root,
+                snapshot=(snapshot if type(snapshot) is CharacterAbilityRawSnapshot else None),
             )
-            expression = _target_expression_from_raw(
-                raw,
-                field_name="$self",
-                expression_id=f"target_expression:global_alias:{_safe_id(alias)}",
-                source=source,
-            )
-            if expression is not None:
-                expressions.append(expression)
-        return expressions
+            self._target_language_definition_cache = cached
+        return cached
 
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
@@ -8635,6 +8658,7 @@ def _lower_unit_birth_templates(
     combatant_profiles: list[CombatantProfileIR],
     monster_data_cards: tuple[MonsterDataCardIR, ...] | list[MonsterDataCardIR],
     timeline_rules: list[TimelineRuleIR],
+    monster_rank_scores: Mapping[str, JSONValue],
 ) -> list[UnitBirthTemplateIR]:
     profile_by_entity = {profile.entity_id: profile for profile in combatant_profiles}
     card_by_entity = {card.entity_ref: card for card in monster_data_cards}
@@ -8649,6 +8673,7 @@ def _lower_unit_birth_templates(
                     profile_by_entity.get(entry.monster_entity_ref),
                     card_by_entity.get(entry.monster_entity_ref),
                     timeline_rule,
+                    monster_rank_scores,
                 )
             )
     for definition in servant_definitions:
@@ -8662,6 +8687,7 @@ def _lower_unit_birth_templates(
                     profile_by_entity.get(entry.monster_entity_ref),
                     card_by_entity.get(entry.monster_entity_ref),
                     timeline_rule,
+                    monster_rank_scores,
                 )
             )
     return list({template.birth_template_id: template for template in templates}.values())
@@ -8673,6 +8699,7 @@ def _summoned_monster_birth_template(
     profile: CombatantProfileIR | None,
     card: MonsterDataCardIR | None,
     timeline_rule: TimelineRuleIR | None,
+    monster_rank_scores: Mapping[str, JSONValue],
 ) -> UnitBirthTemplateIR:
     reasons: list[str] = []
     if intent.coverage_status != "executable":
@@ -8683,6 +8710,10 @@ def _summoned_monster_birth_template(
         reasons.append("summon_monster_combatant_profile_missing_or_blocked")
     if card is None:
         reasons.append("summon_monster_data_card_missing")
+    monster_rank = card.rank if card is not None else ""
+    monster_rank_score = _strict_json_number(monster_rank_scores.get(monster_rank))
+    if monster_rank_score is None:
+        reasons.append("summon_monster_rank_score_missing")
     if timeline_rule is None:
         reasons.append("summon_monster_timeline_rule_missing")
     if entry.level_policy.get("admission_status") != "executable" or (
@@ -8754,6 +8785,13 @@ def _summoned_monster_birth_template(
         "combatant_profile_coverage_status": profile.coverage_status if profile is not None else "blocked",
         "monster_data_card_id": card.card_id if card is not None else "",
         "monster_data_card_source_trace": card_source,
+        "monster_rank": monster_rank,
+        "monster_rank_score": monster_rank_score,
+        "monster_rank_source_trace": {
+            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
+            "raw_type": "MonsterRankScore",
+            "raw_id": monster_rank,
+        },
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
@@ -9009,6 +9047,7 @@ def _wave_enemy_birth_template(
     profile: CombatantProfileIR | None,
     card: MonsterDataCardIR | None,
     timeline_rule: TimelineRuleIR | None,
+    monster_rank_scores: Mapping[str, JSONValue],
 ) -> UnitBirthTemplateIR:
     reasons: list[str] = []
     if definition.coverage_status != "executable":
@@ -9023,6 +9062,10 @@ def _wave_enemy_birth_template(
         reasons.append("wave_combatant_profile_missing_or_blocked")
     if card is None:
         reasons.append("wave_monster_data_card_missing")
+    monster_rank = card.rank if card is not None else ""
+    monster_rank_score = _strict_json_number(monster_rank_scores.get(monster_rank))
+    if monster_rank_score is None:
+        reasons.append("wave_monster_rank_score_missing")
     if timeline_rule is None:
         reasons.append("wave_timeline_rule_missing")
     profile_values, profile_reasons = _birth_profile_values(profile)
@@ -9092,6 +9135,13 @@ def _wave_enemy_birth_template(
         "combatant_profile_coverage_status": profile.coverage_status if profile is not None else "blocked",
         "monster_data_card_id": card.card_id if card is not None else "",
         "monster_data_card_source_trace": card_source,
+        "monster_rank": monster_rank,
+        "monster_rank_score": monster_rank_score,
+        "monster_rank_source_trace": {
+            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
+            "raw_type": "MonsterRankScore",
+            "raw_id": monster_rank,
+        },
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
@@ -14310,13 +14360,20 @@ P1_6_SAFE_TARGET_FETCH_KINDS = {
     "TargetFetchAbilityTarget",
     "TargetFetchCaster",
     "TargetFetchCurrentActionTarget",
+    "TargetFetchParamEntity",
     "TargetFetchModifierOwner",
     "TargetFetchOwner",
     "TargetFetchParamEntityList",
     "TargetFetchPartner",
     "TargetFetchUniqueNameEntity",
+    "TargetFetchTeamEntity",
+    "TargetFetchBattleEventEntityList",
+    "TargetFetchTurnOwnerEntity",
+    "TargetFetchNone",
+    "TargetFetchAllUnselectable",
+    "TargetFetchAllCustomUnselectable",
 }
-P1_6_SAFE_TARGET_PROPERTY_SORTS = {"CurrentHP", "MaxHP", "CurrentStance", "MaxStance"}
+P1_6_SAFE_TARGET_PROPERTY_SORTS = {"CurrentHP", "MaxHP", "CurrentStance", "MaxStance", "Shield", "BreakDamageAddedRatio"}
 P1_6_SAFE_TARGET_RATIO_SORTS = {"HPRatio", "StanceRatio"}
 P1_6_SAFE_DIRECT_TARGET_ALIASES = {
     "AbilityTargetAdjoinEntity",
@@ -14949,6 +15006,10 @@ def _target_expression_from_raw(
         source=target_source,
     )
     node = _target_expression_execution_node(value, target_source)
+    if expression_kind == "TargetFilter" and node.expression_kind in {
+        "TargetFilterAliveState", "TargetFilterUnselectable", "TargetFilterEntityType",
+    }:
+        expression_kind = node.expression_kind
     node_blocked_reason = _target_node_contract_blocked_reason(node)
     if node_blocked_reason:
         coverage_status = "blocked"
@@ -15036,16 +15097,22 @@ def _target_expression_admission(
     *,
     source: IRSource | None = None,
 ) -> tuple[str, str, str]:
-    if kind == "TargetAlias" and _target_alias_admitted(alias):
-        return "executable", "", "p1_6_target_pipeline" if _target_alias_chain_admitted(alias) else "v0_288_target_alias_core"
+    if kind == "TargetAlias" and alias:
+        return (
+            "blocked",
+            f"target_alias_requires_source_closure:{alias}",
+            "p9_s5a_target_language_closure",
+        )
     if kind in {"TargetConcat", "TargetSequence", "TargetFilter", "Retarget"}:
         reason = _target_expression_runtime_blocked_reason(raw, source=source)
         if not reason:
             return "executable", "", "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
         return "blocked", reason, "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
     reason = _target_expression_runtime_blocked_reason(raw, source=source)
-    if not reason and _target_expression_kind_admitted(kind, raw):
+    if not reason and (kind == "TargetQuery" or _target_expression_kind_admitted(kind, raw)):
         return "executable", "", "p1_6_target_pipeline"
+    if reason:
+        return "blocked", reason, "p9_s5b_typed_target_admission"
     if kind.startswith("TargetSort"):
         return "blocked", f"target_sort_not_admitted:{kind}", "after_target_sequence_sorting"
     if kind.startswith("TargetFetch"):
@@ -15072,12 +15139,39 @@ def _target_expression_runtime_blocked_reason(
     kind = _target_raw_expression_kind(raw)
     if kind == "TargetAlias":
         alias = _target_alias(raw) or ""
-        return "" if _target_alias_admitted(alias) else f"target_alias_not_admitted:{alias or 'missing'}"
+        return f"target_alias_requires_source_closure:{alias}" if alias else "target_alias_missing"
     if kind == "TargetConcat":
         targets = raw.get("Targets")
         if not isinstance(targets, list) or not targets:
             return "target_concat_children_missing"
         return _first_target_expression_child_blocked_reason(targets, source=source, field_name="Targets")
+    if kind == "TargetCompute":
+        if raw.get("ComputeType") != "Union":
+            return "target_compute_type_not_admitted"
+        targets = raw.get("Targets")
+        if not isinstance(targets, list) or not targets:
+            return "target_compute_children_missing"
+        return _first_target_expression_child_blocked_reason(targets, source=source, field_name="Targets")
+    if kind == "TargetSelector":
+        predicate = raw.get("Predicate")
+        if not isinstance(predicate, dict) or source is None:
+            return "target_selector_predicate_missing"
+        predicate_node = _typed_condition_execution_node(
+            predicate, equipment_scope=True,
+            source=_target_child_source(source, "Predicate", "TargetPredicate"),
+        )
+        if predicate_node.get("supported") is not True:
+            return f"target_selector_condition_not_admitted:{predicate_node.get('opcode') or 'missing'}"
+        for key in ("SuccTarget", "FailTarget"):
+            child = raw.get(key)
+            if not isinstance(child, dict):
+                return f"target_selector_{key.lower()}_missing"
+            reason = _target_expression_runtime_blocked_reason(
+                child, source=_target_child_source(source, key, "TargetExpression")
+            )
+            if reason:
+                return reason
+        return ""
     if kind == "TargetSequence":
         sequence = raw.get("Sequence")
         if not isinstance(sequence, list) or not sequence:
@@ -15087,6 +15181,15 @@ def _target_expression_runtime_blocked_reason(
         predicate = raw.get("Predicate")
         if not isinstance(predicate, dict):
             return "target_filter_predicate_missing"
+        predicate_kind = _short_gamecore_type(predicate.get("$type"))
+        if predicate_kind == "ByTargetAliveState":
+            mask = _target_string_field(predicate, "AliveStateMask")
+            return "" if mask in {"Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone"} else "target_alive_state_mask_invalid"
+        if predicate_kind == "ByIsTargetUnselectable":
+            return "" if type(predicate.get("Inverse", False)) is bool else "target_unselectable_inverse_invalid"
+        if predicate_kind == "ByTargetEntityType":
+            mask = _target_string_field(predicate, "EntityTypeMask")
+            return "" if mask in {"Servant", "BattleEvent"} and type(predicate.get("Inverse", False)) is bool else "target_entity_type_filter_invalid"
         if source is None:
             return "target_filter_predicate_source_missing"
         predicate_node = _typed_condition_execution_node(
@@ -15129,8 +15232,6 @@ def _target_expression_runtime_blocked_reason(
         include_limbo = raw.get("IncludeLimbo", False)
         if type(include_limbo) is not bool:
             return "retarget_include_limbo_invalid"
-        if include_limbo:
-            return "retarget_include_limbo_deferred_s5b"
         by_random = _target_boolean_field(raw, "ByRandom")
         if by_random is None:
             return "retarget_by_random_invalid"
@@ -15199,7 +15300,32 @@ def _target_fetch_field_reason(kind: str, name: str, unique_name: str) -> str:
 
 
 def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
+    if kind == "TargetFilterAliveState":
+        mask = _target_string_field(raw, "Mask")
+        return "" if mask in {"Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone"} else "target_alive_state_mask_invalid"
+    if kind in {"TargetSortMonsterRank", "TargetSortByModifierValue", "TargetSortByModifierStatusCount"}:
+        if type(raw.get("HighestFirst", False)) is not bool:
+            return "target_sort_direction_invalid"
+        if kind == "TargetSortMonsterRank":
+            return "" if isinstance(raw.get("MaxRank", ""), str) else "target_sort_max_rank_invalid"
+        if kind == "TargetSortByModifierValue":
+            return "" if isinstance(raw.get("ModifierName"), str) and raw.get("ModifierName") else "target_sort_modifier_name_missing"
+        return "" if raw.get("BuffStatus") in {"Buff", "Debuff"} else "target_sort_buff_status_invalid"
+    if kind == "TargetSortByActionOrder":
+        return "" if type(raw.get("HighestFirst", False)) is bool else "target_sort_direction_invalid"
     if kind in P1_6_SAFE_TARGET_FETCH_KINDS:
+        if kind == "TargetFetchPartner":
+            return "target_partner_producer_dependency"
+        if kind == "TargetFetchUniqueNameEntity":
+            return "target_unique_entity_producer_dependency"
+        if kind == "TargetFetchTeamEntity":
+            team_type = _target_string_field(raw, "TeamType")
+            return "" if team_type in {"TeamLight", "TeamDark"} else "target_fetch_team_type_invalid"
+        if kind in {"TargetFetchBattleEventEntityList", "TargetFetchTurnOwnerEntity", "TargetFetchNone"}:
+            return ""
+        if kind in {"TargetFetchAllUnselectable", "TargetFetchAllCustomUnselectable"}:
+            source_entity = raw.get("SourceEntity")
+            return "" if source_entity is None or _is_target_expression_node(source_entity) else "target_fetch_unselectable_source_invalid"
         name = _target_string_field(raw, "Name")
         if name is None:
             return "target_fetch_name_invalid"
@@ -15214,14 +15340,23 @@ def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
         counting_option = raw.get("CountingOption", "")
         if not isinstance(counting_option, str):
             return "target_adjacent_counting_option_invalid"
-        if counting_option:
+        if counting_option not in {"", "IgnoreServant"}:
             return f"target_adjacent_counting_option_deferred_s5b:{counting_option}"
         return ""
     if kind == "TargetMapSummoner":
         recursive = raw.get("Recursive", False)
         if type(recursive) is not bool:
             return "target_summoner_recursive_invalid"
-        return "" if not recursive else "target_summoner_recursive_deferred_s5b"
+        return ""
+    if kind == "TargetMapAllTeamMember":
+        remove_unselectable = raw.get("RemoveUnselectable", True)
+        return "" if type(remove_unselectable) is bool else "target_map_team_remove_unselectable_invalid"
+    if kind in {"TargetMapEnemyTeamEntity", "TargetRemoveUnselectable"}:
+        return ""
+    if kind == "TargetMapCreator":
+        return ""
+    if kind == "TargetMapAllTeamMemberFromFirstEntity":
+        return "" if type(raw.get("SelectEnemyTeam", False)) is bool else "target_map_team_selector_invalid"
     if kind == "TargetMapSummonedMinions":
         return ""
     if kind == "TargetReverse":
@@ -15273,7 +15408,9 @@ def _target_query_blocked_reason(
     alive_state_mask = _target_string_field(raw, "AliveStateMask")
     if alive_state_mask is None:
         return "target_query_alive_state_mask_invalid"
-    if alive_state_mask:
+    if alive_state_mask not in {
+        "", "Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone",
+    }:
         return f"target_query_alive_state_mask_deferred_s5b:{alive_state_mask}"
     predicate = raw.get("Predicate")
     if predicate is None:
@@ -15393,6 +15530,33 @@ def _target_expression_execution_node(
     node_source = _target_expression_node_source(source, kind)
     if kind == "TargetConcat":
         return _target_children_node(raw, "Targets", kind, node_source)
+    if kind == "TargetCompute":
+        targets = raw.get("Targets")
+        if raw.get("ComputeType") != "Union" or not isinstance(targets, list):
+            return _target_unsupported_node(node_source, kind, "target_compute_not_admitted")
+        children = _target_children_node(raw, "Targets", "TargetConcat", node_source).children
+        return TargetExpressionNodeIR.build(
+            kind, node_source, {"children": children, "compute_type": "Union"}
+        )
+    if kind == "TargetSelector":
+        predicate_raw = raw.get("Predicate")
+        success_raw = raw.get("SuccTarget")
+        failure_raw = raw.get("FailTarget")
+        if not all(isinstance(item, dict) for item in (predicate_raw, success_raw, failure_raw)):
+            return _target_unsupported_node(node_source, kind, "target_selector_payload_missing")
+        assert isinstance(predicate_raw, dict) and isinstance(success_raw, dict) and isinstance(failure_raw, dict)
+        return TargetExpressionNodeIR.build(
+            kind, node_source,
+            {
+                "children": (
+                    _target_expression_execution_node(success_raw, _target_child_source(node_source, "SuccTarget", "TargetExpression")),
+                    _target_expression_execution_node(failure_raw, _target_child_source(node_source, "FailTarget", "TargetExpression")),
+                ),
+                "predicate": _condition_ir_from_typed_target_predicate(
+                    predicate_raw, _target_child_source(node_source, "Predicate", "TargetPredicate")
+                ),
+            },
+        )
     if kind == "TargetSequence":
         return _target_children_node(raw, "Sequence", kind, node_source)
     if kind == "TargetAlias":
@@ -15400,8 +15564,30 @@ def _target_expression_execution_node(
             return _target_unsupported_node(node_source, kind, "target_alias_missing")
         return TargetExpressionNodeIR.build(kind, node_source, {"alias": alias})
     if kind == "TargetFilter":
-        candidate_key, candidate_raw = _first_target_child(raw, ("TargetType", "Target", "Targets"))
         predicate_raw = raw.get("Predicate")
+        predicate_kind = (
+            _short_gamecore_type(predicate_raw.get("$type"))
+            if isinstance(predicate_raw, dict) else ""
+        )
+        if predicate_kind == "ByTargetAliveState":
+            return TargetExpressionNodeIR.build(
+                "TargetFilterAliveState", node_source,
+                {"alive_state_mask": str(predicate_raw.get("AliveStateMask") or "")},
+            )
+        if predicate_kind == "ByIsTargetUnselectable":
+            return TargetExpressionNodeIR.build(
+                "TargetFilterUnselectable", node_source,
+                {"inverse": predicate_raw.get("Inverse", False)},
+            )
+        if predicate_kind == "ByTargetEntityType":
+            return TargetExpressionNodeIR.build(
+                "TargetFilterEntityType", node_source,
+                {
+                    "entity_type_mask": str(predicate_raw.get("EntityTypeMask") or ""),
+                    "inverse": predicate_raw.get("Inverse", False),
+                },
+            )
+        candidate_key, candidate_raw = _first_target_child(raw, ("TargetType", "Target", "Targets"))
         if not isinstance(predicate_raw, dict):
             return _target_unsupported_node(node_source, kind, "target_filter_predicate_missing")
         candidate = (
@@ -15462,6 +15648,24 @@ def _target_expression_execution_node(
                 "include_limbo": include_limbo,
             },
         )
+    if kind == "TargetFetchTeamEntity":
+        team_type = _target_string_field(raw, "TeamType")
+        if team_type not in {"TeamLight", "TeamDark"}:
+            return _target_unsupported_node(node_source, kind, "target_fetch_team_type_invalid")
+        return TargetExpressionNodeIR.build(kind, node_source, {"team_type": team_type})
+    if kind in {
+        "TargetFetchBattleEventEntityList", "TargetFetchTurnOwnerEntity", "TargetFetchNone",
+    }:
+        return TargetExpressionNodeIR.build(kind, node_source, {})
+    if kind in {"TargetFetchAllUnselectable", "TargetFetchAllCustomUnselectable"}:
+        source_entity = raw.get("SourceEntity")
+        candidate = (
+            _target_expression_execution_node(source_entity, _target_child_source(node_source, "SourceEntity", "TargetExpression"))
+            if isinstance(source_entity, dict) else None
+        )
+        return TargetExpressionNodeIR.build(kind, node_source, {"candidate": candidate})
+    if kind == "TargetFilterAliveState":
+        return TargetExpressionNodeIR.build(kind, node_source, {"alive_state_mask": str(raw.get("Mask") or "")})
     if kind == "TargetQuery":
         entity_type_mask = _target_string_field(raw, "EntityTypeMask")
         if entity_type_mask != "Servant":
@@ -15543,8 +15747,42 @@ def _target_expression_execution_node(
         if type(recursive) is not bool:
             return _target_unsupported_node(node_source, kind, "target_summoner_recursive_invalid")
         return TargetExpressionNodeIR.build(kind, node_source, {"recursive": recursive})
+    if kind == "TargetMapAllTeamMember":
+        remove_unselectable = raw.get("RemoveUnselectable", True)
+        if type(remove_unselectable) is not bool:
+            return _target_unsupported_node(node_source, kind, "target_map_team_remove_unselectable_invalid")
+        return TargetExpressionNodeIR.build(
+            kind, node_source, {"allow_unselectable": not remove_unselectable}
+        )
+    if kind in {"TargetMapEnemyTeamEntity", "TargetRemoveUnselectable"}:
+        return TargetExpressionNodeIR.build(kind, node_source, {})
+    if kind == "TargetMapCreator":
+        return TargetExpressionNodeIR.build(kind, node_source, {})
+    if kind == "TargetMapAllTeamMemberFromFirstEntity":
+        return TargetExpressionNodeIR.build(
+            kind, node_source, {"select_enemy_team": raw.get("SelectEnemyTeam", False)}
+        )
     if kind in {"TargetMapSummonedMinions", "TargetReverse", "TargetShuffle"}:
         return TargetExpressionNodeIR.build(kind, node_source, {})
+    if kind == "TargetSortMonsterRank":
+        return TargetExpressionNodeIR.build(kind, node_source, {
+            "highest_first": raw.get("HighestFirst", False), "max_rank": str(raw.get("MaxRank") or ""),
+        })
+    if kind == "TargetSortByModifierValue":
+        return TargetExpressionNodeIR.build(kind, node_source, {
+            "modifier_name": str(raw.get("ModifierName") or ""),
+            "value_type": str(raw.get("ValueType") or "Layer"),
+            "highest_first": raw.get("HighestFirst", False),
+        })
+    if kind == "TargetSortByModifierStatusCount":
+        return TargetExpressionNodeIR.build(kind, node_source, {
+            "buff_status": str(raw.get("BuffStatus") or ""),
+            "highest_first": raw.get("HighestFirst", False),
+        })
+    if kind == "TargetSortByActionOrder":
+        return TargetExpressionNodeIR.build(
+            kind, node_source, {"highest_first": raw.get("HighestFirst", False)}
+        )
     if kind == "TargetTake":
         count = raw.get("Count")
         if count is None:
@@ -15606,6 +15844,7 @@ _TYPED_TARGET_FETCH_KINDS = frozenset(
         "TargetFetchOwner",
         "TargetFetchAbilityTarget",
         "TargetFetchCurrentActionTarget",
+        "TargetFetchParamEntity",
         "TargetFetchParamEntityList",
         "TargetFetchActualOwner",
         "TargetFetchPartner",

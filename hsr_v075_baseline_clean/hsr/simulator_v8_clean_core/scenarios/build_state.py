@@ -352,6 +352,19 @@ class ScenarioStateBuilder:
                 if monster_card is not None:
                     flags["monster_data_card_id"] = monster_card.card_id
                     flags["monster_passive_mechanism_slot_ids"] = tuple(monster_card.passive_mechanism_slot_ids)
+                    rank_scores = self.rules.ir.metadata.get("monster_rank_scores")
+                    rank_score = rank_scores.get(monster_card.rank) if isinstance(rank_scores, dict) else None
+                    if isinstance(rank_score, bool) or not isinstance(rank_score, (int, float)):
+                        raise ValueError(
+                            f"unit {unit.unit_id}: canonical monster rank score is missing"
+                        )
+                    flags["monster_rank"] = monster_card.rank
+                    flags["monster_rank_score"] = float(rank_score)
+                    flags["monster_rank_source_trace"] = {
+                        "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
+                        "raw_type": "MonsterRankScore",
+                        "raw_id": monster_card.rank,
+                    }
             profile_values = _profile_values(profile)
             panel_overrides = _panel_overrides(panel, profile_values)
             if profile is not None:
@@ -470,6 +483,13 @@ class ScenarioStateBuilder:
                 "scenario.global_flags cannot inject summon_runtime; "
                 "formal state construction owns this runtime"
             )
+        if "monster_rank_scores" in global_flags:
+            raise ValueError(
+                "scenario.global_flags cannot inject canonical monster rank scores"
+            )
+        canonical_rank_scores = self.rules.ir.metadata.get("monster_rank_scores")
+        if isinstance(canonical_rank_scores, dict) and canonical_rank_scores:
+            global_flags["monster_rank_scores"] = canonical_rank_scores
         summon_runtime = empty_summon_runtime()
         global_flags["summon_runtime"] = summon_runtime
         setup_records.append(

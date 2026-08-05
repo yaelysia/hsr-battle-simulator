@@ -27,6 +27,7 @@ from .mutation_events import events_for_mutation
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
 from .shield import NORMAL_SHIELD_FAMILIES, ShieldSystem
 from .target import TargetSystem
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .unit_stats import effective_unit_stat
 
 
@@ -81,6 +82,7 @@ class EffectRegistry:
 
     def __init__(self, status_system: StatusSystem | None = None) -> None:
         self.status_system = status_system
+        self.targets = status_system.targets if status_system is not None else None
         self.damage_system = DamageSystem(status_system.rules) if status_system is not None else DamageSystem()
         self.shield_system = ShieldSystem(self.damage_system.engine_rules)
         self._pre_heal_dispatcher: PreHealDispatcher | None = None
@@ -401,7 +403,9 @@ class EffectRegistry:
         context: EffectExecutionContext | None,
     ) -> EffectResult:
         rules = self.status_system.rules if self.status_system is not None else None
-        return _execute_trigger_modifier_custom_event(effect, context, rules=rules)
+        return _execute_trigger_modifier_custom_event(
+            effect, context, rules=rules, targets=self.targets
+        )
 
     def _execute_stack_weakness(
         self,
@@ -409,7 +413,9 @@ class EffectRegistry:
         context: EffectExecutionContext | None,
     ) -> EffectResult:
         rules = self.status_system.rules if self.status_system is not None else None
-        return _execute_stack_weakness(effect, context, rules=rules)
+        return _execute_stack_weakness(
+            effect, context, rules=rules, targets=self.targets
+        )
 
 
 def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
@@ -1474,6 +1480,7 @@ def _execute_trigger_modifier_custom_event(
     context: EffectExecutionContext | None,
     *,
     rules: RuleBook | None,
+    targets: TargetSystem | None,
 ) -> EffectResult:
     if context is None:
         return _unsupported_effect(
@@ -1485,6 +1492,8 @@ def _execute_trigger_modifier_custom_event(
             effect,
             "TriggerModifierCustomEvent requires RuleBook-backed StatusSystem",
         )
+    if targets is None:
+        return _unsupported_effect(effect, "TriggerModifierCustomEvent target system missing")
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return _unsupported_effect(
@@ -1525,15 +1534,23 @@ def _execute_trigger_modifier_custom_event(
             effect,
             f"custom_event_target_expression_alias_mismatch:{payload_alias}:{expression.alias}",
         )
-    target_result = TargetSystem().resolve_target_expression(
+    target_result = targets.resolve_target_expression(
         context.state,
         expression,
-        caster_id=context.caster_id,
-        owner_id=context.owner_id,
-        param_entity_id=context.param_entity_id,
-        current_action_target_id=context.current_action_target_id,
+        context=TargetEvaluationContext(
+            caster_id=context.caster_id,
+            effect_owner_id=context.owner_id,
+            parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+            selected_target_ids=(
+                tuple(context.target_resolution.selected)
+                if context.target_resolution is not None and context.target_resolution.selected
+                else ((context.current_action_target_id,) if context.current_action_target_id else ())
+            ),
+            current_target_id=context.current_action_target_id,
+            turn_owner_id=committed_turn_owner_id(context.state),
+        ),
         target_resolution=context.target_resolution,
-        event_payload=context.event_payload,
+        condition_event_payload=context.event_payload,
         dynamic_values=context.dynamic_values,
         binding_sources=_binding_sources(context),
     )
@@ -1648,6 +1665,7 @@ def _execute_stack_weakness(
     context: EffectExecutionContext | None,
     *,
     rules: RuleBook | None,
+    targets: TargetSystem | None,
 ) -> EffectResult:
     if context is None:
         return _unsupported_effect(
@@ -1659,6 +1677,8 @@ def _execute_stack_weakness(
             effect,
             "StackWeakness requires RuleBook-backed StatusSystem",
         )
+    if targets is None:
+        return _unsupported_effect(effect, "StackWeakness target system missing")
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return _unsupported_effect(
@@ -1698,15 +1718,23 @@ def _execute_stack_weakness(
             effect,
             f"stack_weakness_target_expression_alias_mismatch:{payload_alias}:{expression.alias}",
         )
-    target_result = TargetSystem().resolve_target_expression(
+    target_result = targets.resolve_target_expression(
         context.state,
         expression,
-        caster_id=context.caster_id,
-        owner_id=context.owner_id,
-        param_entity_id=context.param_entity_id,
-        current_action_target_id=context.current_action_target_id,
+        context=TargetEvaluationContext(
+            caster_id=context.caster_id,
+            effect_owner_id=context.owner_id,
+            parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+            selected_target_ids=(
+                tuple(context.target_resolution.selected)
+                if context.target_resolution is not None and context.target_resolution.selected
+                else ((context.current_action_target_id,) if context.current_action_target_id else ())
+            ),
+            current_target_id=context.current_action_target_id,
+            turn_owner_id=committed_turn_owner_id(context.state),
+        ),
         target_resolution=context.target_resolution,
-        event_payload=context.event_payload,
+        condition_event_payload=context.event_payload,
         dynamic_values=context.dynamic_values,
         binding_sources=_binding_sources(context),
     )

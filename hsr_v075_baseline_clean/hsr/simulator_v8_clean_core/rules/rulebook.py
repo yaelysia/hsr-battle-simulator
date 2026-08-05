@@ -2065,6 +2065,20 @@ class RuleBook:
                 for key, values in target_expressions_by_source.items()
             },
         )
+        object.__setattr__(
+            self,
+            "_target_language_expressions",
+            tuple(
+                expression
+                for expression in self.ir.target_expressions
+                if expression.source.source_path in {
+                    "Config/GlobalConfig/TargetAliasConfig.json",
+                    "Config/GlobalConfig/TargetOperationConfig.json",
+                }
+                or expression.source.evidence.get("source_raw_type") == "GlobalTargetAlias"
+                or expression.source.raw_type == "GlobalTargetAlias"
+            ),
+        )
         wave_definitions_by_stage: dict[str, list[WaveDefinitionIR]] = {}
         wave_entries_by_definition_wave: dict[tuple[str, int], list[WaveMonsterEntryIR]] = {}
         for definition in self.ir.wave_definitions:
@@ -2983,6 +2997,10 @@ class RuleBook:
 
     def target_expressions(self) -> tuple[TargetExpressionIR, ...]:
         return self.ir.target_expressions
+
+    def target_language_expressions(self) -> tuple[TargetExpressionIR, ...]:
+        """Return source-closed global target definitions without rescanning IR."""
+        return self._target_language_expressions
 
     def target_expressions_for_source(
         self,

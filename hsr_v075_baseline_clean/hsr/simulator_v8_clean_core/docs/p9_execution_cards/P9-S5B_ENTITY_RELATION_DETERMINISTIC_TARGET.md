@@ -197,10 +197,10 @@ validate_p9_s5b_entity_relation_deterministic_target
 
 ## 唯一执行清单
 
-- [ ] 实体关系全部迁移到单一 resolver 和明确权威来源。
-- [ ] 自由 event/owner 参数迁移为严格目标上下文。
-- [ ] S5B 负责的确定性 operator 全部闭合。
-- [ ] 空关系、损坏关系和下游生产者依赖诚实区分。
-- [ ] 无随机、动作提交、条件副本或 synthetic body-part 实现。
-- [ ] 主验证、必要 direct、资源审计和 `git diff --check` 通过。
-- [ ] 仅提交 `ready_for_review`；未勾总 checklist、未提交 Git、未进入 S5C。
+- [x] 实体关系全部迁移到单一 resolver 和明确权威来源。
+- [x] 自由 event/owner 参数迁移为严格目标上下文。
+- [x] S5B 负责的确定性 operator 全部闭合。
+- [x] 空关系、损坏关系和下游生产者依赖诚实区分。
+- [x] 无随机、动作提交、条件副本或 synthetic body-part 实现。
+- [x] 主验证、必要 direct、资源审计和 `git diff --check` 通过。
+- [x] 仅提交 `ready_for_review`；未勾总 checklist、未提交 Git、未进入 S5C。

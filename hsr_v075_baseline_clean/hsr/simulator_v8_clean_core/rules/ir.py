@@ -3632,6 +3632,8 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetAlias": frozenset({"alias"}),
     "TargetConcat": frozenset({"children"}),
     "TargetSequence": frozenset({"children"}),
+    "TargetCompute": frozenset({"children", "compute_type"}),
+    "TargetSelector": frozenset({"children", "predicate"}),
     "TargetFilter": frozenset({"candidate", "predicate"}),
     "Retarget": frozenset({"target", "predicate", "by_random", "max_number_expr", "include_limbo"}),
     "TargetQuery": frozenset({
@@ -3645,13 +3647,28 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetFetchOwner": frozenset({"name", "unique_name"}),
     "TargetFetchAbilityTarget": frozenset({"name", "unique_name"}),
     "TargetFetchCurrentActionTarget": frozenset({"name", "unique_name"}),
+    "TargetFetchParamEntity": frozenset({"name", "unique_name"}),
     "TargetFetchParamEntityList": frozenset({"name", "unique_name"}),
+    "TargetFetchTeamEntity": frozenset({"team_type"}),
+    "TargetFetchBattleEventEntityList": frozenset(),
+    "TargetFetchTurnOwnerEntity": frozenset(),
+    "TargetFetchNone": frozenset(),
     "TargetFetchActualOwner": frozenset({"name", "unique_name"}),
     "TargetFetchPartner": frozenset({"name", "unique_name"}),
     "TargetFetchUniqueNameEntity": frozenset({"name", "unique_name"}),
     "TargetMapAdjoinEntity": frozenset({"side", "counting_option"}),
     "TargetMapSummoner": frozenset({"recursive"}),
     "TargetMapSummonedMinions": frozenset(),
+    "TargetMapAllTeamMember": frozenset({"allow_unselectable"}),
+    "TargetMapEnemyTeamEntity": frozenset(),
+    "TargetRemoveUnselectable": frozenset(),
+    "TargetFilterAliveState": frozenset({"alive_state_mask"}),
+    "TargetFilterUnselectable": frozenset({"inverse"}),
+    "TargetFilterEntityType": frozenset({"entity_type_mask", "inverse"}),
+    "TargetFetchAllUnselectable": frozenset({"candidate"}),
+    "TargetFetchAllCustomUnselectable": frozenset({"candidate"}),
+    "TargetMapCreator": frozenset(),
+    "TargetMapAllTeamMemberFromFirstEntity": frozenset({"select_enemy_team"}),
     "TargetReverse": frozenset(),
     "TargetShuffle": frozenset(),
     "TargetTake": frozenset({"count_expr"}),
@@ -3659,10 +3676,14 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetSortByProperty": frozenset({"sort_key", "highest_first"}),
     "TargetSortByPropertyRatio": frozenset({"sort_key", "highest_first"}),
     "TargetSortByFormation": frozenset({"sort_key", "highest_first"}),
+    "TargetSortMonsterRank": frozenset({"highest_first", "max_rank"}),
+    "TargetSortByModifierValue": frozenset({"modifier_name", "value_type", "highest_first"}),
+    "TargetSortByModifierStatusCount": frozenset({"buff_status", "highest_first"}),
+    "TargetSortByActionOrder": frozenset({"highest_first"}),
     "TargetUnsupported": frozenset({"original_kind", "blocked_reason"}),
 }
 
-_TARGET_SORT_PROPERTY_KEYS = frozenset({"CurrentHP", "MaxHP", "CurrentStance", "MaxStance"})
+_TARGET_SORT_PROPERTY_KEYS = frozenset({"CurrentHP", "MaxHP", "CurrentStance", "MaxStance", "Shield", "BreakDamageAddedRatio"})
 _TARGET_SORT_RATIO_KEYS = frozenset({"HPRatio", "StanceRatio"})
 
 
@@ -3819,6 +3840,42 @@ class TargetExpressionNodeIR:
         return cast(str, self.payload.get("name", ""))
 
     @property
+    def team_type(self) -> str:
+        return cast(str, self.payload.get("team_type", ""))
+
+    @property
+    def allow_unselectable(self) -> bool:
+        return cast(bool, self.payload.get("allow_unselectable", False))
+
+    @property
+    def select_enemy_team(self) -> bool:
+        return cast(bool, self.payload.get("select_enemy_team", False))
+
+    @property
+    def inverse(self) -> bool:
+        return cast(bool, self.payload.get("inverse", False))
+
+    @property
+    def alive_state_mask(self) -> str:
+        return cast(str, self.payload.get("alive_state_mask", ""))
+
+    @property
+    def max_rank(self) -> str:
+        return cast(str, self.payload.get("max_rank", ""))
+
+    @property
+    def modifier_name(self) -> str:
+        return cast(str, self.payload.get("modifier_name", ""))
+
+    @property
+    def value_type(self) -> str:
+        return cast(str, self.payload.get("value_type", ""))
+
+    @property
+    def buff_status(self) -> str:
+        return cast(str, self.payload.get("buff_status", ""))
+
+    @property
     def adjacent_side(self) -> str:
         return cast(str, self.payload.get("side", ""))
 
@@ -3923,7 +3980,7 @@ def _validate_target_node_payload(
             if value is not None and type(value) is not ConditionIR:
                 raise TypeError("target predicate must be an exact ConditionIR or null")
             normalized[field_name] = value
-        elif field_name in {"by_random", "highest_first", "recursive", "include_limbo"}:
+        elif field_name in {"by_random", "highest_first", "recursive", "include_limbo", "allow_unselectable", "select_enemy_team", "inverse"}:
             if not isinstance(value, bool):
                 raise TypeError(f"target node {field_name} must be boolean")
             normalized[field_name] = value
@@ -3936,7 +3993,8 @@ def _validate_target_node_payload(
             normalized[field_name] = freeze_json(numeric)
         elif field_name in {
             "alias", "entity_type_mask", "alive_state_mask", "name", "unique_name",
-            "side", "counting_option", "index_type", "sort_key", "original_kind", "blocked_reason",
+            "side", "counting_option", "index_type", "sort_key", "team_type", "max_rank",
+            "modifier_name", "value_type", "buff_status", "compute_type", "original_kind", "blocked_reason",
         }:
             if not isinstance(value, str):
                 raise TypeError(f"target node {field_name} must be a string")
@@ -3955,16 +4013,47 @@ def _validate_target_node_payload(
         raise ValueError("target query comparison requires both sides")
     if expression_kind == "TargetQuery" and normalized["entity_type_mask"] != "Servant":
         raise ValueError("target query entity type is invalid")
+    lifecycle_masks = {
+        "Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone",
+    }
+    if expression_kind in {"TargetQuery", "TargetFilterAliveState"} and normalized["alive_state_mask"] not in lifecycle_masks:
+        raise ValueError("target lifecycle mask is invalid")
+    if expression_kind == "TargetCompute" and normalized["compute_type"] != "Union":
+        raise ValueError("target compute type is invalid")
+    if expression_kind == "TargetSelector" and (
+        len(normalized["children"]) != 2 or normalized["predicate"] is None
+    ):
+        raise ValueError("target selector requires one predicate and exactly two branches")
+    if expression_kind == "TargetFilterEntityType" and normalized["entity_type_mask"] not in {
+        "Servant", "BattleEvent",
+    }:
+        raise ValueError("target entity type mask is invalid")
     if expression_kind == "TargetMapAdjoinEntity" and normalized["side"] not in {
         "Both", "Left", "Right",
     }:
         raise ValueError("target adjacent side is invalid")
+    if expression_kind == "TargetMapAdjoinEntity" and normalized["counting_option"] not in {
+        "", "IgnoreServant",
+    }:
+        raise ValueError("target adjacent counting option is invalid")
+    if expression_kind == "TargetFetchTeamEntity" and normalized["team_type"] not in {
+        "TeamLight", "TeamDark",
+    }:
+        raise ValueError("target team entity type is invalid")
     if expression_kind == "TargetSortByProperty" and normalized["sort_key"] not in _TARGET_SORT_PROPERTY_KEYS:
         raise ValueError("target sort property is invalid")
     if expression_kind == "TargetSortByPropertyRatio" and normalized["sort_key"] not in _TARGET_SORT_RATIO_KEYS:
         raise ValueError("target sort ratio is invalid")
     if expression_kind == "TargetSortByFormation" and normalized["sort_key"] != "formation_position":
         raise ValueError("target formation sort key is invalid")
+    if expression_kind == "TargetSortByModifierValue" and (
+        not normalized["modifier_name"] or normalized["value_type"] not in {"", "Layer"}
+    ):
+        raise ValueError("target modifier value sort contract is invalid")
+    if expression_kind == "TargetSortByModifierStatusCount" and normalized["buff_status"] not in {
+        "Buff", "Debuff",
+    }:
+        raise ValueError("target modifier status sort contract is invalid")
     if expression_kind == "TargetTake" and not normalized["count_expr"]:
         raise ValueError("target take requires a count")
     if expression_kind == "TargetTake" and not _target_numeric_expression_runtime_bound(
@@ -4060,8 +4149,12 @@ def _validate_target_node_sources(
     children = cast(tuple[TargetExpressionNodeIR, ...], payload.get("children", ()))
     if expression_kind == "TargetConcat":
         child_prefixes = (".Targets[",)
+    elif expression_kind == "TargetCompute":
+        child_prefixes = (".Targets[",)
     elif expression_kind == "TargetSequence":
         child_prefixes = (".Sequence[",)
+    elif expression_kind == "TargetSelector":
+        child_prefixes = (".SuccTarget", ".FailTarget")
     for child in children:
         if not _source_descends_from(source, child.source, child_prefixes):
             raise ValueError("target child source does not close to its parent")
@@ -4083,7 +4176,7 @@ def _validate_target_node_sources(
         ):
             raise ValueError("target child source does not close to its parent")
 
-    if expression_kind in {"TargetFilter", "Retarget"}:
+    if expression_kind in {"TargetFilter", "Retarget", "TargetSelector"}:
         predicate = cast(ConditionIR | None, payload.get("predicate"))
         if predicate is not None:
             if not _source_descends_from(source, predicate.source, (".Predicate",)):
@@ -4139,13 +4232,11 @@ def _condition_payload_contains_target(*, value: object) -> bool:
 def _target_node_blocked_reason(node: TargetExpressionNodeIR) -> str:
     if node.expression_kind == "TargetUnsupported":
         return cast(str, node.payload["blocked_reason"])
-    if node.expression_kind == "TargetMapSummoner" and node.recursive_summoner:
-        return "target_summoner_recursive_deferred_s5b"
-    if node.expression_kind == "TargetMapAdjoinEntity" and node.adjacent_counting_option:
+    if node.expression_kind == "TargetMapAdjoinEntity" and node.adjacent_counting_option not in {"", "IgnoreServant"}:
         return f"target_adjacent_counting_option_deferred_s5b:{node.adjacent_counting_option}"
-    if node.expression_kind == "Retarget" and node.include_limbo:
-        return "retarget_include_limbo_deferred_s5b"
-    if node.expression_kind == "TargetQuery" and node.query_alive_state_mask:
+    if node.expression_kind == "TargetQuery" and node.query_alive_state_mask not in {
+        "", "Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone",
+    }:
         return f"target_query_alive_state_mask_deferred_s5b:{node.query_alive_state_mask}"
     for child in node.children:
         reason = _target_node_blocked_reason(child)

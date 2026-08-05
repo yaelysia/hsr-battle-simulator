@@ -24,6 +24,7 @@ from .rng import (
     rng_mode_from_payload,
 )
 from .target import TargetSystem
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_relation import is_opposing_combat_team
 from .unit_stats import effective_unit_stat
@@ -260,6 +261,7 @@ class StatusSystem:
     def __init__(self, rules: RuleBook | None = None):
         self.rules = rules
         self.value_resolver = ValueResolver(rules) if rules is not None else None
+        self.targets = TargetSystem(rules) if rules is not None else None
 
     def add_status(self, state: BattleState, unit_id: str, status_id: str, source: str) -> Mutation:
         unit = state.units[unit_id]
@@ -419,6 +421,7 @@ class StatusSystem:
             )
             on_create_dynamic_values = _on_create_define_dynamic_values(
                 self.rules,
+                self.targets,
                 modifier_name,
                 effect.status_callback_ids,
                 state,
@@ -1052,11 +1055,15 @@ class StatusSystem:
             for item in relation.get("binding_sources", [])
             if isinstance(item, dict)
         )
-        target_result = TargetSystem().resolve_target_expression(
+        assert self.targets is not None
+        target_result = self.targets.resolve_target_expression(
             state,
             expression,
-            caster_id=str(relation["caster_id"]),
-            owner_id=parent_owner_id,
+            context=TargetEvaluationContext(
+                caster_id=str(relation["caster_id"]),
+                effect_owner_id=parent_owner_id,
+                turn_owner_id=committed_turn_owner_id(state),
+            ),
             dynamic_values=resolved_dynamic_values,
             binding_sources=binding_sources,
         )
@@ -1099,6 +1106,7 @@ class StatusSystem:
                     continue
                 remains_related, blocked_reason = (
                     _defeated_halo_member_remains_related(
+                        self.targets,
                         state,
                         expression,
                         target_id=target_id,
@@ -1424,15 +1432,24 @@ class StatusSystem:
                     "target_expression": expression.to_json(),
                     "target_alias": payload_alias,
                 }, ()
-            result = TargetSystem().resolve_target_expression(
+            assert self.targets is not None
+            result = self.targets.resolve_target_expression(
                 state,
                 expression,
-                caster_id=caster_id,
-                owner_id=owner_id,
-                param_entity_id=param_entity_id,
-                current_action_target_id=current_action_target_id,
+                context=TargetEvaluationContext(
+                    caster_id=caster_id,
+                    effect_owner_id=owner_id,
+                    parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
+                    selected_target_ids=(
+                        tuple(target_resolution.selected)
+                        if target_resolution is not None and target_resolution.selected
+                        else ((current_action_target_id,) if current_action_target_id else ())
+                    ),
+                    current_target_id=current_action_target_id,
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
                 target_resolution=target_resolution,
-                event_payload=event_payload,
+                condition_event_payload=event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
             )
@@ -2982,6 +2999,7 @@ def _resolve_dynamic_values(
 
 def _on_create_define_dynamic_values(
     rules: RuleBook,
+    targets: TargetSystem | None,
     modifier_name: str,
     callback_ids: tuple[str, ...],
     state: BattleState,
@@ -3012,15 +3030,21 @@ def _on_create_define_dynamic_values(
             expression = rules.target_expression(target_expression_id)
             if expression is None:
                 continue
-            target_result = TargetSystem().resolve_target_expression(
+            if targets is None:
+                continue
+            target_result = targets.resolve_target_expression(
                 state,
                 expression,
-                caster_id=caster_id,
-                owner_id=owner_id,
-                param_entity_id=param_entity_id,
-                current_action_target_id=current_action_target_id,
+                context=TargetEvaluationContext(
+                    caster_id=caster_id,
+                    effect_owner_id=owner_id,
+                    parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
+                    selected_target_ids=((current_action_target_id,) if current_action_target_id else ()),
+                    current_target_id=current_action_target_id,
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
                 target_resolution=None,
-                event_payload=None,
+                condition_event_payload=None,
                 dynamic_values=None,
                 binding_sources=binding_sources,
             )
@@ -5126,6 +5150,7 @@ def _halo_member_is_present(state: BattleState, target_id: str) -> bool:
 
 
 def _defeated_halo_member_remains_related(
+    targets: TargetSystem,
     state: BattleState,
     expression: TargetExpressionIR,
     *,
@@ -5137,7 +5162,7 @@ def _defeated_halo_member_remains_related(
 ) -> tuple[bool, str]:
     """Check relation membership without converting defeated into unrelated.
 
-    Target resolution intentionally excludes defeated units.  For an
+    Team/lifecycle expressions can exclude defeated units.  For an
     ``AliveOnly=false`` halo we therefore re-evaluate the same typed target
     expression against a read-only active view of that one defeated member.
     This preserves the real owner/team/summon relation while still dropping
@@ -5172,11 +5197,14 @@ def _defeated_halo_member_remains_related(
         state,
         units={**state.units, target_id: active_view},
     )
-    result = TargetSystem().resolve_target_expression(
+    result = targets.resolve_target_expression(
         probe_state,
         expression,
-        caster_id=caster_id,
-        owner_id=owner_id,
+        context=TargetEvaluationContext(
+            caster_id=caster_id,
+            effect_owner_id=owner_id,
+            turn_owner_id=committed_turn_owner_id(probe_state),
+        ),
         dynamic_values=dynamic_values,
         binding_sources=binding_sources,
     )

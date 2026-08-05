@@ -26,6 +26,7 @@ from .ability_task_contract import (
     is_process_only_ability_task,
 )
 from .target import TargetSystem
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ class AbilityTaskSystem:
         self.event_dispatcher = event_dispatcher
         self.toughness = ToughnessSystem(rules)
         self.summons = SummonSystem(rules)
-        self.targets = TargetSystem()
+        self.targets = TargetSystem(rules)
 
     def execute_callback(
         self,
@@ -1103,15 +1104,19 @@ class AbilityTaskSystem:
         for field_name, node in condition.payload.items():
             if not isinstance(node, TargetExpressionNodeIR):
                 continue
-            target_result = self.targets.resolve_expression_node(
+            target_result = self.targets.resolve_target_expression(
                 state,
                 node,
-                caster_id=command.actor_id,
-                owner_id=command.actor_id,
-                param_entity_id=primary_target or command.actor_id,
-                current_action_target_id=primary_target,
+                context=TargetEvaluationContext(
+                    caster_id=command.actor_id,
+                    effect_owner_id=command.actor_id,
+                    parameter_entity_ids=((primary_target or command.actor_id),),
+                    selected_target_ids=tuple(target_resolution.selected),
+                    current_target_id=primary_target,
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
                 target_resolution=target_resolution,
-                event_payload=event_payload,
+                condition_event_payload=event_payload,
                 binding_sources=binding_sources,
             )
             if target_result.resolved:

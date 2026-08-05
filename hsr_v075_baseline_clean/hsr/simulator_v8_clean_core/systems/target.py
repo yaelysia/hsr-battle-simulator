@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -18,10 +19,6 @@ from ..rules.expression_ir import (
     numeric_fixed_value,
 )
 from ..rules.ir import ConditionIR, TargetExpressionIR, TargetExpressionNodeIR
-from ..unit_eligibility import (
-    runtime_unit_is_battle_event_entity,
-    runtime_unit_is_unselectable,
-)
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -30,8 +27,14 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
-from .summon_runtime import validate_summon_runtime
-from .unit_relation import is_dark_team, is_light_team, is_opposing_combat_team, is_same_combat_team
+from .unit_relation import (
+    EntityRelationResolver,
+    TargetEvaluationContext,
+    is_dark_team,
+    is_light_team,
+    is_opposing_combat_team,
+    is_same_combat_team,
+)
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_stats import effective_unit_stat
 
@@ -151,32 +154,85 @@ class TargetExpressionResult:
 
 
 class TargetSystem:
-    def __init__(self) -> None:
+    def __init__(self, rules: Any | None = None) -> None:
         self.lifecycle = UnitLifecycleSystem()
+        self.relations = EntityRelationResolver()
+        self.alias_definitions: dict[str, TargetExpressionIR] = {}
+        self.scoped_alias_definitions: dict[tuple[str, str], TargetExpressionIR] = {}
+        self.operation_definitions: dict[str, TargetExpressionIR] = {}
+        self.ambiguous_definition_names: frozenset[str] = frozenset()
+        if rules is not None:
+            duplicate_names: set[str] = set()
+            language_lookup = getattr(rules, "target_language_expressions", None)
+            definitions = (
+                language_lookup() if callable(language_lookup) else rules.target_expressions()
+            )
+            for definition in definitions:
+                source_path = definition.source.source_path
+                name = definition.source.evidence.get("source_raw_id")
+                if not isinstance(name, str) or not name:
+                    continue
+                source_raw_type = definition.source.evidence.get("source_raw_type") or definition.source.raw_type
+                if source_raw_type == "GlobalTargetAlias":
+                    key = (source_path, name)
+                    if key in self.scoped_alias_definitions:
+                        duplicate_names.add(f"{source_path}:{name}")
+                    self.scoped_alias_definitions[key] = definition
+                elif source_path == "Config/GlobalConfig/TargetAliasConfig.json":
+                    if name in self.alias_definitions:
+                        duplicate_names.add(name)
+                    self.alias_definitions[name] = definition
+                elif source_path == "Config/GlobalConfig/TargetOperationConfig.json":
+                    if name in self.operation_definitions:
+                        duplicate_names.add(name)
+                    self.operation_definitions[name] = definition
+            self.ambiguous_definition_names = frozenset(
+                duplicate_names
+                | (self.alias_definitions.keys() & self.operation_definitions.keys())
+            )
 
     def resolve_target_expression(
         self,
         state: BattleState,
-        expression: TargetExpressionIR,
+        expression: TargetExpressionIR | TargetExpressionNodeIR,
         *,
-        caster_id: str,
-        owner_id: str | None = None,
-        param_entity_id: str | None = None,
-        current_action_target_id: str | None = None,
+        context: TargetEvaluationContext,
         target_resolution: TargetResolution | None = None,
-        event_payload: dict[str, JSONValue] | None = None,
+        condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> TargetExpressionResult:
+        if type(expression) is TargetExpressionNodeIR:
+            return self._resolve_expression_node(
+                state,
+                expression,
+                context=context,
+                target_resolution=target_resolution,
+                condition_event_payload=condition_event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+            )
+        if type(expression) is not TargetExpressionIR:
+            raise TypeError("target expression must be exact IR or node IR")
         metadata: dict[str, JSONValue] = {
             "target_expression": expression.to_json(),
-            "caster_id": caster_id,
-            "owner_id": owner_id,
-            "param_entity_id": param_entity_id,
-            "current_action_target_id": current_action_target_id,
+            "caster_id": context.caster_id,
+            "owner_id": context.effect_owner_id,
+            "param_entity_ids": list(context.parameter_entity_ids),
+            "selected_target_ids": list(context.selected_target_ids),
+            "current_action_target_id": context.current_target_id,
             "target_resolution": target_resolution.to_json() if target_resolution else None,
-            "event_payload": event_payload or {},
         }
+        context_validation = self.relations.resolve(state, "context.caster", context)
+        if context_validation.blocked:
+            return TargetExpressionResult(
+                status="blocked",
+                blocked_reason=context_validation.blocked_reason,
+                expression_id=expression.target_expression_id,
+                expression_kind=expression.expression_kind,
+                alias=expression.alias,
+                metadata=metadata,
+            )
         if expression.coverage_status != "executable":
             reason = expression.blocked_reason or f"target_expression_not_executable:{expression.coverage_status}"
             return TargetExpressionResult(
@@ -192,14 +248,21 @@ class TargetSystem:
             expression.node,
             expression_kind=expression.expression_kind,
             alias=expression.alias,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
+            caster_id=context.caster_id,
+            owner_id=context.effect_owner_id,
+            param_entity_id=context.parameter_entity_id,
+            current_action_target_id=context.current_target_id,
             target_resolution=target_resolution,
-            event_payload=event_payload or {},
+            event_payload=condition_event_payload or {},
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
+            target_context=context,
+            relations=self.relations,
+            alias_definitions=self.alias_definitions,
+            operation_definitions=self.operation_definitions,
+            ambiguous_definition_names=self.ambiguous_definition_names,
+            scoped_alias_definitions=self.scoped_alias_definitions,
+            definition_source_path=expression.source.source_path,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -221,17 +284,14 @@ class TargetSystem:
             rng_events=result.rng_events,
         )
 
-    def resolve_expression_node(
+    def _resolve_expression_node(
         self,
         state: BattleState,
         node: TargetExpressionNodeIR,
         *,
-        caster_id: str,
-        owner_id: str | None = None,
-        param_entity_id: str | None = None,
-        current_action_target_id: str | None = None,
+        context: TargetEvaluationContext,
         target_resolution: TargetResolution | None = None,
-        event_payload: dict[str, JSONValue] | None = None,
+        condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> TargetExpressionResult:
@@ -241,6 +301,15 @@ class TargetSystem:
             "target_expression_node": node.to_json(),
             "resolution_steps": [],
         }
+        context_validation = self.relations.resolve(state, "context.caster", context)
+        if context_validation.blocked:
+            return TargetExpressionResult(
+                status="blocked",
+                blocked_reason=context_validation.blocked_reason,
+                expression_kind=node.expression_kind,
+                alias=node.alias,
+                metadata=metadata,
+            )
         if node.runtime_blocked_reason:
             return TargetExpressionResult(
                 status="blocked",
@@ -254,14 +323,21 @@ class TargetSystem:
             node,
             expression_kind=node.expression_kind,
             alias=node.alias,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
+            caster_id=context.caster_id,
+            owner_id=context.effect_owner_id,
+            param_entity_id=context.parameter_entity_id,
+            current_action_target_id=context.current_target_id,
             target_resolution=target_resolution,
-            event_payload=event_payload or {},
+            event_payload=condition_event_payload or {},
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
+            target_context=context,
+            relations=self.relations,
+            alias_definitions=self.alias_definitions,
+            operation_definitions=self.operation_definitions,
+            scoped_alias_definitions=self.scoped_alias_definitions,
+            definition_source_path=node.source.source_path,
+            ambiguous_definition_names=self.ambiguous_definition_names,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -286,11 +362,8 @@ class TargetSystem:
         state: BattleState,
         condition: ConditionIR,
         *,
-        caster_id: str,
-        owner_id: str | None = None,
-        param_entity_id: str | None = None,
-        current_action_target_id: str | None = None,
-        event_payload: dict[str, JSONValue] | None = None,
+        context: TargetEvaluationContext,
+        condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
@@ -307,14 +380,11 @@ class TargetSystem:
             key = _condition_target_key(node)
             if key in resolved or key in errors:
                 continue
-            result = self.resolve_expression_node(
+            result = self.resolve_target_expression(
                 state,
                 node,
-                caster_id=caster_id,
-                owner_id=owner_id,
-                param_entity_id=param_entity_id,
-                current_action_target_id=current_action_target_id,
-                event_payload=event_payload,
+                context=context,
+                condition_event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
             )
@@ -763,6 +833,22 @@ class _ExpressionResolution:
     rng_events: tuple[RNGEvent, ...] = ()
 
 
+@dataclass(frozen=True)
+class _TargetRelationRuntime:
+    context: TargetEvaluationContext
+    relations: EntityRelationResolver
+    alias_definitions: Mapping[str, TargetExpressionIR]
+    operation_definitions: Mapping[str, TargetExpressionIR]
+    scoped_alias_definitions: Mapping[tuple[str, str], TargetExpressionIR]
+    definition_source_path: str
+    ambiguous_definition_names: frozenset[str] = frozenset()
+    alias_stack: tuple[str, ...] = ()
+    include_limbo: bool = False
+
+    def entering_alias(self, alias: str) -> "_TargetRelationRuntime":
+        return replace(self, alias_stack=(*self.alias_stack, alias))
+
+
 def _resolve_expression_payload(
     state: BattleState,
     raw: TargetExpressionNodeIR | None,
@@ -777,6 +863,13 @@ def _resolve_expression_payload(
     event_payload: dict[str, JSONValue],
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
+    target_context: TargetEvaluationContext,
+    relations: EntityRelationResolver,
+    alias_definitions: Mapping[str, TargetExpressionIR],
+    operation_definitions: Mapping[str, TargetExpressionIR],
+    scoped_alias_definitions: Mapping[tuple[str, str], TargetExpressionIR],
+    definition_source_path: str,
+    ambiguous_definition_names: frozenset[str],
 ) -> _ExpressionResolution:
     if raw is None or raw.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return _ExpressionResolution(blocked_reason="target_expression_typed_node_missing")
@@ -795,6 +888,15 @@ def _resolve_expression_payload(
         binding_sources=binding_sources,
         previous_targets=(),
         path="$",
+        relation_runtime=_TargetRelationRuntime(
+            context=target_context,
+            relations=relations,
+            alias_definitions=alias_definitions,
+            operation_definitions=operation_definitions,
+            scoped_alias_definitions=scoped_alias_definitions,
+            definition_source_path=definition_source_path,
+            ambiguous_definition_names=ambiguous_definition_names,
+        ),
     )
 
 
@@ -814,6 +916,7 @@ def _resolve_inline_expression(
     binding_sources: tuple[dict[str, JSONValue], ...],
     previous_targets: tuple[str, ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is not None:
         expression_kind = _inline_expression_kind(raw) or expression_kind
@@ -828,7 +931,10 @@ def _resolve_inline_expression(
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
             event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
             path=path,
+            relation_runtime=relation_runtime,
         )
         return _inline_result(
             path,
@@ -839,8 +945,50 @@ def _resolve_inline_expression(
             alias_result.steps,
             alias_result.rng_events,
         )
-    if expression_kind == "TargetConcat":
-        children = _inline_children(raw, expression_kind)
+    if expression_kind == "TargetSelector":
+        if raw is None or raw.predicate is None or len(raw.children) != 2:
+            return _inline_result(path, expression_kind, alias, (), "target_selector_payload_missing")
+        probe_id = param_entity_id or caster_id
+        predicate_result = _resolve_filter_candidates(
+            state,
+            raw.predicate,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            candidate_targets=(probe_id,),
+            path=f"{path}.predicate",
+            steps=(),
+            rng_events=(),
+            relation_runtime=relation_runtime,
+        )
+        if predicate_result.blocked_reason:
+            return _inline_result(path, expression_kind, alias, (), predicate_result.blocked_reason, predicate_result.steps)
+        branch_index = 0 if predicate_result.target_ids else 1
+        branch = raw.children[branch_index]
+        return _resolve_inline_expression(
+            state,
+            branch,
+            expression_kind=branch.expression_kind,
+            alias=branch.alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            previous_targets=previous_targets,
+            path=f"{path}.{'success' if branch_index == 0 else 'failure'}",
+            relation_runtime=relation_runtime,
+        )
+    if expression_kind in {"TargetConcat", "TargetCompute"}:
+        children = raw.children if raw is not None else ()
         if not children:
             return _inline_result(path, expression_kind, alias, (), f"target_expression_children_missing:{expression_kind}")
         selected: tuple[str, ...] = ()
@@ -862,6 +1010,7 @@ def _resolve_inline_expression(
                 binding_sources=binding_sources,
                 previous_targets=(),
                 path=f"{path}.{expression_kind}[{index}]",
+                relation_runtime=relation_runtime,
             )
             steps.extend(child_result.steps)
             rng_events.extend(child_result.rng_events)
@@ -902,6 +1051,7 @@ def _resolve_inline_expression(
                     binding_sources=binding_sources,
                     candidate_targets=selected,
                     path=child_path,
+                    relation_runtime=relation_runtime,
                 )
             elif _is_transform_expression_kind(child_kind):
                 child_result = _resolve_transform_expression(
@@ -916,6 +1066,7 @@ def _resolve_inline_expression(
                     binding_sources=binding_sources,
                     candidate_targets=selected,
                     path=child_path,
+                    relation_runtime=relation_runtime,
                 )
             else:
                 child_result = _resolve_inline_expression(
@@ -933,6 +1084,7 @@ def _resolve_inline_expression(
                     binding_sources=binding_sources,
                     previous_targets=selected,
                     path=child_path,
+                    relation_runtime=relation_runtime,
                 )
             steps.extend(child_result.steps)
             rng_events.extend(child_result.rng_events)
@@ -954,6 +1106,7 @@ def _resolve_inline_expression(
             binding_sources=binding_sources,
             candidate_targets=previous_targets,
             path=path,
+            relation_runtime=relation_runtime,
         )
     if expression_kind == "Retarget":
         return _resolve_retarget_expression(
@@ -968,6 +1121,7 @@ def _resolve_inline_expression(
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
             path=path,
+            relation_runtime=relation_runtime,
         )
     if expression_kind.startswith("TargetFetch"):
         return _resolve_fetch_expression(
@@ -979,8 +1133,11 @@ def _resolve_inline_expression(
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
             event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
             previous_targets=previous_targets,
             path=path,
+            relation_runtime=relation_runtime,
         )
     if expression_kind == "TargetQuery":
         return _resolve_target_query(
@@ -994,6 +1151,7 @@ def _resolve_inline_expression(
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
             path=path,
+            relation_runtime=relation_runtime,
         )
     if _is_transform_expression_kind(expression_kind):
         return _resolve_transform_expression(
@@ -1008,6 +1166,7 @@ def _resolve_inline_expression(
             binding_sources=binding_sources,
             candidate_targets=previous_targets,
             path=path,
+            relation_runtime=relation_runtime,
         )
     return _inline_result(path, expression_kind, alias, (), f"target_expression_kind_not_supported:{expression_kind}")
 
@@ -1024,21 +1183,21 @@ def _resolve_target_query(
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, "TargetQuery", "", (), "target_query_payload_missing")
     entity_type = raw.query_entity_type_mask
     if entity_type != "Servant":
         return _inline_result(path, "TargetQuery", "", (), f"target_query_entity_type_not_supported:{entity_type or 'missing'}")
-    if raw.query_alive_state_mask:
-        return _inline_result(
-            path,
-            "TargetQuery",
-            "",
-            (),
-            f"target_query_alive_state_mask_deferred_s5b:{raw.query_alive_state_mask}",
-        )
-    candidates, reason = _servant_entity_list(state)
+    servant_result = relation_runtime.relations.resolve(
+        state,
+        "entity.servant",
+        relation_runtime.context,
+        options={"mask": raw.query_alive_state_mask or "Mask_AliveOnly"},
+    )
+    candidates = servant_result.target_ids
+    reason = servant_result.blocked_reason
     steps: list[JSONValue] = [
         {
             "operation": "TargetQuery",
@@ -1069,6 +1228,7 @@ def _resolve_target_query(
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
             path=f"{path}.Predicate[{candidate_id}]",
+            relation_runtime=relation_runtime,
         )
         predicate_steps.append(predicate_result)
         if predicate_result.get("blocked_reason"):
@@ -1100,6 +1260,7 @@ def _evaluate_target_query_compare_predicate(
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> dict[str, JSONValue]:
     left_raw = predicate.query_target
     right_raw = predicate.query_compare
@@ -1118,6 +1279,10 @@ def _evaluate_target_query_compare_predicate(
         binding_sources=binding_sources,
         previous_targets=(),
         path=f"{path}.left",
+        relation_runtime=replace(
+            relation_runtime,
+            context=relation_runtime.context.with_parameter(candidate_id),
+        ),
     )
     if left.blocked_reason:
         return {
@@ -1140,6 +1305,10 @@ def _evaluate_target_query_compare_predicate(
         binding_sources=binding_sources,
         previous_targets=(),
         path=f"{path}.right",
+        relation_runtime=replace(
+            relation_runtime,
+            context=relation_runtime.context.with_parameter(candidate_id),
+        ),
     )
     if right.blocked_reason:
         return {
@@ -1190,6 +1359,7 @@ def _resolve_filter_expression(
     binding_sources: tuple[dict[str, JSONValue], ...],
     candidate_targets: tuple[str, ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, "TargetFilter", "", (), "target_filter_payload_missing")
@@ -1211,13 +1381,14 @@ def _resolve_filter_expression(
             binding_sources=binding_sources,
             previous_targets=(),
             path=f"{path}.source",
+            relation_runtime=relation_runtime,
         )
         steps.extend(source_result.steps)
         if source_result.blocked_reason:
             return _inline_result(path, "TargetFilter", "", (), source_result.blocked_reason, steps, source_result.rng_events)
         candidate_targets = source_result.target_ids
     if not candidate_targets:
-        return _inline_result(path, "TargetFilter", "", (), "target_filter_candidate_missing", steps)
+        return _inline_result(path, "TargetFilter", "", (), "", steps)
     condition = raw.predicate
     if condition is None:
         return _inline_result(path, "TargetFilter", "", (), "target_filter_predicate_missing", steps)
@@ -1236,6 +1407,7 @@ def _resolve_filter_expression(
         path=path,
         steps=tuple(steps),
         rng_events=source_result.rng_events if explicit_target is not None else (),
+        relation_runtime=relation_runtime,
     )
 
 
@@ -1255,9 +1427,10 @@ def _resolve_filter_candidates(
     path: str,
     steps: tuple[JSONValue, ...],
     rng_events: tuple[RNGEvent, ...],
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if not candidate_targets:
-        return _inline_result(path, "TargetFilter", "", (), "target_filter_candidate_missing", list(steps), rng_events)
+        return _inline_result(path, "TargetFilter", "", (), "", list(steps), rng_events)
     evaluator = RuleEvaluator()
     selected: list[str] = []
     condition_results: list[JSONValue] = []
@@ -1267,19 +1440,37 @@ def _resolve_filter_candidates(
             "target_id": candidate_id,
             "param_entity_id": candidate_id,
         }
-        resolved_target_groups, target_resolution_errors = (
-            TargetSystem().resolve_condition_target_groups(
+        candidate_runtime = replace(
+            relation_runtime,
+            context=relation_runtime.context.with_parameter(candidate_id),
+        )
+        resolved_target_groups: dict[str, tuple[str, ...]] = {}
+        target_resolution_errors: dict[str, str] = {}
+        for node in _condition_target_nodes(condition):
+            key = _condition_target_key(node)
+            if key in resolved_target_groups or key in target_resolution_errors:
+                continue
+            target_result = _resolve_inline_expression(
                 state,
-                condition,
+                node,
+                expression_kind=node.expression_kind,
+                alias=node.alias,
                 caster_id=caster_id,
                 owner_id=owner_id,
                 param_entity_id=candidate_id,
                 current_action_target_id=current_action_target_id or candidate_id,
+                target_resolution=target_resolution,
                 event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                previous_targets=(),
+                path=f"{path}.condition_target.{key}",
+                relation_runtime=candidate_runtime,
             )
-        )
+            if target_result.blocked_reason:
+                target_resolution_errors[key] = target_result.blocked_reason
+            else:
+                resolved_target_groups[key] = target_result.target_ids
         result = evaluator.evaluate_condition_result(
             condition,
             EvaluationContext(
@@ -1333,6 +1524,7 @@ def _resolve_retarget_expression(
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, "Retarget", "", (), "retarget_payload_missing")
@@ -1354,6 +1546,7 @@ def _resolve_retarget_expression(
         binding_sources=binding_sources,
         previous_targets=(),
         path=f"{path}.TargetType",
+        relation_runtime=replace(relation_runtime, include_limbo=raw.include_limbo),
     )
     if source_result.blocked_reason:
         return _inline_result(path, "Retarget", "", (), source_result.blocked_reason, source_result.steps, source_result.rng_events)
@@ -1376,6 +1569,7 @@ def _resolve_retarget_expression(
             path=f"{path}.predicate",
             steps=tuple(steps),
             rng_events=tuple(rng_events),
+            relation_runtime=relation_runtime,
         )
         if filter_result.blocked_reason:
             return _inline_result(
@@ -1402,29 +1596,37 @@ def _resolve_retarget_expression(
     if max_reason:
         return _inline_result(path, "Retarget", "", (), f"retarget_max_number_blocked:{max_reason}", steps, tuple(rng_events))
     if raw.by_random:
-        random_result = _select_random_targets(
+        return _inline_result(path, "Retarget", "", (), "random_target_pending_s5d", steps, tuple(rng_events))
+    if raw.include_limbo:
+        lifecycle_result = relation_runtime.relations.resolve(
             state,
-            candidate_targets,
-            event_payload=event_payload,
-            path=f"{path}.ByRandom",
-            source_trace={"target_expression_path": path, "expression_kind": "Retarget"},
+            "lifecycle.filter",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={"mask": "Mask_AliveOrLimbo"},
         )
-        steps.extend(random_result.steps)
-        rng_events.extend(random_result.rng_events)
-        if random_result.blocked_reason:
-            return _inline_result(path, "Retarget", "", (), random_result.blocked_reason, steps, tuple(rng_events))
-        candidate_targets = random_result.target_ids
+        if lifecycle_result.blocked:
+            return _inline_result(path, "Retarget", "", (), lifecycle_result.blocked_reason, steps, tuple(rng_events))
+        candidate_targets = lifecycle_result.target_ids
     selected = candidate_targets[: max_number]
     if not selected:
-        return _inline_result(path, "Retarget", "", (), "retarget_candidate_missing", steps, tuple(rng_events))
+        return _inline_result(path, "Retarget", "", (), "", steps, tuple(rng_events))
     return _inline_result(path, "Retarget", "", selected, "", steps, tuple(rng_events))
 
 
 def _is_transform_expression_kind(kind: str) -> bool:
     return kind in {
         "TargetMapAdjoinEntity",
+        "TargetMapAllTeamMember",
+        "TargetMapEnemyTeamEntity",
+        "TargetMapCreator",
+        "TargetMapAllTeamMemberFromFirstEntity",
         "TargetMapSummoner",
         "TargetMapSummonedMinions",
+        "TargetRemoveUnselectable",
+        "TargetFilterAliveState",
+        "TargetFilterUnselectable",
+        "TargetFilterEntityType",
         "TargetReverse",
         "TargetShuffle",
         "TargetTake",
@@ -1442,49 +1644,134 @@ def _resolve_fetch_expression(
     current_action_target_id: str | None,
     target_resolution: TargetResolution | None,
     event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
     previous_targets: tuple[str, ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, expression_kind, "", (), "target_fetch_payload_missing")
     if expression_kind == "TargetFetchCaster":
-        return _validated_target_result(state, path, expression_kind, (caster_id,), "target_fetch_caster")
+        return _resolve_context_relation(state, expression_kind, "context.caster", path, relation_runtime)
     if expression_kind in {"TargetFetchModifierOwner", "TargetFetchOwner"}:
-        if not owner_id:
-            return _inline_result(path, expression_kind, "", (), "target_fetch_owner_missing")
-        return _validated_target_result(state, path, expression_kind, (owner_id,), "target_fetch_owner")
+        return _resolve_context_relation(state, expression_kind, "context.owner", path, relation_runtime)
     if expression_kind in {"TargetFetchAbilityTarget", "TargetFetchCurrentActionTarget"}:
-        target_ids: tuple[str, ...] = ()
-        if current_action_target_id:
-            target_ids = (current_action_target_id,)
-        elif target_resolution is not None and target_resolution.selected:
-            target_ids = tuple(target_resolution.selected)
-        if not target_ids:
-            return _inline_result(path, expression_kind, "", (), "target_fetch_ability_target_missing")
-        return _validated_target_result(state, path, expression_kind, target_ids, "target_fetch_ability_target")
+        relation = "context.current" if expression_kind == "TargetFetchCurrentActionTarget" else "context.selected"
+        return _resolve_context_relation(state, expression_kind, relation, path, relation_runtime)
+    if expression_kind == "TargetFetchParamEntity":
+        return _resolve_context_relation(state, expression_kind, "context.parameter", path, relation_runtime)
     if expression_kind == "TargetFetchParamEntityList":
-        target_ids, reason = _target_ids_from_payload(
-            state,
-            event_payload,
-            ("param_entity_ids", "param_entity_list", "param_entities"),
-            missing_reason="param_entity_list_missing",
-        )
-        if reason:
-            return _inline_result(path, expression_kind, "", (), reason)
-        return _validated_target_result(state, path, expression_kind, target_ids, "target_fetch_param_entity_list")
+        return _resolve_context_relation(state, expression_kind, "context.parameter", path, relation_runtime)
     if expression_kind == "TargetFetchActualOwner":
         if not previous_targets:
             return _inline_result(path, expression_kind, "", (), "target_fetch_actual_owner_input_missing")
-        selected, reason, steps = _actual_owners_for_targets(state, previous_targets)
-        return _inline_result(path, expression_kind, "", selected, reason, steps)
+        selected: list[str] = []
+        for target_id in previous_targets:
+            result = relation_runtime.relations.resolve(
+                state, "summon.owner", relation_runtime.context, subject_ids=(target_id,)
+            )
+            if result.blocked:
+                return _inline_result(path, expression_kind, "", (), result.blocked_reason)
+            if result.target_ids:
+                selected.extend(result.target_ids)
+            else:
+                selected.append(target_id)
+        return _inline_result(path, expression_kind, "", _dedupe(tuple(selected)), "")
+    if expression_kind == "TargetFetchTeamEntity":
+        relation = "team.light" if raw.team_type == "TeamLight" else "team.dark"
+        result = relation_runtime.relations.resolve(
+            state,
+            relation,
+            relation_runtime.context,
+            subject_ids=(relation_runtime.context.caster_id,),
+            options={"include_limbo": relation_runtime.include_limbo},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFetchBattleEventEntityList":
+        result = relation_runtime.relations.resolve(
+            state, "entity.battle_event", relation_runtime.context
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFetchTurnOwnerEntity":
+        result = relation_runtime.relations.resolve(
+            state, "context.turn_owner", relation_runtime.context
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFetchNone":
+        return _inline_result(path, expression_kind, "", (), "")
+    if expression_kind in {"TargetFetchAllUnselectable", "TargetFetchAllCustomUnselectable"}:
+        candidates = tuple(sorted(state.units))
+        if raw.candidate is not None:
+            candidate_result = _resolve_inline_expression(
+                state,
+                raw.candidate,
+                expression_kind=raw.candidate.expression_kind,
+                alias=raw.candidate.alias,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=relation_runtime.context.parameter_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+                previous_targets=previous_targets,
+                path=f"{path}.source_entity",
+                relation_runtime=relation_runtime,
+            )
+            if candidate_result.blocked_reason:
+                return _inline_result(
+                    path, expression_kind, "", (), candidate_result.blocked_reason,
+                    candidate_result.steps, candidate_result.rng_events,
+                )
+            if not candidate_result.target_ids:
+                return _inline_result(path, expression_kind, "", (), "")
+            team_result = relation_runtime.relations.resolve(
+                state,
+                "team.same",
+                relation_runtime.context,
+                subject_ids=(candidate_result.target_ids[0],),
+                options={"allow_unselectable": True, "include_limbo": True},
+            )
+            if team_result.blocked:
+                return _inline_result(path, expression_kind, "", (), team_result.blocked_reason)
+            candidates = team_result.target_ids
+        result = relation_runtime.relations.resolve(
+            state, "entity.unselectable", relation_runtime.context, subject_ids=candidates
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetFetchPartner":
-        return _resolve_partner_fetch(state, raw.name, caster_id=caster_id, path=path)
+        result = relation_runtime.relations.resolve(
+            state,
+            "entity.partner",
+            relation_runtime.context,
+            options={"name": raw.name},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetFetchUniqueNameEntity":
         unique_name = raw.unique_name
         if not unique_name:
             return _inline_result(path, expression_kind, "", (), "unique_entity_key_missing")
-        return _resolve_unique_entity(state, unique_name, path=path)
+        result = relation_runtime.relations.resolve(
+            state,
+            "entity.unique_name",
+            relation_runtime.context,
+            options={"unique_name": unique_name},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     return _inline_result(path, expression_kind, "", (), f"target_fetch_not_supported:{expression_kind}")
+
+
+def _resolve_context_relation(
+    state: BattleState,
+    expression_kind: str,
+    relation: str,
+    path: str,
+    relation_runtime: _TargetRelationRuntime,
+) -> _ExpressionResolution:
+    result = relation_runtime.relations.resolve(state, relation, relation_runtime.context)
+    return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
 
 
 def _resolve_transform_expression(
@@ -1500,11 +1787,14 @@ def _resolve_transform_expression(
     binding_sources: tuple[dict[str, JSONValue], ...],
     candidate_targets: tuple[str, ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, expression_kind, "", (), "target_transform_payload_missing")
-    if not candidate_targets:
-        return _inline_result(path, expression_kind, "", (), f"target_transform_candidate_missing:{expression_kind}")
+    if not candidate_targets and expression_kind == "TargetShuffle":
+        return _inline_result(path, expression_kind, "", (), "random_target_pending_s5d")
+    if not candidate_targets and expression_kind not in {"TargetTake", "TargetIndex"}:
+        return _inline_result(path, expression_kind, "", (), "")
     if expression_kind == "TargetReverse":
         return _inline_result(
             path,
@@ -1524,21 +1814,120 @@ def _resolve_transform_expression(
             path=path,
         )
     if expression_kind == "TargetMapAdjoinEntity":
-        return _resolve_adjacent_expression(state, candidate_targets, raw, path=path)
-    if expression_kind == "TargetMapSummoner":
-        selected, reason, steps = _summoners_for_targets(state, candidate_targets)
-        return _inline_result(path, expression_kind, "", selected, reason, steps)
-    if expression_kind == "TargetMapSummonedMinions":
-        selected, reason, steps = _summoned_minions_for_targets(state, candidate_targets)
-        return _inline_result(path, expression_kind, "", selected, reason, steps)
-    if expression_kind == "TargetShuffle":
-        return _select_random_targets(
+        selected: tuple[str, ...] = ()
+        for target_id in candidate_targets:
+            result = relation_runtime.relations.resolve(
+                state,
+                "formation.adjacent",
+                relation_runtime.context,
+                subject_ids=(target_id,),
+                options={"side": raw.adjacent_side, "counting_option": raw.adjacent_counting_option},
+            )
+            if result.blocked:
+                return _inline_result(path, expression_kind, "", (), result.blocked_reason)
+            selected = _dedupe((*selected, *result.target_ids))
+        return _inline_result(path, expression_kind, "", selected, "")
+    if expression_kind == "TargetMapAllTeamMember":
+        result = relation_runtime.relations.resolve(
             state,
-            candidate_targets,
-            event_payload=event_payload,
-            path=path,
-            source_trace={"target_expression_path": path, "expression_kind": expression_kind},
+            "team.same",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={
+                "allow_unselectable": raw.allow_unselectable,
+                "include_limbo": relation_runtime.include_limbo,
+            },
         )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetMapEnemyTeamEntity":
+        result = relation_runtime.relations.resolve(
+            state,
+            "team.opposing",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={"include_limbo": relation_runtime.include_limbo},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetMapAllTeamMemberFromFirstEntity":
+        relation = "team.opposing" if raw.select_enemy_team else "team.same"
+        result = relation_runtime.relations.resolve(
+            state,
+            relation,
+            relation_runtime.context,
+            subject_ids=(candidate_targets[0],),
+            options={"allow_unselectable": True, "include_limbo": True},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetMapCreator":
+        selected: tuple[str, ...] = ()
+        for target_id in candidate_targets:
+            result = relation_runtime.relations.resolve(
+                state,
+                "entity.creator",
+                relation_runtime.context,
+                subject_ids=(target_id,),
+            )
+            if result.blocked:
+                return _inline_result(path, expression_kind, "", (), result.blocked_reason)
+            selected = _dedupe((*selected, *result.target_ids))
+        return _inline_result(path, expression_kind, "", selected, "")
+    if expression_kind == "TargetRemoveUnselectable":
+        result = relation_runtime.relations.resolve(
+            state,
+            "lifecycle.filter",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={"mask": "Mask_AliveOnly", "require_targetable": True},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFilterAliveState":
+        result = relation_runtime.relations.resolve(
+            state,
+            "lifecycle.filter",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={"mask": raw.alive_state_mask},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFilterUnselectable":
+        unselectable = relation_runtime.relations.resolve(
+            state, "entity.unselectable", relation_runtime.context, subject_ids=candidate_targets
+        )
+        if unselectable.blocked:
+            return _inline_result(path, expression_kind, "", (), unselectable.blocked_reason)
+        unselectable_ids = frozenset(unselectable.target_ids)
+        selected = tuple(target_id for target_id in candidate_targets
+            if (target_id in unselectable_ids) is not raw.inverse)
+        return _inline_result(path, expression_kind, "", selected, "")
+    if expression_kind == "TargetFilterEntityType":
+        relation = {"BattleEvent": "entity.battle_event", "Servant": "entity.servant"}.get(raw.entity_type_mask)
+        if relation is None:
+            return _inline_result(path, expression_kind, "", (), "target_entity_type_filter_invalid")
+        typed = relation_runtime.relations.resolve(
+            state, relation, relation_runtime.context, options={"mask": "Anyone"}
+        )
+        if typed.blocked:
+            return _inline_result(path, expression_kind, "", (), typed.blocked_reason)
+        typed_ids = frozenset(typed.target_ids)
+        selected = [target_id for target_id in candidate_targets
+            if (target_id in typed_ids) is not raw.inverse]
+        return _inline_result(path, expression_kind, "", tuple(selected), "")
+    if expression_kind == "TargetMapSummoner":
+        result = relation_runtime.relations.resolve(
+            state,
+            "summon.summoner",
+            relation_runtime.context,
+            subject_ids=candidate_targets,
+            options={"recursive": raw.recursive_summoner},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetMapSummonedMinions":
+        result = relation_runtime.relations.resolve(
+            state, "summon.owned", relation_runtime.context, subject_ids=candidate_targets
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetShuffle":
+        return _inline_result(path, expression_kind, "", (), "random_target_pending_s5d")
     if expression_kind.startswith("TargetSort"):
         return _resolve_sort_expression(state, candidate_targets, raw, expression_kind=expression_kind, path=path)
     return _inline_result(path, expression_kind, "", (), f"target_transform_not_supported:{expression_kind}")
@@ -1554,13 +1943,78 @@ def _resolve_target_alias_resolution(
     current_action_target_id: str | None,
     target_resolution: TargetResolution | None,
     event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
     path: str,
+    relation_runtime: _TargetRelationRuntime,
 ) -> _ExpressionResolution:
-    set_alias = _safe_set_alias(alias)
-    if set_alias:
+    if not alias:
+        return _inline_result(path, "TargetAlias", "", (), "target_alias_missing")
+    if alias in relation_runtime.alias_stack:
+        return _inline_result(path, "TargetAlias", alias, (), f"target_alias_cycle:{alias}")
+    if alias.startswith("(") and ")." in alias:
+        closing = alias.find(").")
+        inner_alias = alias[1:closing]
+        operations = tuple(alias[closing + 2:].split("."))
+        if not _safe_set_alias(inner_alias) or any(not item for item in operations):
+            return _inline_result(path, "TargetAlias", alias, (), "target_alias_group_syntax_invalid")
+        base = _resolve_target_alias_resolution(
+            state,
+            inner_alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            path=f"{path}.alias_group",
+            relation_runtime=relation_runtime.entering_alias(alias),
+        )
+        if base.blocked_reason:
+            return _inline_result(path, "TargetAlias", alias, (), base.blocked_reason, base.steps, base.rng_events)
+        current = base.target_ids
+        steps = list(base.steps)
+        rng_events = list(base.rng_events)
+        for index, operation_name in enumerate(operations):
+            definition = relation_runtime.operation_definitions.get(operation_name)
+            if operation_name in relation_runtime.ambiguous_definition_names or definition is None:
+                return _inline_result(path, "TargetAlias", alias, (), f"target_operation_definition_missing:{operation_name}", steps)
+            if definition.coverage_status != "executable" or definition.node is None:
+                return _inline_result(path, "TargetAlias", alias, (), definition.blocked_reason or f"target_operation_definition_blocked:{operation_name}", steps)
+            operation_context = replace(relation_runtime.context, parameter_entity_ids=current)
+            result = _resolve_inline_expression(
+                state,
+                definition.node,
+                expression_kind=definition.expression_kind,
+                alias=definition.alias,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=operation_context.parameter_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+                previous_targets=current,
+                path=f"{path}.alias_group_op[{index}]",
+                relation_runtime=replace(
+                    relation_runtime.entering_alias(alias), context=operation_context,
+                    definition_source_path=definition.source.source_path,
+                ),
+            )
+            steps.extend(result.steps)
+            rng_events.extend(result.rng_events)
+            if result.blocked_reason:
+                return _inline_result(path, "TargetAlias", alias, (), result.blocked_reason, steps, tuple(rng_events))
+            current = result.target_ids
+        return _inline_result(path, "TargetAlias", alias, current, "", steps, tuple(rng_events))
+    parsed_set = _safe_set_alias(alias)
+    if parsed_set:
         steps: list[JSONValue] = []
         selected: tuple[str, ...] = ()
-        for index, (operator, child_alias) in enumerate(set_alias):
+        for index, (operator, child_alias) in enumerate(parsed_set):
             child = _resolve_target_alias_resolution(
                 state,
                 child_alias,
@@ -1570,7 +2024,10 @@ def _resolve_target_alias_resolution(
                 current_action_target_id=current_action_target_id,
                 target_resolution=target_resolution,
                 event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
                 path=f"{path}.alias_set[{index}]",
+                relation_runtime=relation_runtime.entering_alias(alias),
             )
             steps.extend(child.steps)
             if child.blocked_reason:
@@ -1593,31 +2050,11 @@ def _resolve_target_alias_resolution(
             return _inline_result(path, "TargetAlias", alias, (), "", steps)
         return _inline_result(path, "TargetAlias", alias, selected, "", steps)
 
-    concat_alias = _safe_concat_alias(alias)
-    if concat_alias:
-        selected: tuple[str, ...] = ()
-        steps: list[JSONValue] = []
-        for index, child_alias in enumerate(concat_alias):
-            child = _resolve_target_alias_resolution(
-                state,
-                child_alias,
-                caster_id=caster_id,
-                owner_id=owner_id,
-                param_entity_id=param_entity_id,
-                current_action_target_id=current_action_target_id,
-                target_resolution=target_resolution,
-                event_payload=event_payload,
-                path=f"{path}.alias_concat[{index}]",
-            )
-            steps.extend(child.steps)
-            if child.blocked_reason:
-                return _inline_result(path, "TargetAlias", alias, (), child.blocked_reason, steps)
-            selected = _dedupe((*selected, *child.target_ids))
-        return _inline_result(path, "TargetAlias", alias, selected, "", steps)
-
-    expanded = _safe_alias_expansion(alias)
-    if expanded is not None:
-        base_alias, operations = expanded
+    if "." in alias:
+        parts = tuple(alias.split("."))
+        if any(not part for part in parts):
+            return _inline_result(path, "TargetAlias", alias, (), "target_alias_dot_syntax_invalid")
+        base_alias, operations = parts[0], parts[1:]
         base = _resolve_target_alias_resolution(
             state,
             base_alias,
@@ -1627,20 +2064,57 @@ def _resolve_target_alias_resolution(
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
             event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
             path=f"{path}.alias_base",
+            relation_runtime=relation_runtime.entering_alias(alias),
         )
         steps = list(base.steps)
         rng_events = list(base.rng_events)
         if base.blocked_reason:
             return _inline_result(path, "TargetAlias", alias, (), base.blocked_reason, steps)
         current = base.target_ids
-        for index, operation in enumerate(operations):
-            result = _apply_alias_operation(
+        for index, operation_name in enumerate(operations):
+            if operation_name in relation_runtime.ambiguous_definition_names:
+                return _inline_result(
+                    path, "TargetAlias", alias, (),
+                    f"target_language_definition_name_ambiguous:{operation_name}", steps,
+                )
+            definition = relation_runtime.operation_definitions.get(operation_name)
+            if definition is None:
+                return _inline_result(
+                    path, "TargetAlias", alias, (),
+                    f"target_operation_definition_missing:{operation_name}", steps,
+                )
+            if definition.coverage_status != "executable" or definition.node is None:
+                return _inline_result(
+                    path, "TargetAlias", alias, (),
+                    definition.blocked_reason or f"target_operation_definition_blocked:{operation_name}", steps,
+                )
+            operation_context = replace(
+                relation_runtime.context,
+                parameter_entity_ids=current,
+            )
+            result = _resolve_inline_expression(
                 state,
-                current,
-                operation,
+                definition.node,
+                expression_kind=definition.expression_kind,
+                alias=definition.alias,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=operation_context.parameter_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
                 event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+                previous_targets=current,
                 path=f"{path}.alias_op[{index}]",
+                relation_runtime=replace(
+                    relation_runtime.entering_alias(alias),
+                    context=operation_context,
+                    definition_source_path=definition.source.source_path,
+                ),
             )
             steps.extend(result.steps)
             rng_events.extend(result.rng_events)
@@ -1648,232 +2122,46 @@ def _resolve_target_alias_resolution(
                 return _inline_result(path, "TargetAlias", alias, (), result.blocked_reason, steps, tuple(rng_events))
             current = result.target_ids
         return _inline_result(path, "TargetAlias", alias, current, "", steps, tuple(rng_events))
-
-    target_ids, reason = _resolve_target_alias_ids(
+    if alias in relation_runtime.ambiguous_definition_names:
+        return _inline_result(
+            path, "TargetAlias", alias, (),
+            f"target_language_definition_name_ambiguous:{alias}",
+        )
+    definition = relation_runtime.scoped_alias_definitions.get(
+        (relation_runtime.definition_source_path, alias)
+    ) or relation_runtime.alias_definitions.get(alias)
+    if definition is None:
+        return _inline_result(
+            path, "TargetAlias", alias, (), f"target_alias_definition_missing:{alias}"
+        )
+    if definition.coverage_status != "executable" or definition.node is None:
+        return _inline_result(
+            path,
+            "TargetAlias",
+            alias,
+            (),
+            definition.blocked_reason or f"target_alias_definition_blocked:{alias}",
+        )
+    return _resolve_inline_expression(
         state,
-        alias,
+        definition.node,
+        expression_kind=definition.expression_kind,
+        alias=definition.alias,
         caster_id=caster_id,
         owner_id=owner_id,
         param_entity_id=param_entity_id,
         current_action_target_id=current_action_target_id,
         target_resolution=target_resolution,
         event_payload=event_payload,
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+        previous_targets=(),
+        path=f"{path}.alias_definition[{alias}]",
+        relation_runtime=replace(
+            relation_runtime.entering_alias(alias),
+            definition_source_path=definition.source.source_path,
+        ),
     )
-    return _inline_result(path, "TargetAlias", alias, target_ids, reason)
-
-
-def _resolve_target_alias_ids(
-    state: BattleState,
-    alias: str,
-    *,
-    caster_id: str,
-    owner_id: str | None,
-    param_entity_id: str | None,
-    current_action_target_id: str | None,
-    target_resolution: TargetResolution | None,
-    event_payload: dict[str, JSONValue],
-) -> tuple[tuple[str, ...], str]:
-    if alias in {
-        "AbilityTargetEntity",
-        "Caster",
-        "CurrentActionTarget",
-        "CurrentTurnOwnerEntity",
-        "DamageAttackerEntity",
-        "DamageDefenderEntity",
-        "LevelEntity",
-        "ModifierOwnerEntity",
-        "ParamEntity",
-        "ParamEntity2",
-    }:
-        target_id = _resolve_single_alias(
-            alias,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
-            target_resolution=target_resolution,
-            event_payload=event_payload,
-        )
-        if target_id is None:
-            return (), f"unsupported_or_missing_target_alias:{alias}"
-        if target_id not in state.units:
-            return (), f"target unit {target_id!r} is not in state"
-        return (target_id,), ""
-    if alias in {
-        "AttackTargetList",
-        "ParamEntityAttackTargetList",
-        "ParamEntitySkillSubTargetEntityList",
-        "ParamEntitySkillTargetEntityList",
-        "ModifierOwnerSkillTargetEntityList",
-        "SkillSubTargetEntityList",
-        "SkillTargetEntityList",
-        "TurnActionEntitySkillTarget",
-    }:
-        if alias in {
-            "SkillTargetEntityList",
-            "ParamEntitySkillTargetEntityList",
-            "ModifierOwnerSkillTargetEntityList",
-            "TurnActionEntitySkillTarget",
-        }:
-            return _target_ids_from_resolution_or_payload(state, target_resolution, event_payload)
-        keys = {
-            "AttackTargetList": ("attack_target_ids", "selected_target_ids", "target_ids"),
-            "ParamEntityAttackTargetList": ("param_entity_attack_target_ids", "attack_target_ids", "selected_target_ids"),
-            "ParamEntitySkillSubTargetEntityList": (
-                "param_entity_skill_sub_target_ids",
-                "skill_sub_target_ids",
-                "sub_target_ids",
-            ),
-            "SkillSubTargetEntityList": ("skill_sub_target_ids", "sub_target_ids"),
-        }[alias]
-        return _target_ids_from_payload(
-            state,
-            event_payload,
-            keys,
-            missing_reason=f"{alias}_missing",
-        )
-    if alias == "ParamEntityList":
-        return _target_ids_from_payload(
-            state,
-            event_payload,
-            ("param_entity_ids", "param_entity_list", "param_entities"),
-            missing_reason="param_entity_list_missing",
-        )
-    if alias == "BattleEventEntityList":
-        return _battle_event_entity_list(state)
-    if alias in {"GridFight_AllBackEnd", "GridFight_AllBackEndRoleOnly", "GridFight_AllBackEndActivedRoleOnly"}:
-        return _grid_fight_entity_list(state, alias)
-    if alias in {
-        "AllEnemy",
-        "AllTeamMember",
-        "AllTeamMemberWithUnselectable",
-        "AllLightTeam",
-        "AllLightTeamWithUnselectable",
-        "AllDarkTeam",
-        "AllDarkTeamWithUnselectable",
-        "AllTeammate",
-        "AllTeammateWithUnselectable",
-        "TeamFormation",
-        "AllEnemyWithUnSelectable",
-    }:
-        return _resolve_group_alias(state, caster_id, alias)
-    if alias == "AllUnselectable":
-        return (
-            tuple(
-                unit_id
-                for unit_id in sorted(state.units)
-                if _is_unselectable_unit(state, unit_id)
-                and UnitLifecycleSystem().view(state, unit_id).is_active
-            ),
-            "",
-        )
-    if alias == "LastSummonMonsters":
-        return _last_summon_monsters(state)
-    if alias == "CasterSummonedMinions":
-        return _caster_summoned_minions(state, caster_id)
-    if alias == "ServantEntityList":
-        return _servant_entity_list(state)
-    if alias == "CasterServant":
-        return _caster_servants(state, caster_id)
-    if alias == "FriendServantSelect":
-        return _friend_servant_select(state, caster_id)
-    return (), f"target_alias_not_admitted:{alias or 'missing'}"
-
-
-def _resolve_single_alias(
-    alias: str,
-    *,
-    caster_id: str,
-    owner_id: str | None,
-    param_entity_id: str | None,
-    current_action_target_id: str | None,
-    target_resolution: TargetResolution | None,
-    event_payload: dict[str, JSONValue],
-) -> str | None:
-    if alias == "Caster":
-        return caster_id
-    if alias == "ModifierOwnerEntity":
-        return owner_id
-    if alias == "LevelEntity":
-        return _first_payload_target(event_payload, ("level_entity_id",)) or "level:global"
-    if alias == "ParamEntity":
-        return param_entity_id
-    if alias == "ParamEntity2":
-        return _first_payload_target(
-            event_payload,
-            ("param_entity_2_id", "param_entity2_id", "secondary_target_id"),
-        )
-    if alias == "DamageDefenderEntity":
-        return _first_payload_target(
-            event_payload,
-            ("current_hit_target_id", "damage_defender_id", "primary_target_id", "target_id", "event_target_id"),
-        ) or current_action_target_id
-    if alias == "DamageAttackerEntity":
-        return _first_payload_target(
-            event_payload,
-            ("damage_attacker_id", "actor_id", "source_id", "event_source_id"),
-        ) or caster_id
-    if alias == "CurrentTurnOwnerEntity":
-        return _first_payload_target(
-            event_payload,
-            ("turn_owner_id", "actor_id", "event_source_id"),
-        )
-    if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:
-        if current_action_target_id:
-            return current_action_target_id
-        if alias == "AbilityTargetEntity" and target_resolution is not None and target_resolution.selected:
-            return target_resolution.selected[0]
-    return None
-
-
-def _first_payload_target(
-    payload: dict[str, JSONValue],
-    keys: tuple[str, ...],
-) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _resolve_group_alias(
-    state: BattleState,
-    caster_id: str,
-    alias: str,
-) -> tuple[tuple[str, ...], str]:
-    caster = state.units.get(caster_id)
-    if caster is None:
-        return (), "caster_missing_for_group_target"
-    targets: list[str] = []
-    for unit_id, unit in sorted(state.units.items()):
-        if not UnitLifecycleSystem().can_target(state, unit_id)[0]:
-            continue
-        if unit_is_unselectable(state, unit_id) and alias not in {
-            "AllEnemyWithUnSelectable",
-            "AllLightTeamWithUnselectable",
-            "AllDarkTeamWithUnselectable",
-            "AllTeamMemberWithUnselectable",
-            "AllTeammateWithUnselectable",
-        }:
-            continue
-        if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and is_opposing_combat_team(caster, unit):
-            targets.append(unit_id)
-        elif alias in {
-            "AllTeamMember",
-            "AllTeamMemberWithUnselectable",
-            "TeamFormation",
-        } and is_same_combat_team(caster, unit):
-            targets.append(unit_id)
-        elif alias in {"AllLightTeam", "AllLightTeamWithUnselectable"} and is_light_team(unit):
-            targets.append(unit_id)
-        elif alias in {"AllDarkTeam", "AllDarkTeamWithUnselectable"} and is_dark_team(unit):
-            targets.append(unit_id)
-        elif alias in {"AllTeammate", "AllTeammateWithUnselectable"} and is_same_combat_team(caster, unit) and unit_id != caster_id:
-            targets.append(unit_id)
-    if not targets:
-        return (), ""
-    return tuple(dict.fromkeys(targets)), ""
 
 
 def _validated_target_result(
@@ -1914,72 +2202,6 @@ def _validated_target_result(
     return _inline_result(path, expression_kind, "", _dedupe(tuple(selected)), "", [step])
 
 
-def _resolve_partner_fetch(state: BattleState, name: str, *, caster_id: str, path: str) -> _ExpressionResolution:
-    registry = state.global_flags.get("target_partner_registry")
-    if not isinstance(registry, dict):
-        return _inline_result(path, "TargetFetchPartner", "", (), "target_partner_registry_missing")
-    lookup_keys = (name, f"{caster_id}:{name}") if name else (caster_id,)
-    matched_key = ""
-    target_ids: tuple[str, ...] = ()
-    for key in lookup_keys:
-        if not key:
-            continue
-        candidate_ids = _ids_from_registry_value(registry.get(key))
-        if candidate_ids:
-            matched_key = key
-            target_ids = candidate_ids
-            break
-    step = {
-        "operation": "target_fetch_partner",
-        "name": name,
-        "lookup_keys": list(lookup_keys),
-        "matched_registry_key": matched_key,
-        "candidate_pool_before": list(target_ids),
-    }
-    if not target_ids:
-        return _inline_result(path, "TargetFetchPartner", "", (), "target_partner_missing", [step])
-    return _validated_target_result(
-        state,
-        path,
-        "TargetFetchPartner",
-        target_ids,
-        "target_fetch_partner",
-        metadata={
-            "name": name,
-            "lookup_keys": list(lookup_keys),
-            "matched_registry_key": matched_key,
-        },
-    )
-
-
-def _resolve_unique_entity(state: BattleState, unique_name: str, *, path: str) -> _ExpressionResolution:
-    registry = state.global_flags.get("target_unique_entity_registry")
-    if not isinstance(registry, dict):
-        return _inline_result(path, "TargetFetchUniqueNameEntity", "", (), "target_unique_entity_registry_missing")
-    target_ids = _ids_from_registry_value(registry.get(unique_name))
-    step = {"operation": "target_fetch_unique_entity", "unique_name": unique_name, "candidate_pool_before": list(target_ids)}
-    if not target_ids:
-        return _inline_result(path, "TargetFetchUniqueNameEntity", "", (), "unique_entity_missing", [step])
-    if len(target_ids) > 1:
-        return _inline_result(path, "TargetFetchUniqueNameEntity", "", (), "unique_entity_ambiguous", [step])
-    return _validated_target_result(state, path, "TargetFetchUniqueNameEntity", target_ids, "target_fetch_unique_entity")
-
-
-def _ids_from_registry_value(value: JSONValue) -> tuple[str, ...]:
-    if isinstance(value, str) and value:
-        return (value,)
-    if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value if isinstance(item, str) and item)
-    if isinstance(value, dict):
-        unit_id = value.get("unit_id")
-        if isinstance(unit_id, str) and unit_id:
-            return (unit_id,)
-        unit_ids = value.get("unit_ids")
-        if isinstance(unit_ids, list):
-            return tuple(str(item) for item in unit_ids if isinstance(item, str) and item)
-    return ()
-
-
 def _resolve_sort_expression(
     state: BattleState,
     candidate_targets: tuple[str, ...],
@@ -2003,6 +2225,33 @@ def _resolve_sort_expression(
     elif expression_kind == "TargetSortByBreakDamageAddedRatio":
         sort_key = "break_damage_added_ratio"
         value_getter = _break_damage_added_ratio_sort_value
+    elif expression_kind == "TargetSortMonsterRank":
+        sort_key = "monster_rank_score"
+        rank_scores = state.global_flags.get("monster_rank_scores")
+        if not isinstance(rank_scores, dict) or not rank_scores:
+            return _inline_result(path, expression_kind, "", (), "monster_rank_scores_missing")
+        maximum = rank_scores.get(payload.max_rank) if payload.max_rank else None
+        if payload.max_rank and (
+            isinstance(maximum, bool) or not isinstance(maximum, (int, float))
+            or not math.isfinite(float(maximum))
+        ):
+            return _inline_result(path, expression_kind, "", (), "monster_rank_maximum_missing")
+        value_getter = lambda unit, key: _monster_rank_sort_value(
+            unit, key, maximum=float(maximum) if maximum is not None else None
+        )
+    elif expression_kind == "TargetSortByModifierValue":
+        sort_key = f"modifier_value:{payload.modifier_name}:{payload.value_type}"
+        value_getter = lambda unit, _key: _modifier_value_sort_value(
+            unit, payload.modifier_name, payload.value_type
+        )
+    elif expression_kind == "TargetSortByModifierStatusCount":
+        sort_key = f"modifier_status_count:{payload.buff_status}"
+        value_getter = lambda unit, _key: _modifier_status_count_sort_value(
+            unit, payload.buff_status
+        )
+    elif expression_kind == "TargetSortByActionOrder":
+        sort_key = "action_value"
+        value_getter = lambda unit, _key: (float(unit.action_value), "")
     else:
         return _inline_result(path, expression_kind, "", (), f"target_sort_not_supported:{expression_kind}")
     for target_id in candidate_targets:
@@ -2011,6 +2260,8 @@ def _resolve_sort_expression(
             skipped.append({"target_id": target_id, "reason": "unit_missing"})
             continue
         value, reason = value_getter(unit, sort_key)
+        if not reason and not math.isfinite(value):
+            reason = "sort_value_not_finite"
         if reason:
             skipped.append({"target_id": target_id, "reason": reason})
             continue
@@ -2022,7 +2273,7 @@ def _resolve_sort_expression(
         "candidate_pool_before": list(candidate_targets),
         "sort_values": values,
         "skipped_targets": skipped,
-        "tie_breaker": "unit_id",
+        "tie_breaker": "source_order_then_unit_id",
     }
     if skipped:
         return _inline_result(path, expression_kind, "", (), f"target_sort_value_blocked:{sort_key or 'missing'}", [step])
@@ -2030,17 +2281,76 @@ def _resolve_sort_expression(
         return _inline_result(path, expression_kind, "", (), "target_sort_candidate_missing", [step])
     highest_first = payload.highest_first
     step["direction"] = "desc" if highest_first else "asc"
+    source_order = {target_id: index for index, target_id in enumerate(candidate_targets)}
     ordered = tuple(
         sorted(
             candidate_targets,
             key=lambda target_id: (
                 -values[target_id] if highest_first else values[target_id],
+                source_order[target_id],
                 target_id,
             ),
         )
     )
     step["selected_targets"] = list(ordered)
     return _inline_result(path, expression_kind, "", ordered, "", [step])
+
+
+def _monster_rank_sort_value(
+    unit: Any, _sort_key: str, *, maximum: float | None
+) -> tuple[float, str]:
+    value = unit.flags.get("monster_rank_score")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0, "monster_rank_score_missing"
+    numeric = float(value)
+    return min(numeric, maximum) if maximum is not None else numeric, ""
+
+
+def _validated_status_details_for_sort(unit: Any) -> tuple[tuple[dict[str, JSONValue], ...], str]:
+    raw_details = unit.flags.get("status_details", ())
+    if not isinstance(raw_details, (list, tuple)):
+        return (), "status_details_invalid"
+    details: list[dict[str, JSONValue]] = []
+    for detail in raw_details:
+        if not isinstance(detail, dict):
+            return (), "status_detail_invalid"
+        details.append(detail)
+    return tuple(details), ""
+
+
+def _modifier_value_sort_value(unit: Any, modifier_name: str, value_type: str) -> tuple[float, str]:
+    if value_type not in {"", "Layer"}:
+        return 0.0, f"modifier_value_type_not_supported:{value_type}"
+    details, reason = _validated_status_details_for_sort(unit)
+    if reason:
+        return 0.0, reason
+    value = 0.0
+    for detail in details:
+        if detail.get("modifier_name") != modifier_name:
+            continue
+        stacks = detail.get("stacks")
+        if isinstance(stacks, bool) or not isinstance(stacks, (int, float)):
+            return 0.0, "modifier_stack_invalid"
+        value += float(stacks)
+    return value, ""
+
+
+def _modifier_status_count_sort_value(unit: Any, buff_status: str) -> tuple[float, str]:
+    details, reason = _validated_status_details_for_sort(unit)
+    if reason:
+        return 0.0, reason
+    expected = buff_status.lower()
+    count = 0
+    for detail in details:
+        status_type = detail.get("status_type", "")
+        status_category = detail.get("status_category", "")
+        if not isinstance(status_type, str) or not isinstance(status_category, str):
+            return 0.0, "modifier_status_type_invalid"
+        if not status_type and not status_category:
+            return 0.0, "modifier_status_type_missing"
+        if expected in {status_type.lower(), status_category.lower()}:
+            count += 1
+    return float(count), ""
 
 
 def _property_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
@@ -2056,6 +2366,10 @@ def _property_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
         if unit.max_toughness <= 0:
             return 0.0, "max_toughness_non_positive"
         return float(unit.max_toughness), ""
+    if sort_key == "Shield":
+        return sum(float(item["remaining"]) for item in unit.shield_instances), ""
+    if sort_key == "BreakDamageAddedRatio":
+        return _break_damage_added_ratio_sort_value(unit, sort_key)
     return 0.0, f"target_sort_property_not_admitted:{sort_key or 'missing'}"
 
 
@@ -2162,173 +2476,6 @@ def _resolve_take_expression(
     )
 
 
-def _resolve_adjacent_expression(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-    payload: Any,
-    *,
-    path: str,
-) -> _ExpressionResolution:
-    side_type = payload.adjacent_side or "Both"
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for primary_id in candidate_targets:
-        primary = state.units.get(primary_id)
-        if primary is None:
-            skipped.append({"target_id": primary_id, "reason": "unit_missing"})
-            continue
-        position = _position(primary.flags.get("position"))
-        if position is None:
-            skipped.append({"target_id": primary_id, "reason": "target_position_missing"})
-            continue
-        wanted = set()
-        if side_type in {"Both", "", "Left"}:
-            wanted.add(position - 1)
-        if side_type in {"Both", "", "Right"}:
-            wanted.add(position + 1)
-        if not wanted:
-            skipped.append({"target_id": primary_id, "reason": f"target_adjacent_side_not_admitted:{side_type}"})
-            continue
-        for unit_id, unit in state.units.items():
-            if unit_id == primary_id or not is_same_combat_team(primary, unit):
-                continue
-            unit_position = _position(unit.flags.get("position"))
-            if unit_position not in wanted:
-                continue
-            ok, reason = UnitLifecycleSystem().can_target(state, unit_id)
-            if not ok:
-                skipped.append({"target_id": unit_id, "primary_target_id": primary_id, "reason": reason})
-                continue
-            selected.append(unit_id)
-    ordered = tuple(
-        sorted(
-            _dedupe(tuple(selected)),
-            key=lambda target_id: (_position(state.units[target_id].flags.get("position")) or 0, target_id),
-        )
-    )
-    step = {
-        "operation": "target_adjacent",
-        "side_type": side_type,
-        "candidate_pool_before": list(candidate_targets),
-        "selected_targets": list(ordered),
-        "skipped_targets": skipped,
-        "position_source": "UnitState.flags.position",
-    }
-    if skipped and not ordered:
-        return _inline_result(path, "TargetMapAdjoinEntity", "", (), "target_adjacent_blocked", [step])
-    return _inline_result(path, "TargetMapAdjoinEntity", "", ordered, "", [step])
-
-
-def _select_random_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-    *,
-    event_payload: dict[str, JSONValue],
-    path: str,
-    source_trace: dict[str, JSONValue],
-) -> _ExpressionResolution:
-    choices = rng_choices_from_payload(event_payload)
-    outcomes = tuple(
-        RNGOutcome(
-            outcome_id=str(target_id),
-            payload={
-                "selected_target_id": target_id,
-                "selected_index": index,
-                "candidate_pool": list(candidate_targets),
-                "value": target_id,
-            },
-            weight=1.0,
-        )
-        for index, target_id in enumerate(candidate_targets)
-    )
-    actor_id = str(event_payload.get("actor_id") or event_payload.get("caster_id") or "")
-    action_id = str(event_payload.get("action_id") or "")
-    task_id = str(event_payload.get("task_id") or "")
-    hit_index_value = event_payload.get("hit_index", 0)
-    hit_index = int(hit_index_value) if isinstance(hit_index_value, int) and not isinstance(hit_index_value, bool) else 0
-    decision_index_value = event_payload.get("rng_decision_index", hit_index)
-    decision_index = (
-        int(decision_index_value)
-        if isinstance(decision_index_value, int) and not isinstance(decision_index_value, bool)
-        else hit_index
-    )
-    identity_seed = {
-        "decision_scope": "target_expression",
-        "decision_index": max(0, decision_index),
-        "actor_id": actor_id,
-        "action_id": action_id,
-        "action_level": event_payload.get("action_level", 0),
-        "task_id": task_id,
-        "hit_index": max(0, hit_index),
-        "target_expression_id": path,
-        "event_index": state.event_index,
-    }
-    event_suffix = choice_key_for_identity("target_random_event", identity_seed).rsplit(":", 1)[-1]
-    event_id = f"rng:{state.event_index}:target_random:{event_suffix}"
-    identity = {
-        **identity_seed,
-        "target_id": "",
-        "derived_event_id": event_id,
-    }
-    request = RNGRequest(
-        rng_type="target_random",
-        purpose="target_random",
-        event_id=event_id,
-        choice_key=choice_key_for_identity("target_random", identity),
-        source="target_system",
-        before_state=state.rng_state,
-        decision_kind="choice",
-        outcomes=outcomes,
-        source_trace=source_trace,
-        metadata={
-            "candidate_pool": list(candidate_targets),
-            "path": path,
-            "actor_id": actor_id,
-            "action_id": action_id,
-            "task_id": task_id,
-            "hit_index": hit_index,
-        },
-        invalid_choice_reason="target_random_choice_invalid",
-        identity=identity,
-    )
-    resolution = resolve_rng_request(
-        request,
-        rng_choices=choices,
-        rng_mode=rng_mode_from_payload(event_payload, default="explicit_ledger"),
-    )
-    if not resolution.ok:
-        return _inline_result(
-            path,
-            "TargetShuffle",
-            "",
-            (),
-            resolution.blocked_reason,
-            [
-                {
-                    "operation": "target_random",
-                    "candidate_pool_before": list(candidate_targets),
-                    "choice_key": request.choice_key,
-                    "available_rng_outcomes": resolution.available_rng_outcomes(),
-                    "raw_choice": resolution.raw_choice,
-                }
-            ],
-        )
-    if resolution.selected_outcome is None or resolution.event is None:
-        return _inline_result(path, "TargetShuffle", "", (), "target_random_choice_invalid")
-    selected_id = str(resolution.selected_outcome.payload.get("selected_target_id") or "")
-    selected_index = int(resolution.selected_outcome.payload.get("selected_index") or 0)
-    step = {
-        "operation": "target_random",
-        "candidate_pool_before": list(candidate_targets),
-        "selected_targets": [selected_id],
-        "selected_index": selected_index,
-        "rng_event_id": event_id,
-        "choice_key": request.choice_key,
-        "choice_source": resolution.choice_source,
-    }
-    return _inline_result(path, "TargetShuffle", "", (selected_id,), "", [step], (resolution.event,))
-
-
 def _positive_int_from_numeric(
     value: JSONValue,
     *,
@@ -2350,7 +2497,7 @@ def _positive_int_from_numeric(
     step = {"operation": "numeric_evaluation", "numeric_evaluation": result.to_json()}
     if not result.ok or result.value is None:
         return 0, step, result.blocked_reason or "numeric_not_executable"
-    if int(result.value) != float(result.value) or result.value <= 0:
+    if not math.isfinite(float(result.value)) or int(result.value) != float(result.value) or result.value <= 0:
         return 0, step, "numeric_not_positive_integer"
     return int(result.value), step, ""
 
@@ -2373,20 +2520,9 @@ def _non_negative_int_from_numeric(
     step = {"operation": "numeric_evaluation", "numeric_evaluation": result.to_json()}
     if not result.ok or result.value is None:
         return 0, step, result.blocked_reason or "numeric_not_executable"
-    if int(result.value) != float(result.value) or result.value < 0:
+    if not math.isfinite(float(result.value)) or int(result.value) != float(result.value) or result.value < 0:
         return 0, step, "numeric_not_non_negative_integer"
     return int(result.value), step, ""
-
-
-def _safe_concat_alias(alias: str) -> tuple[str, ...]:
-    return {
-        "AbilityTargetAndAdjoinEntity": ("AbilityTargetEntity", "AbilityTargetAdjoinEntity"),
-        "AbilityTargetServantOrSummoner": ("AbilityTargetEntity.GetSummoner", "AbilityTargetEntity.GetServant"),
-        "CasterBEServant": ("Caster.GetBEServant",),
-        "CasterWithAbilityTargetAndAdjoinEntity": ("Caster", "AbilityTargetAndAdjoinEntity"),
-        "CasterServantOrSummoner": ("Caster.GetSummoner", "Caster.GetServant"),
-        "CurrentAimAtTarget": ("CurrentActionTarget",),
-    }.get(alias, ())
 
 
 def _safe_set_alias(alias: str) -> tuple[tuple[str, str], ...]:
@@ -2410,416 +2546,6 @@ def _safe_set_alias(alias: str) -> tuple[tuple[str, str], ...]:
     return tuple(parsed) if len(parsed) >= 2 else ()
 
 
-def _safe_alias_expansion(alias: str) -> tuple[str, tuple[dict[str, JSONValue], ...]] | None:
-    direct: dict[str, tuple[str, tuple[dict[str, JSONValue], ...]]] = {
-        "AbilityTargetAdjoinEntity": ("AbilityTargetEntity", ({"kind": "TargetMapAdjoinEntity"},)),
-        "AbilityTargetLeftEntity": ("AbilityTargetEntity", ({"kind": "TargetMapAdjoinEntity", "SideType": "Left"},)),
-        "AbilityTargetRightEntity": ("AbilityTargetEntity", ({"kind": "TargetMapAdjoinEntity", "SideType": "Right"},)),
-        "AllLightTeamIgnoreServant": ("AllLightTeam", ({"kind": "TargetRemoveServant"},)),
-        "AllLightTeamOnlyAddSPOnceForServant": ("AllLightTeam", ({"kind": "TargetRemoveServant"},)),
-        "AllLightTeamWithAllLightTeamUnselectable": ("AllLightTeamWithUnselectable", ()),
-        "AllLightTeamWithAllUnselectableLightTeam": ("AllLightTeamWithUnselectable", ()),
-        "AllDarkTeamWithAllDarkTeamUnselectable": ("AllDarkTeamWithUnselectable", ()),
-        "AllTeammateOnlyAddSPOnceForServant": ("AllTeammate", ({"kind": "TargetRemoveServant"},)),
-        "AllEnemyIgnoreServant": ("AllEnemy", ({"kind": "TargetRemoveServant"},)),
-        "CasterSummoner": ("Caster", ({"kind": "TargetMapSummoner"},)),
-        "LightTeamLeftWithoutServant": (
-            "AllLightTeam",
-            (
-                {"kind": "TargetRemoveServant"},
-                {"kind": "TargetSortByFormation", "HighestFirst": True},
-                {"kind": "TargetIndex", "IndexType": "First"},
-            ),
-        ),
-        "LightTeamRightWithoutServant": (
-            "AllLightTeam",
-            (
-                {"kind": "TargetRemoveServant"},
-                {"kind": "TargetSortByFormation", "HighestFirst": True},
-                {"kind": "TargetIndex", "IndexType": "Last"},
-            ),
-        ),
-        "LeftToRightLightTeamTarget": ("AllLightTeam", ({"kind": "TargetSortByFormation"},)),
-        "ParamEntityAdjoinEntity": ("ParamEntity", ({"kind": "TargetMapAdjoinEntity"},)),
-        "ParamEntitySummoner": ("ParamEntity", ({"kind": "TargetMapSummoner"},)),
-        "CasterAdjoinEntity": ("Caster", ({"kind": "TargetMapAdjoinEntity"},)),
-        "ModifierOwnerSummoner": ("ModifierOwnerEntity", ({"kind": "TargetMapSummoner"},)),
-        "ModifierOwnerEntityAdjoinEntity": ("ModifierOwnerEntity", ({"kind": "TargetMapAdjoinEntity"},)),
-        "ModifierOwnerSummonedMinions": ("ModifierOwnerEntity", ({"kind": "TargetMapSummonedMinions"},)),
-    }
-    if alias in direct:
-        return direct[alias]
-    if not _safe_dot_alias(alias):
-        return None
-    parts = tuple(part for part in alias.split(".") if part)
-    if len(parts) < 2:
-        return None
-    base_alias = parts[0]
-    operations: list[dict[str, JSONValue]] = []
-    for op in parts[1:]:
-        operation = _dot_alias_operation(op)
-        if operation is None:
-            return None
-        operations.append(operation)
-    return base_alias, tuple(operations)
-
-
-def _safe_dot_alias(alias: str) -> bool:
-    if "." not in alias:
-        return False
-    return not any(token in alias for token in (" ", "+", "-", "|", "(", ")"))
-
-
-def _dot_alias_operation(op: str) -> dict[str, JSONValue] | None:
-    mapping: dict[str, dict[str, JSONValue]] = {
-        "GetAliveOnly": {"kind": "GetAliveOnly"},
-        "SortByHP": {"kind": "TargetSortByProperty", "PropertyType": "CurrentHP"},
-        "SortByHPRatio": {"kind": "TargetSortByPropertyRatio", "PropertyRatioType": "HPRatio"},
-        "SortByMaxHP": {"kind": "TargetSortByProperty", "PropertyType": "MaxHP"},
-        "SortByStance": {"kind": "TargetSortByProperty", "PropertyType": "CurrentStance"},
-        "SortByStanceRatio": {"kind": "TargetSortByPropertyRatio", "PropertyRatioType": "StanceRatio"},
-        "SortByBreakDamageAddedRatio": {"kind": "TargetSortByBreakDamageAddedRatio"},
-        "SortByFormation": {"kind": "TargetSortByFormation"},
-        "Reverse": {"kind": "TargetReverse"},
-        "Select1": {"kind": "TargetIndex", "IndexType": "IndexStrict"},
-        "Select2": {"kind": "TargetIndex", "IndexType": "IndexStrict", "IndexValue": 1},
-        "Select3": {"kind": "TargetIndex", "IndexType": "IndexStrict", "IndexValue": 2},
-        "Select4": {"kind": "TargetIndex", "IndexType": "IndexStrict", "IndexValue": 3},
-        "SelectLast": {"kind": "TargetIndex", "IndexType": "Last"},
-        "Shuffle": {"kind": "TargetShuffle"},
-        "GetAdjoinEntity": {"kind": "TargetMapAdjoinEntity"},
-        "GetServant": {"kind": "TargetMapServant"},
-        "GetBEServant": {"kind": "TargetMapBEServant"},
-        "GetServantAndDummyCharacter": {"kind": "TargetMapServantAndDummyCharacter"},
-        "GetDummyCharacter": {"kind": "TargetMapDummyCharacter"},
-        "WithServant": {"kind": "TargetWithServant"},
-        "WithBEServant": {"kind": "TargetWithBEServant"},
-        "WithServantAndDummyCharacter": {"kind": "TargetWithServantAndDummyCharacter"},
-        "RemoveBattleEvent": {"kind": "TargetRemoveBattleEvent"},
-        "RemoveBEServant": {"kind": "TargetRemoveBEServant"},
-        "RemoveCharacterChangeTarget": {"kind": "TargetRemoveCharacterChangeTarget"},
-        "RemoveNonSelfCreateBattleEvent": {"kind": "TargetRemoveNonSelfCreateBattleEvent"},
-        "RemoveServant": {"kind": "TargetRemoveServant"},
-        "RemoveUnselectable": {"kind": "TargetRemoveUnselectable"},
-        "GetSummoner": {"kind": "TargetMapSummoner"},
-        "WithSummoner": {"kind": "TargetWithSummoner"},
-        "GetSummonedMinions": {"kind": "TargetMapSummonedMinions"},
-        "GetSkillAllTarget": {
-            "kind": "TargetSkillAllTarget",
-            "operation": "GetSkillAllTarget",
-        },
-        "GetSkillTarget": {
-            "kind": "TargetSkillAllTarget",
-            "operation": "GetSkillTarget",
-        },
-    }
-    return mapping.get(op)
-
-
-def _apply_alias_operation(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-    operation: dict[str, JSONValue],
-    *,
-    event_payload: dict[str, JSONValue],
-    path: str,
-) -> _ExpressionResolution:
-    kind = str(operation.get("kind") or "")
-    if kind == "GetAliveOnly":
-        selected: list[str] = []
-        skipped: list[JSONValue] = []
-        lifecycle = UnitLifecycleSystem()
-        for target_id in candidate_targets:
-            ok, reason = lifecycle.can_target(state, target_id)
-            if ok:
-                selected.append(target_id)
-            else:
-                skipped.append({"target_id": target_id, "reason": reason})
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            tuple(selected),
-            "",
-            [{"operation": "GetAliveOnly", "candidate_pool_before": list(candidate_targets), "selected_targets": selected, "skipped_targets": skipped}],
-        )
-    if kind == "TargetReverse":
-        return _inline_result(path, kind, "", tuple(reversed(candidate_targets)), "", [{"operation": "Reverse", "candidate_pool_before": list(candidate_targets)}])
-    if kind == "TargetShuffle":
-        return _select_random_targets(
-            state,
-            candidate_targets,
-            event_payload=event_payload,
-            path=path,
-            source_trace={"target_expression_path": path, "expression_kind": kind},
-        )
-    if kind in {"TargetSortByProperty", "TargetSortByPropertyRatio", "TargetSortByFormation", "TargetSortByBreakDamageAddedRatio"}:
-        return _resolve_sort_expression(
-            state,
-            candidate_targets,
-            _typed_alias_operation_node(operation),
-            expression_kind=kind,
-            path=path,
-        )
-    if kind in {"TargetIndex", "TargetTake"}:
-        return _resolve_take_expression(
-            candidate_targets,
-            _typed_alias_operation_node(operation),
-            expression_kind=kind,
-            dynamic_values=None,
-            binding_sources=(),
-            path=path,
-        )
-    if kind == "TargetMapAdjoinEntity":
-        return _resolve_adjacent_expression(
-            state,
-            candidate_targets,
-            _typed_alias_operation_node(operation),
-            path=path,
-        )
-    if kind == "TargetSkillAllTarget":
-        target_ids, reason = _target_ids_from_payload(
-            state,
-            event_payload,
-            (
-                "skill_target_ids",
-                "selected_target_ids",
-                "requested_target_ids",
-                "target_ids",
-            ),
-            missing_reason="skill_all_targets_missing",
-        )
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            target_ids,
-            reason,
-            [
-                {
-                    "operation": str(
-                        operation.get("operation") or "GetSkillAllTarget"
-                    ),
-                    "candidate_pool_before": list(candidate_targets),
-                    "selected_targets": list(target_ids),
-                    "source": "event_payload",
-                }
-            ],
-        )
-    if kind == "TargetMapServant":
-        selected, reason, steps = _servants_for_targets(state, candidate_targets)
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
-    if kind == "TargetMapBEServant":
-        selected, reason, steps = _be_servants_for_targets(state, candidate_targets)
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
-    if kind == "TargetMapServantAndDummyCharacter":
-        servants, servant_reason, servant_steps = _servants_for_targets(state, candidate_targets)
-        dummy, dummy_reason, dummy_steps = _dummy_characters_for_targets(state, candidate_targets)
-        if servant_reason or dummy_reason:
-            return _inline_result(
-                path,
-                "TargetAliasOperation",
-                "",
-                (),
-                servant_reason or dummy_reason,
-                [*servant_steps, *dummy_steps],
-            )
-        selected = _dedupe((*servants, *dummy))
-        return _inline_result(path, "TargetAliasOperation", "", selected, "", [*servant_steps, *dummy_steps])
-    if kind == "TargetMapDummyCharacter":
-        selected, reason, steps = _dummy_characters_for_targets(state, candidate_targets)
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
-    if kind == "TargetWithServant":
-        mapped, reason, map_steps = _servants_for_targets(state, candidate_targets)
-        if reason:
-            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
-        selected = _dedupe((*candidate_targets, *mapped))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [
-                *map_steps,
-                {
-                    "operation": "WithServant",
-                    "candidate_pool_before": list(candidate_targets),
-                    "selected_targets": list(selected),
-                },
-            ],
-        )
-    if kind == "TargetWithBEServant":
-        mapped, reason, map_steps = _be_servants_for_targets(state, candidate_targets)
-        if reason:
-            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
-        selected = _dedupe((*candidate_targets, *mapped))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [
-                *map_steps,
-                {
-                    "operation": "WithBEServant",
-                    "candidate_pool_before": list(candidate_targets),
-                    "selected_targets": list(selected),
-                },
-            ],
-        )
-    if kind == "TargetWithServantAndDummyCharacter":
-        servants, servant_reason, servant_steps = _servants_for_targets(state, candidate_targets)
-        dummy, dummy_reason, dummy_steps = _dummy_characters_for_targets(state, candidate_targets)
-        if servant_reason or dummy_reason:
-            return _inline_result(
-                path,
-                "TargetAliasOperation",
-                "",
-                (),
-                servant_reason or dummy_reason,
-                [*servant_steps, *dummy_steps],
-            )
-        selected = _dedupe((*candidate_targets, *servants, *dummy))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [
-                *servant_steps,
-                *dummy_steps,
-                {
-                    "operation": "WithServantAndDummyCharacter",
-                    "candidate_pool_before": list(candidate_targets),
-                    "selected_targets": list(selected),
-                },
-            ],
-        )
-    if kind == "TargetRemoveServant":
-        selected = tuple(target_id for target_id in candidate_targets if not _is_servant_unit(state, target_id))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [{"operation": "RemoveServant", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
-        )
-    if kind == "TargetRemoveBEServant":
-        selected = tuple(target_id for target_id in candidate_targets if not _is_be_servant_unit(state, target_id))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [{"operation": "RemoveBEServant", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
-        )
-    if kind == "TargetRemoveUnselectable":
-        selected = tuple(
-            target_id
-            for target_id in candidate_targets
-            if UnitLifecycleSystem().can_target(state, target_id)[0] and not _is_unselectable_unit(state, target_id)
-        )
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [{"operation": "RemoveUnselectable", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
-        )
-    if kind in {"TargetRemoveBattleEvent", "TargetRemoveNonSelfCreateBattleEvent"}:
-        selected = tuple(target_id for target_id in candidate_targets if not _is_battle_event_unit(state, target_id))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [{"operation": kind.removeprefix("Target"), "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
-        )
-    if kind == "TargetRemoveCharacterChangeTarget":
-        selected = tuple(target_id for target_id in candidate_targets if not _is_character_change_target_unit(state, target_id))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [{"operation": "RemoveCharacterChangeTarget", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
-        )
-    if kind == "TargetMapSummoner":
-        selected, reason, steps = _summoners_for_targets(state, candidate_targets)
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
-    if kind == "TargetWithSummoner":
-        mapped, reason, map_steps = _summoners_for_targets(state, candidate_targets)
-        if reason:
-            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
-        selected = _dedupe((*candidate_targets, *mapped))
-        return _inline_result(
-            path,
-            "TargetAliasOperation",
-            "",
-            selected,
-            "",
-            [
-                *map_steps,
-                {
-                    "operation": "WithSummoner",
-                    "candidate_pool_before": list(candidate_targets),
-                    "selected_targets": list(selected),
-                },
-            ],
-        )
-    if kind == "TargetMapSummonedMinions":
-        selected, reason, steps = _summoned_minions_for_targets(state, candidate_targets)
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
-    return _inline_result(path, "TargetAliasOperation", "", (), f"target_alias_operation_not_supported:{kind or 'missing'}")
-
-
-@dataclass(frozen=True)
-class _AliasOperationPayload:
-    adjacent_side: str = ""
-    count_expr: Mapping[str, JSONValue] = field(default_factory=dict)
-    index_type: str = ""
-    index_expr: Mapping[str, JSONValue] = field(default_factory=dict)
-    sort_key: str = ""
-    highest_first: bool = False
-
-
-def _typed_alias_operation_node(operation: dict[str, JSONValue]) -> _AliasOperationPayload:
-    kind = str(operation.get("kind") or "")
-    numeric = operation.get("IndexValue") if kind == "TargetIndex" else operation.get("Count")
-    numeric_expr: dict[str, JSONValue] = {}
-    if isinstance(numeric, (int, float)) and not isinstance(numeric, bool):
-        numeric_expr = {
-            "schema_version": "hsr.numeric_expression.v1",
-            "kind": "fixed",
-            "value": float(numeric),
-            "supported": True,
-        }
-    return _AliasOperationPayload(
-        adjacent_side=str(operation.get("SideType") or "Both"),
-        count_expr=numeric_expr if kind == "TargetTake" else {},
-        index_type=str(operation.get("IndexType") or "IndexStrict"),
-        index_expr=numeric_expr if kind == "TargetIndex" else {},
-        sort_key=str(
-            operation.get("PropertyType")
-            or operation.get("PropertyRatioType")
-            or ("formation_position" if kind == "TargetSortByFormation" else "")
-        ),
-        highest_first=bool(operation.get("HighestFirst")),
-    )
-
-
-def _stable_path(path: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in path)[:80]
-
-
 def _inline_expression_kind(raw: TargetExpressionNodeIR | None) -> str:
     return raw.expression_kind if raw is not None else ""
 
@@ -2835,613 +2561,6 @@ def _inline_children(
     if raw is None or raw.expression_kind != expression_kind:
         return ()
     return raw.children
-
-
-def _target_ids_from_resolution_or_payload(
-    state: BattleState,
-    target_resolution: TargetResolution | None,
-    event_payload: dict[str, JSONValue],
-) -> tuple[tuple[str, ...], str]:
-    if target_resolution is not None and target_resolution.selected:
-        target_ids = _existing_targets(state, target_resolution.selected)
-        if target_ids:
-            return target_ids, ""
-        return (), "skill_target_entity_list_units_missing"
-    return _target_ids_from_payload(
-        state,
-        event_payload,
-        ("selected_target_ids", "skill_target_ids", "target_ids", "requested_target_ids"),
-        missing_reason="skill_target_entity_list_missing",
-    )
-
-
-def _target_ids_from_payload(
-    state: BattleState,
-    event_payload: dict[str, JSONValue],
-    keys: tuple[str, ...],
-    *,
-    missing_reason: str,
-) -> tuple[tuple[str, ...], str]:
-    for key in keys:
-        value = event_payload.get(key)
-        if isinstance(value, (list, tuple)):
-            target_ids = _existing_targets(state, tuple(str(item) for item in value if isinstance(item, str)))
-            if target_ids:
-                return target_ids, ""
-    return (), missing_reason
-
-
-def _existing_targets(state: BattleState, target_ids: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(target_id for target_id in target_ids if target_id in state.units))
-
-
-def _last_summon_monsters(state: BattleState) -> tuple[tuple[str, ...], str]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason
-    assert isinstance(runtime, dict)
-    raw = runtime.get("last_summon_monsters")
-    if not isinstance(raw, list):
-        return (), "last_summon_monsters_missing"
-    lifecycle = UnitLifecycleSystem()
-    target_ids: list[str] = []
-    skipped_reasons: list[str] = []
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        if not _runtime_entity_is_active(runtime, item):
-            skipped_reasons.append("summon_runtime_entity_missing_or_removed")
-            continue
-        targetable, targetable_reason = _runtime_entity_targetability(runtime, item)
-        if not targetable:
-            skipped_reasons.append(targetable_reason)
-            continue
-        ok, reason = lifecycle.can_target(state, item, allow_defeated=False)
-        if ok:
-            target_ids.append(item)
-        else:
-            skipped_reasons.append(reason)
-    if not target_ids:
-        return (), ""
-    return tuple(dict.fromkeys(target_ids)), ""
-
-
-def _caster_summoned_minions(state: BattleState, caster_id: str) -> tuple[tuple[str, ...], str]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason
-    assert isinstance(runtime, dict)
-    by_owner = runtime.get("by_owner")
-    if not isinstance(by_owner, dict):
-        return (), "summon_runtime_by_owner_missing"
-    raw = by_owner.get(caster_id)
-    if raw is None:
-        return (), ""
-    if not isinstance(raw, list):
-        return (), "caster_summoned_minions_invalid"
-    lifecycle = UnitLifecycleSystem()
-    target_ids: list[str] = []
-    skipped_reasons: list[str] = []
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        if not _runtime_entity_is_active(runtime, item):
-            skipped_reasons.append("summon_runtime_entity_missing_or_removed")
-            continue
-        targetable, targetable_reason = _runtime_entity_targetability(runtime, item)
-        if not targetable:
-            skipped_reasons.append(targetable_reason)
-            continue
-        ok, reason = lifecycle.can_target(state, item, allow_defeated=False)
-        if ok:
-            target_ids.append(item)
-        else:
-            skipped_reasons.append(reason)
-    if not target_ids:
-        return (), ""
-    return tuple(dict.fromkeys(target_ids)), ""
-
-
-def _servant_entity_list(state: BattleState) -> tuple[tuple[str, ...], str]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason
-    assert isinstance(runtime, dict)
-    servants = runtime.get("servants")
-    if not isinstance(servants, dict):
-        return (), "summon_runtime_servants_missing"
-    lifecycle = UnitLifecycleSystem()
-    target_ids: list[str] = []
-    skipped_reasons: list[str] = []
-    for unit_id, entry in sorted(servants.items()):
-        if not isinstance(unit_id, str) or not isinstance(entry, dict):
-            continue
-        if entry.get("removed_event_index") is not None:
-            continue
-        if not _runtime_entity_is_active(runtime, unit_id):
-            skipped_reasons.append("summon_runtime_entity_missing_or_removed")
-            continue
-        targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-        if not targetable:
-            skipped_reasons.append(targetable_reason)
-            continue
-        if unit_id not in state.units or not _is_servant_unit(state, unit_id):
-            skipped_reasons.append("not_servant_unit")
-            continue
-        ok, reason = lifecycle.can_target(state, unit_id)
-        if ok:
-            target_ids.append(unit_id)
-        else:
-            skipped_reasons.append(reason)
-    if not target_ids:
-        return (), ""
-    return tuple(dict.fromkeys(target_ids)), ""
-
-
-def _caster_servants(state: BattleState, caster_id: str) -> tuple[tuple[str, ...], str]:
-    selected, reason, _ = _servants_for_targets(state, (caster_id,))
-    if reason:
-        return (), reason
-    return selected, ""
-
-
-def _friend_servant_select(state: BattleState, caster_id: str) -> tuple[tuple[str, ...], str]:
-    caster = state.units.get(caster_id)
-    if caster is None:
-        return (), "caster_missing_for_friend_servant_select"
-    servants, reason = _servant_entity_list(state)
-    if reason:
-        return (), reason
-    selected = tuple(
-        unit_id
-        for unit_id in servants
-        for unit in (state.units.get(unit_id),)
-        if unit is not None and is_same_combat_team(caster, unit)
-    )
-    if not selected:
-        return (), ""
-    return tuple(dict.fromkeys(selected)), ""
-
-
-def _servants_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason, [{"operation": "GetServant", "candidate_pool_before": list(candidate_targets)}]
-    assert isinstance(runtime, dict)
-    by_owner = runtime.get("by_owner")
-    if not isinstance(by_owner, dict):
-        return (), "summon_runtime_by_owner_missing", [{"operation": "GetServant", "candidate_pool_before": list(candidate_targets)}]
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for owner_id in candidate_targets:
-        raw = by_owner.get(owner_id)
-        if not isinstance(raw, list):
-            skipped.append({"owner_id": owner_id, "reason": "owner_has_no_runtime_summons"})
-            continue
-        for unit_id in raw:
-            if not isinstance(unit_id, str):
-                continue
-            if not _runtime_entity_is_active(runtime, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "runtime_entity_missing_or_removed"})
-                continue
-            targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-            if not targetable:
-                skipped.append({"unit_id": unit_id, "reason": targetable_reason})
-                continue
-            if not _is_servant_unit(state, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "not_servant_unit"})
-                continue
-            ok, reason = lifecycle.can_target(state, unit_id)
-            if not ok:
-                skipped.append({"unit_id": unit_id, "reason": reason})
-                continue
-            selected.append(unit_id)
-    steps = [
-        {
-            "operation": "GetServant",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if not selected:
-        return (), "", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _be_servants_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason, [{"operation": "GetBEServant", "candidate_pool_before": list(candidate_targets)}]
-    assert isinstance(runtime, dict)
-    by_owner = runtime.get("by_owner")
-    if not isinstance(by_owner, dict):
-        return (), "summon_runtime_by_owner_missing", [{"operation": "GetBEServant", "candidate_pool_before": list(candidate_targets)}]
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for owner_id in candidate_targets:
-        raw = by_owner.get(owner_id)
-        if not isinstance(raw, list):
-            skipped.append({"owner_id": owner_id, "reason": "owner_has_no_runtime_summons"})
-            continue
-        for unit_id in raw:
-            if not isinstance(unit_id, str):
-                continue
-            if not _runtime_entity_is_active(runtime, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "runtime_entity_missing_or_removed"})
-                continue
-            targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-            if not targetable:
-                skipped.append({"unit_id": unit_id, "reason": targetable_reason})
-                continue
-            if not _is_be_servant_unit(state, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "not_be_servant_unit"})
-                continue
-            ok, reason = lifecycle.can_target(state, unit_id)
-            if not ok:
-                skipped.append({"unit_id": unit_id, "reason": reason})
-                continue
-            selected.append(unit_id)
-    steps = [
-        {
-            "operation": "GetBEServant",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if not selected:
-        return (), "", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _dummy_characters_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason, [{"operation": "GetDummyCharacter", "candidate_pool_before": list(candidate_targets)}]
-    assert isinstance(runtime, dict)
-    by_owner = runtime.get("by_owner")
-    if not isinstance(by_owner, dict):
-        return (), "summon_runtime_by_owner_missing", [{"operation": "GetDummyCharacter", "candidate_pool_before": list(candidate_targets)}]
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for owner_id in candidate_targets:
-        raw = by_owner.get(owner_id)
-        if not isinstance(raw, list):
-            skipped.append({"owner_id": owner_id, "reason": "owner_has_no_runtime_summons"})
-            continue
-        for unit_id in raw:
-            if not isinstance(unit_id, str):
-                continue
-            if not _runtime_entity_is_active(runtime, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "runtime_entity_missing_or_removed"})
-                continue
-            targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-            if not targetable:
-                skipped.append({"unit_id": unit_id, "reason": targetable_reason})
-                continue
-            if not _is_dummy_character_unit(state, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "not_dummy_character_unit"})
-                continue
-            ok, reason = lifecycle.can_target(state, unit_id)
-            if not ok:
-                skipped.append({"unit_id": unit_id, "reason": reason})
-                continue
-            selected.append(unit_id)
-    steps = [
-        {
-            "operation": "GetDummyCharacter",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if not selected:
-        return (), "", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _summoned_minions_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason, [{"operation": "GetSummonedMinions", "candidate_pool_before": list(candidate_targets)}]
-    assert isinstance(runtime, dict)
-    by_owner = runtime.get("by_owner")
-    if not isinstance(by_owner, dict):
-        return (), "summon_runtime_by_owner_missing", [{"operation": "GetSummonedMinions", "candidate_pool_before": list(candidate_targets)}]
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for owner_id in candidate_targets:
-        raw = by_owner.get(owner_id)
-        if not isinstance(raw, list):
-            skipped.append({"owner_id": owner_id, "reason": "owner_has_no_runtime_summons"})
-            continue
-        for unit_id in raw:
-            if not isinstance(unit_id, str):
-                continue
-            unit = state.units.get(unit_id)
-            if unit is None:
-                skipped.append({"unit_id": unit_id, "reason": "unit_missing"})
-                continue
-            if unit.flags.get("summon_kind") not in {"servant", "summoned_monster"}:
-                skipped.append({"unit_id": unit_id, "reason": "not_summon_unit"})
-                continue
-            if not _runtime_entity_is_active(runtime, unit_id):
-                skipped.append({"unit_id": unit_id, "reason": "runtime_entity_missing_or_removed"})
-                continue
-            targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-            if not targetable:
-                skipped.append({"unit_id": unit_id, "reason": targetable_reason})
-                continue
-            ok, reason = lifecycle.can_target(state, unit_id)
-            if not ok:
-                skipped.append({"unit_id": unit_id, "reason": reason})
-                continue
-            selected.append(unit_id)
-    steps = [
-        {
-            "operation": "GetSummonedMinions",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if not selected:
-        return (), "", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _summoners_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    runtime = state.global_flags.get("summon_runtime")
-    runtime_reason = _summon_runtime_blocked_reason(state)
-    if runtime_reason:
-        return (), runtime_reason, [{"operation": "GetSummoner", "candidate_pool_before": list(candidate_targets)}]
-    assert isinstance(runtime, dict)
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for unit_id in candidate_targets:
-        unit = state.units.get(unit_id)
-        if unit is None:
-            skipped.append({"unit_id": unit_id, "reason": "unit_missing"})
-            continue
-        if unit.flags.get("summon_kind") not in {"servant", "summoned_monster"}:
-            skipped.append({"unit_id": unit_id, "reason": "not_summon_unit"})
-            continue
-        if not _runtime_entity_is_active(runtime, unit_id):
-            skipped.append({"unit_id": unit_id, "reason": "runtime_entity_missing_or_removed"})
-            continue
-        targetable, targetable_reason = _runtime_entity_targetability(runtime, unit_id)
-        if not targetable:
-            skipped.append({"unit_id": unit_id, "reason": targetable_reason})
-            continue
-        owner_id = unit.flags.get("owner_id")
-        if not isinstance(owner_id, str) or owner_id not in state.units:
-            skipped.append({"unit_id": unit_id, "reason": "summon_owner_missing"})
-            continue
-        ok, reason = lifecycle.can_target(state, owner_id)
-        if not ok:
-            skipped.append({"unit_id": unit_id, "owner_id": owner_id, "reason": reason})
-            continue
-        selected.append(owner_id)
-    steps = [
-        {
-            "operation": "GetSummoner",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if not selected:
-        return (), "", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _actual_owners_for_targets(
-    state: BattleState,
-    candidate_targets: tuple[str, ...],
-) -> tuple[tuple[str, ...], str, list[JSONValue]]:
-    """Resolve each entity to the combat owner that should receive attribution.
-
-    Ordinary combatants own themselves. Summoned entities require the same
-    source-backed runtime ownership relation used by GetSummoner; missing or
-    removed summon ownership remains fail-closed.
-    """
-
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for unit_id in candidate_targets:
-        unit = state.units.get(unit_id)
-        if unit is None:
-            skipped.append({"unit_id": unit_id, "reason": "unit_missing"})
-            continue
-        if unit.flags.get("summon_kind") not in {"servant", "summoned_monster"}:
-            selected.append(unit_id)
-            continue
-        owners, reason, owner_steps = _summoners_for_targets(state, (unit_id,))
-        if reason:
-            skipped.append(
-                {
-                    "unit_id": unit_id,
-                    "reason": reason,
-                    "owner_resolution_steps": owner_steps,
-                }
-            )
-            continue
-        selected.extend(owners)
-    steps = [
-        {
-            "operation": "GetActualOwner",
-            "candidate_pool_before": list(candidate_targets),
-            "selected_targets": list(dict.fromkeys(selected)),
-            "skipped_targets": skipped,
-        }
-    ]
-    if skipped:
-        return (), "target_fetch_actual_owner_incomplete", steps
-    if not selected:
-        return (), "target_fetch_actual_owner_empty", steps
-    return tuple(dict.fromkeys(selected)), "", steps
-
-
-def _is_servant_unit(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    return bool(unit is not None and unit.side == "summon" and unit.flags.get("summon_kind") == "servant")
-
-
-def _is_be_servant_unit(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return False
-    return bool(
-        _is_servant_unit(state, unit_id)
-        and (
-            unit.flags.get("servant_subtype") in {"BEServant", "battle_event"}
-            or unit.flags.get("servant_kind") in {"BEServant", "battle_event"}
-            or unit.flags.get("battle_event_subtype") in {"BEServant", "Servant"}
-            or unit.flags.get("entity_type") == "battle_event"
-        )
-    )
-
-
-def _is_dummy_character_unit(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return False
-    return unit.flags.get("summon_kind") == "dummy_character" or unit.flags.get("battle_event_subtype") == "DummyCharacter"
-
-
-def _is_battle_event_unit(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return False
-    return runtime_unit_is_battle_event_entity(unit)
-
-
-def unit_is_unselectable(state: BattleState, unit_id: str) -> bool:
-    """Return the canonical runtime target-selectability decision for one unit."""
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return True
-    return runtime_unit_is_unselectable(unit)
-
-
-def _is_unselectable_unit(state: BattleState, unit_id: str) -> bool:
-    return unit_is_unselectable(state, unit_id)
-
-
-def _is_character_change_target_unit(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return False
-    return bool(
-        unit.flags.get("character_change_target") is True
-        or unit.flags.get("is_character_change_target") is True
-        or unit.flags.get("target_kind") == "character_change"
-    )
-
-
-def _battle_event_entity_list(state: BattleState) -> tuple[tuple[str, ...], str]:
-    selected = tuple(unit_id for unit_id in sorted(state.units) if _is_battle_event_unit(state, unit_id))
-    if not selected:
-        return (), "battle_event_entity_list_empty"
-    return selected, ""
-
-
-def _grid_fight_entity_list(state: BattleState, alias: str) -> tuple[tuple[str, ...], str]:
-    lifecycle = UnitLifecycleSystem()
-    selected: list[str] = []
-    skipped: list[JSONValue] = []
-    for unit_id, unit in sorted(state.units.items()):
-        if unit.flags.get("grid_fight_backend") is not True and unit.flags.get("grid_fight_role") is not True:
-            continue
-        if alias.endswith("RoleOnly") and unit.flags.get("grid_fight_role") is not True:
-            skipped.append({"unit_id": unit_id, "reason": "grid_fight_role_required"})
-            continue
-        if "ActivedRoleOnly" in alias and unit.flags.get("grid_fight_active") is not True:
-            skipped.append({"unit_id": unit_id, "reason": "grid_fight_active_required"})
-            continue
-        ok, reason = lifecycle.can_target(state, unit_id)
-        if not ok:
-            skipped.append({"unit_id": unit_id, "reason": reason})
-            continue
-        selected.append(unit_id)
-    if not selected:
-        reason = str(skipped[0].get("reason")) if skipped and isinstance(skipped[0], dict) else "grid_fight_entity_list_empty"
-        return (), reason
-    return tuple(dict.fromkeys(selected)), ""
-
-
-def _runtime_entity_is_active(runtime: dict[str, JSONValue], unit_id: str) -> bool:
-    entities = runtime.get("entities")
-    if not isinstance(entities, dict):
-        return False
-    entry = entities.get(unit_id)
-    if not isinstance(entry, dict):
-        return False
-    if entry.get("status") == "removed" or entry.get("removed_event_index") is not None:
-        return False
-    return True
-
-
-def _runtime_entity_targetability(runtime: dict[str, JSONValue], unit_id: str) -> tuple[bool, str]:
-    if not _runtime_entity_is_active(runtime, unit_id):
-        return False, "summon_runtime_entity_missing_or_removed"
-    entities = runtime.get("entities")
-    entry = entities.get(unit_id) if isinstance(entities, dict) else None
-    if not isinstance(entry, dict):
-        return False, "summon_runtime_entity_missing"
-    targetability = entry.get("targetability")
-    if isinstance(targetability, dict) and targetability.get("targetable") is False:
-        return False, "summon_runtime_entity_not_targetable"
-    return True, ""
-
-
-def _first_specific_reason(reasons: list[str]) -> str:
-    priority = (
-        "summon_runtime_entity_missing_or_removed",
-        "summon_runtime_entity_not_targetable",
-        "unit_removed",
-        "unit_defeated",
-        "unit_missing",
-    )
-    for expected in priority:
-        if expected in reasons:
-            return expected
-    return reasons[0] if reasons else "target_candidates_empty"
-
-
-def _summon_runtime_blocked_reason(state: BattleState) -> str:
-    return validate_summon_runtime(
-        state.global_flags.get("summon_runtime"),
-        units=state.units,
-    ).reason
 
 
 def _dedupe(target_ids: tuple[str, ...]) -> tuple[str, ...]:

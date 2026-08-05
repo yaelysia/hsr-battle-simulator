@@ -52,6 +52,7 @@ from .rng import (
 )
 from .status import StatusSystem
 from .target import TargetSystem
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .timeline import TimelineSystem
 from .unit_stats import effective_unit_stat
 
@@ -87,7 +88,7 @@ class StatusCallbackSystem:
         self.timeline = timeline or TimelineSystem()
         self.queue = queue or QueueSystem()
         self.queue_targets = QueueTargetResolver()
-        self.targets = TargetSystem()
+        self.targets = TargetSystem(rules)
         self.effect_registry = effect_registry or EffectRegistry(StatusSystem(rules))
         self.effect_registry.set_pre_heal_dispatcher(self._dispatch_pre_heal)
         self.evaluator = RuleEvaluator()
@@ -1240,11 +1241,17 @@ class StatusCallbackSystem:
         resolution = self.targets.resolve_target_expression(
             state,
             expression,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id or None,
-            current_action_target_id=param_entity_id or None,
-            event_payload=event_payload,
+            context=TargetEvaluationContext(
+                caster_id=caster_id,
+                effect_owner_id=owner_id,
+                parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
+                selected_target_ids=((param_entity_id,) if param_entity_id else ()),
+                current_target_id=param_entity_id or None,
+                event_source_id=(trigger_event.source_id if trigger_event is not None else None),
+                event_target_id=(trigger_event.target_id if trigger_event is not None else None),
+                turn_owner_id=committed_turn_owner_id(state),
+            ),
+            condition_event_payload=event_payload,
             binding_sources=tuple(
                 status_binding_sources(
                     state,
@@ -1807,12 +1814,18 @@ class StatusCallbackSystem:
             resolution = self.targets.resolve_target_expression(
                 state,
                 expression,
-                caster_id=context.caster_id,
-                owner_id=context.owner_id,
-                param_entity_id=context.param_entity_id,
-                current_action_target_id=context.current_action_target_id,
+                context=TargetEvaluationContext(
+                    caster_id=context.caster_id,
+                    effect_owner_id=context.owner_id,
+                    parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+                    selected_target_ids=((context.current_action_target_id,) if context.current_action_target_id else ()),
+                    current_target_id=context.current_action_target_id,
+                    event_source_id=(trigger_event.source_id if trigger_event is not None else None),
+                    event_target_id=(trigger_event.target_id if trigger_event is not None else None),
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
                 target_resolution=context.target_resolution,
-                event_payload=context.event_payload,
+                condition_event_payload=context.event_payload,
                 dynamic_values=context.dynamic_values,
                 binding_sources=context.binding_sources,
             )
@@ -2462,12 +2475,18 @@ class StatusCallbackSystem:
             resolution = self.targets.resolve_target_expression(
                 state,
                 expression,
-                caster_id=context.caster_id,
-                owner_id=context.owner_id,
-                param_entity_id=context.param_entity_id,
-                current_action_target_id=context.current_action_target_id,
+                context=TargetEvaluationContext(
+                    caster_id=context.caster_id,
+                    effect_owner_id=context.owner_id,
+                    parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+                    selected_target_ids=((context.current_action_target_id,) if context.current_action_target_id else ()),
+                    current_target_id=context.current_action_target_id,
+                    event_source_id=(trigger_event.source_id if trigger_event is not None else None),
+                    event_target_id=(trigger_event.target_id if trigger_event is not None else None),
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
                 target_resolution=context.target_resolution,
-                event_payload=context.event_payload,
+                condition_event_payload=context.event_payload,
                 dynamic_values=context.dynamic_values,
                 binding_sources=context.binding_sources,
             )
@@ -4230,14 +4249,20 @@ def _condition_context(
             key = _condition_target_key(node)
             if key in resolved_target_groups or key in target_resolution_errors:
                 continue
-            resolution = targets.resolve_expression_node(
+            resolution = targets.resolve_target_expression(
                 state,
                 node,
-                caster_id=caster_id,
-                owner_id=owner_id or None,
-                param_entity_id=param_entity_id or None,
-                current_action_target_id=target_id or None,
-                event_payload=payload,
+                context=TargetEvaluationContext(
+                    caster_id=caster_id,
+                    effect_owner_id=owner_id or None,
+                    parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
+                    selected_target_ids=((target_id,) if target_id else ()),
+                    current_target_id=target_id or None,
+                    event_source_id=(event.source_id if event is not None else None),
+                    event_target_id=(event.target_id if event is not None else None),
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
+                condition_event_payload=payload,
                 binding_sources=callback_binding_sources,
             )
             if resolution.resolved:
