@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from simulator_v8_clean_core.core.executor import CombatExecutor
 from simulator_v8_clean_core.core.model import ActionCommand, BattleState, JSONValue
 from simulator_v8_clean_core.core.transition_consumer import (
     transition_blocked_reason as _transition_blocked_reason,
@@ -18,6 +17,7 @@ from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.scenarios import IdentityResolver, ScenarioLoader, ScenarioStateBuilder
 from simulator_v8_clean_core.scenarios.schema import ScenarioSpec
 from simulator_v8_clean_core.systems.scheduler import CombatScheduler
+from simulator_v8_clean_core.systems.decision import CurrentDecision, DecisionSystem
 from simulator_v8_clean_core.tbgd.lowering import TBGDLowering
 from simulator_v8_clean_core.tbgd.paths import find_tbgd_root
 
@@ -33,37 +33,34 @@ from .report import (
 )
 
 
-RunMode = Literal["scheduler", "executor"]
+RunMode = Literal["decision"]
 
 
 @dataclass(frozen=True)
 class UIRunOptions:
-    mode: RunMode = "scheduler"
+    mode: RunMode = "decision"
     initialize_timeline: bool = True
     include_raw_transition: bool = True
     write_tmp_report: bool = True
-    auto_skip_enemy_turns: bool = True
-    max_auto_skip_turns: int = 20
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "UIRunOptions":
         raw = data or {}
-        mode = str(raw.get("mode", "scheduler"))
-        if mode not in {"scheduler", "executor"}:
-            raise ValueError("运行模式只能是 'scheduler' 或 'executor'")
+        mode = str(raw.get("mode", "decision"))
+        if mode != "decision":
+            raise ValueError("运行模式只能是 'decision'")
         return cls(
             mode=mode,  # type: ignore[arg-type]
             initialize_timeline=bool(raw.get("initialize_timeline", True)),
             include_raw_transition=bool(raw.get("include_raw_transition", True)),
             write_tmp_report=bool(raw.get("write_tmp_report", True)),
-            auto_skip_enemy_turns=bool(raw.get("auto_skip_enemy_turns", True)),
-            max_auto_skip_turns=max(0, int(raw.get("max_auto_skip_turns", 20) or 0)),
         )
 
 
 @dataclass(frozen=True)
 class _PromptPreparation:
     state: BattleState
+    decision: CurrentDecision | None = None
     transitions: tuple[dict[str, JSONValue], ...] = ()
     auto_skip_records: tuple[dict[str, JSONValue], ...] = ()
     process_notice_records: tuple[dict[str, JSONValue], ...] = ()
@@ -121,8 +118,9 @@ class UIRunner:
         state = build.state
         initial_snapshot = state.snapshot().to_json()
         scheduler = CombatScheduler(self.rules)
+        decisions = DecisionSystem(self.rules)
         timeline_init_transition: dict[str, JSONValue] | None = None
-        if run_options.mode == "scheduler" and run_options.initialize_timeline:
+        if run_options.initialize_timeline:
             explicit_overrides = _explicit_action_value_unit_ids(scenario)
             timeline_result = scheduler.initialize_timeline(state, explicit_overrides=explicit_overrides)
             state = _transition_successor_state(state, timeline_result.after_state, timeline_result.transition.to_json())
@@ -134,44 +132,42 @@ class UIRunner:
         prompt_preparation_transitions: list[dict[str, JSONValue]] = []
         prompt_preparation_blocked: list[dict[str, JSONValue]] = []
         for index, command in enumerate(build.commands):
-            if run_options.mode == "executor":
-                before_state = state
-                after_state, transition = CombatExecutor(self.rules).execute(command, before_state)
-                after_state = _transition_successor_state(before_state, after_state, transition.to_json())
-                child_transitions = ()
+            advance = decisions.advance_to_decision(state)
+            for prepared in advance.transitions:
+                prompt_preparation_transitions.append(
+                    {
+                        "stage": "decision_advance",
+                        "transition": transition_summary(prepared.to_json()),
+                    }
+                )
+            before_state = advance.after_state
+            if not advance.decision.ready or advance.decision.token is None:
+                result = decisions.scheduler.reject_decision_submission(
+                    before_state,
+                    advance.blocked_reason or "decision_not_ready",
+                    {
+                        "command": {
+                            "actor_id": command.actor_id,
+                            "action_id": command.action_id,
+                            "action_level": command.action_level,
+                            "target_ids": list(command.target_ids),
+                            "source": command.source,
+                        }
+                    },
+                )
             else:
-                attempts = 0
-                while True:
-                    before_state = state
-                    result = scheduler.step(before_state, command)
-                    transition_json = result.transition.to_json()
-                    reason = _transition_blocked_reason(transition_json)
-                    if (
-                        run_options.auto_skip_enemy_turns
-                        and reason == "enemy_ai_missing"
-                        and attempts < run_options.max_auto_skip_turns
-                    ):
-                        actor_id = _blocked_actor_id(transition_json)
-                        if not actor_id:
-                            break
-                        skip = _skip_enemy_missing_ai(
-                            before_state,
-                            scheduler=scheduler,
-                            actor_id=actor_id,
-                            blocked_transition=transition_json,
-                            attempt=attempts,
-                        )
-                        state = skip.state
-                        auto_skip_records.extend(skip.auto_skip_records)
-                        process_notice_records.extend(skip.process_notice_records)
-                        prompt_preparation_transitions.extend(skip.transitions)
-                        prompt_preparation_blocked.extend(skip.blocked_records)
-                        attempts += 1
-                        continue
-                    break
-                after_state = _transition_successor_state(before_state, result.after_state, result.transition.to_json())
-                transition = result.transition
-                child_transitions = result.child_transitions
+                result = decisions.submit(
+                    before_state,
+                    advance.decision.token,
+                    command,
+                )
+            after_state = _transition_successor_state(
+                before_state,
+                result.after_state,
+                result.transition.to_json(),
+            )
+            transition = result.transition
+            child_transitions = result.child_transitions
             steps.append(
                 build_step_report(
                     route_index=index,
@@ -189,12 +185,10 @@ class UIRunner:
 
         prompt_preparation = _prepare_action_prompt_state(
             state,
-            scheduler=scheduler,
-            options=run_options,
+            decisions=decisions,
         )
         state = prompt_preparation.state
         final_snapshot = state.snapshot().to_json()
-        action_slots_by_entity = _action_slots_by_entity(ir=self.ir)
         step_blocked_records = _flatten_step_records(steps, "blocked_records")
         step_coverage_gap_records = _flatten_step_records(steps, "coverage_gap_records")
         step_process_notice_records = _flatten_step_records(steps, "process_notice_records")
@@ -225,8 +219,9 @@ class UIRunner:
             "action_prompt": build_action_prompt(
                 final_snapshot,
                 scenario_data,
-                action_slots_by_entity,
-                enemy_action_candidate=_enemy_action_candidate_for_prompt(scheduler, state),
+                prompt_preparation.decision.to_json()
+                if prompt_preparation.decision is not None
+                else {},
             ),
             "event_replay_view": build_event_replay_view(
                 steps,
@@ -352,270 +347,38 @@ def _options_to_json(options: UIRunOptions) -> dict[str, JSONValue]:
         "initialize_timeline": options.initialize_timeline,
         "include_raw_transition": options.include_raw_transition,
         "write_tmp_report": options.write_tmp_report,
-        "auto_skip_enemy_turns": options.auto_skip_enemy_turns,
-        "max_auto_skip_turns": options.max_auto_skip_turns,
     }
 
 
 def _prepare_action_prompt_state(
     state: BattleState,
     *,
-    scheduler: CombatScheduler,
-    options: UIRunOptions,
+    decisions: DecisionSystem,
 ) -> _PromptPreparation:
-    if options.mode != "scheduler" or not options.auto_skip_enemy_turns:
-        return _PromptPreparation(state=state)
-
-    current = state
-    transitions: list[dict[str, JSONValue]] = []
-    auto_skip_records: list[dict[str, JSONValue]] = []
-    process_notice_records: list[dict[str, JSONValue]] = []
-    blocked_records: list[dict[str, JSONValue]] = []
-
-    for attempt in range(options.max_auto_skip_turns):
-        active = _current_turn_unit(current)
-        if active and active.side == "ally":
-            break
-        if active and active.side == "enemy":
-            candidate = scheduler.enemy_actions.next_candidate(current, active.unit_id)
-            if candidate.status == "available":
-                break
-            skip = _skip_enemy_active_turn(current, scheduler=scheduler, actor_id=active.unit_id, attempt=attempt)
-            current = skip.state
-            transitions.extend(skip.transitions)
-            auto_skip_records.extend(skip.auto_skip_records)
-            process_notice_records.extend(skip.process_notice_records)
-            blocked_records.extend(skip.blocked_records)
-            continue
-
-        next_result = scheduler.advance_to_next_turn(current)
-        next_json = next_result.transition.to_json()
-        reason = _transition_blocked_reason(next_json)
-        if reason:
-            if reason == "enemy_ai_missing":
-                actor_id = _blocked_actor_id(next_json)
-                if not actor_id:
-                    blocked_records.append(_prompt_preparation_blocked_record(reason, next_json, attempt))
-                    break
-                skip = _skip_enemy_missing_ai(
-                    current,
-                    scheduler=scheduler,
-                    actor_id=actor_id,
-                    blocked_transition=next_json,
-                    attempt=attempt,
-                )
-                current = skip.state
-                transitions.extend(skip.transitions)
-                auto_skip_records.extend(skip.auto_skip_records)
-                process_notice_records.extend(skip.process_notice_records)
-                blocked_records.extend(skip.blocked_records)
-                continue
-            blocked_records.append(_prompt_preparation_blocked_record(reason, next_json, attempt))
-            transitions.append(
-                {
-                    "stage": "prepare_action_prompt_blocked",
-                    "temporary_until_enemy_ai": False,
-                    "transition": transition_summary(next_json),
-                }
-            )
-            break
-
-        current = _transition_successor_state(current, next_result.after_state, next_json)
-        transitions.append(
+    advance = decisions.advance_to_decision(state)
+    transitions = tuple(
+        {
+            "stage": "prepare_action_prompt_decision_advance",
+            "transition": transition_summary(item.to_json()),
+        }
+        for item in advance.transitions
+    )
+    blocked_records: tuple[dict[str, JSONValue], ...] = ()
+    if not advance.decision.ready and advance.blocked_reason:
+        blocked_records = (
             {
-                "stage": "prepare_action_prompt_advance",
-                "temporary_until_enemy_ai": False,
-                "transition": transition_summary(next_json),
-            }
-        )
-    else:
-        process_notice_records.append(
-            {
-                "record_type": "ui_prompt_preparation_limit_reached",
-                "category": "过程提示",
-                "reason": "到达敌方自动跳过次数上限，停止继续准备行动提示",
-                "max_auto_skip_turns": options.max_auto_skip_turns,
-                "temporary_until_enemy_ai": True,
-                "todo": "enemy_ai",
+                "record_type": "ui_decision_not_ready",
+                "category": "阻断",
+                "reason": advance.blocked_reason,
                 "produced_mutation": False,
-            }
-        )
-
-    return _PromptPreparation(
-        state=current,
-        transitions=tuple(transitions),
-        auto_skip_records=tuple(auto_skip_records),
-        process_notice_records=tuple(process_notice_records),
-        blocked_records=tuple(blocked_records),
-    )
-
-
-def _skip_enemy_missing_ai(
-    state: BattleState,
-    *,
-    scheduler: CombatScheduler,
-    actor_id: str,
-    blocked_transition: dict[str, JSONValue],
-    attempt: int,
-) -> _PromptPreparation:
-    temp_state = _state_with_unit_flags(
-        state,
-        actor_id,
-        {
-            "ai_policy_admitted": True,
-            "ui_temporary_enemy_skip": True,
-        },
-    )
-    begin_result = scheduler.advance_to_next_turn(temp_state)
-    return _finish_temporary_enemy_turn(
-        begin_result.after_state,
-        scheduler=scheduler,
-        actor_id=actor_id,
-        attempt=attempt,
-        blocked_transition=blocked_transition,
-        begin_transition=begin_result.transition.to_json(),
-    )
-
-
-def _skip_enemy_active_turn(
-    state: BattleState,
-    *,
-    scheduler: CombatScheduler,
-    actor_id: str,
-    attempt: int,
-) -> _PromptPreparation:
-    temp_state = _state_with_unit_flags(
-        state,
-        actor_id,
-        {
-            "ui_temporary_enemy_skip": True,
-        },
-    )
-    return _finish_temporary_enemy_turn(
-        temp_state,
-        scheduler=scheduler,
-        actor_id=actor_id,
-        attempt=attempt,
-        blocked_transition={},
-        begin_transition={},
-    )
-
-
-def _finish_temporary_enemy_turn(
-    state: BattleState,
-    *,
-    scheduler: CombatScheduler,
-    actor_id: str,
-    attempt: int,
-    blocked_transition: dict[str, JSONValue],
-    begin_transition: dict[str, JSONValue],
-) -> _PromptPreparation:
-    end_result = scheduler.end_current_turn(state)
-    end_transition = end_result.transition.to_json()
-    final_state = _state_without_unit_flags(
-        end_result.after_state,
-        actor_id,
-        ("ai_policy_admitted", "ui_temporary_enemy_skip"),
-    )
-    produced_mutation = bool(_list(begin_transition.get("mutations"))) or bool(_list(end_transition.get("mutations")))
-    record: dict[str, JSONValue] = {
-        "record_type": "ui_temporary_enemy_turn_skip",
-        "category": "过程提示",
-        "reason": "enemy_ai_missing",
-        "actor_id": actor_id,
-        "attempt": attempt,
-        "temporary_until_enemy_ai": True,
-        "todo": "enemy_ai",
-        "impact": "UI 测试台临时结束敌方回合，让手动测试可以继续推进；未生成敌方动作、伤害或 AI 规则来源。",
-        "produced_mutation": produced_mutation,
-        "mutation_count": len(_list(begin_transition.get("mutations"))) + len(_list(end_transition.get("mutations"))),
-        "blocked_transition": transition_summary(blocked_transition) if blocked_transition else {},
-        "begin_transition": transition_summary(begin_transition) if begin_transition else {},
-        "end_transition": transition_summary(end_transition),
-    }
-    return _PromptPreparation(
-        state=final_state,
-        transitions=(
-            {
-                "stage": "temporary_enemy_turn_skip",
-                "temporary_until_enemy_ai": True,
-                "todo": "enemy_ai",
-                "record": record,
             },
-        ),
-        auto_skip_records=(record,),
-        process_notice_records=(record,),
+        )
+    return _PromptPreparation(
+        state=advance.after_state,
+        decision=advance.decision,
+        transitions=transitions,
+        blocked_records=blocked_records,
     )
-
-
-def _current_turn_unit(state: BattleState) -> Any | None:
-    active_turn = state.global_flags.get("active_turn")
-    actor_id = ""
-    if isinstance(active_turn, dict):
-        actor_id = str(active_turn.get("actor_id") or active_turn.get("owner_id") or "")
-    if not actor_id:
-        return None
-    return state.units.get(actor_id)
-
-
-def _enemy_action_candidate_for_prompt(
-    scheduler: CombatScheduler,
-    state: BattleState,
-) -> dict[str, JSONValue]:
-    active = _current_turn_unit(state)
-    if active is None or getattr(active, "side", "") != "enemy":
-        return {}
-    return scheduler.enemy_actions.next_candidate(state, active.unit_id).to_json()
-
-
-def _state_with_unit_flags(
-    state: BattleState,
-    unit_id: str,
-    flags: dict[str, JSONValue],
-) -> BattleState:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return state
-    updated_flags = {**unit.flags, **flags}
-    units = {**state.units, unit_id: replace(unit, flags=updated_flags)}
-    return replace(state, units=units)
-
-
-def _state_without_unit_flags(
-    state: BattleState,
-    unit_id: str,
-    flag_keys: tuple[str, ...],
-) -> BattleState:
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return state
-    updated_flags = dict(unit.flags)
-    for key in flag_keys:
-        updated_flags.pop(key, None)
-    units = {**state.units, unit_id: replace(unit, flags=updated_flags)}
-    return replace(state, units=units)
-
-
-def _blocked_actor_id(transition_json: dict[str, JSONValue]) -> str:
-    command = _dict(transition_json.get("command"))
-    actor_id = command.get("actor_id")
-    return actor_id if isinstance(actor_id, str) else ""
-
-
-def _prompt_preparation_blocked_record(
-    reason: str,
-    transition_json: dict[str, JSONValue],
-    attempt: int,
-) -> dict[str, JSONValue]:
-    return {
-        "record_type": "ui_prompt_preparation_blocked",
-        "category": "真正阻塞",
-        "reason": reason,
-        "attempt": attempt,
-        "impact": "UI 无法准备下一个行动提示。",
-        "produced_mutation": False,
-        "transition": transition_summary(transition_json),
-    }
 
 
 def _flatten_step_records(steps: list[dict[str, JSONValue]], key: str) -> list[dict[str, JSONValue]]:

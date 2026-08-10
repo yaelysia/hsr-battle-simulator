@@ -514,9 +514,63 @@ class ActionCommand:
     action_id: str
     action_level: int
     target_ids: tuple[str, ...] = ()
-    source: Literal["manual", "ai", "queue"] = "manual"
+    source: Literal["manual", "ai", "queue", "system"] = "manual"
     queue_name: str | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ActionCommand:
+            raise TypeError("action command must not be subclassed")
+        if not isinstance(self.actor_id, str) or not self.actor_id:
+            raise ValueError("action command actor identity is required")
+        if not isinstance(self.action_id, str) or not self.action_id:
+            raise ValueError("action command action identity is required")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level < 0
+        ):
+            raise ValueError("action command level is invalid")
+        if isinstance(self.target_ids, str):
+            raise TypeError("action command target identifiers must be a tuple")
+        targets = tuple(self.target_ids)
+        if any(not isinstance(item, str) or not item for item in targets):
+            raise ValueError("action command target identity is invalid")
+        if len(targets) != len(set(targets)):
+            raise ValueError("action command target identities must be unique")
+        if self.source not in {"manual", "ai", "queue", "system"}:
+            raise ValueError("action command source is invalid")
+        if self.queue_name is not None and (
+            not isinstance(self.queue_name, str) or not self.queue_name
+        ):
+            raise ValueError("action command queue name must be non-empty or null")
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("action command metadata must be an object")
+        forbidden = {
+            "accepted_selection",
+            "impact",
+            "impact_groups",
+            "impact_target_ids",
+            "primary_target_ids",
+            "query_fingerprint",
+            "selection_context",
+            "selection_fingerprint",
+            "target_contract",
+            "target_policy",
+            "target_query",
+            "target_selection_context",
+        }
+        injected = tuple(sorted(forbidden & set(self.metadata)))
+        if injected:
+            raise ValueError(
+                "action command metadata contains reserved target fields:"
+                + ",".join(injected)
+            )
+        metadata = freeze_json(dict(self.metadata))
+        if not isinstance(metadata, dict):
+            raise TypeError("action command metadata freeze failed")
+        object.__setattr__(self, "target_ids", targets)
+        object.__setattr__(self, "metadata", metadata)
 
 
 @dataclass(frozen=True)
@@ -596,6 +650,37 @@ class TargetResolution:
     reason: str = "not_resolved"
     source: str = "target_system"
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if type(self) is not TargetResolution:
+            raise TypeError("target resolution must not be subclassed")
+        for name in (
+            "requested",
+            "selectable",
+            "legal",
+            "impact_group",
+            "selected",
+            "rejected",
+        ):
+            raw = getattr(self, name)
+            if isinstance(raw, str):
+                raise TypeError(f"target resolution {name} must be a tuple")
+            values = tuple(raw)
+            if any(not isinstance(item, str) or not item for item in values):
+                raise ValueError(f"target resolution {name} contains an invalid identity")
+            if len(values) != len(set(values)):
+                raise ValueError(f"target resolution {name} contains duplicate identities")
+            object.__setattr__(self, name, values)
+        if self.primary is not None and (
+            not isinstance(self.primary, str) or not self.primary
+        ):
+            raise ValueError("target resolution primary identity is invalid")
+        if not isinstance(self.reason, str) or not isinstance(self.source, str):
+            raise TypeError("target resolution reason and source must be strings")
+        metadata = freeze_json(self.metadata)
+        if not isinstance(metadata, dict):
+            raise TypeError("target resolution metadata must be an object")
+        object.__setattr__(self, "metadata", metadata)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {

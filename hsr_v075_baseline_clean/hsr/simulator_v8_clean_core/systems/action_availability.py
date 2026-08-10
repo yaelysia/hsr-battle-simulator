@@ -7,6 +7,7 @@ from typing import Literal
 from ..builds.models import OwnedCombatantBuildAssemblyResult
 from ..build_types import ir_source_from_json
 from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
+from ..immutable_json import freeze_json
 from ..ir_types import same_ir_source_raw_row
 from ..rules.ir import ActionDefinitionIR, ActionEventIR, QueueResolutionIR
 from ..rules.rulebook import RuleBook
@@ -16,9 +17,9 @@ from .action_preflight import (
     action_resource_blocked_reason,
     action_resource_plan,
     combined_blocked_reason,
-    target_policy_for_action,
 )
 from .action_contract import ActionContractSystem
+from .action_selection import ActionTargetQuery, ActionTargetSelectionSystem
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .queue import QueueDrainPlan, QueueSystem
 from .resource import ResourceSystem
@@ -31,7 +32,6 @@ from .scheduler import (
 )
 from .status import status_control_gate_for_actor
 from .summon import SUMMON_RUNTIME_SCHEMA_VERSION
-from .target import TargetEnumerationResult, TargetSystem
 from .timeline import TimelineSystem
 from .unit_lifecycle import UnitLifecycleSystem
 from .wave import WaveSystem
@@ -166,17 +166,61 @@ class ActionChoice:
     action_role: str = "unknown"
     allowed_windows: tuple[str, ...] = ()
     submission_modes: tuple[str, ...] = ()
-    auto_target_ids: tuple[str, ...] = ()
-    selectable_target_ids: tuple[str, ...] = ()
-    target_policy: dict[str, JSONValue] = field(default_factory=dict)
-    target_status: Literal["ok", "blocked"] = "blocked"
-    target_blocked_reason: str = ""
+    target_query: ActionTargetQuery | None = None
     resource_status: Literal["ok", "blocked", "not_checked"] = "not_checked"
     resource_blocked_reason: str = ""
     coverage_status: str = "blocked"
     blocked_reason: str = ""
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ActionChoice:
+            raise TypeError("action choice must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (self.choice_id, self.choice_kind, self.control, self.actor_id, self.actor_side, self.action_id)
+        ):
+            raise ValueError("action choice identity is incomplete")
+        if self.choice_kind not in {
+            "normal_action",
+            "enemy_fixed_sequence",
+            "queue_action",
+            "ultimate_window",
+            "summon_action",
+            "timeline_actor",
+        } or self.control not in {"external", "mandatory", "selectable"}:
+            raise ValueError("action choice kind or control is invalid")
+        if self.coverage_status != "executable" or self.blocked_reason:
+            raise ValueError("published action choice must be executable and unblocked")
+        if self.resource_status not in {"ok", "blocked", "not_checked"}:
+            raise ValueError("action choice resource status is invalid")
+        if self.choice_kind == "timeline_actor":
+            if self.action_level != 0 or self.target_query is not None:
+                raise ValueError("timeline control choice must be targetless")
+        elif (
+            self.action_level <= 0
+            or type(self.target_query) is not ActionTargetQuery
+            or not self.target_query.resolved
+            or self.target_query.actor_id != self.actor_id
+            or self.target_query.action_id != self.action_id
+            or self.target_query.action_level != self.action_level
+        ):
+            raise ValueError("battle action choice lacks a matching resolved target query")
+        if (
+            not isinstance(self.command_template, Mapping)
+            or self.command_template.get("actor_id") != self.actor_id
+            or self.command_template.get("action_id") != self.action_id
+            or self.command_template.get("action_level") != self.action_level
+        ):
+            raise ValueError("action choice command template identity is inconsistent")
+        object.__setattr__(self, "allowed_windows", tuple(self.allowed_windows))
+        object.__setattr__(self, "submission_modes", tuple(self.submission_modes))
+        for name in ("command_template", "source_trace", "metadata"):
+            frozen = freeze_json(getattr(self, name))
+            if not isinstance(frozen, dict):
+                raise TypeError(f"action choice {name} must be an object")
+            object.__setattr__(self, name, frozen)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -193,11 +237,7 @@ class ActionChoice:
             "action_role": self.action_role,
             "allowed_windows": list(self.allowed_windows),
             "submission_modes": list(self.submission_modes),
-            "auto_target_ids": list(self.auto_target_ids),
-            "selectable_target_ids": list(self.selectable_target_ids),
-            "target_policy": self.target_policy,
-            "target_status": self.target_status,
-            "target_blocked_reason": self.target_blocked_reason,
+            "target_query": self.target_query.to_json() if self.target_query is not None else None,
             "resource_status": self.resource_status,
             "resource_blocked_reason": self.resource_blocked_reason,
             "coverage_status": self.coverage_status,
@@ -251,7 +291,7 @@ class ActionAvailabilitySystem:
         self.timeline = TimelineSystem()
         self.queue = QueueSystem()
         self.enemy_actions = EnemyActionSystem(rules)
-        self.targets = TargetSystem()
+        self.action_targets = ActionTargetSelectionSystem(rules)
         self.resources = ResourceSystem()
         self.contract = ActionContractSystem(rules)
         self.lifecycle = UnitLifecycleSystem()
@@ -573,7 +613,6 @@ class ActionAvailabilitySystem:
             action_role="timeline_control",
             allowed_windows=("timeline_tie",),
             submission_modes=("decision",),
-            target_status="ok",
             resource_status="not_checked",
             coverage_status="executable",
             metadata={
@@ -662,19 +701,18 @@ class ActionAvailabilitySystem:
         if not action_id or action_level is None:
             return "queue_action_resolution_missing"
         target_ids = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
-        if not target_ids:
-            return "queue_action_target_missing"
-        invalid_targets = tuple(
-            target_id
-            for target_id in target_ids
-            if not self.lifecycle.can_target(state, target_id, allow_defeated=False)[0]
-        )
-        if invalid_targets:
-            reasons = [
-                f"{self.lifecycle.can_target(state, target_id, allow_defeated=False)[1]}:{target_id}"
-                for target_id in invalid_targets
-            ]
-            return f"queue_action_target_lifecycle_blocked:{','.join(reasons)}"
+        target_query = self.action_targets.query(state, actor_id, action_id, action_level)
+        if not target_query.resolved:
+            return target_query.blocked_reason or "queue_action_target_query_blocked"
+        target_decision = self.action_targets.accept(state, target_query, target_ids)
+        if not target_decision.accepted:
+            requires_external_targets = (
+                queue_plan_requires_external_command(plan, resolution)
+                and not target_ids
+                and target_query.selection_mode == "explicit"
+            )
+            if not requires_external_targets:
+                return target_decision.blocked_reason or "queue_action_target_selection_blocked"
         contract = self.contract.evaluate(
             state,
             ActionCommand(
@@ -746,6 +784,9 @@ class ActionAvailabilitySystem:
         )
         if not contract.ok or contract.admission is None:
             return ()
+        target_query = self.action_targets.query(state, actor_id, action_id, action_level)
+        if not target_query.resolved:
+            return ()
         window_family = str((plan.queue_window or {}).get("window_family") or "")
         control: Literal["mandatory", "selectable"] = "selectable" if queue_plan_requires_external_command(plan, resolution) else "mandatory"
         kind: Literal["queue_action", "ultimate_window"] = "ultimate_window" if window_family == "ultimate" else "queue_action"
@@ -781,11 +822,7 @@ class ActionAvailabilitySystem:
                 action_role=contract.admission.action_role,
                 allowed_windows=contract.admission.allowed_windows,
                 submission_modes=contract.admission.submission_modes,
-                auto_target_ids=target_ids,
-                selectable_target_ids=(),
-                target_policy={"source": "queue_target_resolution", "queue_window_plan": plan.queue_window or {}},
-                target_status="ok" if target_ids else "blocked",
-                target_blocked_reason="" if target_ids else "queue_action_target_missing",
+                target_query=target_query,
                 resource_status=resource_status,
                 coverage_status="executable" if action_id and action_level > 0 else "requires_external_selection",
                 source_trace=plan.source_trace or {},
@@ -803,9 +840,13 @@ class ActionAvailabilitySystem:
             return ()
         window = plan.queue_window or {}
         actor_id = str(plan.queue_entry.get("actor_id") or "")
-        target_resolution = window.get("target_resolution", plan.queue_entry.get("target_resolution", {}))
-        if not isinstance(target_resolution, dict):
-            target_resolution = {}
+        action_id = plan.resolved_action_id or str(plan.queue_entry.get("action_or_ability_ref") or "")
+        action_level = int(plan.resolved_action_level or 0)
+        target_query = (
+            self.action_targets.query(state, actor_id, action_id, action_level)
+            if action_id and action_level > 0
+            else None
+        )
         return (
             SelectableWindow(
                 window_id=str(window.get("queue_window_id") or plan.queue_intent_id),
@@ -824,13 +865,7 @@ class ActionAvailabilitySystem:
                     "drain_plan": plan.to_json(),
                     "queue_resolution": resolution.to_json(),
                     "resource_preflight": _selectable_resource_preflight(state, plan),
-                    "target_policy": {
-                        "source": "queue_target_resolution",
-                        "target_resolution": target_resolution,
-                        "target_ids": list(plan.queue_entry.get("target_ids", ()))
-                        if isinstance(plan.queue_entry.get("target_ids"), list)
-                        else [],
-                    },
+                    "target_query": target_query.to_json() if target_query is not None else None,
                     "source_contract": {
                         "queue_intent_source": (plan.queue_entry.get("source_trace") or {}).get("queue_intent_source", {})
                         if isinstance(plan.queue_entry.get("source_trace"), dict)
@@ -922,22 +957,28 @@ class ActionAvailabilitySystem:
         for skill_index, entry in sorted_entries:
             action_id = str(entry.get("action_ref") or "")
             level = _default_level(entry)
+            effective_level_trace: dict[str, JSONValue] = {}
             reason = self._action_set_entry_blocked_reason(
                 entry,
                 action_id,
                 level,
                 require_level=not formal_build,
             )
-            formal_level_trace: dict[str, JSONValue] = {}
             if not reason and formal_build:
                 if formal_mapping_reason:
                     reason = formal_mapping_reason
                     level = 0
                 else:
-                    level, reason, formal_level_trace = self._formal_character_action_level(
+                    level, reason, effective_level_trace = self._formal_character_action_level(
                         actor,
                         action_id,
                     )
+            elif not reason:
+                level, reason, effective_level_trace = self._kernel_fixture_action_level(
+                    actor,
+                    action_id,
+                    level,
+                )
             if reason:
                 blocked.append(
                     BlockedActionReason(
@@ -950,7 +991,7 @@ class ActionAvailabilitySystem:
                         metadata={"skill_index": skill_index, "action_set_entry": entry},
                         source_trace={
                             "combatant_action_set": action_set.source.to_json(),
-                            **formal_level_trace,
+                            **effective_level_trace,
                         },
                     )
                 )
@@ -967,12 +1008,13 @@ class ActionAvailabilitySystem:
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "skill_index": skill_index,
                     "action_set_entry": entry,
-                    **formal_level_trace,
+                    **effective_level_trace,
                 },
                 metadata={
                     "skill_index": skill_index,
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "actor_data_card": _compact_actor_data_card(actor_data_card),
+                    **effective_level_trace,
                 },
             )
             if choice is not None:
@@ -980,6 +1022,50 @@ class ActionAvailabilitySystem:
             else:
                 blocked.append(reason)
         return tuple(choices), tuple(blocked)
+
+    def _kernel_fixture_action_level(
+        self,
+        actor: UnitState,
+        action_id: str,
+        requested_level: int,
+    ) -> tuple[int, str, dict[str, JSONValue]]:
+        bonuses = actor.flags.get("eidolon_skill_level_bonus_by_action_id")
+        if bonuses is None:
+            return requested_level, "", {}
+        if not isinstance(bonuses, Mapping):
+            return requested_level, "kernel_fixture_skill_level_bonus_mapping_invalid", {}
+        raw_bonus = bonuses.get(action_id)
+        if raw_bonus is None:
+            return requested_level, "", {}
+        if (
+            not isinstance(raw_bonus, (int, float))
+            or isinstance(raw_bonus, bool)
+            or raw_bonus <= 0
+            or not float(raw_bonus).is_integer()
+        ):
+            return requested_level, "kernel_fixture_skill_level_bonus_invalid", {}
+        levels = self.rules.action_levels(action_id)
+        if not levels:
+            return requested_level, "kernel_fixture_action_levels_missing", {}
+        effective_level = min(max(levels), requested_level + int(raw_bonus))
+        sources = actor.flags.get("eidolon_skill_level_bonus_sources")
+        source_payload = sources.get(action_id, ()) if isinstance(sources, Mapping) else ()
+        if not isinstance(source_payload, (list, tuple)):
+            return requested_level, "kernel_fixture_skill_level_bonus_sources_invalid", {}
+        return (
+            effective_level,
+            "",
+            {
+                "effective_action_level_source": {
+                    "source_kind": "character_data_card_eidolon_skill_level_bonus",
+                    "action_id": action_id,
+                    "requested_level": requested_level,
+                    "effective_level": effective_level,
+                    "bonus": int(raw_bonus),
+                    "sources": list(source_payload),
+                }
+            },
+        )
 
     def _formal_character_action_level(
         self,
@@ -1454,10 +1540,7 @@ class ActionAvailabilitySystem:
                     action_role=contract.admission.action_role,
                     allowed_windows=contract.admission.allowed_windows,
                     submission_modes=contract.admission.submission_modes,
-                    auto_target_ids=candidate.auto_target_ids,
-                    selectable_target_ids=candidate.selectable_target_ids,
-                    target_policy=candidate.target_policy,
-                    target_status="ok",
+                    target_query=candidate.target_query,
                     resource_status=resource_status,
                     resource_blocked_reason=resource_reason,
                     coverage_status="executable",
@@ -1605,17 +1688,18 @@ class ActionAvailabilitySystem:
             return None, _blocked_action(actor, action_id, action_level, "action_event_missing", source_trace, metadata)
         event_reason = self._action_event_admission_reason(event)
         binding_reason = action_binding_blocked_reason(self.rules.action_ability_binding(action_id, action_level))
-        target_result = self.targets.enumerate_action_targets(
+        target_query = self.action_targets.query(
             state,
             actor.unit_id,
-            target_policy_for_action(self.rules, definition, event.target_mode, action_event=event),
+            action_id,
+            action_level,
         )
         resource_status = "ok" if contract.resource_status == "ok" else "blocked"
         resource_reason = contract.resource_blocked_reason
         blocked_reason = combined_blocked_reason(
             event_reason,
             binding_reason,
-            target_result.blocked_reason if not target_result.ok else "",
+            target_query.blocked_reason if not target_query.resolved else "",
             resource_reason if resource_status == "blocked" else "",
         )
         if blocked_reason:
@@ -1631,7 +1715,7 @@ class ActionAvailabilitySystem:
                 },
                 {
                     **metadata,
-                    "target_enumeration": target_result.to_json(),
+                    "target_query": target_query.to_json(),
                     "resource_status": resource_status,
                     "resource_blocked_reason": resource_reason,
                 },
@@ -1659,10 +1743,7 @@ class ActionAvailabilitySystem:
                 action_role=contract.admission.action_role,
                 allowed_windows=contract.admission.allowed_windows,
                 submission_modes=contract.admission.submission_modes,
-                auto_target_ids=target_result.auto_target_ids,
-                selectable_target_ids=target_result.selectable_target_ids,
-                target_policy=target_result.policy,
-                target_status="ok",
+                target_query=target_query,
                 resource_status=resource_status,
                 resource_blocked_reason=resource_reason,
                 coverage_status="executable",
@@ -1675,7 +1756,7 @@ class ActionAvailabilitySystem:
                     **metadata,
                     "action_definition": definition.to_json(),
                     "action_event": event.to_json(),
-                    "target_enumeration": target_result.to_json(),
+                    "target_query": target_query.to_json(),
                 },
             ),
             _blocked_action(actor, action_id, action_level, "", source_trace, metadata),

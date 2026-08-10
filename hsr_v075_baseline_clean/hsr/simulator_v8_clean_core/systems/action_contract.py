@@ -40,19 +40,45 @@ class ActionSubmissionAuthorization:
     window: str
     source_id: str
     state_revision: str = ""
+    selection_context_fingerprint: str = ""
     _seal: _ActionAuthorizationSeal | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ActionSubmissionAuthorization:
+            raise TypeError("action submission authorization must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.submission_mode,
+                self.actor_id,
+                self.owner_entity_ref,
+                self.action_id,
+                self.window,
+                self.source_id,
+                self.state_revision,
+                self.selection_context_fingerprint,
+            )
+        ):
+            raise ValueError("action submission authorization identity is incomplete")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level <= 0
+        ):
+            raise ValueError("action submission authorization level is invalid")
 
     def blocked_reason(
         self,
         command: ActionCommand,
         actual_owner_entity_ref: str,
         actual_state_revision: str,
+        actual_selection_context_fingerprint: str,
     ) -> str:
         if not _action_authorization_seal_valid(self):
             return "action_submission_authorization_not_issued"
         if self.state_revision != actual_state_revision:
             return "action_submission_authorization_state_mismatch"
-        if self.submission_mode not in {"queue", "insert_window", "trigger", "out_of_combat"}:
+        if self.submission_mode not in {"external_turn", "queue", "insert_window", "trigger", "out_of_combat"}:
             return "action_submission_authorization_mode_invalid"
         if self.actor_id != command.actor_id:
             return "action_submission_authorization_actor_mismatch"
@@ -60,8 +86,10 @@ class ActionSubmissionAuthorization:
             return "action_submission_authorization_owner_mismatch"
         if self.action_id != command.action_id or self.action_level != command.action_level:
             return "action_submission_authorization_action_mismatch"
-        if not self.window or not self.source_id:
+        if not self.window or not self.source_id or not self.selection_context_fingerprint:
             return "action_submission_authorization_identity_missing"
+        if self.selection_context_fingerprint != actual_selection_context_fingerprint:
+            return "action_submission_authorization_selection_mismatch"
         return ""
 
 
@@ -75,6 +103,7 @@ def _issue_action_submission_authorization(
     action_level: int,
     window: str,
     source_id: str,
+    selection_context_fingerprint: str,
 ) -> ActionSubmissionAuthorization:
     authorization = ActionSubmissionAuthorization(
         submission_mode=submission_mode,
@@ -85,6 +114,7 @@ def _issue_action_submission_authorization(
         window=window,
         source_id=source_id,
         state_revision=_action_state_revision(state),
+        selection_context_fingerprint=selection_context_fingerprint,
     )
     return ActionSubmissionAuthorization(
         **_action_authorization_payload(authorization),
@@ -117,6 +147,7 @@ def _action_authorization_payload(
         "window": authorization.window,
         "source_id": authorization.source_id,
         "state_revision": authorization.state_revision,
+        "selection_context_fingerprint": authorization.selection_context_fingerprint,
     }
 
 
@@ -133,13 +164,14 @@ def _action_authorization_claims(
         "window",
         "source_id",
         "state_revision",
+        "selection_context_fingerprint",
     ))
 
 
 def _action_authorization_seal_valid(authorization: ActionSubmissionAuthorization) -> bool:
     seal = authorization._seal
     return (
-        isinstance(seal, _ActionAuthorizationSeal)
+        type(seal) is _ActionAuthorizationSeal
         and seal.issuer is _ACTION_AUTHORIZATION_ISSUER
         and seal.claims == _action_authorization_claims(authorization)
     )
@@ -193,6 +225,7 @@ class ActionContractSystem:
         *,
         submission_mode: str | None = None,
         authorization: ActionSubmissionAuthorization | None = None,
+        target_selection_fingerprint: str = "",
         queue_resource_policy: dict[str, JSONValue] | None = None,
     ) -> ActionContractDecision:
         actor = state.units.get(command.actor_id)
@@ -216,6 +249,7 @@ class ActionContractSystem:
                 command,
                 owner_entity_ref,
                 _action_state_revision(state),
+                target_selection_fingerprint,
             )
             if authorization_reason:
                 return ActionContractDecision(

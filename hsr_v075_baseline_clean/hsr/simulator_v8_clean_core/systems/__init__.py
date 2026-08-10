@@ -28,6 +28,14 @@ from .resource import ResourcePlan, ResourcePlanResult, ResourceSystem
 from .rng import RNGChoiceLedgerValidation, choice_key_for_identity, validate_rng_choice_ledger
 from .scheduler import CombatScheduler, SchedulerStepResult
 from .action_availability import ActionAvailabilitySystem, ActionAvailabilityView
+from .action_selection import (
+    AcceptedActionTargetSelection,
+    ActionTargetImpactResult,
+    ActionTargetQuery,
+    ActionTargetSelectionContext,
+    ActionTargetSelectionDecision,
+    ActionTargetSelectionSystem,
+)
 from .decision import CurrentDecision, DecisionAdvanceResult, DecisionSystem, DecisionToken
 from .phase_machine import CombatPhaseMachine, PhaseTransitionPlan, PhaseTransitionResult
 from .status import StatusApplicationResult, StatusInstance, StatusSystem
@@ -39,7 +47,15 @@ from .summon_runtime import (
     empty_summon_runtime,
     validate_summon_runtime,
 )
-from .target import TargetingResult, TargetSystem
+from .target import TargetSystem
+from .target_random import (
+    TargetRandomPlan,
+    TargetRandomReplayResult,
+    TargetRandomResult,
+    TargetRandomSampler,
+    replay_target_random,
+    target_pool_fingerprint,
+)
 from .timeline import (
     TimelineAdjustmentPlan,
     TimelineAdjustmentResult,
@@ -86,6 +102,12 @@ __all__ = [
     "SchedulerStepResult",
     "ActionAvailabilitySystem",
     "ActionAvailabilityView",
+    "AcceptedActionTargetSelection",
+    "ActionTargetImpactResult",
+    "ActionTargetQuery",
+    "ActionTargetSelectionContext",
+    "ActionTargetSelectionDecision",
+    "ActionTargetSelectionSystem",
     "DecisionSystem",
     "DecisionToken",
     "CurrentDecision",
@@ -108,8 +130,13 @@ __all__ = [
     "SummonRuntimeValidation",
     "empty_summon_runtime",
     "validate_summon_runtime",
-    "TargetingResult",
     "TargetSystem",
+    "TargetRandomPlan",
+    "TargetRandomReplayResult",
+    "TargetRandomResult",
+    "TargetRandomSampler",
+    "replay_target_random",
+    "target_pool_fingerprint",
     "TimelinePlan",
     "TimelinePlanResult",
     "TimelineAdjustmentPlan",

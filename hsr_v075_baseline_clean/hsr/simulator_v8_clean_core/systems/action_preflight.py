@@ -3,10 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.model import JSONValue
-from ..rules.ir import ActionDefinitionIR, ActionEventIR
-from ..rules.rulebook import RuleBook
+from ..rules.ir import ActionDefinitionIR
 from .resource import ResourcePlan
-from .target import TargetPolicy
 
 
 def action_skill_point_delta(bp_need: float, bp_add: float) -> int:
@@ -46,104 +44,6 @@ def action_resource_plan(
         source=source,
         metadata=metadata or {},
     )
-
-
-def target_policy_for_action(
-    rules: RuleBook,
-    action_definition: ActionDefinitionIR,
-    target_mode: str,
-    *,
-    action_event: ActionEventIR | None = None,
-) -> TargetPolicy:
-    bounce_policy = bounce_policy_for_action(rules, action_definition.action_id, action_definition.level)
-    source_trace = _target_policy_source_trace(action_definition, target_mode, action_event, bounce_policy)
-    metadata = {
-        "action_id": action_definition.action_id,
-        "action_level": action_definition.level,
-        "definition_id": action_definition.definition_id,
-        "action_event_id": action_event.action_event_id if action_event is not None else "",
-        "target_mode": target_mode,
-        "action_definition_target_mode": action_definition.target_mode,
-        "damage_kind": action_definition.damage_kind,
-        "source_mode": action_definition.source_mode,
-        "target_relation": action_event.target_relation
-        if action_event is not None
-        else action_definition.target_relation,
-    }
-    relation = str(metadata["target_relation"] or "unknown")
-    allow_enemy, allow_ally, allow_self = _target_relation_flags(relation)
-    selection_min = 0 if target_mode == "aoe" else 1
-    selection_max = 0 if target_mode == "aoe" else 1
-    impact_mode = {
-        "single": "primary_only",
-        "self_or_team": "primary_only",
-        "blast": "primary_plus_adjacent",
-        "aoe": "all_relation_targets",
-        "bounce": "primary_then_rng_bounce",
-    }.get(target_mode, "unknown")
-    return TargetPolicy(
-        policy_id=f"{relation}:{target_mode}",
-        allow_enemy=allow_enemy,
-        allow_ally=allow_ally,
-        allow_self=allow_self,
-        target_mode=target_mode,
-        selection_mode="automatic" if selection_max == 0 else "explicit_primary",
-        target_relation=relation,
-        selection_min=selection_min,
-        selection_max=selection_max,
-        impact_mode=impact_mode,
-        bounce_policy=bounce_policy,
-        source_trace=source_trace,
-        metadata=metadata,
-    )
-
-
-def _target_relation_flags(relation: str) -> tuple[bool, bool, bool]:
-    if relation == "enemy":
-        return True, False, False
-    if relation == "ally":
-        return False, True, False
-    if relation == "self":
-        return False, False, True
-    if relation == "ally_or_self":
-        return False, True, True
-    if relation == "any":
-        return True, True, True
-    if relation in {"owner", "summoner", "summon"}:
-        return False, True, True
-    return False, False, False
-
-
-def bounce_policy_for_action(rules: RuleBook, action_id: str, level: int) -> dict[str, JSONValue]:
-    for profile in rules.hit_profiles_for_action(action_id, level):
-        policy_id = getattr(profile, "bounce_policy_id", "")
-        if not policy_id:
-            continue
-        policy = rules.bounce_policy(str(policy_id))
-        if policy is not None:
-            return policy.to_json()
-    return {}
-
-
-def _target_policy_source_trace(
-    action_definition: ActionDefinitionIR,
-    target_mode: str,
-    action_event: ActionEventIR | None,
-    bounce_policy: dict[str, JSONValue],
-) -> dict[str, JSONValue]:
-    source_trace: dict[str, JSONValue] = {
-        "action_definition": action_definition.source.to_json(),
-        "target_mode": {
-            "value": target_mode,
-            "source": "action_event" if action_event is not None else "action_definition",
-        },
-    }
-    if action_event is not None:
-        source_trace["action_event"] = action_event.source.to_json()
-    bounce_source = bounce_policy.get("source")
-    if isinstance(bounce_source, dict) and bounce_source:
-        source_trace["bounce_policy"] = bounce_source
-    return source_trace
 
 
 def action_binding_blocked_reason(action_binding: Any | None) -> str:

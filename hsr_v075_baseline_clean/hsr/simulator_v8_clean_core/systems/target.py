@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -18,33 +19,24 @@ from ..rules.expression_ir import (
     TARGET_EXPRESSION_NODE_SCHEMA,
     numeric_fixed_value,
 )
-from ..rules.ir import ConditionIR, TargetExpressionIR, TargetExpressionNodeIR
-from .rng import (
-    RNGOutcome,
-    RNGRequest,
-    choice_key_for_identity,
-    resolve_rng_request,
-    rng_choices_from_payload,
-    rng_mode_from_payload,
+from ..rules.ir import (
+    BouncePolicyIR,
+    CharacterDataCardIR,
+    ConditionIR,
+    HitProfileIR,
+    TargetExpressionIR,
+    TargetExpressionNodeIR,
 )
+from ..unit_eligibility import runtime_unit_is_unselectable
+from .rng import rng_choices_from_payload, rng_mode_from_payload
+from .target_random import TargetRandomPlan, TargetRandomSampler
 from .unit_relation import (
     EntityRelationResolver,
     TargetEvaluationContext,
-    is_dark_team,
-    is_light_team,
     is_opposing_combat_team,
-    is_same_combat_team,
+    is_light_team,
 )
 from .unit_lifecycle import UnitLifecycleSystem
-from .unit_stats import effective_unit_stat
-
-
-@dataclass(frozen=True)
-class TargetingResult:
-    resolution: TargetResolution
-    ok: bool
-    errors: tuple[str, ...] = ()
-    rng_events: tuple[RNGEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,47 +44,164 @@ class BounceTargetResult:
     ok: bool
     target_id: str = ""
     rng_event: RNGEvent | None = None
+    random_plan: TargetRandomPlan | None = None
+    sequence_exhausted: bool = False
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     error: str = ""
 
-
-@dataclass(frozen=True)
-class TargetPolicy:
-    policy_id: str = "enemy"
-    allow_enemy: bool = True
-    allow_ally: bool = False
-    allow_self: bool = False
-    allow_defeated: bool = False
-    target_mode: str = "single"
-    selection_mode: str = "explicit"
-    target_relation: str = "unknown"
-    selection_min: int = 1
-    selection_max: int = 1
-    impact_mode: str = "primary_only"
-    allow_off_field: bool = False
-    bounce_policy: dict[str, JSONValue] = field(default_factory=dict)
-    source_trace: dict[str, JSONValue] = field(default_factory=dict)
-    metadata: dict[str, JSONValue] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class TargetEnumerationResult:
-    ok: bool
-    selectable_target_ids: tuple[str, ...] = ()
-    auto_target_ids: tuple[str, ...] = ()
-    blocked_reason: str = ""
-    policy: dict[str, JSONValue] = field(default_factory=dict)
-    metadata: dict[str, JSONValue] = field(default_factory=dict)
+    def __post_init__(self) -> None:
+        if type(self) is not BounceTargetResult:
+            raise TypeError("bounce target result must not be subclassed")
+        if type(self.ok) is not bool:
+            raise TypeError("bounce target result status must be boolean")
+        if type(self.sequence_exhausted) is not bool:
+            raise TypeError("bounce sequence exhaustion flag must be boolean")
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("bounce target result metadata must be an object")
+        object.__setattr__(self, "metadata", freeze_json(dict(self.metadata)))
+        if self.random_plan is not None and type(self.random_plan) is not TargetRandomPlan:
+            raise TypeError("bounce target random plan must be exact")
+        if self.ok:
+            if self.sequence_exhausted:
+                if self.target_id or self.rng_event is not None or self.random_plan is not None:
+                    raise ValueError("exhausted bounce sequence carries target output")
+            elif not isinstance(self.target_id, str) or not self.target_id:
+                raise ValueError("resolved bounce target requires an identity")
+            if self.error:
+                raise ValueError("resolved bounce target carries a blocker")
+            if self.rng_event is not None and type(self.rng_event) is not RNGEvent:
+                raise TypeError("bounce target RNG event must be exact")
+        elif self.sequence_exhausted or self.target_id or self.rng_event is not None or not self.error:
+            raise ValueError("blocked bounce target carries executable output")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "ok": self.ok,
-            "selectable_target_ids": list(self.selectable_target_ids),
-            "auto_target_ids": list(self.auto_target_ids),
-            "blocked_reason": self.blocked_reason,
-            "policy": self.policy,
-            "metadata": self.metadata,
+            "target_id": self.target_id,
+            "rng_event": self.rng_event.to_json() if self.rng_event is not None else None,
+            "random_plan": self.random_plan.to_json() if self.random_plan is not None else None,
+            "sequence_exhausted": self.sequence_exhausted,
+            "metadata": thaw_json(self.metadata),
+            "error": self.error,
         }
+
+
+@dataclass(frozen=True)
+class BouncePolicyResolution:
+    status: Literal["resolved", "blocked"]
+    policy: BouncePolicyIR | None = None
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self) is not BouncePolicyResolution:
+            raise TypeError("bounce policy resolution must not be subclassed")
+        if self.status == "resolved":
+            if type(self.policy) is not BouncePolicyIR or self.blocked_reason:
+                raise ValueError("resolved bounce policy result is inconsistent")
+        elif self.status == "blocked":
+            if self.policy is not None or not self.blocked_reason:
+                raise ValueError("blocked bounce policy result is inconsistent")
+        else:
+            raise ValueError("bounce policy resolution status is invalid")
+
+    @property
+    def resolved(self) -> bool:
+        return self.status == "resolved"
+
+
+def resolve_action_bounce_policy(
+    rules: Any,
+    action_id: str,
+    action_level: int,
+    *,
+    hit_profiles: tuple[HitProfileIR, ...] | None = None,
+    actor_entity_ref: str | None = None,
+) -> BouncePolicyResolution:
+    if not isinstance(action_id, str) or not action_id:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_action_identity_invalid")
+    if type(action_level) is not int or action_level <= 0:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_action_level_invalid")
+    lookup = getattr(rules, "bounce_policies_for_action", None)
+    if not callable(lookup):
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_query_missing")
+    policies = tuple(lookup(action_id, action_level))
+    if not policies:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_missing")
+    if len(policies) != 1:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_ambiguous")
+    policy = policies[0]
+    if type(policy) is not BouncePolicyIR:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_type_invalid")
+    if policy.action_id != action_id or policy.level != action_level:
+        return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_action_binding_mismatch")
+    if policy.coverage_status != "executable":
+        return BouncePolicyResolution(
+            "blocked",
+            blocked_reason=policy.blocked_reason
+            or f"bounce_policy_not_executable:{policy.coverage_status}",
+        )
+    if actor_entity_ref is not None:
+        if not isinstance(actor_entity_ref, str) or not actor_entity_ref:
+            return BouncePolicyResolution("blocked", blocked_reason="bounce_actor_entity_ref_invalid")
+        card_lookup = getattr(rules, "character_data_card", None)
+        card = card_lookup(policy.character_data_card_id) if callable(card_lookup) else None
+        if type(card) is not CharacterDataCardIR:
+            return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_owner_card_missing")
+        if card.entity_ref != actor_entity_ref:
+            return BouncePolicyResolution("blocked", blocked_reason="bounce_policy_actor_owner_mismatch")
+    if hit_profiles is not None:
+        if not isinstance(hit_profiles, tuple) or any(
+            type(profile) is not HitProfileIR for profile in hit_profiles
+        ):
+            return BouncePolicyResolution("blocked", blocked_reason="bounce_hit_profiles_invalid")
+        referenced = {
+            profile.bounce_policy_id
+            for profile in hit_profiles
+            if profile.bounce_policy_id
+        }
+        if referenced != {policy.bounce_policy_id}:
+            return BouncePolicyResolution(
+                "blocked",
+                blocked_reason=(
+                    "bounce_hit_profile_policy_missing"
+                    if not referenced
+                    else "bounce_hit_profile_policy_mismatch"
+                ),
+            )
+        bounce_profiles = tuple(
+            profile for profile in hit_profiles if profile.target_group.startswith("bounce:")
+        )
+        if len(bounce_profiles) != policy.bounce_count:
+            return BouncePolicyResolution(
+                "blocked",
+                blocked_reason="bounce_hit_profile_count_mismatch",
+            )
+        primary_profiles = tuple(
+            profile for profile in hit_profiles
+            if profile.target_group == policy.initial_target_group
+        )
+        expected_bounce_groups = {
+            f"{policy.bounce_target_group}:{index}"
+            for index in range(policy.bounce_count)
+        }
+        if len(primary_profiles) != 1 or {
+            profile.target_group for profile in bounce_profiles
+        } != expected_bounce_groups:
+            return BouncePolicyResolution(
+                "blocked",
+                blocked_reason="bounce_hit_profile_sequence_mismatch",
+            )
+        if primary_profiles[0].coverage_status != "executable":
+            return BouncePolicyResolution(
+                "blocked",
+                blocked_reason="bounce_primary_hit_profile_not_executable",
+            )
+        if any(profile.coverage_status != "executable" for profile in bounce_profiles):
+            return BouncePolicyResolution(
+                "blocked",
+                blocked_reason="bounce_hit_profile_not_executable",
+            )
+    return BouncePolicyResolution("resolved", policy=policy)
 
 
 @dataclass(frozen=True)
@@ -157,6 +266,7 @@ class TargetSystem:
     def __init__(self, rules: Any | None = None) -> None:
         self.lifecycle = UnitLifecycleSystem()
         self.relations = EntityRelationResolver()
+        self.random_sampler = TargetRandomSampler()
         self.alias_definitions: dict[str, TargetExpressionIR] = {}
         self.scoped_alias_definitions: dict[tuple[str, str], TargetExpressionIR] = {}
         self.operation_definitions: dict[str, TargetExpressionIR] = {}
@@ -263,6 +373,7 @@ class TargetSystem:
             ambiguous_definition_names=self.ambiguous_definition_names,
             scoped_alias_definitions=self.scoped_alias_definitions,
             definition_source_path=expression.source.source_path,
+            random_sampler=self.random_sampler,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -338,6 +449,7 @@ class TargetSystem:
             scoped_alias_definitions=self.scoped_alias_definitions,
             definition_source_path=node.source.source_path,
             ambiguous_definition_names=self.ambiguous_definition_names,
+            random_sampler=self.random_sampler,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -394,320 +506,73 @@ class TargetSystem:
                 errors[key] = result.blocked_reason
         return resolved, errors
 
-    def enumerate_action_targets(
-        self,
-        state: BattleState,
-        actor_id: str,
-        policy: TargetPolicy | None = None,
-    ) -> TargetEnumerationResult:
-        policy = policy or TargetPolicy()
-        actor = state.units.get(actor_id)
-        policy_payload = _policy_metadata(policy)
-        if actor is None:
-            return TargetEnumerationResult(
-                ok=False,
-                blocked_reason="unknown_actor",
-                policy=policy_payload,
-                metadata={"actor_id": actor_id},
-            )
-        blocked_reason = _target_mode_blocked_reason(policy)
-        if blocked_reason:
-            return TargetEnumerationResult(
-                ok=False,
-                blocked_reason=blocked_reason,
-                policy=policy_payload,
-                metadata={"actor_id": actor_id},
-            )
-        candidates = tuple(
-            unit_id
-            for unit_id, unit in sorted(state.units.items())
-            if _targetability_reason(state, unit_id, policy, self.lifecycle) == ""
-            and _policy_allows(actor_id, actor, unit_id, unit, policy)
-        )
-        if policy.selection_max == 0:
-            auto_targets = candidates
-            if not auto_targets:
-                return TargetEnumerationResult(
-                    ok=False,
-                    blocked_reason="target_candidates_empty",
-                    policy=policy_payload,
-                    metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
-                )
-            return TargetEnumerationResult(
-                ok=True,
-                auto_target_ids=auto_targets,
-                policy=policy_payload,
-                metadata=_target_enumeration_metadata(
-                    state,
-                    actor_id,
-                    auto_targets,
-                    policy.target_mode,
-                ),
-            )
-        if policy.selection_min == 1 and policy.selection_max == 1:
-            selectable = candidates
-            if not selectable:
-                return TargetEnumerationResult(
-                    ok=False,
-                    blocked_reason="target_candidates_empty",
-                    policy=policy_payload,
-                    metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
-                )
-            return TargetEnumerationResult(
-                ok=True,
-                selectable_target_ids=selectable,
-                policy=policy_payload,
-                metadata=_target_enumeration_metadata(
-                    state,
-                    actor_id,
-                    selectable,
-                    policy.target_mode,
-                ),
-            )
-        return TargetEnumerationResult(
-            ok=False,
-            blocked_reason=f"unsupported_target_mode:{policy.target_mode}",
-            policy=policy_payload,
-            metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
-        )
-
-    def resolve_action_targets(
-        self,
-        state: BattleState,
-        actor_id: str,
-        target_ids: tuple[str, ...],
-        policy: TargetPolicy | None = None,
-    ) -> TargetingResult:
-        policy = policy or TargetPolicy()
-        requested = target_ids
-        enumeration = self.enumerate_action_targets(state, actor_id, policy)
-        if not enumeration.ok:
-            resolution = TargetResolution(
-                requested=requested,
-                selectable=enumeration.selectable_target_ids,
-                rejected=requested,
-                reason=enumeration.blocked_reason,
-                metadata={
-                    "policy": _policy_metadata(policy),
-                    "target_groups": {},
-                    "blocked_reason": enumeration.blocked_reason,
-                },
-            )
-            return TargetingResult(
-                resolution=resolution,
-                ok=False,
-                errors=(enumeration.blocked_reason,),
-            )
-        blocked_reason = _target_mode_blocked_reason(policy)
-        if blocked_reason:
-            resolution = TargetResolution(
-                requested=requested,
-                selectable=enumeration.selectable_target_ids,
-                selected=(),
-                rejected=requested,
-                reason=blocked_reason,
-                source="target_system",
-                metadata={
-                    "policy": _policy_metadata(policy),
-                    "target_groups": {},
-                    "blocked_reason": blocked_reason,
-                },
-            )
-            return TargetingResult(resolution=resolution, ok=False, errors=(blocked_reason,))
-        if policy.selection_max == 0:
-            if requested:
-                reason = "auto_target_mode_rejects_explicit_targets"
-                return TargetingResult(
-                    resolution=TargetResolution(
-                        requested=requested,
-                        impact_group=(),
-                        rejected=requested,
-                        reason=reason,
-                        metadata={
-                            "policy": _policy_metadata(policy),
-                            "target_groups": {},
-                            "blocked_reason": reason,
-                        },
-                    ),
-                    ok=False,
-                    errors=(reason,),
-                )
-            impact_group = enumeration.auto_target_ids
-            target_groups = {"selected": impact_group, "impact": impact_group}
-            return TargetingResult(
-                resolution=TargetResolution(
-                    requested=(),
-                    selectable=(),
-                    legal=(),
-                    primary=None,
-                    impact_group=impact_group,
-                    selected=impact_group,
-                    reason="action_targets_resolved",
-                    metadata={
-                        "policy": _policy_metadata(policy),
-                        "target_groups": {
-                            key: list(value) for key, value in sorted(target_groups.items())
-                        },
-                    },
-                ),
-                ok=True,
-            )
-        explicit = self.resolve_explicit_targets(state, actor_id, requested, policy=policy)
-        if not explicit.ok:
-            return replace(
-                explicit,
-                resolution=replace(
-                    explicit.resolution,
-                    selectable=enumeration.selectable_target_ids,
-                ),
-            )
-        primary = explicit.resolution.legal[0]
-        target_groups = _target_groups(state, actor_id, primary, policy)
-        impact_group = target_groups.get("impact", target_groups.get("selected", ()))
-        resolution = TargetResolution(
-            requested=requested,
-            selectable=enumeration.selectable_target_ids,
-            legal=explicit.resolution.legal,
-            primary=primary,
-            impact_group=impact_group,
-            selected=impact_group,
-            rejected=explicit.resolution.rejected,
-            reason="action_targets_resolved",
-            source="target_system",
-            metadata={
-                **explicit.resolution.metadata,
-                "target_groups": {key: list(value) for key, value in sorted(target_groups.items())},
-            },
-        )
-        return TargetingResult(resolution=resolution, ok=True)
-
-    def resolve_explicit_targets(
-        self,
-        state: BattleState,
-        actor_id: str,
-        target_ids: tuple[str, ...],
-        policy: TargetPolicy | None = None,
-    ) -> TargetingResult:
-        policy = policy or TargetPolicy()
-        errors: list[str] = []
-        legal: list[str] = []
-        rejected: list[str] = []
-        metadata: dict[str, JSONValue] = {"policy": _policy_metadata(policy)}
-
-        actor = state.units.get(actor_id)
-        if actor is None:
-            errors.append(f"unknown actor_id: {actor_id}")
-            rejected.extend(target_ids)
-            return TargetingResult(
-                resolution=TargetResolution(
-                    requested=target_ids,
-                    legal=(),
-                    selected=(),
-                    rejected=tuple(rejected),
-                    reason="unknown_actor",
-                    source="target_system",
-                    metadata={"errors": list(errors)},
-                ),
-                ok=False,
-                errors=tuple(errors),
-            )
-
-        cardinality_reason = _selection_cardinality_blocked_reason(target_ids, policy)
-        if cardinality_reason:
-            return TargetingResult(
-                resolution=TargetResolution(
-                    requested=target_ids,
-                    rejected=target_ids,
-                    reason=cardinality_reason,
-                    source="target_system",
-                    metadata={
-                        "policy": _policy_metadata(policy),
-                        "errors": [cardinality_reason],
-                    },
-                ),
-                ok=False,
-                errors=(cardinality_reason,),
-            )
-
-        for target_id in target_ids:
-            target = state.units.get(target_id)
-            if target is None:
-                reason = f"unknown:{target_id}"
-                errors.append(reason)
-                rejected.append(target_id)
-                continue
-            targetability_reason = _targetability_reason(
-                state,
-                target_id,
-                policy,
-                self.lifecycle,
-            )
-            if targetability_reason:
-                reason = f"{targetability_reason}:{target_id}"
-                errors.append(reason)
-                rejected.append(target_id)
-                continue
-            if not _policy_allows(actor_id, actor, target_id, target, policy):
-                reason = f"policy_rejected:{policy.policy_id}:{target_id}"
-                errors.append(reason)
-                rejected.append(target_id)
-                continue
-            legal.append(target_id)
-
-        ok = not errors
-        if errors:
-            metadata["errors"] = list(errors)
-        return TargetingResult(
-            resolution=TargetResolution(
-                requested=target_ids,
-                legal=tuple(legal),
-                selected=tuple(legal),
-                rejected=tuple(rejected),
-                reason="explicit_targets_resolved" if ok else "explicit_targets_rejected",
-                source="target_system",
-                metadata=metadata,
-            ),
-            ok=ok,
-            errors=tuple(errors),
-        )
-
-    def enemies_of(self, state: BattleState, actor_id: str, *, allow_defeated: bool = False) -> tuple[str, ...]:
-        actor = state.units[actor_id]
-        return tuple(
-            unit_id
-            for unit_id, unit in sorted(state.units.items())
-            if is_opposing_combat_team(actor, unit) and self.lifecycle.can_target(state, unit_id, allow_defeated=allow_defeated)[0]
-        )
-
     def resolve_bounce_hit_target(
         self,
         state: BattleState,
         *,
         actor_id: str,
         primary_target_id: str,
-        bounce_policy: dict[str, JSONValue],
+        bounce_policy: BouncePolicyIR,
         hit_index: int,
         previous_hit_targets: tuple[str, ...],
         action_id: str,
         action_level: int,
+        source_task_id: str,
+        hit_profile_id: str,
         event_payload: dict[str, JSONValue] | None = None,
     ) -> BounceTargetResult:
         actor = state.units.get(actor_id)
         if actor is None:
             return BounceTargetResult(ok=False, error="unknown_actor")
-        if str(bounce_policy.get("coverage_status") or "") != "executable":
-            return BounceTargetResult(ok=False, error="bounce_policy_not_executable", metadata={"bounce_policy": bounce_policy})
+        if not isinstance(primary_target_id, str) or not primary_target_id:
+            return BounceTargetResult(ok=False, error="bounce_primary_target_identity_invalid")
+        primary_target = state.units.get(primary_target_id)
+        if primary_target is None:
+            return BounceTargetResult(ok=False, error="bounce_primary_target_missing")
+        if not is_opposing_combat_team(actor, primary_target):
+            return BounceTargetResult(ok=False, error="bounce_primary_target_not_opposing")
+        if type(bounce_policy) is not BouncePolicyIR:
+            return BounceTargetResult(ok=False, error="bounce_policy_type_invalid")
+        if (
+            bounce_policy.coverage_status != "executable"
+            or bounce_policy.action_id != action_id
+            or bounce_policy.level != action_level
+        ):
+            return BounceTargetResult(
+                ok=False,
+                error=(
+                    bounce_policy.blocked_reason
+                    or "bounce_policy_action_binding_mismatch"
+                ),
+                metadata={"bounce_policy": bounce_policy.to_json()},
+            )
+        if type(hit_index) is not int or hit_index <= 0:
+            return BounceTargetResult(ok=False, error="bounce_hit_index_invalid")
+        if hit_index > bounce_policy.bounce_count:
+            return BounceTargetResult(ok=False, error="bounce_hit_index_out_of_policy_range")
+        if not isinstance(source_task_id, str) or not source_task_id:
+            return BounceTargetResult(ok=False, error="bounce_source_task_identity_missing")
+        if not isinstance(hit_profile_id, str) or not hit_profile_id:
+            return BounceTargetResult(ok=False, error="bounce_hit_profile_identity_missing")
+        if isinstance(previous_hit_targets, str) or any(
+            not isinstance(target_id, str) or not target_id
+            for target_id in previous_hit_targets
+        ):
+            return BounceTargetResult(ok=False, error="bounce_previous_target_identity_invalid")
+        if bounce_policy.candidate_scope != "enemy_single":
+            return BounceTargetResult(ok=False, error="bounce_candidate_scope_not_supported")
+        if not bounce_policy.live_target_priority:
+            return BounceTargetResult(ok=False, error="bounce_live_target_priority_not_admitted")
         live_candidates = tuple(
             unit_id
             for unit_id, unit in sorted(state.units.items())
-            if is_opposing_combat_team(actor, unit) and self.lifecycle.can_target(state, unit_id)[0]
-        )
-        all_candidates = tuple(
-            unit_id
-            for unit_id, unit in sorted(state.units.items())
             if is_opposing_combat_team(actor, unit)
+            and self.lifecycle.can_target(state, unit_id)[0]
+            and not runtime_unit_is_unselectable(unit)
         )
-        selection_strategy = str(bounce_policy.get("selection_strategy") or "")
+        selection_strategy = bounce_policy.selection_strategy
+        if selection_strategy not in {"prefer_unhit_then_random", "random_live_targets"}:
+            return BounceTargetResult(ok=False, error="bounce_selection_strategy_not_supported")
         candidate_pool = live_candidates
         candidate_pool_reason = "live_targets"
         if live_candidates and selection_strategy == "prefer_unhit_then_random":
@@ -715,114 +580,129 @@ class TargetSystem:
             if unhit:
                 candidate_pool = unhit
                 candidate_pool_reason = "live_unhit_targets"
+            elif not bounce_policy.allow_repeat_after_all_hit:
+                return BounceTargetResult(
+                    ok=False,
+                    error="bounce_repeat_after_all_hit_not_admitted",
+                    metadata={"bounce_policy": bounce_policy.to_json()},
+                )
+            else:
+                candidate_pool_reason = "live_targets_repeat_after_all_hit"
         if not candidate_pool:
-            if not bool(bounce_policy.get("continue_on_all_defeated")):
+            if not bounce_policy.continue_on_all_defeated:
                 return BounceTargetResult(
                     ok=False,
                     error="bounce_no_live_target_and_continuation_not_admitted",
-                    metadata={"bounce_policy": bounce_policy},
+                    metadata={"bounce_policy": bounce_policy.to_json()},
                 )
-            candidate_pool = all_candidates or (primary_target_id,)
-            candidate_pool_reason = "all_targets_defeated_continue_sequence"
-        event_id = f"rng:{state.event_index}:{actor_id}:{action_id}:{action_level}:bounce:{hit_index}"
-        outcomes = tuple(
-            RNGOutcome(
-                outcome_id=str(unit_id),
-                payload={
-                    "selected_target_id": unit_id,
-                    "selected_index": index,
-                    "candidate_pool": list(candidate_pool),
-                    "candidate_pool_reason": candidate_pool_reason,
+            return BounceTargetResult(
+                ok=True,
+                sequence_exhausted=True,
+                metadata={
+                    "candidate_pool_reason": "all_targets_defeated_sequence_complete",
+                    "bounce_policy_id": bounce_policy.bounce_policy_id,
                     "hit_index": hit_index,
-                    "selection_strategy": selection_strategy,
-                    "live_target_priority": bool(bounce_policy.get("live_target_priority")),
-                    "continue_on_all_defeated": bool(bounce_policy.get("continue_on_all_defeated")),
-                    "previous_hit_targets": list(previous_hit_targets),
-                    "bounce_policy_id": str(bounce_policy.get("bounce_policy_id") or ""),
-                    "value": unit_id,
                 },
-                weight=1.0,
             )
-            for index, unit_id in enumerate(candidate_pool)
+        if (
+            bounce_policy.random_selector_sources
+            and hit_index > len(bounce_policy.random_selector_sources)
+        ):
+            return BounceTargetResult(
+                ok=False,
+                error="bounce_random_selector_source_missing_for_hit",
+            )
+        selector_source = (
+            bounce_policy.random_selector_sources[hit_index - 1]
+            if bounce_policy.random_selector_sources
+            and hit_index <= len(bounce_policy.random_selector_sources)
+            else bounce_policy.source
         )
-        identity = {
-            "decision_scope": "bounce_target",
-            "decision_index": hit_index,
-            "action_id": action_id,
-            "action_level": action_level,
-            "task_id": str(bounce_policy.get("source_task_id") or "bounce_policy"),
-            "hit_index": hit_index,
-            "target_id": primary_target_id,
-            "derived_event_id": event_id,
-        }
-        request = RNGRequest(
-            rng_type="bounce_target",
-            purpose="bounce_target",
-            event_id=event_id,
-            choice_key=choice_key_for_identity("bounce_target", identity),
-            source="target_system",
-            before_state=state.rng_state,
-            decision_kind="choice",
-            outcomes=outcomes,
-            source_trace=bounce_policy.get("source", {}) if isinstance(bounce_policy.get("source"), dict) else {},
-            metadata={
+        selector_source_kind: Literal["bounce_policy", "random_select_task"] = (
+            "random_select_task"
+            if selector_source.raw_type == "RandomSelectInTargetList"
+            else "bounce_policy"
+        )
+        selector_source_identity = (
+            selector_source.raw_id
+            if selector_source_kind == "random_select_task"
+            else bounce_policy.bounce_policy_id
+        )
+        plan = TargetRandomPlan(
+            mode="single",
+            source_kind=selector_source_kind,
+            source_identity=selector_source_identity,
+            source_trace=selector_source.to_json(),
+            evaluation_context={
                 "actor_id": actor_id,
+                "primary_target_id": primary_target_id,
                 "action_id": action_id,
                 "action_level": action_level,
-                "primary_target_id": primary_target_id,
-                "candidate_pool": list(candidate_pool),
-                "candidate_pool_reason": candidate_pool_reason,
+                "source_task_id": source_task_id,
+                "hit_profile_id": hit_profile_id,
+                "hit_index": hit_index,
                 "previous_hit_targets": list(previous_hit_targets),
+                "candidate_pool_reason": candidate_pool_reason,
+                "selection_strategy": selection_strategy,
+                "live_target_priority": bounce_policy.live_target_priority,
+                "continue_on_all_defeated": bounce_policy.continue_on_all_defeated,
+                "allow_repeat_after_all_hit": bounce_policy.allow_repeat_after_all_hit,
+                "bounce_policy_id": bounce_policy.bounce_policy_id,
+                "bounce_policy_source": bounce_policy.source.to_json(),
             },
-            invalid_choice_reason="bounce_target_choice_invalid",
-            identity=identity,
+            invocation_identity=(
+                f"bounce:{state.event_index}:{actor_id}:{action_id}:{action_level}:"
+                f"{source_task_id}:{hit_profile_id}:{hit_index}"
+            ),
+            candidate_ids=candidate_pool,
+            requested_count=1,
+            before_state=state.rng_state,
+            event_index=state.event_index,
         )
-        resolution = resolve_rng_request(
-            request,
+        resolution = self.random_sampler.resolve(
+            plan,
             rng_choices=rng_choices_from_payload(event_payload),
             rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
         )
-        if not resolution.ok or resolution.selected_outcome is None or resolution.event is None:
-            return BounceTargetResult(ok=False, error=resolution.blocked_reason, metadata=resolution.blocked_payload())
-        result = dict(resolution.selected_outcome.payload)
-        if resolution.roll is not None:
-            result["roll"] = resolution.roll
-        result["rng_event_id"] = resolution.event.event_id
-        result["choice_key"] = request.choice_key
-        result["choice_source"] = resolution.choice_source
+        if not resolution.resolved or not resolution.selected_ids:
+            return BounceTargetResult(
+                ok=False,
+                error=resolution.blocked_reason or "bounce_target_resolution_blocked",
+                metadata={
+                    "plan": plan.to_json(),
+                    "pending_request": thaw_json(resolution.pending_request),
+                },
+                random_plan=plan,
+            )
+        selected_target_id = resolution.selected_ids[0]
+        event = resolution.rng_events[0] if resolution.rng_events else None
         return BounceTargetResult(
             ok=True,
-            target_id=str(result.get("selected_target_id") or ""),
-            rng_event=resolution.event,
-            metadata=result,
+            target_id=selected_target_id,
+            rng_event=event,
+            random_plan=plan,
+            metadata={
+                "selected_target_id": selected_target_id,
+                "candidate_pool": list(candidate_pool),
+                "candidate_pool_reason": candidate_pool_reason,
+                "previous_hit_targets": list(previous_hit_targets),
+                "bounce_policy_id": bounce_policy.bounce_policy_id,
+                "random_selector_source": selector_source.to_json(),
+                "source_task_id": source_task_id,
+                "hit_profile_id": hit_profile_id,
+                "hit_index": hit_index,
+                "plan_fingerprint": plan.plan_fingerprint,
+                "candidate_pool_fingerprint": plan.candidate_pool_fingerprint,
+                "choice_key": (
+                    str(event.metadata.get("choice_key") or "") if event is not None else ""
+                ),
+                "choice_source": (
+                    str(event.metadata.get("choice_source") or "deterministic_singleton")
+                    if event is not None
+                    else "deterministic_singleton"
+                ),
+            },
         )
-
-
-def _policy_allows(actor_id: str, actor: Any, target_id: str, target: Any, policy: TargetPolicy) -> bool:
-    relation = policy.target_relation
-    if relation == "self":
-        return target_id == actor_id and policy.allow_self
-    if relation == "enemy":
-        return is_opposing_combat_team(actor, target) and policy.allow_enemy
-    if relation == "ally":
-        return target_id != actor_id and is_same_combat_team(actor, target) and policy.allow_ally
-    if relation == "ally_or_self":
-        return is_same_combat_team(actor, target) and (
-            policy.allow_self if target_id == actor_id else policy.allow_ally
-        )
-    if relation == "any":
-        if target_id == actor_id:
-            return policy.allow_self
-        if is_same_combat_team(actor, target):
-            return policy.allow_ally
-        return is_opposing_combat_team(actor, target) and policy.allow_enemy
-    if relation == "owner":
-        return target_id == str(actor.flags.get("owner_id") or "")
-    if relation == "summoner":
-        return target_id == str(actor.flags.get("summoner_id") or "")
-    if relation == "summon":
-        return bool(target.flags.get("summon_kind")) and is_same_combat_team(actor, target)
-    return False
 
 
 @dataclass(frozen=True)
@@ -841,12 +721,85 @@ class _TargetRelationRuntime:
     operation_definitions: Mapping[str, TargetExpressionIR]
     scoped_alias_definitions: Mapping[tuple[str, str], TargetExpressionIR]
     definition_source_path: str
+    random_sampler: TargetRandomSampler
     ambiguous_definition_names: frozenset[str] = frozenset()
     alias_stack: tuple[str, ...] = ()
     include_limbo: bool = False
 
     def entering_alias(self, alias: str) -> "_TargetRelationRuntime":
         return replace(self, alias_stack=(*self.alias_stack, alias))
+
+
+def _target_random_plan(
+    state: BattleState,
+    node: TargetExpressionNodeIR,
+    *,
+    mode: Literal["single", "sample_without_replacement", "shuffle"],
+    requested_count: int,
+    candidate_ids: tuple[str, ...],
+    path: str,
+    event_payload: dict[str, JSONValue],
+    relation_runtime: _TargetRelationRuntime,
+) -> TargetRandomPlan:
+    event_context: dict[str, JSONValue] = {}
+    for key in (
+        "action_id",
+        "action_level",
+        "task_id",
+        "hit_index",
+        "rng_decision_index",
+        "event_id",
+        "status_instance_id",
+        "callback_id",
+    ):
+        value = event_payload.get(key)
+        if isinstance(value, str) and value:
+            event_context[key] = value
+        elif type(value) is int and value >= 0:
+            event_context[key] = value
+    context = relation_runtime.context
+    evaluation_context: dict[str, JSONValue] = {
+        "state_event_index": state.event_index,
+        "caster_id": context.caster_id,
+        "effect_owner_id": context.effect_owner_id,
+        "parameter_entity_ids": list(context.parameter_entity_ids),
+        "selected_target_ids": list(context.selected_target_ids),
+        "current_target_id": context.current_target_id,
+        "event_source_id": context.event_source_id,
+        "event_subject_id": context.event_subject_id,
+        "event_target_id": context.event_target_id,
+        "damage_attacker_id": context.damage_attacker_id,
+        "damage_defender_id": context.damage_defender_id,
+        "turn_owner_id": context.turn_owner_id,
+        "event_context": event_context,
+    }
+    invocation_payload = {
+        "source_identity": node.node_id,
+        "path": path,
+        "evaluation_context": evaluation_context,
+    }
+    invocation_raw = json.dumps(
+        invocation_payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    invocation_identity = (
+        "target_random_invocation:"
+        + hashlib.sha256(invocation_raw).hexdigest()
+    )
+    return TargetRandomPlan(
+        mode=mode,
+        source_kind="target_expression",
+        source_identity=node.node_id,
+        source_trace=node.source.to_json(),
+        evaluation_context=evaluation_context,
+        invocation_identity=invocation_identity,
+        candidate_ids=candidate_ids,
+        requested_count=requested_count,
+        before_state=state.rng_state,
+        event_index=state.event_index,
+    )
 
 
 def _resolve_expression_payload(
@@ -870,6 +823,7 @@ def _resolve_expression_payload(
     scoped_alias_definitions: Mapping[tuple[str, str], TargetExpressionIR],
     definition_source_path: str,
     ambiguous_definition_names: frozenset[str],
+    random_sampler: TargetRandomSampler,
 ) -> _ExpressionResolution:
     if raw is None or raw.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return _ExpressionResolution(blocked_reason="target_expression_typed_node_missing")
@@ -895,6 +849,7 @@ def _resolve_expression_payload(
             operation_definitions=operation_definitions,
             scoped_alias_definitions=scoped_alias_definitions,
             definition_source_path=definition_source_path,
+            random_sampler=random_sampler,
             ambiguous_definition_names=ambiguous_definition_names,
         ),
     )
@@ -1585,18 +1540,24 @@ def _resolve_retarget_expression(
         steps = list(filter_result.steps)
         rng_events = list(filter_result.rng_events)
     max_number_expr = raw.max_number_expr
-    max_number, max_step, max_reason = _positive_int_from_numeric(
-        max_number_expr or None,
-        dynamic_values=dynamic_values,
-        binding_sources=binding_sources,
-        source_trace={"target_expression_path": path, "field": "MaxNumber"},
-        missing_default=len(candidate_targets),
-    )
+    if max_number_expr:
+        max_number, max_step, max_reason = _non_negative_int_from_numeric(
+            max_number_expr,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            source_trace={"target_expression_path": path, "field": "MaxNumber"},
+        )
+    else:
+        max_number = len(candidate_targets)
+        max_step = {
+            "operation": "numeric_default",
+            "value": max_number,
+            "source_trace": {"target_expression_path": path, "field": "MaxNumber"},
+        }
+        max_reason = ""
     steps.append(max_step)
     if max_reason:
         return _inline_result(path, "Retarget", "", (), f"retarget_max_number_blocked:{max_reason}", steps, tuple(rng_events))
-    if raw.by_random:
-        return _inline_result(path, "Retarget", "", (), "random_target_pending_s5d", steps, tuple(rng_events))
     if raw.include_limbo:
         lifecycle_result = relation_runtime.relations.resolve(
             state,
@@ -1608,6 +1569,40 @@ def _resolve_retarget_expression(
         if lifecycle_result.blocked:
             return _inline_result(path, "Retarget", "", (), lifecycle_result.blocked_reason, steps, tuple(rng_events))
         candidate_targets = lifecycle_result.target_ids
+    if raw.by_random:
+        random_result = relation_runtime.random_sampler.resolve(
+            _target_random_plan(
+                state,
+                raw,
+                mode="sample_without_replacement",
+                requested_count=max_number,
+                candidate_ids=candidate_targets,
+                path=path,
+                event_payload=event_payload,
+                relation_runtime=relation_runtime,
+            ),
+            rng_choices=rng_choices_from_payload(event_payload),
+            rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
+        )
+        steps.append({"operation": "target_random", "result": random_result.to_json()})
+        if not random_result.resolved:
+            return _inline_result(
+                path,
+                "Retarget",
+                "",
+                (),
+                random_result.blocked_reason,
+                steps,
+            )
+        return _inline_result(
+            path,
+            "Retarget",
+            "",
+            random_result.selected_ids,
+            "",
+            steps,
+            tuple((*rng_events, *random_result.rng_events)),
+        )
     selected = candidate_targets[: max_number]
     if not selected:
         return _inline_result(path, "Retarget", "", (), "", steps, tuple(rng_events))
@@ -1631,6 +1626,7 @@ def _is_transform_expression_kind(kind: str) -> bool:
         "TargetShuffle",
         "TargetTake",
         "TargetIndex",
+        "TargetPresentationOrderIgnored",
     } or kind.startswith("TargetSort")
 
 
@@ -1791,8 +1787,19 @@ def _resolve_transform_expression(
 ) -> _ExpressionResolution:
     if raw is None:
         return _inline_result(path, expression_kind, "", (), "target_transform_payload_missing")
-    if not candidate_targets and expression_kind == "TargetShuffle":
-        return _inline_result(path, expression_kind, "", (), "random_target_pending_s5d")
+    if expression_kind == "TargetPresentationOrderIgnored":
+        return _inline_result(
+            path,
+            expression_kind,
+            "",
+            candidate_targets,
+            "",
+            [{
+                "operation": "presentation_order_ignored",
+                "original_kind": raw.payload["original_kind"],
+                "presentation_key": raw.payload["presentation_key"],
+            }],
+        )
     if not candidate_targets and expression_kind not in {"TargetTake", "TargetIndex"}:
         return _inline_result(path, expression_kind, "", (), "")
     if expression_kind == "TargetReverse":
@@ -1927,7 +1934,38 @@ def _resolve_transform_expression(
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetShuffle":
-        return _inline_result(path, expression_kind, "", (), "random_target_pending_s5d")
+        result = relation_runtime.random_sampler.resolve(
+            _target_random_plan(
+                state,
+                raw,
+                mode="shuffle",
+                requested_count=len(candidate_targets),
+                candidate_ids=candidate_targets,
+                path=path,
+                event_payload=event_payload,
+                relation_runtime=relation_runtime,
+            ),
+            rng_choices=rng_choices_from_payload(event_payload),
+            rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
+        )
+        if not result.resolved:
+            return _inline_result(
+                path,
+                expression_kind,
+                "",
+                (),
+                result.blocked_reason,
+                [{"operation": "target_random", "result": result.to_json()}],
+            )
+        return _inline_result(
+            path,
+            expression_kind,
+            "",
+            result.selected_ids,
+            "",
+            [{"operation": "target_random", "result": result.to_json()}],
+            result.rng_events,
+        )
     if expression_kind.startswith("TargetSort"):
         return _resolve_sort_expression(state, candidate_targets, raw, expression_kind=expression_kind, path=path)
     return _inline_result(path, expression_kind, "", (), f"target_transform_not_supported:{expression_kind}")
@@ -2596,185 +2634,6 @@ def _inline_result(
         steps=[*(steps or []), step],
         rng_events=rng_events,
     )
-
-
-def _policy_metadata(policy: TargetPolicy) -> dict[str, JSONValue]:
-    return {
-        "policy_id": policy.policy_id,
-        "allow_enemy": policy.allow_enemy,
-        "allow_ally": policy.allow_ally,
-        "allow_self": policy.allow_self,
-        "allow_defeated": policy.allow_defeated,
-        "target_mode": policy.target_mode,
-        "selection_mode": policy.selection_mode,
-        "target_relation": policy.target_relation,
-        "selection_min": policy.selection_min,
-        "selection_max": policy.selection_max,
-        "impact_mode": policy.impact_mode,
-        "allow_off_field": policy.allow_off_field,
-        "bounce_policy": policy.bounce_policy,
-        "source_trace": policy.source_trace,
-        "metadata": policy.metadata,
-    }
-
-
-def _target_groups(
-    state: BattleState,
-    actor_id: str,
-    primary: str,
-    policy: TargetPolicy,
-) -> dict[str, tuple[str, ...]]:
-    if policy.target_mode == "blast":
-        adjacent = _adjacent_units(state, actor_id, primary, policy)
-        impact = (primary, *adjacent)
-        return {
-            "primary": (primary,),
-            "adjacent": adjacent,
-            "selected": impact,
-            "impact": impact,
-        }
-    if policy.target_mode == "bounce":
-        return {
-            "primary": (primary,),
-            "selected": (primary,),
-            "impact": (primary,),
-            "bounce_pending": (primary,),
-        }
-    return {
-        "primary": (primary,),
-        "selected": (primary,),
-        "impact": (primary,),
-    }
-
-
-def _target_mode_blocked_reason(policy: TargetPolicy) -> str:
-    if policy.target_relation == "unknown":
-        return "target_relation_not_admitted"
-    if policy.selection_min < 0 or policy.selection_max < policy.selection_min:
-        return "target_selection_cardinality_invalid"
-    if policy.target_mode == "bounce":
-        if str(policy.bounce_policy.get("coverage_status") or "") == "executable":
-            return ""
-        reason = str(policy.bounce_policy.get("blocked_reason") or "bounce_policy_not_executable")
-        return reason
-    if policy.target_mode == "unknown":
-        return "unknown_target_mode_not_executable"
-    if policy.target_mode not in {"single", "aoe", "blast", "self_or_team"}:
-        return f"unsupported_target_mode:{policy.target_mode}"
-    return ""
-
-
-def _deterministic_roll(rng_state: str, event_id: str, candidates: tuple[str, ...], previous: tuple[str, ...]) -> float:
-    raw = "|".join((rng_state, event_id, ",".join(candidates), ",".join(previous)))
-    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-    return int(digest[:12], 16) / float(0xFFFFFFFFFFFF)
-
-
-def _adjacent_units(
-    state: BattleState,
-    actor_id: str,
-    primary_id: str,
-    policy: TargetPolicy,
-) -> tuple[str, ...]:
-    primary = state.units.get(primary_id)
-    if primary is None:
-        return ()
-    position = _position(primary.flags.get("position"))
-    if position is None:
-        return ()
-    actor = state.units.get(actor_id)
-    if actor is None:
-        return ()
-    candidates = [
-        unit_id
-        for unit_id, unit in state.units.items()
-        if unit_id != primary_id
-        and _policy_allows(actor_id, actor, unit_id, unit, policy)
-        and _targetability_reason(state, unit_id, policy, UnitLifecycleSystem()) == ""
-        and _position(unit.flags.get("position")) in {position - 1, position + 1}
-    ]
-    ordered = sorted(
-        candidates,
-        key=lambda unit_id: (
-            abs((_position(state.units[unit_id].flags.get("position")) or position) - position),
-            _position(state.units[unit_id].flags.get("position")) or 0,
-            unit_id,
-        ),
-    )
-    return tuple(ordered)
-
-
-def _selection_cardinality_blocked_reason(
-    target_ids: tuple[str, ...],
-    policy: TargetPolicy,
-) -> str:
-    if len(set(target_ids)) != len(target_ids):
-        return "duplicate_target_selection"
-    count = len(target_ids)
-    if count < policy.selection_min:
-        return f"target_selection_too_few:{count}:{policy.selection_min}"
-    if count > policy.selection_max:
-        return f"target_selection_too_many:{count}:{policy.selection_max}"
-    return ""
-
-
-def _target_enumeration_metadata(
-    state: BattleState,
-    actor_id: str,
-    target_ids: tuple[str, ...],
-    target_mode: str,
-) -> dict[str, JSONValue]:
-    metadata: dict[str, JSONValue] = {
-        "actor_id": actor_id,
-        "target_mode": target_mode,
-    }
-    actor = state.units.get(actor_id)
-    if actor is None or not is_dark_team(actor):
-        return metadata
-    aggro_rows = {
-        target_id: effective_unit_stat(state.units[target_id], "base_aggro")
-        for target_id in target_ids
-    }
-    total = sum(row.value for row in aggro_rows.values())
-    metadata["aggro_selection"] = {
-        "mode": "external_weighted_choice",
-        "total_weight": total,
-        "targets": {
-            target_id: {
-                **row.to_json(),
-                "probability": row.value / total if total > 0.0 else None,
-            }
-            for target_id, row in aggro_rows.items()
-        },
-    }
-    return metadata
-
-
-def _targetability_reason(
-    state: BattleState,
-    unit_id: str,
-    policy: TargetPolicy,
-    lifecycle: UnitLifecycleSystem,
-) -> str:
-    target_ok, lifecycle_reason = lifecycle.can_target(
-        state,
-        unit_id,
-        allow_defeated=policy.allow_defeated,
-    )
-    if not target_ok:
-        return lifecycle_reason
-    unit = state.units.get(unit_id)
-    if unit is None:
-        return "unit_missing"
-    if unit.flags.get("targetable") is False:
-        return "unit_untargetable"
-    off_field = unit.flags.get("on_field") is False or unit.flags.get("battle_position") in {
-        "backline",
-        "off_field",
-    }
-    if off_field and not policy.allow_off_field:
-        return "unit_off_field"
-    return ""
 
 
 def _position(value: JSONValue) -> int | None:

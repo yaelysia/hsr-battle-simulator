@@ -38,6 +38,10 @@ from .engine_rule_registry import (
     ULTIMATE_COST_RULE_APPLICABILITY,
     engine_rule_admission_reason,
 )
+from .action_target_contract import (
+    ActionTargetContractIR,
+    ActionTargetContractQueryResult,
+)
 from .ir import (
     AbilityPropertyRangeIR,
     AbilityPropertyWatcherIR,
@@ -1372,6 +1376,22 @@ class RuleBook:
                 key: candidates[0]
                 for key, candidates in frozen_action_definition_candidates.items()
                 if len(candidates) == 1
+            },
+        )
+        action_target_candidates: dict[
+            tuple[str, int], list[ActionTargetContractIR]
+        ] = {}
+        target_catalog = self.ir.action_target_contract_catalog
+        for contract in target_catalog.contracts if target_catalog is not None else ():
+            action_target_candidates.setdefault(
+                (contract.action_id, contract.level), []
+            ).append(contract)
+        object.__setattr__(
+            self,
+            "_action_target_contract_candidates",
+            {
+                key: tuple(sorted(values, key=lambda item: item.contract_id))
+                for key, values in action_target_candidates.items()
             },
         )
         damage_modifiers_by_callback: dict[str, list[DamageModifierIR]] = {}
@@ -3040,6 +3060,51 @@ class RuleBook:
         level: int,
     ) -> tuple[ActionDefinitionIR, ...]:
         return self._action_definition_candidates.get((action_id, level), ())
+
+    def action_target_contract(
+        self,
+        action_id: str,
+        level: int,
+    ) -> ActionTargetContractQueryResult:
+        if not isinstance(action_id, str) or not action_id:
+            raise ValueError("action target query action_id is required")
+        if not isinstance(level, int) or isinstance(level, bool) or level <= 0:
+            raise ValueError("action target query level is invalid")
+        candidates = self._action_target_contract_candidates.get(
+            (action_id, level), ()
+        )
+        candidate_ids = tuple(item.contract_id for item in candidates)
+        if not candidates:
+            return ActionTargetContractQueryResult(
+                resolution_status="blocked",
+                action_id=action_id,
+                level=level,
+                blocked_reason="action_target_contract_missing",
+            )
+        if len(candidates) != 1:
+            return ActionTargetContractQueryResult(
+                resolution_status="blocked",
+                action_id=action_id,
+                level=level,
+                candidate_ids=candidate_ids,
+                blocked_reason="action_target_contract_ambiguous",
+            )
+        contract = candidates[0]
+        if contract.coverage_status != "lowered":
+            return ActionTargetContractQueryResult(
+                resolution_status="blocked",
+                action_id=action_id,
+                level=level,
+                candidate_ids=candidate_ids,
+                blocked_reason=contract.blocked_reason,
+            )
+        return ActionTargetContractQueryResult(
+            resolution_status="resolved",
+            action_id=action_id,
+            level=level,
+            value=contract,
+            candidate_ids=candidate_ids,
+        )
 
     def require_action_definition(self, action_id: str, level: int) -> ActionDefinitionIR:
         definition = self.action_definition(action_id, level)

@@ -28,6 +28,8 @@ from ..core.transition_outcome import ExecutionNodeResult, ExecutionNodeStatus
 from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
+from .action_contract import _issue_action_submission_authorization
+from .action_selection import ActionTargetSelectionContext, ActionTargetSelectionSystem
 from .effect import EffectRegistry
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .event_dispatch import EventDispatchSystem
@@ -75,7 +77,25 @@ class DecisionSubmissionAuthorization:
     actor_id: str
     action_id: str
     action_level: int
+    selection_context: ActionTargetSelectionContext | None = None
     _seal: _DecisionAuthorizationSeal | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not DecisionSubmissionAuthorization:
+            raise TypeError("decision submission authorization must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (self.decision_id, self.state_revision, self.actor_id, self.action_id)
+        ):
+            raise ValueError("decision submission authorization identity is incomplete")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level < 0
+        ):
+            raise ValueError("decision submission authorization level is invalid")
+        if self.selection_context is not None and type(self.selection_context) is not ActionTargetSelectionContext:
+            raise TypeError("decision submission authorization selection context has the wrong type")
 
     def blocked_reason(self, command: ActionCommand, actual_state_revision: str) -> str:
         if not _decision_authorization_seal_valid(self):
@@ -88,6 +108,11 @@ class DecisionSubmissionAuthorization:
             return "decision_submission_authorization_actor_mismatch"
         if self.action_id != command.action_id or self.action_level != command.action_level:
             return "decision_submission_authorization_action_mismatch"
+        if command.action_id == TIMELINE_TIE_CHOICE_ACTION_ID:
+            if self.selection_context is not None or command.target_ids:
+                return "timeline_decision_must_be_targetless"
+        elif type(self.selection_context) is not ActionTargetSelectionContext:
+            return "decision_target_selection_context_required"
         return ""
 
 
@@ -98,6 +123,7 @@ def _issue_decision_submission_authorization(
     actor_id: str,
     action_id: str,
     action_level: int,
+    selection_context: ActionTargetSelectionContext | None,
 ) -> DecisionSubmissionAuthorization:
     authorization = DecisionSubmissionAuthorization(
         decision_id=decision_id,
@@ -105,6 +131,7 @@ def _issue_decision_submission_authorization(
         actor_id=actor_id,
         action_id=action_id,
         action_level=action_level,
+        selection_context=selection_context,
     )
     return DecisionSubmissionAuthorization(
         **_decision_authorization_payload(authorization),
@@ -124,6 +151,7 @@ def _decision_authorization_payload(
         "actor_id": authorization.actor_id,
         "action_id": authorization.action_id,
         "action_level": authorization.action_level,
+        "selection_context": authorization.selection_context,
     }
 
 
@@ -131,19 +159,21 @@ def _decision_authorization_claims(
     authorization: DecisionSubmissionAuthorization,
 ) -> tuple[object, ...]:
     payload = _decision_authorization_payload(authorization)
-    return tuple(payload[key] for key in (
+    identity = tuple(payload[key] for key in (
         "decision_id",
         "state_revision",
         "actor_id",
         "action_id",
         "action_level",
     ))
+    context = authorization.selection_context
+    return (*identity, context.context_fingerprint if context is not None else "")
 
 
 def _decision_authorization_seal_valid(authorization: DecisionSubmissionAuthorization) -> bool:
     seal = authorization._seal
     return (
-        isinstance(seal, _DecisionAuthorizationSeal)
+        type(seal) is _DecisionAuthorizationSeal
         and seal.issuer is _DECISION_AUTHORIZATION_ISSUER
         and seal.claims == _decision_authorization_claims(authorization)
     )
@@ -185,6 +215,7 @@ class CombatScheduler:
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.enemy_actions = EnemyActionSystem(rules)
+        self.action_targets = ActionTargetSelectionSystem(rules)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
         self.ability_tasks = AbilityTaskSystem(
             rules,
@@ -261,6 +292,37 @@ class CombatScheduler:
             return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_definition_missing", {"command": _command_payload(command)})
         if action_event is None:
             return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_event_missing", {"command": _command_payload(command)})
+        admission, admission_reason = self.rules.action_admission_resolution(
+            actor.template_id,
+            command.action_id,
+            command.action_level,
+            "insert_window",
+        )
+        if admission is None:
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                f"manual_ultimate_action_not_admitted:{admission_reason}",
+                {"command": _command_payload(command), "owner_entity_ref": actor.template_id},
+            )
+        target_query = self.action_targets.query(
+            state,
+            command.actor_id,
+            command.action_id,
+            command.action_level,
+        )
+        target_decision = self.action_targets.accept(state, target_query, command.target_ids)
+        if not target_decision.accepted or target_decision.context is None:
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                target_decision.blocked_reason or "manual_ultimate_target_selection_blocked",
+                {
+                    "command": _command_payload(command),
+                    "target_decision": target_decision.to_json(),
+                },
+            )
+        target_context = target_decision.context
         ultimate_rule, rule_blocked_reason = self.rules.select_resource_rule("ultimate_energy_cost")
         if ultimate_rule is None:
             return self._blocked(
@@ -283,14 +345,7 @@ class CombatScheduler:
                 "manual_ultimate_energy_not_ready",
                 {"actor_id": actor.unit_id, "energy": actor.energy, "max_energy": actor.max_energy, "command": _command_payload(command)},
             )
-        target_ids = tuple(target_id for target_id in command.target_ids if target_id in state.units)
-        if not target_ids:
-            return self._blocked(
-                state,
-                "queue:manual_ultimate_request",
-                "manual_ultimate_target_not_resolved",
-                {"command": _command_payload(command), "requested_targets": list(command.target_ids)},
-            )
+        target_ids = target_context.accepted.submitted_target_ids
         queue_intent_id = f"manual_ultimate:{command.actor_id}:{command.action_id}:{command.action_level}:{state.event_index}"
         source_trace = {
             "manual_input_source": {
@@ -301,6 +356,7 @@ class CombatScheduler:
             },
             "action_definition_source": definition.source.to_json(),
             "action_event_source": action_event.source.to_json(),
+            "action_admission_source": admission.source.to_json(),
         }
         priority_source = {
             "field": "manual_route_input",
@@ -313,9 +369,11 @@ class CombatScheduler:
         target_resolution = {
             "ok": True,
             "actor_id": command.actor_id,
-            "target_ids": list(target_ids),
-            "actor_alias": "ManualRouteActor",
-            "target_alias": "ManualRouteTarget",
+            "submitted_target_ids": list(target_ids),
+            "selected_target_ids": list(target_context.accepted.selected_target_ids),
+            "query_fingerprint": target_context.accepted.query_fingerprint,
+            "selection_fingerprint": target_context.accepted.selection_fingerprint,
+            "selection_context_fingerprint": target_context.context_fingerprint,
             "blocked_reason": "",
             "source_trace": source_trace,
         }
@@ -410,7 +468,7 @@ class CombatScheduler:
                 GameEvent(
                     "queue.manual_ultimate.requested",
                     source_id=command.actor_id,
-                    target_id=target_ids[0],
+                    target_id=target_context.accepted.selected_target_ids[0],
                     event_id=f"event:{state.event_index}:manual_ultimate:{command.actor_id}",
                     window="manual_ultimate",
                     process_only=True,
@@ -472,6 +530,22 @@ class CombatScheduler:
                         "state_revision": decision_authorization.state_revision,
                     },
                 )
+            if command.action_id != TIMELINE_TIE_CHOICE_ACTION_ID:
+                selection_reason = self.action_targets.context_blocked_reason(
+                    state,
+                    command,
+                    decision_authorization.selection_context,
+                )
+                if selection_reason:
+                    return self._blocked(
+                        state,
+                        "scheduler:decision_submission",
+                        selection_reason,
+                        {
+                            "command": _command_payload(command),
+                            "decision_id": decision_authorization.decision_id,
+                        },
+                    )
 
         if command is not None and command.action_id == TIMELINE_TIE_CHOICE_ACTION_ID:
             if str(state.global_flags.get("turn_owner_id") or ""):
@@ -618,18 +692,6 @@ class CombatScheduler:
                             "command": _command_payload(command),
                         },
                     )
-                target_blocked_reason = _enemy_action_target_blocked_reason(enemy_candidate, command)
-                if target_blocked_reason:
-                    return self._blocked(
-                        state,
-                        "scheduler:enemy_action_target_blocked",
-                        target_blocked_reason,
-                        {
-                            "enemy_action_candidate": enemy_candidate.to_json(),
-                            "command": _command_payload(command),
-                        },
-                    )
-
         phase_reason = self.phases.operation_blocked_reason(decision_state, "submit_turn_action")
         if phase_reason:
             return self._blocked(
@@ -677,7 +739,25 @@ class CombatScheduler:
             command,
             metadata={**command.metadata, **parent_metadata},
         )
-        after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, action_state)
+        selection_context = decision_authorization.selection_context
+        assert selection_context is not None
+        action_authorization = _issue_action_submission_authorization(
+            state=action_state,
+            submission_mode="external_turn",
+            actor_id=scheduled_command.actor_id,
+            owner_entity_ref=action_state.units[actor_id].template_id,
+            action_id=scheduled_command.action_id,
+            action_level=scheduled_command.action_level,
+            window=str(action_state.global_flags.get("current_window") or "action_execution"),
+            source_id=decision_authorization.decision_id,
+            selection_context_fingerprint=selection_context.context_fingerprint,
+        )
+        after_action, action_transition = CombatExecutor(self.rules).execute(
+            scheduled_command,
+            action_state,
+            submission_authorization=action_authorization,
+            target_selection_context=selection_context,
+        )
         cursor_mutation = (
             self.enemy_actions.advance_cursor_mutation(after_action, enemy_candidate, scheduled_command, action_transition)
             if enemy_candidate is not None
@@ -1769,7 +1849,6 @@ class CombatScheduler:
             records.extend(ability_result.records)
         elif resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             from ..core.executor import CombatExecutor
-            from .action_contract import _issue_action_submission_authorization
 
             actor_id = str(plan.queue_entry.get("actor_id") or "")
             selected_command = self._queue_action_command_from_plan(plan, command)
@@ -1796,6 +1875,29 @@ class CombatScheduler:
                 },
             )
             actor = after_dequeue.units.get(actor_id)
+            target_query = self.action_targets.query(
+                after_dequeue,
+                actor_id,
+                queue_command.action_id,
+                queue_command.action_level,
+            )
+            target_decision = self.action_targets.accept(
+                after_dequeue,
+                target_query,
+                queue_command.target_ids,
+            )
+            if not target_decision.accepted or target_decision.context is None:
+                return self._terminalize_queue_entry(
+                    state,
+                    target_decision.blocked_reason or "queue_action_target_selection_blocked",
+                    plan,
+                    child_evidence={
+                        "resolved_kind": resolution.resolved_kind,
+                        "target_decision": target_decision.to_json(),
+                        "published": False,
+                    },
+                )
+            target_context = target_decision.context
             authorization = _issue_action_submission_authorization(
                 state=after_dequeue,
                 submission_mode="queue",
@@ -1805,11 +1907,13 @@ class CombatScheduler:
                 action_level=queue_command.action_level,
                 window=str((plan.queue_window or {}).get("window_family") or "queue"),
                 source_id=str(plan.queue_entry.get("entry_id") or plan.queue_intent_id),
+                selection_context_fingerprint=target_context.context_fingerprint,
             )
             after_action, action_transition = CombatExecutor(self.rules).execute(
                 queue_command,
                 after_dequeue,
                 submission_authorization=authorization,
+                target_selection_context=target_context,
             )
             if not action_transition.outcome.successor_eligible:
                 reasons = ",".join(action_transition.outcome.reason_codes) or action_transition.outcome.category
@@ -2032,6 +2136,8 @@ class CombatScheduler:
         actor_id = str(plan.queue_entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
             return "queue_action_actor_missing"
+        if not state.units[actor_id].template_id:
+            return "queue_action_actor_template_missing"
         control_gate = status_control_gate_for_actor(state.units[actor_id])
         if control_gate is not None:
             return str(control_gate.get("reason") or "status_control_gate")
@@ -2055,7 +2161,7 @@ class CombatScheduler:
                     return "extra_turn_route_action_actor_mismatch"
                 selected_action_id = command.action_id
                 selected_action_level = command.action_level
-                selected_targets = tuple(target_id for target_id in command.target_ids if target_id in state.units)
+                selected_targets = command.target_ids
         if window_family == "ultimate":
             if command is None:
                 return "queue_selectable_command_missing"
@@ -2071,8 +2177,19 @@ class CombatScheduler:
             selected_targets = requested_targets
         if not selected_action_id or selected_action_level is None:
             return "queue_action_resolution_missing"
-        if not selected_targets:
-            return "queue_action_target_missing"
+        target_query = self.action_targets.query(
+            state,
+            actor_id,
+            selected_action_id,
+            selected_action_level,
+        )
+        target_decision = self.action_targets.accept(
+            state,
+            target_query,
+            selected_targets,
+        )
+        if not target_decision.accepted:
+            return target_decision.blocked_reason or "queue_action_target_selection_blocked"
         definition = self.rules.action_definition(selected_action_id, selected_action_level)
         if definition is None:
             return "queue_action_definition_missing"
@@ -2674,21 +2791,6 @@ def _enemy_action_cursor_record(
         },
         trace=candidate.source_trace,
     ).to_json()
-
-
-def _enemy_action_target_blocked_reason(candidate: EnemyActionCandidate, command: ActionCommand) -> str:
-    requested = tuple(command.target_ids)
-    selectable = set(candidate.selectable_target_ids)
-    auto_targets = set(candidate.auto_target_ids)
-    if auto_targets:
-        if requested and not set(requested).issubset(auto_targets):
-            return "enemy_action_target_not_in_auto_target_group"
-        return ""
-    if not requested:
-        return "enemy_action_target_missing"
-    if not set(requested).issubset(selectable):
-        return "enemy_action_target_not_in_candidate"
-    return ""
 
 
 def _command_payload(command: ActionCommand) -> dict[str, JSONValue]:

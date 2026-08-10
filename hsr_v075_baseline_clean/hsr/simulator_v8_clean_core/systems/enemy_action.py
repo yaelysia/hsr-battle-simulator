@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue, Mutation
+from ..immutable_json import freeze_json
 from ..rules.ir import ActionDefinitionIR, MonsterDataCardIR
 from ..rules.rulebook import RuleBook
-from .action_preflight import target_policy_for_action
-from .target import TargetEnumerationResult, TargetSystem
+from .action_selection import ActionTargetQuery, ActionTargetSelectionSystem
 
 
 @dataclass(frozen=True)
@@ -17,16 +17,45 @@ class EnemyActionCandidate:
     sequence_index: int = 0
     action_ref: str = ""
     action_level: int = 0
-    target_mode: str = ""
-    selectable_target_ids: tuple[str, ...] = ()
-    auto_target_ids: tuple[str, ...] = ()
     status: str = "blocked"
     blocked_reason: str = ""
+    target_query: ActionTargetQuery | None = None
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
-    target_policy: dict[str, JSONValue] = field(default_factory=dict)
     sequence_step: dict[str, JSONValue] = field(default_factory=dict)
     action_definition: dict[str, JSONValue] = field(default_factory=dict)
-    target_enumeration: dict[str, JSONValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if type(self) is not EnemyActionCandidate:
+            raise TypeError("enemy action candidate must not be subclassed")
+        if not isinstance(self.actor_id, str) or not self.actor_id:
+            raise ValueError("enemy action candidate actor identity is required")
+        if self.status == "available":
+            if self.blocked_reason:
+                raise ValueError("available enemy action candidate carries a blocker")
+            if (
+                not self.action_ref
+                or self.action_level <= 0
+                or type(self.target_query) is not ActionTargetQuery
+                or not self.target_query.resolved
+                or self.target_query.actor_id != self.actor_id
+                or self.target_query.action_id != self.action_ref
+                or self.target_query.action_level != self.action_level
+            ):
+                raise ValueError("available enemy action candidate is inconsistent")
+        elif self.status == "blocked":
+            if not self.blocked_reason:
+                raise ValueError("blocked enemy action candidate lacks a reason")
+            if self.target_query is not None and type(self.target_query) is not ActionTargetQuery:
+                raise TypeError("enemy action candidate target query has the wrong type")
+            if self.target_query is not None and self.target_query.resolved:
+                raise ValueError("blocked enemy action candidate carries a resolved query")
+        else:
+            raise ValueError("enemy action candidate status is invalid")
+        for name in ("source_trace", "sequence_step", "action_definition"):
+            frozen = freeze_json(getattr(self, name))
+            if not isinstance(frozen, dict):
+                raise TypeError(f"enemy action candidate {name} must be an object")
+            object.__setattr__(self, name, frozen)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -36,16 +65,12 @@ class EnemyActionCandidate:
             "sequence_index": self.sequence_index,
             "action_ref": self.action_ref,
             "action_level": self.action_level,
-            "target_mode": self.target_mode,
-            "selectable_target_ids": list(self.selectable_target_ids),
-            "auto_target_ids": list(self.auto_target_ids),
             "status": self.status,
             "blocked_reason": self.blocked_reason,
+            "target_query": self.target_query.to_json() if self.target_query is not None else None,
             "source_trace": self.source_trace,
-            "target_policy": self.target_policy,
             "sequence_step": self.sequence_step,
             "action_definition": self.action_definition,
-            "target_enumeration": self.target_enumeration,
         }
 
 
@@ -59,7 +84,7 @@ class EnemyActionSystem:
 
     def __init__(self, rules: RuleBook):
         self.rules = rules
-        self.targets = TargetSystem()
+        self.action_targets = ActionTargetSelectionSystem(rules)
 
     def candidate_constraint(self, state: BattleState, actor_id: str) -> dict[str, JSONValue]:
         """Describe whether card data imposes a forced action candidate.
@@ -144,18 +169,17 @@ class EnemyActionSystem:
         event = self.rules.action_event(action_ref, action_level)
         if event is None:
             return self._blocked_from_card(actor_id, actor.template_id, card, "enemy_action_event_missing", sequence_index=sequence_index, step=step)
-        target_policy = target_policy_for_action(self.rules, definition, event.target_mode, action_event=event)
-        target_result = self.targets.enumerate_action_targets(state, actor_id, target_policy)
-        if not target_result.ok:
+        target_query = self.action_targets.query(state, actor_id, action_ref, action_level)
+        if not target_query.resolved:
             return self._blocked_from_card(
                 actor_id,
                 actor.template_id,
                 card,
-                target_result.blocked_reason or "enemy_action_targets_blocked",
+                target_query.blocked_reason or "enemy_action_targets_blocked",
                 sequence_index=sequence_index,
                 step=step,
                 definition=definition,
-                target_result=target_result,
+                target_query=target_query,
             )
         source_trace = _candidate_source_trace(card, step, definition)
         return EnemyActionCandidate(
@@ -165,16 +189,12 @@ class EnemyActionSystem:
             sequence_index=sequence_index,
             action_ref=action_ref,
             action_level=action_level,
-            target_mode=event.target_mode,
-            selectable_target_ids=target_result.selectable_target_ids,
-            auto_target_ids=target_result.auto_target_ids,
             status="available",
             blocked_reason="",
+            target_query=target_query,
             source_trace=source_trace,
-            target_policy=target_result.policy,
             sequence_step=dict(step),
             action_definition=definition.to_json(),
-            target_enumeration=target_result.to_json(),
         )
 
     def command_from_candidate(
@@ -272,7 +292,7 @@ class EnemyActionSystem:
         sequence_index: int = 0,
         step: dict[str, JSONValue] | None = None,
         definition: ActionDefinitionIR | None = None,
-        target_result: TargetEnumerationResult | None = None,
+        target_query: ActionTargetQuery | None = None,
     ) -> EnemyActionCandidate:
         return EnemyActionCandidate(
             actor_id=actor_id,
@@ -281,14 +301,12 @@ class EnemyActionSystem:
             sequence_index=sequence_index,
             action_ref=str((step or {}).get("action_ref") or ""),
             action_level=_action_level_for_step(self.rules, step or {}, str((step or {}).get("action_ref") or "")),
-            target_mode=definition.target_mode if definition is not None else "",
             status="blocked",
             blocked_reason=reason,
+            target_query=target_query,
             source_trace=_candidate_source_trace(card, step or {}, definition),
             sequence_step=dict(step or {}),
             action_definition=definition.to_json() if definition is not None else {},
-            target_enumeration=target_result.to_json() if target_result is not None else {},
-            target_policy=target_result.policy if target_result is not None else {},
         )
 
 

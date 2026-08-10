@@ -34,6 +34,17 @@ from .ir import (
     TriggerIR,
 )
 from .evaluator import EvaluationContext, RuleEvaluator
+from .condition_contract import (
+    CharacterConditionResponsibilityCatalog,
+    CharacterConditionResponsibilityIR,
+    ConditionResponsibilityIssueIR,
+)
+from .action_target_contract import (
+    ActionTargetContractCatalogIR,
+    ActionTargetContractIR,
+    ActionTargetContractQueryResult,
+    ActionTargetSourceComponentIR,
+)
 from .rulebook import (
     CharacterAbilityResolutionLedgerEntry,
     CharacterAbilitySourceGraphQuery,
@@ -43,6 +54,10 @@ from .rulebook import (
 
 __all__ = [
     "BattleStateTransitionIR",
+    "ActionTargetContractCatalogIR",
+    "ActionTargetContractIR",
+    "ActionTargetContractQueryResult",
+    "ActionTargetSourceComponentIR",
     "CanonicalIR",
     "CharacterAbilityBindingGapIR",
     "CharacterAbilityBindingIR",
@@ -70,6 +85,9 @@ __all__ = [
     "CharacterBuildSelectorGapIR",
     "CharacterBuildSelectorRelationIR",
     "CharacterNonGameplaySkillSourceIR",
+    "CharacterConditionResponsibilityCatalog",
+    "CharacterConditionResponsibilityIR",
+    "ConditionResponsibilityIssueIR",
     "ConditionIR",
     "EffectIR",
     "EvaluationContext",

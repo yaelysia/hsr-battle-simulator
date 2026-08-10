@@ -3,13 +3,13 @@
 ## 执行配置
 
 - 对应问题：P9-I07 第二部分；机制包 M05。
-- 硬前置：P9-S6 已验收，其条件分区 manifest 与当前源码/来源指纹一致。
+- 硬前置：P9-S6A、S6B 已验收，S6A 责任目录与当前源码/来源指纹一致。
 - 推荐：5.6 Sol / `max` / Goal 模式。
 - 理由：剩余条件横跨 action、event、queue、damage、resource、toughness 等瞬时上下文，需要严格 typed payload 和生产者责任。
 
 ## 当前事实与阶段结果
 
-S6 应关闭 committed-state 条件并留下 S7 集合。典型 S7 条件包括当前行动实体、战斗事件
+S6B 应关闭 committed-state 条件，S6A 已留下 S7 集合。典型 S7 条件包括当前行动实体、战斗事件
 实体、当前技能/目标类型、插入动作计数、伤害类型/来源、资源变化标签、韧性和行动窗口。
 
 完成后，当前 M05 条件 family 在 lowering/evaluator 层零 gap。S7 建立统一
@@ -19,10 +19,10 @@ S6 应关闭 committed-state 条件并留下 S7 集合。典型 S7 条件包括�
 
 ## 详细目标
 
-1. 校验并消费 S6/S7 分区，S7 集合不得增删或与 S6 重叠。
+1. 校验并消费 S6A 责任目录，S7 集合不得增删或与 S6B 重叠。
 2. 类型化 action/skill/turn/queue/event/damage/heal/resource/toughness 上下文字段及身份。
 3. 条件 lowering 只引用明确字段；缺 payload、错误事件 window 或过期 action identity blocked。
-4. 复用 S4 numeric、S5B relation 和 S6 comparator/quantifier，不按条件名复制 evaluator 分支。
+4. 复用 S4 numeric、S5B relation 和 S6B comparator/quantifier，不按条件名复制 evaluator 分支。
 5. 为每个 transient 字段绑定现有或未来 S9-S17 生产者，并输出 producer obligation ledger。
 6. 当前已有正式生产入口的高频族至少各有真实 true/false/blocked 证据。
 
@@ -70,7 +70,7 @@ character_specific_condition_handlers=0
 - evaluator 语义完整但正式生产者在 S9-S17：记录 `producer_not_proven`，不阻断 S7 evaluator 结论，但阻断最终 S20。
 - 条件字段无法归属任何真实 producer：退回 S3/source audit，不能建立全局万能 dict。
 - 需要修改事件身份根契约：限制在类型定义，实际派发交 S9；若不可分离，暂停修订依赖。
-- S6 manifest 陈旧：停止，不能自行重分区后继续。
+- S6A 责任目录陈旧：停止，不能自行重分区后继续。
 
 ## 拟改范围
 
@@ -84,7 +84,7 @@ character_specific_condition_handlers=0
 - 只构建 S7 condition IR；用现有正式 action/event 入口证明可得字段，未来 producer 只做 schema negative。
 - 一个主入口，direct 最多 2 项，仅触达 evaluator/action-event contract 时运行。
 - 预算：8 分钟、1 GiB、5 MiB、900 行。
-- 不跑 S6 完整主入口、不跑领域 runtime 聚合、不写合成全事件世界。
+- 不跑 S6A/S6B 完整主入口、不跑领域 runtime 聚合、不写合成全事件世界。
 
 ## 唯一执行清单
 
@@ -92,5 +92,5 @@ character_specific_condition_handlers=0
 - [ ] transient context 类型、window 和身份契约完整。
 - [ ] 已有 producer 正式证明，未来 producer obligation 诚实记录。
 - [ ] 缺失、错 kind、错 window、过期和 process-only 负例 blocked。
-- [ ] evaluator 复用 S4-S6，无万能 payload 或角色特判。
+- [ ] evaluator 复用 S4-S6B，无万能 payload 或角色特判。
 - [ ] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。

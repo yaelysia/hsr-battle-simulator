@@ -191,96 +191,60 @@ def build_battlefield_view(
 def build_action_prompt(
     snapshot: dict[str, JSONValue],
     scenario_data: dict[str, Any],
-    action_slots_by_entity: dict[str, JSONValue],
-    *,
-    enemy_action_candidate: dict[str, JSONValue] | None = None,
+    decision_data: dict[str, JSONValue],
 ) -> dict[str, JSONValue]:
     battlefield = build_battlefield_view(snapshot, scenario_data)
-    current_unit_id = str(battlefield.get("current_unit_id") or "")
     units = _list(battlefield.get("units"))
-    current_unit = next((_dict(unit) for unit in units if unit.get("unit_id") == current_unit_id), {})
-    if not current_unit_id:
+    units_by_id = {
+        str(unit.get("unit_id")): _dict(unit)
+        for unit in units
+        if isinstance(unit, dict) and isinstance(unit.get("unit_id"), str)
+    }
+    decision = _dict(decision_data)
+    availability = _dict(decision.get("availability"))
+    choices = [_dict(choice) for choice in _list(availability.get("choices"))]
+    actor_ids = tuple(dict.fromkeys(
+        str(choice.get("actor_id") or "")
+        for choice in choices
+        if choice.get("actor_id")
+    ))
+    timeline_unit_id = str(battlefield.get("current_unit_id") or "")
+    current_unit_id = actor_ids[0] if len(actor_ids) == 1 else timeline_unit_id
+    current_unit = units_by_id.get(current_unit_id, {})
+    if decision.get("ready") is not True or not choices:
+        return {
+            "available": False,
+            "current_unit_id": current_unit_id,
+            "current_unit_name": current_unit.get("display_name", current_unit_id),
+            "reason": str(
+                decision.get("blocked_reason")
+                or availability.get("ordinary_input_blocked_reason")
+                or "当前没有可提交的内核动作选择"
+            ),
+            "slots": [],
+            "targets": [],
+            "decision": decision,
+        }
+    if len(actor_ids) != 1:
         return {
             "available": False,
             "current_unit_id": "",
-            "reason": "当前没有可行动单位",
+            "current_unit_name": "",
+            "reason": "当前决策包含多个行动者，UI 路线输入暂未接通",
             "slots": [],
             "targets": [],
+            "decision": decision,
         }
-    if current_unit.get("side") == "enemy":
-        candidate = _dict(enemy_action_candidate)
-        if candidate.get("status") == "available":
-            action_ref = str(candidate.get("action_ref") or "")
-            action_level = int(candidate.get("action_level") or 0)
-            selectable_ids = set(str(item) for item in _list(candidate.get("selectable_target_ids")) if isinstance(item, str))
-            auto_ids = set(str(item) for item in _list(candidate.get("auto_target_ids")) if isinstance(item, str))
-            targets = [
-                {
-                    "unit_id": unit.get("unit_id"),
-                    "display_name": unit.get("display_name"),
-                    "side": unit.get("side"),
-                    "hp": unit.get("hp"),
-                    "max_hp": unit.get("max_hp"),
-                    "selection_kind": "selectable" if unit.get("unit_id") in selectable_ids else "auto",
-                }
-                for unit in units
-                if unit.get("unit_id") in selectable_ids or unit.get("unit_id") in auto_ids
-            ]
-            slot = {
-                "slot": "enemy_sequence",
-                "label": "固定序列动作",
-                "display_label": _display_name(scenario_data, "actions", action_ref) or "固定序列动作",
-                "available": True,
-                "action_ref": action_ref,
-                "action_level": action_level,
-                "target_mode": candidate.get("target_mode") or "",
-                "selectable_target_ids": list(selectable_ids),
-                "auto_target_ids": list(auto_ids),
-                "source_trace": candidate.get("source_trace") or {},
-            }
-            return {
-                "available": True,
-                "current_unit_id": current_unit_id,
-                "current_unit_name": current_unit.get("display_name", current_unit_id),
-                "entity_ref": current_unit.get("entity_ref") or "",
-                "reason": "",
-                "slots": [slot],
-                "targets": targets,
-                "enemy_action_candidate": candidate,
-            }
-        return {
-            "available": False,
-            "current_unit_id": current_unit_id,
-            "current_unit_name": current_unit.get("display_name", current_unit_id),
-            "reason": f"敌方固定序列候选不可用：{candidate.get('blocked_reason') or '未生成候选'}",
-            "slots": [],
-            "targets": [],
-            "enemy_action_candidate": candidate,
-        }
-    if current_unit.get("side") != "ally":
-        return {
-            "available": False,
-            "current_unit_id": current_unit_id,
-            "current_unit_name": current_unit.get("display_name", current_unit_id),
-            "reason": "第一版暂时跳过敌方回合，不弹出技能按钮",
-            "slots": [],
-            "targets": [],
-        }
-    entity_ref = str(current_unit.get("entity_ref") or "")
-    raw_slots = _list(action_slots_by_entity.get(entity_ref))
-    slots = [_action_prompt_slot(_dict(slot), scenario_data) for slot in raw_slots]
-    if not slots:
-        slots = [
-            {
-                "slot": slot,
-                "label": label,
-                "available": False,
-                "action_ref": "",
-                "action_level": 0,
-                "blocked_reason": "动作槽位未接通：没有找到角色卡或头像档案动作列表",
-            }
-            for slot, label in (("basic", "普攻"), ("skill", "战技"), ("ultimate", "终结技"))
-        ]
+    slots = [
+        _decision_choice_prompt_slot(choice, scenario_data, units_by_id)
+        for choice in choices
+    ]
+    candidate_ids = {
+        str(target_id)
+        for choice in choices
+        for target_id in _list(_dict(choice.get("target_query")).get("candidate_ids"))
+        if isinstance(target_id, str) and target_id
+    }
     targets = [
         {
             "unit_id": unit.get("unit_id"),
@@ -288,18 +252,20 @@ def build_action_prompt(
             "side": unit.get("side"),
             "hp": unit.get("hp"),
             "max_hp": unit.get("max_hp"),
+            "selection_kind": "kernel_candidate",
         }
         for unit in units
-        if unit.get("side") == "enemy" and float(unit.get("hp") or 0) > 0
+        if unit.get("unit_id") in candidate_ids
     ]
     return {
-        "available": any(bool(_dict(slot).get("available")) for slot in slots),
+        "available": True,
         "current_unit_id": current_unit_id,
         "current_unit_name": current_unit.get("display_name", current_unit_id),
-        "entity_ref": entity_ref,
-        "reason": "" if any(bool(_dict(slot).get("available")) for slot in slots) else "当前单位没有可执行动作槽位",
+        "entity_ref": current_unit.get("entity_ref") or "",
+        "reason": "",
         "slots": slots,
         "targets": targets,
+        "decision": decision,
     }
 
 
@@ -785,11 +751,38 @@ def _battlefield_unit_card(
     }
 
 
-def _action_prompt_slot(slot: dict[str, JSONValue], scenario_data: dict[str, Any]) -> dict[str, JSONValue]:
-    action_ref = str(slot.get("action_ref") or "")
+def _decision_choice_prompt_slot(
+    choice: dict[str, JSONValue],
+    scenario_data: dict[str, Any],
+    units_by_id: dict[str, dict[str, JSONValue]],
+) -> dict[str, JSONValue]:
+    action_ref = str(choice.get("action_id") or "")
+    actor_id = str(choice.get("actor_id") or "")
+    actor = units_by_id.get(actor_id, {})
+    choice_kind = str(choice.get("choice_kind") or "action")
+    labels = {
+        "normal_action": "角色动作",
+        "summon_action": "召唤物动作",
+        "enemy_fixed_sequence": "敌方动作",
+        "queue_action": "队列动作",
+        "ultimate_window": "终结技",
+        "timeline_actor": "行动者选择",
+    }
     return {
-        **slot,
-        "display_label": _display_name(scenario_data, "actions", action_ref) or slot.get("label") or action_ref,
+        "slot": str(choice.get("choice_id") or action_ref),
+        "label": labels.get(choice_kind, "动作"),
+        "display_label": _display_name(scenario_data, "actions", action_ref)
+        or labels.get(choice_kind, action_ref),
+        "available": True,
+        "actor_id": actor_id,
+        "actor_name": actor.get("display_name") or actor_id,
+        "action_ref": action_ref,
+        "action_level": choice.get("action_level"),
+        "choice_kind": choice_kind,
+        "control": choice.get("control"),
+        "target_query": choice.get("target_query"),
+        "command_template": choice.get("command_template"),
+        "source_trace": choice.get("source_trace"),
     }
 
 

@@ -402,7 +402,11 @@ def _target_records_from_scope(
             raw_type="TargetExpression",
             raw_id=scope_record.record_id,
         )
-        responsibility, coverage_status, blocked_reason = _target_record_route(scope_record.family, scope_record.effective_scope)
+        responsibility, coverage_status, blocked_reason = _target_record_route(
+            scope_record.family,
+            scope_record.effective_scope,
+            scope_record.nominal_scope,
+        )
         expression: TargetExpressionIR | None = None
         if responsibility == "s5a_effect_target":
             raw = _value_at_json_path(snapshot.documents[scope_record.source.source_path], raw_path)
@@ -453,11 +457,12 @@ def _is_target_family(family: str) -> bool:
 def _target_record_route(
     family: str,
     effective_scope: str,
+    nominal_scope: str,
 ) -> tuple[TargetResponsibility, Literal["executable", "blocked", "retired", "delegated"], str]:
     # Scope is a per-record fact.  Family routing is only meaningful after a
     # record has been admitted to gameplay, otherwise presentation/data rows
     # can be incorrectly delegated to the future random-target stage.
-    if effective_scope == "non_gameplay":
+    if nominal_scope == "non_gameplay" or effective_scope == "non_gameplay":
         return "retired_non_gameplay", "retired", ""
     if effective_scope == "gameplay":
         if family == _RANDOM_TASK_FAMILY:

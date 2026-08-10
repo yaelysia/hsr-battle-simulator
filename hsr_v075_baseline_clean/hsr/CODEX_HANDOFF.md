@@ -87,14 +87,37 @@ S1 在同一来源闭包上建立了唯一能力来源图：1,440 个能力定�
 33 个动态值 family、2,527 次出现全部纳入同一类型化操作和作用域模型，普通能力与状态 callback
 复用公共 effect 执行面；真实动作关联效果的 mutation、settlement、来源审计和 replay 已闭合。
 依赖动作目标、随机目标、事件、伤害、状态、资源或波次生产者的 operand 继续由
-S5C-S5D、S9-S15 负责，因此当前正式构筑仍会诚实阻止未闭合角色出生。共享 graph 只构建
+S5C2-S5D、S9-S15 负责，因此当前正式构筑仍会诚实阻止未闭合角色出生。共享 graph 只构建
 一次，角色卡只引用；缺失或多义子能力在任何 phase/task 生成前 fail-closed。记忆与欢愉
 专属机制继续延期。S5A 已建立完整目标来源责任矩阵和严格类型化目标契约。S5B 已通过
 统一实体关系入口闭合确定性效果目标：当前 11,826 条 gameplay 目标记录中 11,373 条
 executable，453 条 blocked 全部具有结构化后续归属，S5B 和未归属 gameplay gap 均为零；
 671 条全部 blocked 记录已完整列账。召唤怪物档位审计覆盖 121 个真实 ability 来源、516 个
-出生模板，15/15 个真实 executable 模板均具有档位事实。原 P9-S5 严格串行拆为 S5A-S5D；
-下一张唯一可执行卡为 `P9-S5C_ACTION_TARGET_QUERY_SUBMIT.md`。
+出生模板，15/15 个真实 executable 模板均具有档位事实。S5C1 已将 10,799 条动作定义一对一
+投影为严格动作目标契约，并独立闭合 10,216 个真实 `TargetInfo` 同级字段：8,610 条 lowered、
+2,189 条 blocked；其中 2 条目标筛选依赖明确归 P9-S6B，其余按来源范围或来源缺失归属。当前 S1
+范围内 4,970 条角色 action-level 来源全部 lowered。新目录已接入 Canonical IR 和 RuleBook，
+S5C2 已完成选择权威原子迁移：normal、summon、enemy、queue/ultimate 全部通过同一 query、
+accepted selection 和封闭 context，`DecisionToken`、scheduler authorization、executor settlement
+与 replay 保持同一目标身份；旧混合 target policy 已退出生产路径。手动终结技在首次入队 mutation
+前验证动作所有权，UI 命令 actor 直接来自内核 choice，不再从当前行动条单位推断。真实来源语义
+与 validation fixture 的上下文运输证据已分栏，未将后续机制缺口伪装为真实动作 executable。
+S5D 经闭合地图复核后拆为 S5D1、S5D2，避免把共享随机模型、executor 原子迁移和 S5 聚合
+混成一张卡。S5D1 已验收：随机单选、无放回抽样和完整 shuffle 复用严格目标随机计划；choice
+身份绑定来源、求值上下文、invocation、原始池、remaining pool 和 draw，显式 ledger 未完整时
+零部分 RNG event。随机 Retarget 与 TargetShuffle 已迁移，确定性 replay 按原选择模式完整重算。
+S5D2 的目标机制部分已验收：真实弹射策略逐段复用共享随机计划，候选变化、来源顺序、
+重放和 S5 完整来源归属均已闭合；7 条随机目标任务中 4 条由弹射消费，另 3 条精确归属 S8。
+当前真实弹射动作仍被 `IncludeTaskListTemplate`、`TriggerEffect` 等能力图任务阻断，因此没有
+伪造完整动作正例，S5D2 总项保持未完成，并在 S8 后返回验证同一 transaction 的 mutation、
+settlement、来源审计和 replay。原 S6 已按权威边界拆为 S6A、S6B。S6A 已从类型化语义 scope
+重建当前完整条件分母：3,502 条正式条件记录中，3,229 条属于现有 evaluator family；其余
+273 条形成来源可逆的责任目录，当前分为 178 条 S6B committed-state、48 条 S7 transient-context
+和 47 条明确非战斗 occurrence，未分类为零。这里的“现有 family”不代表每个 payload 已可执行。
+表现分支排除会保留 `TriggerAbility`、`IncludeTaskListTemplate` 等未解析跳转；审查中因此纠正了
+姿态倒计时模板内真实击破伤害被误排除的问题。lowering 已使用 evaluator 的唯一 family 权威，
+未知 family/字段/嵌套责任均 fail-closed。当前下一张唯一可执行卡为
+`P9-S6B_COMMITTED_STATE_CONDITION_EVALUATION.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

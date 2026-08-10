@@ -249,6 +249,21 @@ def build_character_card_ir(
                 max_records_per_table=max_records_per_table,
             )
         )
+    if ability_source_graph_catalog is not None and ability_scope_catalog is not None:
+        selector_sources_by_action = _random_selector_sources_by_action(
+            ability_source_graph_catalog,
+            ability_scope_catalog,
+        )
+        bounce_policies = [
+            replace(
+                policy,
+                random_selector_sources=selector_sources_by_action.get(
+                    policy.action_id,
+                    (),
+                ),
+            )
+            for policy in bounce_policies
+        ]
     bounce_policy_by_action = {
         (policy.action_id, policy.level): policy.bounce_policy_id
         for policy in bounce_policies
@@ -2865,6 +2880,100 @@ def _bounce_policies_for_table(
     return policies
 
 
+def _random_selector_sources_by_action(
+    source_catalog: CharacterAbilitySourceGraphCatalogIR,
+    scope_catalog: CharacterAbilityScopeProjectionCatalog,
+) -> dict[str, tuple[IRSource, ...]]:
+    records_by_id = {record.record_id: record for record in scope_catalog.scope_records}
+    definitions_by_location: dict[
+        tuple[str, int], list[CharacterAbilityDefinitionIR]
+    ] = {}
+    for definition in source_catalog.definitions:
+        ability_index = definition.source.evidence.get("ability_index")
+        if type(ability_index) is int:
+            definitions_by_location.setdefault(
+                (definition.source.source_path, ability_index),
+                [],
+            ).append(definition)
+    action_ids_by_definition: dict[str, set[str]] = {}
+    action_id_by_source = {
+        action.action_source_id: action.action_id
+        for action in source_catalog.action_sources
+    }
+    for binding in source_catalog.bindings:
+        action_id = action_id_by_source.get(binding.action_source_id)
+        if action_id:
+            action_ids_by_definition.setdefault(
+                binding.ability_definition_id,
+                set(),
+            ).add(action_id)
+
+    sources_by_action: dict[str, list[IRSource]] = {}
+    for record in scope_catalog.scope_records:
+        if (
+            record.family != "RandomSelectInTargetList"
+            or record.materialization_role != "selected"
+            or record.occurrence_kind != "typed_node"
+            or record.effective_scope != "gameplay"
+        ):
+            continue
+        parent = records_by_id.get(record.parent_record_id)
+        if (
+            parent is None
+            or parent.family != "IncludeTaskListTemplate"
+            or parent.source.source_path != record.source.source_path
+            or parent.source.evidence.get("json_path") != record.parent_branch_path
+        ):
+            continue
+        json_path = str(record.source.evidence.get("json_path") or "")
+        match = re.match(r"^\$\.AbilityList\[(\d+)\]", json_path)
+        if match is None:
+            continue
+        definitions = definitions_by_location.get(
+            (record.source.source_path, int(match.group(1))),
+            (),
+        )
+        action_ids = {
+            action_id
+            for definition in definitions
+            for action_id in action_ids_by_definition.get(
+                definition.definition_id,
+                (),
+            )
+        }
+        for action_id in action_ids:
+            sources_by_action.setdefault(action_id, []).append(record.source)
+
+    return {
+        action_id: tuple(
+            sorted(
+                {
+                    (
+                        source.source_path,
+                        str(source.evidence.get("json_path") or ""),
+                        source.raw_id,
+                    ): source
+                    for source in sources
+                }.values(),
+                key=_selector_source_order_key,
+            )
+        )
+        for action_id, sources in sources_by_action.items()
+    }
+
+
+def _selector_source_order_key(
+    source: IRSource,
+) -> tuple[str, tuple[tuple[int, int | str], ...], str]:
+    path = str(source.evidence.get("json_path") or "")
+    segments = tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.split(r"(\d+)", path)
+        if part
+    )
+    return source.source_path, segments, source.raw_id
+
+
 def _bounce_policy_from_row(
     *,
     relative_path: str,
@@ -2933,6 +3042,7 @@ def _bounce_policy_from_row(
         continue_on_all_defeated=True,
         allow_repeat_after_all_hit=True,
         rng_source_kind="battle_rng",
+        random_selector_sources=(),
         source=source,
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,

@@ -6,8 +6,13 @@
 阶段 checklist 位于 `P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`。本目录不是
 第二套总计划；每个文件只约束一个阶段。
 
-P9-S5 已按目标 IR、实体关系、动作交互和随机账本拆为 S5A-S5D。不存在可执行的旧 S5
-总卡；执行线程必须严格按 A、B、C、D 顺序推进，不能合并施工。
+P9-S5 已按目标 IR、实体关系、动作目标来源、动作选择权威和随机账本拆分。S5C1 独立建立
+来源目录；查询、提交、选择上下文和 executor 消费不能在保留双重权威的前提下继续拆开，
+因此合并为 S5C2。S5D 再按共享随机抽样契约和动作消费/聚合拆为 S5D1、S5D2。不存在
+可执行的旧 S5、S5C、S5D 总卡或 S5C3。
+
+原 P9-S6 同时包含完整来源分区和 evaluator 实现，已按权威边界拆为 S6A、S6B。S6A 只建立
+条件责任目录和精确 blocker；S6B 才实现 committed-state 求值。旧 S6 总卡不再是执行入口。
 
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程
 通过代码审查和聚焦 evidence 后才更新卡片与总 checklist，并建立阶段检查点。
@@ -20,7 +25,8 @@ P9-S5 已按目标 IR、实体关系、动作交互和随机账本拆为 S5A-S5D
 2. 只读当前卡、共享机制归并文档和卡内列出的直接代码；不通读其他 P9 卡或历史验证器。
 3. 用 CodeGraph 定位起始符号、生产调用链和影响范围，最多两轮结构探索。
 4. 核对“当前事实”。若差异改变目标、职责或验收，立即返回 `plan_mismatch`；不能自行缩小目标。
-5. 先形成本阶段 `source -> lowering -> admission -> runtime -> validation` 差距矩阵，再编码。
+5. 先形成本阶段一页闭合地图：权威分母、输入/输出、生产不变量、全部正式调用者、
+   gap owner 和最小 evidence。任一项无法从当前代码或来源确定时不得编码。
 
 ## 3. 共用实施约束
 
@@ -44,11 +50,21 @@ P9-S5 已按目标 IR、实体关系、动作交互和随机账本拆为 S5A-S5D
    身份和具体位置的代表来源。允许后续阶段负责，但不得漏报或用通用原因覆盖精确 blocker。
 4. 每项执行清单都有生产不变量、正式调用链或真实来源 evidence 对应。一个边界只保留一个
    最小负例；不得增加并列 CLI、重复 matrix 或验证专用 runtime 来制造完成证据。
+5. 所有会先写队列、阶段或 committed state 的请求入口，均在首次 mutation 前完成 actor、动作
+   所有权和 submission admission 校验；UI/adapter 命令身份直接来自所选 choice/template。
 
 任一项未闭合时提交 `blocked`；发现卡片职责或语义错误时提交 `plan_mismatch`；仅缺少卡内
 明确导航信息时提交 `context_gap`。已接受的 deferred 不阻止提交，但必须满足第三项交接要求。
 
-## 4. 共用验证协议
+## 4. 验收与返工止损
+
+首次验收必须在一次内完成：完整来源范围、生产不变量、全部正式调用者、gap 归属和验证器本身
+五面审查。验收线程先形成内部 finding ledger，再一次性发出整改意见。
+
+修复后只做差量代码复核，但必须重跑来源范围门和 gap 归属门。若一次集中修复后仍出现新的系统性
+问题类别，立即返回规划线程重写闭合地图或拆卡；不再连续进入局部补丁循环。
+
+## 5. 共用验证协议
 
 验证顺序固定为：
 
@@ -57,7 +73,8 @@ P9-S5 已按目标 IR、实体关系、动作交互和随机账本拆为 S5A-S5D
 ```
 
 - 每阶段只有一个公开业务主入口和一份 summary。
-- 主入口最多一次诊断和一次最终运行；修复期间只运行失败 family/矩阵行。
+- 主入口最多一次诊断和一次最终运行；修复期间只运行失败 family/矩阵行。首次主入口前必须
+  完成生产自审与五面验收清单，不能靠反复全入口发现本可静态审查的问题。
 - direct 默认最多两个，只由实际修改的生产调用链触发。
 - source/family 过滤必须在读取、lowering、IR/RuleBook 构建和 evidence 之前生效。
 - 不构建完整 Canonical IR 后过滤，不写完整 RuleBook、raw ability 或 transition dump。
@@ -80,7 +97,7 @@ PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p9_<stage>_time_v.txt 
 git diff --check
 ```
 
-## 5. 资源止损
+## 6. 资源止损
 
 | 阶段 | 单次主入口 | 累计验证 | RSS | evidence | 验证代码目标 |
 |---|---:|---:|---:|---:|---:|
@@ -94,11 +111,12 @@ git diff --check
 到达任一上限立即停止并提交资源证据。不得提高限制、并发补跑、压缩可读性或拆文件绕过
 代码预算。主入口达到单次预算 80% 即使通过，也必须先缩窄投影/evidence 才能最终验收。
 
-S5A-S5D 是原 S5 的职责拆分，不获得四倍验证预算。后序卡不得重跑前序主入口；四次最终
-主入口墙钟合计目标 20 分钟、evidence 合计 8 MiB、新增验证代码合计目标 2,400 非空行。
+S5A、S5B、S5C1-S5C2 和 S5D1-S5D2 是原 S5 的职责拆分，不因阶段名数增加总验证预算。后序卡不得重跑前序主入口；
+S5C1-S5C2 两段主入口墙钟合计目标 12 分钟、evidence 合计 4 MiB、新增验证代码合计目标 1,200 非空行；
+不得通过压缩可读性满足行数。
 超过任一总量应暂停重新划分证据，不能通过增加 CLI mode 或重复矩阵继续扩张。
 
-## 6. Gap 口径
+## 7. Gap 口径
 
 - `source_gap_blocked`：raw 确实缺失或无法唯一证明；必须排除扫描/lowering/谓词错误。
 - `lowering_gap`、`admission_gap`、`implementation_missing`、`validation_gap`：当前责任阶段
@@ -108,7 +126,7 @@ S5A-S5D 是原 S5 的职责拆分，不获得四倍验证预算。后序卡不�
 - `non_gameplay`：完整分支证明仅表现/客户端/AI/统计，零战斗副作用。
 - `not_proven`：没有证据；不能解释成通过或失败。
 
-## 7. 推荐配置与执行卡
+## 8. 推荐配置与执行卡
 
 | 阶段 | 执行卡 | 推荐配置 |
 |---|---|---|
@@ -119,9 +137,12 @@ S5A-S5D 是原 S5 的职责拆分，不获得四倍验证预算。后序卡不�
 | S4 | `P9-S4_NUMERIC_DYNAMIC_VALUE_CLOSURE.md` | 5.6 Sol / max / 普通聚焦 |
 | S5A | `P9-S5A_TARGET_SOURCE_AND_TYPED_CONTRACT.md` | 5.6 Terra / xhigh / 普通聚焦 |
 | S5B | `P9-S5B_ENTITY_RELATION_DETERMINISTIC_TARGET.md` | 5.6 Terra / xhigh / Goal |
-| S5C | `P9-S5C_ACTION_TARGET_QUERY_SUBMIT.md` | 5.6 Terra / xhigh / 普通聚焦 |
-| S5D | `P9-S5D_RANDOM_TARGET_AND_AGGREGATE.md` | 5.6 Sol / xhigh / 普通聚焦 |
-| S6 | `P9-S6_STATE_ENTITY_CONDITION_CLOSURE.md` | 5.6 Sol / xhigh / Goal |
+| S5C1 | `P9-S5C1_ACTION_TARGET_SOURCE_CONTRACT.md` | 5.6 Terra / max / 普通聚焦 |
+| S5C2 | `P9-S5C2_ACTION_SELECTION_QUERY_SUBMIT_CONTEXT.md` | 5.6 Sol / max / Goal |
+| S5D1 | `P9-S5D1_TARGET_RANDOM_SAMPLER.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S5D2 | `P9-S5D2_BOUNCE_DYNAMIC_TARGET_AND_AGGREGATE.md` | 5.6 Sol / max / 普通聚焦 |
+| S6A | `P9-S6A_CONDITION_RESPONSIBILITY_CONTRACT.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S6B | `P9-S6B_COMMITTED_STATE_CONDITION_EVALUATION.md` | 5.6 Sol / max / Goal |
 | S7 | `P9-S7_CONTEXTUAL_CONDITION_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S8 | `P9-S8_CONTROL_FLOW_SEQUENCE_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S9 | `P9-S9_EVENT_CONTRACT_ACTION_WINDOWS.md` | 5.6 Sol / max / 普通聚焦 |
@@ -137,7 +158,7 @@ S5A-S5D 是原 S5 的职责拆分，不获得四倍验证预算。后序卡不�
 | S19 | `P9-S19_REPRESENTATIVE_FORMAL_BATTLE_SLICES.md` | 5.6 Sol / max / Goal |
 | S20 | `P9-S20_CURRENT_SOURCE_CHARACTER_AGGREGATE.md` | 5.6 Sol / max / Goal |
 
-## 8. 报告边界
+## 9. 报告边界
 
 `ready_for_review` 只汇报：状态、生产改动、主验证、实际 direct、资源、遗留 gap 和报告路径。
 报告写入仓库级 `live_validation_reports/`，临时日志/evidence 写 `/tmp`。执行线程不得在报告中

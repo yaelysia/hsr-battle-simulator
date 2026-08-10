@@ -1027,21 +1027,12 @@ class QueueSystem:
         if not isinstance(action_level, int):
             return {"ok": False, "blocked_reason": "queue_action_level_missing"}
         target_ids = entry.get("target_ids")
-        if not isinstance(target_ids, list) or not any(isinstance(item, str) and item for item in target_ids):
-            return {"ok": False, "blocked_reason": "queue_action_target_missing"}
-        invalid_targets = tuple(
-            str(item)
-            for item in target_ids
-            if isinstance(item, str)
-            and item
-            and not self.lifecycle.can_target(state, item, allow_defeated=False)[0]
-        )
-        if invalid_targets:
-            reasons = [
-                f"{self.lifecycle.can_target(state, target_id, allow_defeated=False)[1]}:{target_id}"
-                for target_id in invalid_targets
-            ]
-            return {"ok": False, "blocked_reason": f"queue_action_target_lifecycle_blocked:{','.join(reasons)}"}
+        if (
+            not isinstance(target_ids, list)
+            or any(not isinstance(item, str) or not item for item in target_ids)
+            or len(target_ids) != len(set(target_ids))
+        ):
+            return {"ok": False, "blocked_reason": "queue_action_target_payload_malformed"}
         return {
             "ok": True,
             "action_id": action_id,

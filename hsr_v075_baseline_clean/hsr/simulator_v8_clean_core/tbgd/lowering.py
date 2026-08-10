@@ -29,10 +29,15 @@ from .character_source_resolution import (
     character_dynamic_value_decode_families,
     lower_character_decoded_dynamic_value_operation,
 )
+from .character_condition_contracts import (
+    character_condition_family_blocked_reason,
+    character_condition_family_stage,
+)
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
 )
+from .action_target_contracts import build_action_target_contract_catalog
 from .equipment_ability_families import (
     classify_equipment_callback,
     classify_equipment_condition,
@@ -60,7 +65,12 @@ from ..resource_event_contract import (
     resource_callback_runtime_sources,
     resource_scope_for_callback,
 )
-from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
+from ..rules.evaluator import (
+    EXECUTABLE_CONDITION_OPCODES,
+    NumericEvaluationContext,
+    RuleEvaluator,
+)
+from ..rules.action_target_contract import ActionTargetContractCatalogIR
 from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
@@ -531,6 +541,22 @@ class TBGDLowering:
         self._character_ability_source_resolution_catalog = catalog
         return catalog
 
+    def build_action_target_contract_catalog(self) -> ActionTargetContractCatalogIR:
+        """Build the complete action-target definition catalog without full IR."""
+
+        source_graph_catalog = self.build_character_ability_source_graph_catalog()
+        snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+        if type(snapshot) is not CharacterAbilityRawSnapshot:
+            raise TypeError("action target catalog requires the cached S0 snapshot")
+        definitions = self._lower_action_definitions()
+        return build_action_target_contract_catalog(
+            self.tbgd_root,
+            definitions=definitions,
+            snapshot=snapshot,
+            source_graph_catalog=source_graph_catalog,
+            definition_scope_complete=self.limits.max_records_per_table is None,
+        )
+
     def build_character_action_ability_slice(
         self,
         definition: ActionDefinitionIR,
@@ -557,15 +583,39 @@ class TBGDLowering:
         if len(action_sources) != 1:
             raise ValueError("character action slice owner is missing or ambiguous")
         owner_avatar_id = action_sources[0].owner_avatar_id
+        character_cards = build_character_card_ir(
+            self.tbgd_root,
+            max_records_per_table=None,
+            skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+            avatar_ids=frozenset({owner_avatar_id}),
+            ability_source_graph_catalog=source_graph_catalog,
+            ability_scope_catalog=scope_catalog,
+        )
+        skill_formula_bindings = tuple(
+            item
+            for item in character_cards.skill_formula_bindings
+            if item.action_id == definition.action_id
+            and item.level == definition.level
+        )
+        bounce_policies = tuple(
+            item
+            for item in character_cards.bounce_policies
+            if item.action_id == definition.action_id
+            and item.level == definition.level
+        )
         binding, phases, lowered = self._avatar_action_binding(definition)
         action_events, hit_profiles = _lower_action_execution_ir(
-            [definition], [binding], phases, [], []
+            [definition],
+            [binding],
+            phases,
+            list(skill_formula_bindings),
+            list(bounce_policies),
         )
         damage_emissions = _lower_damage_emissions(
             lowered.ability_tasks,
             lowered.effects,
             hit_profiles,
-            [],
+            list(skill_formula_bindings),
             self._damage_tag_registry,
         )
         toughness_emissions = _lower_toughness_emissions(
@@ -593,6 +643,13 @@ class TBGDLowering:
             action_sets,
             [definition],
         )
+        action_target_contract_catalog = build_action_target_contract_catalog(
+            self.tbgd_root,
+            definitions=(definition,),
+            snapshot=snapshot,
+            source_graph_catalog=source_graph_catalog,
+            definition_scope_complete=False,
+        )
         owner_entities = self._lower_entity_table(
             "ExcelOutput/AvatarConfig.json",
             ENTITY_TABLES["ExcelOutput/AvatarConfig.json"],
@@ -604,11 +661,14 @@ class TBGDLowering:
                 _dedupe_entities([*owner_entities, *lowered.entities]).values()
             ),
             action_definitions=(definition,),
+            action_target_contract_catalog=action_target_contract_catalog,
             action_ability_bindings=(binding,),
             ability_phases=tuple(phases),
             ability_tasks=tuple(ability_tasks),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
+            skill_formula_bindings=skill_formula_bindings,
+            bounce_policies=bounce_policies,
             damage_emissions=tuple(damage_emissions),
             toughness_emissions=tuple(toughness_emissions),
             status_callbacks=tuple(lowered.status_callbacks),
@@ -623,6 +683,11 @@ class TBGDLowering:
             target_expressions=tuple(lowered.target_expressions),
             combatant_action_sets=tuple(action_sets),
             action_admissions=tuple(action_admissions),
+            avatar_profiles=tuple(character_cards.avatar_profiles),
+            character_data_cards=tuple(character_cards.character_data_cards),
+            character_equipment_eligibilities=tuple(
+                character_cards.character_equipment_eligibilities
+            ),
             triggers=tuple(lowered.triggers),
             effects=tuple(lowered.effects),
             conditions=tuple(lowered.conditions),
@@ -1614,6 +1679,13 @@ class TBGDLowering:
         combatant_profiles = self._lower_combatant_profiles()
         wave_definitions = self._lower_wave_definitions(entities, combatant_profiles, monster_data_cards)
         action_definitions = self._lower_action_definitions()
+        action_target_contract_catalog = build_action_target_contract_catalog(
+            self.tbgd_root,
+            definitions=action_definitions,
+            snapshot=self._character_ability_raw_snapshot,
+            source_graph_catalog=character_ability_source_graph_catalog,
+            definition_scope_complete=self.limits.max_records_per_table is None,
+        )
         (
             action_ability_bindings,
             ability_phases,
@@ -1978,6 +2050,7 @@ class TBGDLowering:
             bounce_policies=tuple(bounce_policies),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
+            action_target_contract_catalog=action_target_contract_catalog,
             action_ability_bindings=tuple(action_ability_bindings),
             ability_phases=tuple(ability_phases),
             ability_tasks=tuple(ability_tasks),
@@ -14453,58 +14526,6 @@ DAMAGE_EMISSION_TARGET_ALIASES = {
     "CurrentActionTarget",
 }
 SUPPORTED_MODIFIER_VALUE_TYPES = {"Layer", "LifeTime", "MaxLayer"}
-EXECUTABLE_CONDITION_OPCODES = {
-    "AlwaysTrue",
-    "ByAnd",
-    "ByAny",
-    "ByAttackType",
-    "ByCheckModifierCallBackBehaviorFlag",
-    "ByCheckModifierCallBackIsSelf",
-    "ByCheckModifierCallBackName",
-    "ByCheckModifierCallBackStatusType",
-    "ByCompareAbilityProperty",
-    "ByCompareCharacterID",
-    "ByCompareDynamicValue",
-    "ByCompareCharacterNumber",
-    "ByCompareCurrentModifierStatusType",
-    "ByCompareHPRatio",
-    "ByCompareModifierValue",
-    "ByCompareMonsterID",
-    "ByCompareDamageCustomName",
-    "ByCompareDamageTag",
-    "ByCompareTarget",
-    "ByCompareTargetCount",
-    "ByContainBehaviorFlag",
-    "ByContainsParamFlag",
-    "ByCharacterDamageType",
-    "ByCompareChangeValue",
-    "ByCompareParamValue",
-    "ByCompareSPRatio",
-    "ByCompareWaveCount",
-    "ByHasStanceWeak",
-    "ByInTurnBasedGameModeState",
-    "ByIsDamageCritical",
-    "ByIsPropertyValueMinOrMax",
-    "ByIsTargetValid",
-    "ByIsTopActionDelayTarget",
-    "ByRandomChance",
-    "ByCurrentSkillName",
-    "ByCurrentSkillType",
-    "ByIsContainModifier",
-    "ByHaveEnemyAlive",
-    "ByIsCurrentSkillActive",
-    "ByIsInsertAction",
-    "ByIsTeammate",
-    "ByIsTurnOwnerEntity",
-    "ByNot",
-    "ByStatusCount",
-    "ByTargetAliveState",
-    "ByTargetListIntersects",
-    "ByTargetEntityType",
-    "ByTargetTeam",
-}
-
-
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
     payload = _compact_payload(value)
     if opcode == "AddModifier":
@@ -15313,6 +15334,9 @@ def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
         return "" if raw.get("BuffStatus") in {"Buff", "Debuff"} else "target_sort_buff_status_invalid"
     if kind == "TargetSortByActionOrder":
         return "" if type(raw.get("HighestFirst", False)) is bool else "target_sort_direction_invalid"
+    if kind == "TargetSortByCustomFormationIndexClientOnly":
+        key = raw.get("CustomFormationName")
+        return "" if isinstance(key, str) and key else "target_presentation_order_key_missing"
     if kind in P1_6_SAFE_TARGET_FETCH_KINDS:
         if kind == "TargetFetchPartner":
             return "target_partner_producer_dependency"
@@ -15783,6 +15807,15 @@ def _target_expression_execution_node(
         return TargetExpressionNodeIR.build(
             kind, node_source, {"highest_first": raw.get("HighestFirst", False)}
         )
+    if kind == "TargetSortByCustomFormationIndexClientOnly":
+        return TargetExpressionNodeIR.build(
+            "TargetPresentationOrderIgnored",
+            node_source,
+            {
+                "original_kind": kind,
+                "presentation_key": str(raw.get("CustomFormationName") or ""),
+            },
+        )
     if kind == "TargetTake":
         count = raw.get("Count")
         if count is None:
@@ -15946,15 +15979,21 @@ def _typed_condition_execution_node(
             source=source,
         ),
     )
-    family_stage = (
-        classify_equipment_condition(opcode, raw)
-        if equipment_scope
-        else "s7"
-    )
-    executable = (
-        family_stage in {"s7", "s8"}
-        and _condition_payload_executable(opcode, payload)
-    )
+    if equipment_scope:
+        family_stage = classify_equipment_condition(opcode, raw)
+        family_admitted = family_stage in {"s7", "s8"}
+        family_blocked_reason = (
+            "equipment_condition_family_unclassified"
+            if family_stage == "unknown"
+            else ""
+        )
+    else:
+        family_stage = character_condition_family_stage(opcode, raw)
+        family_admitted = family_stage == "existing_family"
+        family_blocked_reason = character_condition_family_blocked_reason(
+            opcode, raw
+        )
+    executable = family_admitted and _condition_payload_executable(opcode, payload)
     target_blocked_reason = _condition_payload_target_blocked_reason(payload)
     executable = executable and not target_blocked_reason
     return {
@@ -15969,9 +16008,8 @@ def _typed_condition_execution_node(
             else (
                 target_blocked_reason
                 or (
-                    "equipment_condition_family_unclassified"
-                    if equipment_scope and family_stage == "unknown"
-                    else f"condition_not_admitted:{opcode}"
+                    family_blocked_reason
+                    or f"condition_not_admitted:{opcode}"
                 )
             )
         ),
@@ -19180,6 +19218,13 @@ def _condition_payload_target_blocked_reason(value: Any) -> str:
     if type(value) is ConditionIR:
         return value.blocked_reason if value.coverage_status != "executable" else _condition_payload_target_blocked_reason(value.payload)
     if isinstance(value, Mapping):
+        if (
+            value.get("schema_version") == CONDITION_EXPRESSION_NODE_SCHEMA
+            and value.get("supported") is not True
+            and isinstance(value.get("blocked_reason"), str)
+            and value.get("blocked_reason")
+        ):
+            return str(value["blocked_reason"])
         return next((reason for child in value.values() if (reason := _condition_payload_target_blocked_reason(child))), "")
     if isinstance(value, (list, tuple)):
         return next((reason for child in value if (reason := _condition_payload_target_blocked_reason(child))), "")

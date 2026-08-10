@@ -34,6 +34,10 @@ from ..systems.action_contract import (
     ActionContractSystem,
     ActionSubmissionAuthorization,
 )
+from ..systems.action_selection import (
+    ActionTargetSelectionContext,
+    ActionTargetSelectionSystem,
+)
 from ..systems.action_event_contract import (
     condition_skill_type as _condition_skill_type,
     damage_listener_window_event as _damage_listener_window_event,
@@ -43,7 +47,6 @@ from ..systems.action_preflight import (
     action_event_blocked_reason,
     action_skill_point_delta,
     combined_blocked_reason,
-    target_policy_for_action,
 )
 from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
@@ -54,7 +57,7 @@ from ..systems.rng import rng_choices_from_payload, validate_rng_choice_ledger
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.summon_runtime import validate_summon_runtime
-from ..systems.target import TargetSystem
+from ..systems.target import TargetSystem, resolve_action_bounce_policy
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
@@ -86,6 +89,7 @@ class CombatExecutor:
         self.reducer = MutationReducer()
         self.resources = ResourceSystem()
         self.targets = TargetSystem()
+        self.action_targets = ActionTargetSelectionSystem(rules)
         self.timeline = TimelineSystem()
         self.lifecycle = UnitLifecycleSystem()
         self.damage = DamageSystem(rules)
@@ -321,14 +325,26 @@ class CombatExecutor:
         state: BattleState,
         *,
         submission_authorization: ActionSubmissionAuthorization | None = None,
+        target_selection_context: ActionTargetSelectionContext | None = None,
     ) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
-        command = _command_with_character_card_level_bonus(command, state, self.rules)
+        target_context_reason = self.action_targets.context_identity_blocked_reason(
+            command,
+            target_selection_context,
+        )
+        if target_context_reason:
+            return state, _action_target_context_blocked_transition(
+                state,
+                command,
+                target_context_reason,
+            )
+        assert target_selection_context is not None
         queue_resource_policy = _queue_action_resource_policy(command)
         action_contract = self.action_contract.evaluate(
             state,
             command,
             authorization=submission_authorization,
+            target_selection_fingerprint=target_selection_context.context_fingerprint,
             queue_resource_policy=queue_resource_policy,
         )
         if not action_contract.ok:
@@ -345,7 +361,37 @@ class CombatExecutor:
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
         toughness_emissions = self.rules.toughness_emissions_for_action(command.action_id, command.action_level)
-        bounce_policy = _bounce_policy_for_profiles(self.rules, hit_profiles)
+        bounce_expected = bool(
+            action_event_ir.target_mode == "bounce"
+            or any(profile.bounce_policy_id for profile in hit_profiles)
+        )
+        bounce_resolution = (
+            resolve_action_bounce_policy(
+                self.rules,
+                command.action_id,
+                command.action_level,
+                hit_profiles=hit_profiles,
+                actor_entity_ref=(
+                    state.units[command.actor_id].template_id
+                    if command.actor_id in state.units
+                    else ""
+                ),
+            )
+            if bounce_expected
+            else None
+        )
+        bounce_policy = (
+            bounce_resolution.policy
+            if bounce_resolution is not None and bounce_resolution.resolved
+            else None
+        )
+        bounce_policy_blocked_reason = (
+            bounce_resolution.blocked_reason
+            if bounce_resolution is not None and not bounce_resolution.resolved
+            else "bounce_action_target_mode_mismatch"
+            if bounce_policy is not None and action_event_ir.target_mode != "bounce"
+            else ""
+        )
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         binding_blocked_reason = action_binding_blocked_reason(action_binding)
         action_event_reason = action_event_blocked_reason(action_event_ir)
@@ -372,16 +418,11 @@ class CombatExecutor:
                 "source": command.source,
             },
         )
-        target_result = self.targets.resolve_action_targets(
+        target_result = self.action_targets.resolve_impact(
             state,
-            command.actor_id,
-            command.target_ids,
-            policy=target_policy_for_action(
-                self.rules,
-                action_definition,
-                action_event_ir.target_mode,
-                action_event=action_event_ir,
-            ),
+            command,
+            target_selection_context,
+            action_event_ir,
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,
@@ -399,7 +440,7 @@ class CombatExecutor:
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
                 "damage_emission_ids": [emission.damage_emission_id for emission in damage_emissions],
                 "toughness_emission_ids": [emission.toughness_emission_id for emission in toughness_emissions],
-                "bounce_policy_id": bounce_policy.get("bounce_policy_id", "") if bounce_policy else "",
+                "bounce_policy_id": bounce_policy.bounce_policy_id if bounce_policy else "",
             },
             toughness_emissions=toughness_emissions,
         )
@@ -445,6 +486,7 @@ class CombatExecutor:
             execution_binding_blocked_reason,
             execution_event_blocked_reason,
             action_execution_plan.target_plan.blocked_reason,
+            bounce_policy_blocked_reason,
         )
         blocked_reason = _action_blocked_reason(
             target_ok=target_result.ok,
@@ -785,18 +827,58 @@ class CombatExecutor:
                     applied_toughness_keys: set[tuple[str, str]] = set()
                     for damage_plan in action_execution_plan.damage_plan:
                         if damage_plan.target_group.startswith("bounce:"):
-                            bounce_result = self.targets.resolve_bounce_hit_target(
-                                current_state,
-                                actor_id=command.actor_id,
-                                primary_target_id=action_execution_plan.primary_action_target_id
-                                or (target_result.resolution.selected[0] if target_result.resolution.selected else ""),
-                                bounce_policy=_bounce_policy_from_damage_plan(damage_plan),
-                                hit_index=damage_plan.hit_index,
-                                previous_hit_targets=tuple(action_hit_targets),
-                                action_id=command.action_id,
-                                action_level=command.action_level,
-                                event_payload=command.metadata,
+                            bounce_result = (
+                                self.targets.resolve_bounce_hit_target(
+                                    current_state,
+                                    actor_id=command.actor_id,
+                                    primary_target_id=action_execution_plan.primary_action_target_id
+                                    or (
+                                        target_result.resolution.selected[0]
+                                        if target_result.resolution.selected
+                                        else ""
+                                    ),
+                                    bounce_policy=bounce_policy,
+                                    hit_index=damage_plan.hit_index,
+                                    previous_hit_targets=tuple(action_hit_targets),
+                                    action_id=command.action_id,
+                                    action_level=command.action_level,
+                                    source_task_id=damage_plan.source_task_id,
+                                    hit_profile_id=damage_plan.hit_profile_id,
+                                    event_payload=command.metadata,
+                                )
+                                if bounce_policy is not None
+                                else None
                             )
+                            if bounce_result is None:
+                                execution_node_results.append(
+                                    ExecutionNodeResult(
+                                        node_kind="target_selection",
+                                        node_id=damage_plan.damage_emission_id
+                                        or damage_plan.source_task_id,
+                                        status="blocked",
+                                        reason_code="bounce_policy_missing_at_execution",
+                                    )
+                                )
+                                continue
+                            if bounce_result.sequence_exhausted:
+                                execution_node_results.append(
+                                    ExecutionNodeResult(
+                                        node_kind="target_selection",
+                                        node_id=damage_plan.damage_emission_id
+                                        or damage_plan.source_task_id,
+                                        status="complete",
+                                    )
+                                )
+                                runtime_records.append(
+                                    SettlementRecord(
+                                        record_type="bounce_sequence_exhausted",
+                                        source="target_system",
+                                        process_only=True,
+                                        payload=bounce_result.metadata,
+                                        trace=damage_plan.hit_source_trace,
+                                    ).to_json()
+                                )
+                                break
                             if not bounce_result.ok:
                                 execution_node_results.append(
                                     ExecutionNodeResult(
@@ -1714,6 +1796,28 @@ class CombatExecutor:
                 trace={"event_id": action_event.event_id},
             ).to_json(),
             SettlementRecord(
+                record_type="action_target_selection_context",
+                source="action_target_selection_system",
+                process_only=True,
+                payload={
+                    "selection_context": target_selection_context.to_json(),
+                    "impact": target_result.to_json(),
+                },
+                trace={
+                    "action_target_contract": (
+                        self.rules.action_target_contract(
+                            command.action_id,
+                            command.action_level,
+                        ).value.to_json()
+                        if self.rules.action_target_contract(
+                            command.action_id,
+                            command.action_level,
+                        ).value is not None
+                        else {}
+                    ),
+                },
+            ).to_json(),
+            SettlementRecord(
                 record_type="action_definition",
                 source="rulebook",
                 process_only=True,
@@ -1815,13 +1919,28 @@ class CombatExecutor:
             ).to_json(),
             SettlementRecord(
                 record_type="target_resolution",
-                source="target_system",
+                source="action_target_selection_system",
                 process_only=True,
                 payload=target_result.resolution.to_json(),
                 trace={"errors": list(target_result.errors)},
             ).to_json(),
         ]
         records.extend(runtime_records)
+        if atomic_commit.outcome.successor_eligible:
+            records.extend(
+                SettlementRecord(
+                    record_type="target_random_choice",
+                    source="target_random_sampler",
+                    process_only=True,
+                    payload=event.to_json(),
+                    trace=(
+                        dict(event.metadata.get("source_trace") or {})
+                        if isinstance(event.metadata.get("source_trace"), dict)
+                        else {}
+                    ),
+                ).to_json()
+                for event in target_rng_events
+            )
         records.append(
             SettlementRecord(
                 record_type="rng_choice_ledger",
@@ -1850,7 +1969,7 @@ class CombatExecutor:
             records.append(
                 SettlementRecord(
                     record_type="target_error",
-                    source="target_system",
+                    source="action_target_selection_system",
                     process_only=True,
                     payload={"errors": list(target_result.errors)},
                 ).to_json()
@@ -1923,6 +2042,10 @@ class CombatExecutor:
                     [emission for emission in toughness_emissions if emission.coverage_status == "executable"]
                 ),
                 "definition_id": action_definition.definition_id,
+                "target_query_fingerprint": target_selection_context.accepted.query_fingerprint,
+                "target_selection_fingerprint": target_selection_context.accepted.selection_fingerprint,
+                "target_selection_context_fingerprint": target_selection_context.context_fingerprint,
+                "target_impact_fingerprint": target_result.impact_fingerprint,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
                 "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
@@ -2523,17 +2646,6 @@ def _callback_kind_for_step(phase: str) -> str:
     return ""
 
 
-def _bounce_policy_for_profiles(rules: RuleBook, hit_profiles) -> dict[str, JSONValue]:
-    for profile in hit_profiles:
-        policy_id = getattr(profile, "bounce_policy_id", "")
-        if not policy_id:
-            continue
-        policy = rules.bounce_policy(policy_id)
-        if policy is not None:
-            return policy.to_json()
-    return {}
-
-
 def _damage_packet(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
@@ -2857,11 +2969,6 @@ def _trigger_ids_for_detail_event(detail: dict[str, JSONValue], event: str) -> t
     return tuple(str(item) for item in value if isinstance(item, str) and item)
 
 
-def _bounce_policy_from_damage_plan(damage_plan: DamagePlan) -> dict[str, JSONValue]:
-    policy = (damage_plan.target_selection_policy or {}).get("bounce_policy")
-    return policy if isinstance(policy, dict) else {}
-
-
 def _toughness_plans_for_damage_plan(
     toughness_plans: tuple[ToughnessPlan, ...],
     damage_plan: DamagePlan,
@@ -3045,6 +3152,61 @@ def _action_contract_blocked_transition(
     )
 
 
+def _action_target_context_blocked_transition(
+    state: BattleState,
+    command: ActionCommand,
+    reason: str,
+) -> BattleTransition:
+    node = ExecutionNodeResult(
+        node_kind="action_target_selection_context",
+        node_id=f"{command.actor_id}:{command.action_id}:{command.action_level}",
+        status="blocked",
+        reason_code=reason,
+    )
+    atomic = finalize_selected_execution_graph(
+        state,
+        state,
+        (),
+        (node,),
+        preflight_blocked=True,
+        preflight_reason=reason,
+    )
+    record = SettlementRecord(
+        record_type="action_target_selection_context_blocked",
+        source="action_target_selection_system",
+        process_only=True,
+        payload={"reason": reason, "state_unchanged": True},
+    ).to_json()
+    return BattleTransition(
+        transaction=ActionTransaction(
+            command=command,
+            before=state.snapshot(),
+            mutations=(),
+            settlement=ActionSettlement(
+                action_id=command.action_id,
+                actor_id=command.actor_id,
+                target_ids=(),
+                records=(record,),
+            ),
+        ),
+        after=state.snapshot(),
+        target_resolution=TargetResolution(
+            requested=command.target_ids,
+            selected=(),
+            rejected=command.target_ids,
+            reason=reason,
+            source="action_target_selection_system",
+        ),
+        outcome=atomic.outcome,
+        coverage={
+            "action_enabled": False,
+            "blocked_reason": reason,
+            "target_selection_context_valid": False,
+            "atomic_commit": atomic.evidence,
+        },
+    )
+
+
 def _blocked_plan_value_resolution(
     request_data: dict[str, object],
     context: ValueContext,
@@ -3096,46 +3258,6 @@ def _json_safe(value: object) -> JSONValue:
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return str(value)
-
-
-def _command_with_character_card_level_bonus(
-    command: ActionCommand,
-    state: BattleState,
-    rules: RuleBook,
-) -> ActionCommand:
-    unit = state.units.get(command.actor_id)
-    if unit is None:
-        return command
-    bonuses = unit.flags.get("eidolon_skill_level_bonus_by_action_id")
-    if not isinstance(bonuses, dict):
-        return command
-    raw_bonus = bonuses.get(command.action_id)
-    if not isinstance(raw_bonus, (int, float)) or raw_bonus <= 0:
-        return command
-    levels = rules.action_levels(command.action_id)
-    if not levels:
-        return command
-    requested_level = command.action_level
-    effective_level = min(max(levels), requested_level + int(raw_bonus))
-    if effective_level == requested_level:
-        return command
-    sources = unit.flags.get("eidolon_skill_level_bonus_sources")
-    source_payload = sources.get(command.action_id, []) if isinstance(sources, dict) else []
-    metadata = {
-        **command.metadata,
-        "requested_action_level": requested_level,
-        "effective_action_level": effective_level,
-        "effective_action_level_bonus": int(raw_bonus),
-        "effective_action_level_source": {
-            "source_kind": "character_data_card_eidolon_skill_level_bonus",
-            "action_id": command.action_id,
-            "requested_level": requested_level,
-            "effective_level": effective_level,
-            "bonus": int(raw_bonus),
-            "sources": source_payload if isinstance(source_payload, list) else [],
-        },
-    }
-    return replace(command, action_level=effective_level, metadata=metadata)
 
 
 def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:

@@ -90,7 +90,7 @@ async function saveCase() {
 async function runScenario({ quiet = false } = {}) {
   const scenario = parseEditor("scenarioEditor");
   const observations = parseEditor("observationsEditor");
-  const mode = document.querySelector("input[name=mode]:checked").value;
+  const mode = "decision";
   if (!quiet) setMessage("正在运行...");
   const report = await api("/api/run", {
     method: "POST",
@@ -102,8 +102,6 @@ async function runScenario({ quiet = false } = {}) {
         initialize_timeline: el("initTimeline").checked,
         include_raw_transition: true,
         write_tmp_report: el("writeTmp").checked,
-        auto_skip_enemy_turns: true,
-        max_auto_skip_turns: 20,
       },
     }),
   });
@@ -346,10 +344,18 @@ async function selectSkill(slotName) {
     setMessage(slot ? slot.blocked_reason || "动作槽位未接通" : "找不到动作槽位", "warn");
     return;
   }
-  const selectableTargets = (prompt.targets || []).filter((item) => item.selection_kind !== "auto");
-  const autoTargetIds = Array.isArray(slot.auto_target_ids) ? slot.auto_target_ids.filter(Boolean) : [];
-  if (autoTargetIds.length && selectableTargets.length === 0) {
-    await appendRouteStepWithTargets(slot, autoTargetIds, "自动目标组");
+  const query = slot.target_query || null;
+  if (!query) {
+    await appendRouteStepWithTargets(slot, [], "无目标控制动作");
+    return;
+  }
+  const candidateIds = Array.isArray(query.candidate_ids) ? query.candidate_ids.filter(Boolean) : [];
+  if (query.selection_mode === "automatic") {
+    await appendRouteStepWithTargets(slot, [], "内核自动目标组");
+    return;
+  }
+  if (!candidateIds.length) {
+    setMessage("内核没有返回合法候选目标", "warn");
     return;
   }
   state.selectedSkill = slot;
@@ -377,15 +383,15 @@ async function appendRouteStep(slot, targetUnit) {
 }
 
 async function appendRouteStepWithTargets(slot, targetIds, targetLabel) {
-  const prompt = (state.report && state.report.action_prompt) || {};
-  if (!prompt.current_unit_id || !slot.action_ref || !slot.action_level) {
+  const actorId = slot.actor_id || "";
+  if (!actorId || !slot.action_ref || slot.action_level === undefined || slot.action_level === null) {
     setMessage("动作槽位未接通，未生成路线", "warn");
     return;
   }
   const scenario = parseEditor("scenarioEditor");
   scenario.route = Array.isArray(scenario.route) ? scenario.route : [];
   scenario.route.push({
-    actor_id: prompt.current_unit_id,
+    actor_id: actorId,
     action_ref: slot.action_ref,
     action_level: Number(slot.action_level),
     target_ids: targetIds,
@@ -394,13 +400,15 @@ async function appendRouteStepWithTargets(slot, targetIds, targetLabel) {
   });
   el("scenarioEditor").value = pretty(scenario);
   state.selectedSkill = null;
-  setMessage(`已追加路线：${prompt.current_unit_name} 使用 ${slot.display_label || slot.label} -> ${targetLabel}`, "ok");
+  setMessage(`已追加路线：${slot.actor_name || actorId} 使用 ${slot.display_label || slot.label} -> ${targetLabel}`, "ok");
   await runScenario({ quiet: true });
 }
 
 function isPromptTarget(unitId) {
-  const prompt = (state.report && state.report.action_prompt) || {};
-  return (prompt.targets || []).some((item) => item.unit_id === unitId && item.selection_kind !== "auto");
+  const query = (state.selectedSkill && state.selectedSkill.target_query) || {};
+  return query.selection_mode === "explicit"
+    && Array.isArray(query.candidate_ids)
+    && query.candidate_ids.includes(unitId);
 }
 
 function undoRouteStep() {

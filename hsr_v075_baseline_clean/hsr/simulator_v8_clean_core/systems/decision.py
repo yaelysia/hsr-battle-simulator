@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue
 from ..rules.rulebook import RuleBook
 from .action_availability import ActionAvailabilitySystem, ActionAvailabilityView, ActionChoice
+from .action_selection import ActionTargetSelectionContext
 from .phase_machine import TURN_END, CombatPhaseMachine
 from .scheduler import (
     CombatScheduler,
@@ -30,6 +32,26 @@ class DecisionToken:
     actor_id: str
     current_window: str
 
+    def __post_init__(self) -> None:
+        if type(self) is not DecisionToken:
+            raise TypeError("decision token must not be subclassed")
+        if self.schema_version != DECISION_TOKEN_SCHEMA_VERSION:
+            raise ValueError("decision token schema is invalid")
+        checks = {
+            "decision_id": (self.decision_id, "decision:"),
+            "state_revision": (self.state_revision, "state:"),
+            "choice_revision": (self.choice_revision, "choices:"),
+        }
+        for label, (value, prefix) in checks.items():
+            if not isinstance(value, str) or not value.startswith(prefix):
+                raise ValueError(f"decision token {label} is invalid")
+        if not all(isinstance(value, str) and value for value in (self.mode, self.current_window)):
+            raise ValueError("decision token context is incomplete")
+        if not isinstance(self.actor_id, str) or (
+            not self.actor_id and self.mode != "timeline_actor_selectable"
+        ):
+            raise ValueError("decision token actor context is invalid")
+
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "schema_version": self.schema_version,
@@ -42,15 +64,28 @@ class DecisionToken:
         }
 
     @classmethod
-    def from_json(cls, value: dict[str, JSONValue]) -> "DecisionToken":
+    def from_json(cls, value: Mapping[str, JSONValue]) -> "DecisionToken":
+        expected = {
+            "schema_version",
+            "decision_id",
+            "state_revision",
+            "choice_revision",
+            "mode",
+            "actor_id",
+            "current_window",
+        }
+        if set(value) != expected:
+            raise ValueError("decision token fields are invalid")
+        if any(not isinstance(value[key], str) for key in expected):
+            raise TypeError("decision token fields must be strings")
         return cls(
-            schema_version=str(value.get("schema_version") or ""),
-            decision_id=str(value.get("decision_id") or ""),
-            state_revision=str(value.get("state_revision") or ""),
-            choice_revision=str(value.get("choice_revision") or ""),
-            mode=str(value.get("mode") or ""),
-            actor_id=str(value.get("actor_id") or ""),
-            current_window=str(value.get("current_window") or ""),
+            schema_version=value["schema_version"],  # type: ignore[arg-type]
+            decision_id=value["decision_id"],  # type: ignore[arg-type]
+            state_revision=value["state_revision"],  # type: ignore[arg-type]
+            choice_revision=value["choice_revision"],  # type: ignore[arg-type]
+            mode=value["mode"],  # type: ignore[arg-type]
+            actor_id=value["actor_id"],  # type: ignore[arg-type]
+            current_window=value["current_window"],  # type: ignore[arg-type]
         )
 
 
@@ -100,6 +135,7 @@ class DecisionSystem:
     def __init__(self, rules: RuleBook):
         self.rules = rules
         self.availability = ActionAvailabilitySystem(rules)
+        self.action_targets = self.availability.action_targets
         self.scheduler = CombatScheduler(rules)
         self.phases = CombatPhaseMachine()
 
@@ -126,6 +162,18 @@ class DecisionSystem:
                 ready=False,
                 availability=availability,
                 blocked_reason=availability.ordinary_input_blocked_reason,
+                combat_phase=combat_phase,
+                allowed_next_phases=allowed_next_phases,
+            )
+        ambiguous_identity = _ambiguous_choice_identity(availability.choices)
+        if ambiguous_identity is not None:
+            return CurrentDecision(
+                ready=False,
+                availability=availability,
+                blocked_reason=(
+                    "decision_choice_identity_ambiguous:"
+                    + ":".join(str(item) for item in ambiguous_identity)
+                ),
                 combat_phase=combat_phase,
                 allowed_next_phases=allowed_next_phases,
             )
@@ -213,6 +261,12 @@ class DecisionSystem:
         token: DecisionToken,
         command: ActionCommand,
     ) -> SchedulerStepResult:
+        if type(token) is not DecisionToken:
+            return self.scheduler.reject_decision_submission(
+                state,
+                "decision_token_type_mismatch",
+                {"command": _command_payload(command)},
+            )
         current = self.current_decision(state)
         if token.schema_version != DECISION_TOKEN_SCHEMA_VERSION:
             return self.scheduler.reject_decision_submission(
@@ -246,41 +300,168 @@ class DecisionSystem:
                     "current_token": current.token.to_json(),
                 },
             )
-        choice = _matching_choice(current.availability.choices, command)
+        choice, choice_reason = _matching_choice(
+            current.availability.choices,
+            command,
+        )
         if choice is None:
             return self.scheduler.reject_decision_submission(
                 state,
-                "command_not_in_decision_choices",
+                choice_reason,
                 {
                     "command": _command_payload(command),
                     "decision_id": token.decision_id,
                     "choice_ids": [choice.choice_id for choice in current.availability.choices],
                 },
             )
+        canonical_command, envelope_reason = _canonical_command_for_choice(
+            choice,
+            command,
+        )
+        if canonical_command is None:
+            return self.scheduler.reject_decision_submission(
+                state,
+                envelope_reason or "decision_command_envelope_blocked",
+                {
+                    "command": _command_payload(command),
+                    "choice_id": choice.choice_id,
+                },
+            )
+        selection_context: ActionTargetSelectionContext | None = None
+        if choice.choice_kind != "timeline_actor":
+            if choice.target_query is None:
+                return self.scheduler.reject_decision_submission(
+                    state,
+                    "action_target_query_missing",
+                    {"command": _command_payload(command), "choice_id": choice.choice_id},
+                )
+            target_decision = self.action_targets.accept(
+                state,
+                choice.target_query,
+                canonical_command.target_ids,
+            )
+            if not target_decision.accepted or target_decision.context is None:
+                return self.scheduler.reject_decision_submission(
+                    state,
+                    target_decision.blocked_reason or "action_target_selection_blocked",
+                    {
+                        "command": _command_payload(canonical_command),
+                        "choice_id": choice.choice_id,
+                        "target_decision": target_decision.to_json(),
+                    },
+                )
+            selection_context = target_decision.context
         authorization = _issue_decision_submission_authorization(
             decision_id=token.decision_id,
             state_revision=token.state_revision,
-            actor_id=command.actor_id,
-            action_id=command.action_id,
-            action_level=command.action_level,
+            actor_id=canonical_command.actor_id,
+            action_id=canonical_command.action_id,
+            action_level=canonical_command.action_level,
+            selection_context=selection_context,
         )
-        return self.scheduler.step(state, command, decision_authorization=authorization)
+        return self.scheduler.step(
+            state,
+            canonical_command,
+            decision_authorization=authorization,
+        )
 
 
-def _matching_choice(choices: tuple[ActionChoice, ...], command: ActionCommand) -> ActionChoice | None:
-    for choice in choices:
+def _matching_choice(
+    choices: tuple[ActionChoice, ...],
+    command: ActionCommand,
+) -> tuple[ActionChoice | None, str]:
+    matches = tuple(
+        choice
+        for choice in choices
         if (
             choice.actor_id == command.actor_id
             and choice.action_id == command.action_id
             and choice.action_level == command.action_level
-        ):
-            if (
-                choice.choice_kind == "timeline_actor"
-                and command.metadata.get("timeline_choice_id") != choice.metadata.get("timeline_choice_id")
-            ):
-                continue
-            return choice
+        )
+    )
+    if not matches:
+        return None, "command_not_in_decision_choices"
+    if len(matches) != 1:
+        return None, "decision_choice_identity_ambiguous"
+    return matches[0], ""
+
+
+def _ambiguous_choice_identity(
+    choices: tuple[ActionChoice, ...],
+) -> tuple[str, str, int] | None:
+    seen: set[tuple[str, str, int]] = set()
+    for choice in choices:
+        identity = (choice.actor_id, choice.action_id, choice.action_level)
+        if identity in seen:
+            return identity
+        seen.add(identity)
     return None
+
+
+_DECISION_ENVELOPE_METADATA = frozenset(
+    {
+        "action_choice_source",
+        "effective_action_level",
+        "effective_action_level_bonus",
+        "effective_action_level_source",
+        "enemy_action_candidate",
+        "parent_queue_entry_id",
+        "queue_entry_id",
+        "queue_intent_id",
+        "queue_parent",
+        "queue_resolution_id",
+        "queue_window_plan",
+        "requested_action_level",
+        "scheduler_parent",
+        "selection_controller",
+        "timeline_choice_id",
+    }
+)
+
+
+def _canonical_command_for_choice(
+    choice: ActionChoice,
+    submitted: ActionCommand,
+) -> tuple[ActionCommand | None, str]:
+    template = choice.command_template
+    template_metadata = template.get("metadata")
+    if not isinstance(template_metadata, Mapping):
+        return None, "decision_choice_command_metadata_invalid"
+    injected = tuple(
+        sorted(
+            key
+            for key in _DECISION_ENVELOPE_METADATA
+            if key in submitted.metadata
+            and submitted.metadata.get(key) != template_metadata.get(key)
+        )
+    )
+    if injected:
+        return None, "decision_command_envelope_metadata_mismatch:" + ",".join(injected)
+    external_metadata = {
+        key: value
+        for key, value in submitted.metadata.items()
+        if key not in _DECISION_ENVELOPE_METADATA and key not in template_metadata
+    }
+    source = template.get("source")
+    queue_name = template.get("queue_name")
+    if source not in {"manual", "ai", "queue", "system"}:
+        return None, "decision_choice_command_source_invalid"
+    if queue_name is not None and (
+        not isinstance(queue_name, str) or not queue_name
+    ):
+        return None, "decision_choice_command_queue_invalid"
+    return (
+        ActionCommand(
+            actor_id=choice.actor_id,
+            action_id=choice.action_id,
+            action_level=choice.action_level,
+            target_ids=submitted.target_ids,
+            source=source,  # type: ignore[arg-type]
+            queue_name=queue_name,
+            metadata={**external_metadata, **dict(template_metadata)},
+        ),
+        "",
+    )
 
 
 def _choice_revision(availability: ActionAvailabilityView) -> str:
@@ -298,10 +479,11 @@ def _choice_revision(availability: ActionAvailabilityView) -> str:
                 "action_id": choice.action_id,
                 "action_level": choice.action_level,
                 "admission_id": choice.admission_id,
-                "auto_target_ids": list(choice.auto_target_ids),
-                "selectable_target_ids": list(choice.selectable_target_ids),
-                "target_policy": choice.target_policy,
-                "target_status": choice.target_status,
+                "target_query_fingerprint": (
+                    choice.target_query.query_fingerprint
+                    if choice.target_query is not None
+                    else ""
+                ),
                 "resource_status": choice.resource_status,
             }
             for choice in availability.choices

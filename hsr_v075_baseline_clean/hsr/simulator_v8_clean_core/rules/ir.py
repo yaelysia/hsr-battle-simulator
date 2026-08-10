@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
@@ -25,6 +26,9 @@ from ..equipment.models import (
 from ..immutable_json import freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
 from .expression_ir import DynamicValueOperationIR, is_exact_numeric_expression
+
+if TYPE_CHECKING:
+    from .action_target_contract import ActionTargetContractCatalogIR
 
 
 def _ir_json_value(value: Any) -> JSONValue:
@@ -3680,6 +3684,7 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetSortByModifierValue": frozenset({"modifier_name", "value_type", "highest_first"}),
     "TargetSortByModifierStatusCount": frozenset({"buff_status", "highest_first"}),
     "TargetSortByActionOrder": frozenset({"highest_first"}),
+    "TargetPresentationOrderIgnored": frozenset({"original_kind", "presentation_key"}),
     "TargetUnsupported": frozenset({"original_kind", "blocked_reason"}),
 }
 
@@ -3994,7 +3999,8 @@ def _validate_target_node_payload(
         elif field_name in {
             "alias", "entity_type_mask", "alive_state_mask", "name", "unique_name",
             "side", "counting_option", "index_type", "sort_key", "team_type", "max_rank",
-            "modifier_name", "value_type", "buff_status", "compute_type", "original_kind", "blocked_reason",
+            "modifier_name", "value_type", "buff_status", "compute_type", "original_kind",
+            "presentation_key", "blocked_reason",
         }:
             if not isinstance(value, str):
                 raise TypeError(f"target node {field_name} must be a string")
@@ -4054,6 +4060,12 @@ def _validate_target_node_payload(
         "Buff", "Debuff",
     }:
         raise ValueError("target modifier status sort contract is invalid")
+    if expression_kind == "TargetPresentationOrderIgnored" and normalized["original_kind"] != (
+        "TargetSortByCustomFormationIndexClientOnly"
+    ):
+        raise ValueError("target presentation-only operation is invalid")
+    if expression_kind == "TargetPresentationOrderIgnored" and not normalized["presentation_key"]:
+        raise ValueError("target presentation-only key is missing")
     if expression_kind == "TargetTake" and not normalized["count_expr"]:
         raise ValueError("target take requires a count")
     if expression_kind == "TargetTake" and not _target_numeric_expression_runtime_bound(
@@ -5953,9 +5965,93 @@ class BouncePolicyIR:
     continue_on_all_defeated: bool
     allow_repeat_after_all_hit: bool
     rng_source_kind: str
+    random_selector_sources: tuple[IRSource, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self) is not BouncePolicyIR:
+            raise TypeError("bounce policy must not be subclassed")
+        required_identities = (
+            self.bounce_policy_id,
+            self.action_id,
+            self.initial_target_group,
+            self.bounce_target_group,
+            self.candidate_scope,
+            self.selection_strategy,
+            self.rng_source_kind,
+        )
+        if any(not isinstance(value, str) or not value for value in required_identities):
+            raise ValueError("bounce policy identity is incomplete")
+        if type(self.level) is not int or self.level <= 0:
+            raise ValueError("bounce policy level is invalid")
+        if type(self.bounce_count) is not int or self.bounce_count < 0:
+            raise ValueError("bounce policy count is invalid")
+        if any(
+            type(value) is not bool
+            for value in (
+                self.live_target_priority,
+                self.continue_on_all_defeated,
+                self.allow_repeat_after_all_hit,
+            )
+        ):
+            raise TypeError("bounce policy switches must be booleans")
+        if type(self.source) is not IRSource:
+            raise TypeError("bounce policy requires an exact IR source")
+        if not isinstance(self.random_selector_sources, tuple) or any(
+            type(source) is not IRSource for source in self.random_selector_sources
+        ):
+            raise TypeError("bounce policy random selector sources must be exact")
+        selector_sources = tuple(self.random_selector_sources)
+        canonical_selector_sources = tuple(
+            sorted(selector_sources, key=_bounce_selector_source_order_key)
+        )
+        selector_identities = tuple(
+            (
+                source.source_path,
+                str(source.evidence.get("json_path") or ""),
+                source.raw_id,
+            )
+            for source in selector_sources
+        )
+        if (
+            len(selector_identities) != len(set(selector_identities))
+            or selector_sources != canonical_selector_sources
+            or any(
+                source.raw_type != "RandomSelectInTargetList"
+                or not isinstance(source.evidence.get("json_path"), str)
+                or not source.evidence.get("json_path")
+                for source in selector_sources
+            )
+        ):
+            raise ValueError("bounce policy random selector source lineage is invalid")
+        object.__setattr__(self, "random_selector_sources", selector_sources)
+        if self.coverage_status == "executable":
+            if self.blocked_reason:
+                raise ValueError("executable bounce policy carries a blocker")
+            if not self.character_data_card_id:
+                raise ValueError("executable bounce policy requires an owner card")
+            if self.bounce_count <= 0:
+                raise ValueError("executable bounce policy requires positive hit count")
+            if self.initial_target_group != "primary" or self.bounce_target_group != "bounce":
+                raise ValueError("executable bounce policy target groups are invalid")
+            if self.candidate_scope != "enemy_single":
+                raise ValueError("executable bounce policy candidate scope is unsupported")
+            if self.selection_strategy not in {
+                "random_live_targets",
+                "prefer_unhit_then_random",
+            }:
+                raise ValueError("executable bounce policy selection strategy is unsupported")
+            if self.rng_source_kind != "battle_rng":
+                raise ValueError("executable bounce policy RNG source is unsupported")
+            if selector_sources and len(selector_sources) != self.bounce_count:
+                raise ValueError("bounce policy random selector count is inconsistent")
+        elif self.coverage_status == "blocked":
+            if not self.blocked_reason:
+                raise ValueError("blocked bounce policy requires a reason")
+        else:
+            raise ValueError("bounce policy coverage must be executable or blocked")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -5972,10 +6068,25 @@ class BouncePolicyIR:
             "continue_on_all_defeated": self.continue_on_all_defeated,
             "allow_repeat_after_all_hit": self.allow_repeat_after_all_hit,
             "rng_source_kind": self.rng_source_kind,
+            "random_selector_sources": [
+                source.to_json() for source in self.random_selector_sources
+            ],
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
         }
+
+
+def _bounce_selector_source_order_key(
+    source: IRSource,
+) -> tuple[str, tuple[tuple[int, int | str], ...], str]:
+    path = str(source.evidence.get("json_path") or "")
+    segments = tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.split(r"(\d+)", path)
+        if part
+    )
+    return source.source_path, segments, source.raw_id
 
 
 @dataclass(frozen=True)
@@ -7307,6 +7418,7 @@ class CanonicalIR:
     bounce_policies: tuple[BouncePolicyIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
+    action_target_contract_catalog: ActionTargetContractCatalogIR | None = None
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
     ability_phases: tuple[AbilityPhaseIR, ...] = ()
     ability_tasks: tuple[AbilityTaskIR, ...] = ()
@@ -7355,6 +7467,39 @@ class CanonicalIR:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        target_catalog = self.action_target_contract_catalog
+        if target_catalog is not None:
+            from .action_target_contract import ActionTargetContractCatalogIR
+
+            if type(target_catalog) is not ActionTargetContractCatalogIR:
+                raise TypeError(
+                    "CanonicalIR action target catalog must be the exact internal type"
+                )
+            definition_keys = tuple(
+                (item.action_id, item.level) for item in self.action_definitions
+            )
+            if len(definition_keys) != len(set(definition_keys)):
+                raise ValueError(
+                    "CanonicalIR action definitions conflict with the target catalog"
+                )
+            contract_keys = tuple(
+                (item.action_id, item.level) for item in target_catalog.contracts
+            )
+            if set(contract_keys) != set(definition_keys):
+                raise ValueError(
+                    "CanonicalIR action target catalog does not cover its definitions"
+                )
+            definitions_by_key = {
+                (item.action_id, item.level): item for item in self.action_definitions
+            }
+            if any(
+                definitions_by_key[(item.action_id, item.level)].definition_id
+                != item.definition_id
+                for item in target_catalog.contracts
+            ):
+                raise ValueError(
+                    "CanonicalIR action target catalog definition identity mismatch"
+                )
         relations = tuple(self.character_build_selector_relations)
         gaps = tuple(self.character_build_selector_gaps)
         if any(type(item) is not CharacterBuildSelectorRelationIR for item in relations):
@@ -7403,6 +7548,13 @@ class CanonicalIR:
         if type(catalog) is not CharacterAbilitySourceGraphCatalogIR:
             raise TypeError(
                 "CanonicalIR character ability source catalog must be the exact internal type"
+            )
+        if target_catalog is not None and (
+            target_catalog.source_graph_catalog_id != catalog.catalog_id
+            or target_catalog.source_graph_fingerprint != catalog.source_fingerprint
+        ):
+            raise ValueError(
+                "CanonicalIR action target catalog source graph mismatch"
             )
         cards = tuple(self.character_data_cards)
         if any(type(card) is not CharacterDataCardIR for card in cards):
@@ -7625,6 +7777,11 @@ class CanonicalIR:
             "bounce_policies": [policy.to_json() for policy in self.bounce_policies],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
+            "action_target_contract_catalog": (
+                self.action_target_contract_catalog.to_json()
+                if self.action_target_contract_catalog is not None
+                else None
+            ),
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
             "ability_phases": [phase.to_json() for phase in self.ability_phases],
             "ability_tasks": [task.to_json() for task in self.ability_tasks],
