@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from ..core.model import JSONValue, UnitState
 from ..rules.ability_properties import ability_property_stat_name
@@ -28,6 +29,22 @@ class EffectiveUnitStat:
             "flat_delta": self.flat_delta,
             "value": self.value,
             "source_terms": [dict(term) for term in self.source_terms],
+        }
+
+
+@dataclass(frozen=True)
+class EffectiveStatusResistance:
+    effect_resistance: float
+    control_resistance: float
+    specific_resistance: float
+    resistance_chance: float
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "effect_resistance": self.effect_resistance,
+            "control_resistance": self.control_resistance,
+            "specific_resistance": self.specific_resistance,
+            "resistance_chance": self.resistance_chance,
         }
 
 
@@ -142,6 +159,52 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
     )
 
 
+def control_kind_from_behavior_flags(behavior_flags: tuple[str, ...]) -> str:
+    """Resolve the shared control-resistance key from admitted behavior flags."""
+
+    if not ({"STAT_CTRL", "DisableAction"} & set(behavior_flags)):
+        return ""
+    for flag in behavior_flags:
+        if not flag.startswith("STAT_") or flag == "STAT_CTRL":
+            continue
+        return flag.removeprefix("STAT_")
+    return "control"
+
+
+def effective_status_resistance(
+    unit: UnitState,
+    *,
+    control_kind: str = "",
+    special_resistance_key: str = "",
+) -> EffectiveStatusResistance:
+    """Return the shared committed resistance terms and combined resist chance."""
+
+    if not isinstance(control_kind, str) or not isinstance(
+        special_resistance_key, str
+    ):
+        raise TypeError("status resistance keys must be strings")
+    effect = _clamped_stat_value(unit, "effect_resistance")
+    control = (
+        _clamped_resource_value(unit, "control_resistance")
+        if control_kind
+        else 0.0
+    )
+    specific = 0.0
+    if control_kind and control_kind != "control":
+        specific = _clamped_resource_value(
+            unit, f"control_resistance:{control_kind}"
+        )
+    elif special_resistance_key:
+        specific = _clamped_resource_value(unit, special_resistance_key)
+    chance = 1.0 - (1.0 - effect) * (1.0 - control) * (1.0 - specific)
+    return EffectiveStatusResistance(
+        effect_resistance=effect,
+        control_resistance=control,
+        specific_resistance=specific,
+        resistance_chance=max(0.0, min(1.0, chance)),
+    )
+
+
 def ability_property_value(unit: UnitState, property_name: object) -> float | None:
     if property_name == "Shield":
         return sum(
@@ -170,6 +233,20 @@ def _resource_value(unit: UnitState, key: str) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     return 0.0
+
+
+def _clamped_stat_value(unit: UnitState, key: str) -> float:
+    value = effective_unit_stat(unit, key).value
+    if not math.isfinite(value):
+        return 0.0
+    return max(0.0, min(1.0, value))
+
+
+def _clamped_resource_value(unit: UnitState, key: str) -> float:
+    value = _resource_value(unit, key)
+    if not math.isfinite(value):
+        return 0.0
+    return max(0.0, min(1.0, value))
 
 
 def _status_modifier_total(

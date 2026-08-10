@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..unit_eligibility import (
@@ -14,6 +14,11 @@ from ..unit_eligibility import (
     runtime_units_share_combat_team,
 )
 from .ir import ConditionIR, FormulaIR, TargetExpressionNodeIR
+from .condition_state import (
+    ConditionOperandProvider,
+    ConditionOperandRequest,
+    ConditionOperandResolution,
+)
 from .expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
     NUMERIC_EXPRESSION_SCHEMA,
@@ -37,6 +42,7 @@ class EvaluationContext:
     binding_sources: tuple[dict[str, Any], ...] = ()
     resolved_target_groups: dict[str, tuple[str, ...]] | None = None
     target_resolution_errors: dict[str, str] | None = None
+    committed_condition_provider: ConditionOperandProvider | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +94,7 @@ class ConditionEvaluationResult:
         }
 
 
-EXECUTABLE_CONDITION_OPCODES = {
+_PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "AlwaysTrue",
     "ByAnd",
     "ByAny",
@@ -138,6 +144,36 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByTargetEntityType",
     "ByTargetTeam",
 }
+
+COMMITTED_STATE_CONDITION_OPCODES = frozenset(
+    {
+        "ByAvatarBaseType",
+        "ByCasterAliveOrLimbo",
+        "ByCompareBP",
+        "ByCompareBattleEventID",
+        "ByCompareHP",
+        "ByCompareMonsterRank",
+        "ByCompareResistChance",
+        "ByCompareSpecialSPRatio",
+        "ByCompareStance",
+        "ByCompareStanceCount",
+        "ByCompareStanceRatio",
+        "ByContainsRedStance",
+        "ByHasSummonRelation",
+        "ByIsBattleEventEntity",
+        "ByIsBodyPart",
+        "ByIsEnemy",
+        "ByIsSubTargetOfHpSharedGroup",
+        "ByIsTargetUnselectable",
+        "ByTargetIsStanceWeak",
+        "ByTargetListAll",
+        "ByTargetListAny",
+    }
+)
+
+EXECUTABLE_CONDITION_OPCODES = frozenset(
+    _PRE_P9_EXECUTABLE_CONDITION_OPCODES
+) | COMMITTED_STATE_CONDITION_OPCODES
 
 
 class RuleEvaluator:
@@ -604,6 +640,15 @@ def _evaluate_condition_payload(
         )
     if opcode == "AlwaysTrue":
         return _condition_result(True, condition_id, opcode, "condition_true", {}, source_trace)
+    if opcode in COMMITTED_STATE_CONDITION_OPCODES:
+        return _evaluate_committed_state_condition(
+            evaluator,
+            opcode,
+            payload,
+            context,
+            condition_id=condition_id,
+            source_trace=source_trace,
+        )
     event_payload = context.event_payload or {}
     if opcode == "ByCheckModifierCallBackIsSelf":
         explicit = event_payload.get("is_self")
@@ -803,7 +848,27 @@ def _evaluate_condition_payload(
         unit = _state_unit(context, target_id) if target_id else None
         if unit is None:
             return _condition_blocked(condition_id, opcode, "alive_state_target_missing", target_details, source_trace)
-        if payload.get("AliveStateMask") != "Mask_AliveOrRevivable":
+        alive_mask = payload.get("AliveStateMask")
+        if alive_mask == "Mask_AliveOnly":
+            operand = _condition_operand(
+                context,
+                "unit.lifecycle_mask",
+                subject_ids=(target_id,),
+                parameters={"mask": alive_mask},
+            )
+            if operand.status != "resolved" or operand.value_type != "boolean":
+                return _condition_operand_blocked(
+                    condition_id, opcode, operand, source_trace
+                )
+            return _condition_result(
+                bool(operand.value),
+                condition_id,
+                opcode,
+                "target_alive_state_checked",
+                {"operand": operand.to_json()},
+                source_trace,
+            )
+        if alive_mask != "Mask_AliveOrRevivable":
             return _condition_blocked(condition_id, opcode, "alive_state_mask_not_supported", {"mask": payload.get("AliveStateMask")}, source_trace)
         if _unit_is_alive(unit):
             return _condition_result(
@@ -1458,24 +1523,33 @@ def _evaluate_condition_payload(
         predicates = payload.get("PredicateList")
         if not isinstance(predicates, list):
             return _condition_blocked(condition_id, opcode, "predicate_list_missing", {"payload": payload}, source_trace)
-        child_results = [
-            _evaluate_typed_condition_node(evaluator, item, context, condition_id=condition_id, source_trace=source_trace)
-            for item in predicates
-        ]
-        if opcode == "ByAnd":
-            for child in child_results:
-                if not child.ok:
-                    return _condition_blocked(condition_id, opcode, f"child_blocked:{child.reason}", {"children": [item.to_json() for item in child_results]}, source_trace)
-                if child.result is False:
-                    return _condition_result(False, condition_id, opcode, "and_child_false", {"children": [item.to_json() for item in child_results]}, source_trace)
-            return _condition_result(True, condition_id, opcode, "and_all_true", {"children": [item.to_json() for item in child_results]}, source_trace)
-        for child in child_results:
-            if child.ok and child.result is True:
-                return _condition_result(True, condition_id, opcode, "any_child_true", {"children": [item.to_json() for item in child_results]}, source_trace)
-        blocked = [child for child in child_results if not child.ok]
-        if blocked:
-            return _condition_blocked(condition_id, opcode, f"child_blocked:{blocked[0].reason}", {"children": [item.to_json() for item in child_results]}, source_trace)
-        return _condition_result(False, condition_id, opcode, "any_all_false", {"children": [item.to_json() for item in child_results]}, source_trace)
+        child_results: list[ConditionEvaluationResult] = []
+        blocked: ConditionEvaluationResult | None = None
+        for item in predicates:
+            child = _evaluate_typed_condition_node(
+                evaluator,
+                item,
+                context,
+                condition_id=condition_id,
+                source_trace=source_trace,
+            )
+            child_results.append(child)
+            if opcode == "ByAnd" and child.ok and child.result is False:
+                return _condition_result(False, condition_id, opcode, "and_child_false", {"children": [value.to_json() for value in child_results]}, source_trace)
+            if opcode == "ByAny" and child.ok and child.result is True:
+                return _condition_result(True, condition_id, opcode, "any_child_true", {"children": [value.to_json() for value in child_results]}, source_trace)
+            if not child.ok and blocked is None:
+                blocked = child
+        if blocked is not None:
+            return _condition_blocked(condition_id, opcode, f"child_blocked:{blocked.reason}", {"children": [value.to_json() for value in child_results]}, source_trace)
+        return _condition_result(
+            opcode == "ByAnd",
+            condition_id,
+            opcode,
+            "and_all_true" if opcode == "ByAnd" else "any_all_false",
+            {"children": [value.to_json() for value in child_results]},
+            source_trace,
+        )
     if opcode == "ByNot":
         predicate = payload.get("Predicate")
         if not isinstance(predicate, dict):
@@ -1485,6 +1559,583 @@ def _evaluate_condition_payload(
             return _condition_blocked(condition_id, opcode, f"child_blocked:{child.reason}", {"child": child.to_json()}, source_trace)
         return _condition_result(not child.result, condition_id, opcode, "not_child_inverted", {"child": child.to_json()}, source_trace)
     return _condition_blocked(condition_id, opcode, f"condition_opcode_not_supported:{opcode}", {"payload": payload}, source_trace)
+
+
+_COMMITTED_NUMERIC_FACTS = {
+    "ByCompareBP": ("battle.skill_points", "", "CompareValue"),
+    "ByCompareBattleEventID": (
+        "unit.battle_event_id",
+        "TargetType",
+        "TargetBattleEventID",
+    ),
+    "ByCompareHP": ("unit.hp", "TargetType", "CompareValue"),
+    "ByCompareMonsterRank": (
+        "unit.monster_rank",
+        "TargetType",
+        "CompareValue",
+    ),
+    "ByCompareSpecialSPRatio": (
+        "unit.special_resource_ratio",
+        "TargetType",
+        "CompareValue",
+    ),
+    "ByCompareStance": (
+        "unit.stance_current",
+        "TargetType",
+        "CompareValue",
+    ),
+    "ByCompareStanceCount": (
+        "unit.stance_segment_count",
+        "TargetType",
+        "CompareValue",
+    ),
+    "ByCompareStanceRatio": (
+        "unit.stance_ratio",
+        "TargetType",
+        "CompareValue",
+    ),
+}
+
+_COMMITTED_BOOLEAN_FACTS = {
+    "ByContainsRedStance": ("unit.red_stance", "TargetType"),
+    "ByIsBattleEventEntity": ("unit.is_battle_event_entity", "TargetType"),
+    "ByIsBodyPart": ("relation.body_part", "TargetType"),
+    "ByIsSubTargetOfHpSharedGroup": (
+        "relation.hp_shared_group",
+        "TargetType",
+    ),
+}
+
+_COMMITTED_SPECIAL_OPCODES = {
+    "ByAvatarBaseType",
+    "ByCasterAliveOrLimbo",
+    "ByCompareResistChance",
+    "ByHasSummonRelation",
+    "ByIsEnemy",
+    "ByIsTargetUnselectable",
+    "ByTargetIsStanceWeak",
+    "ByTargetListAll",
+    "ByTargetListAny",
+}
+
+if (
+    set(_COMMITTED_NUMERIC_FACTS)
+    | set(_COMMITTED_BOOLEAN_FACTS)
+    | _COMMITTED_SPECIAL_OPCODES
+) != set(COMMITTED_STATE_CONDITION_OPCODES):
+    raise RuntimeError("committed condition evaluator registry is incomplete")
+
+
+def _evaluate_committed_state_condition(
+    evaluator: RuleEvaluator,
+    opcode: str,
+    payload: dict[str, Any],
+    context: EvaluationContext,
+    *,
+    condition_id: str,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    numeric_fact = _COMMITTED_NUMERIC_FACTS.get(opcode)
+    if numeric_fact is not None:
+        fact_kind, target_field, value_field = numeric_fact
+        subject_ids: tuple[str, ...] = ()
+        if target_field:
+            target_id, target_details = _condition_single_target(
+                payload.get(target_field), context
+            )
+            if target_id is None:
+                return _condition_blocked(
+                    condition_id,
+                    opcode,
+                    "condition_fact_target_requires_singleton",
+                    target_details,
+                    source_trace,
+                )
+            subject_ids = (target_id,)
+        parameters: dict[str, Any] = {}
+        if opcode == "ByCompareStanceRatio":
+            parameters["include_red_stance"] = payload.get("IncludeRedStance", False)
+        operand = _condition_operand(
+            context, fact_kind, subject_ids=subject_ids, parameters=parameters
+        )
+        if operand.status != "resolved" or operand.value_type != "number":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        expected = evaluator.evaluate_numeric(
+            payload.get(value_field),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                expected.blocked_reason or "compare_value_blocked",
+                {"numeric_evaluation": expected.to_json()},
+                source_trace,
+            )
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(operand.value),
+            payload.get("CompareType") or "Equal",
+            expected.value,
+            source_trace,
+        )
+    if opcode == "ByCompareResistChance":
+        target_id, target_details = _condition_single_target(
+            payload.get("TargetType"), context
+        )
+        if target_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "condition_fact_target_requires_singleton",
+                target_details,
+                source_trace,
+            )
+        operand = _condition_operand(
+            context,
+            "unit.status_resist_chance",
+            subject_ids=(target_id,),
+            parameters={"behavior_flags": payload.get("BehaviorFlagList")},
+        )
+        if operand.status != "resolved" or operand.value_type != "number":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        expected = evaluator.evaluate_numeric(
+            payload.get("CompareValue"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                expected.blocked_reason or "compare_value_blocked",
+                {"numeric_evaluation": expected.to_json()},
+                source_trace,
+            )
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(operand.value),
+            payload.get("CompareType"),
+            expected.value,
+            source_trace,
+        )
+    if opcode == "ByAvatarBaseType":
+        target_id, target_details = _condition_single_target(
+            payload.get("TargetType"), context
+        )
+        base_types = payload.get("BaseTypeList")
+        if target_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "condition_fact_target_requires_singleton",
+                target_details,
+                source_trace,
+            )
+        if not isinstance(base_types, list) or not base_types:
+            return _condition_blocked(
+                condition_id, opcode, "avatar_base_type_list_invalid", {}, source_trace
+            )
+        operand = _condition_operand(
+            context, "unit.avatar_base_type", subject_ids=(target_id,)
+        )
+        if operand.status != "resolved" or operand.value_type != "string":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            operand.value in base_types,
+            condition_id,
+            opcode,
+            "avatar_base_type_compared",
+            {"operand": operand.to_json(), "expected": base_types},
+            source_trace,
+        )
+    if opcode == "ByCasterAliveOrLimbo":
+        if not isinstance(context.actor_id, str) or not context.actor_id:
+            return _condition_blocked(
+                condition_id, opcode, "condition_caster_identity_missing", {}, source_trace
+            )
+        operand = _condition_operand(
+            context,
+            "unit.lifecycle_mask",
+            subject_ids=(context.actor_id,),
+            parameters={"mask": payload.get("AliveStateMask")},
+        )
+        if operand.status != "resolved" or operand.value_type != "boolean":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            bool(operand.value),
+            condition_id,
+            opcode,
+            "caster_lifecycle_checked",
+            {"operand": operand.to_json()},
+            source_trace,
+        )
+    if opcode == "ByHasSummonRelation":
+        servant_id, servant_details = _condition_single_target(
+            payload.get("ServantType"), context
+        )
+        summoner_id, summoner_details = _condition_single_target(
+            payload.get("SummonerType"), context
+        )
+        if servant_id is None or summoner_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "summon_relation_requires_singleton_targets",
+                {"servant": servant_details, "summoner": summoner_details},
+                source_trace,
+            )
+        operand = _condition_operand(
+            context, "relation.summoner", subject_ids=(servant_id,)
+        )
+        if operand.status != "resolved" or operand.value_type != "identity_set":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            summoner_id in tuple(operand.value),
+            condition_id,
+            opcode,
+            "summon_relation_checked",
+            {"operand": operand.to_json(), "summoner_id": summoner_id},
+            source_trace,
+        )
+    if opcode == "ByIsEnemy":
+        left_id, left_details = _condition_single_target(
+            payload.get("TargetTypeA"), context
+        )
+        right_id, right_details = _condition_single_target(
+            payload.get("TargetTypeB"), context
+        )
+        if left_id is None or right_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "enemy_relation_requires_singleton_targets",
+                {"left": left_details, "right": right_details},
+                source_trace,
+            )
+        operand = _condition_operand(
+            context, "relation.opposing", subject_ids=(left_id, right_id)
+        )
+        if operand.status != "resolved" or operand.value_type != "boolean":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            bool(operand.value),
+            condition_id,
+            opcode,
+            "enemy_relation_checked",
+            {"operand": operand.to_json(), "left_id": left_id, "right_id": right_id},
+            source_trace,
+        )
+    if opcode == "ByIsTargetUnselectable":
+        target_ids, target_details = _condition_target_ids(
+            payload.get("TargetType"), context
+        )
+        if target_ids is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_collection_unresolved",
+                target_details,
+                source_trace,
+            )
+        source_id = ""
+        if payload.get("SourceEntity") is not None:
+            source_id, source_details = _condition_single_target(
+                payload.get("SourceEntity"), context
+            )
+            if source_id is None:
+                return _condition_blocked(
+                    condition_id,
+                    opcode,
+                    "targetability_source_requires_singleton",
+                    source_details,
+                    source_trace,
+                )
+        operands = tuple(
+            _condition_operand(
+                context,
+                "unit.target_unselectable",
+                subject_ids=(target_id,),
+                parameters={"source_id": source_id},
+            )
+            for target_id in target_ids
+        )
+        blocked = next(
+            (
+                operand
+                for operand in operands
+                if operand.status != "resolved" or operand.value_type != "boolean"
+            ),
+            None,
+        )
+        if blocked is not None:
+            return _condition_operand_blocked(
+                condition_id, opcode, blocked, source_trace
+            )
+        return _condition_result(
+            any(bool(operand.value) for operand in operands),
+            condition_id,
+            opcode,
+            "target_unselectable_checked",
+            {"operands": [operand.to_json() for operand in operands]},
+            source_trace,
+        )
+    if opcode in {"ByTargetListAll", "ByTargetListAny"}:
+        return _evaluate_committed_quantifier(
+            evaluator,
+            opcode,
+            payload,
+            context,
+            condition_id=condition_id,
+            source_trace=source_trace,
+        )
+    boolean_fact = _COMMITTED_BOOLEAN_FACTS.get(opcode)
+    if boolean_fact is not None:
+        fact_kind, target_field = boolean_fact
+        target_id, target_details = _condition_single_target(
+            payload.get(target_field), context
+        )
+        if target_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "condition_fact_target_requires_singleton",
+                target_details,
+                source_trace,
+            )
+        parameters: dict[str, Any] = {}
+        if opcode == "ByIsBattleEventEntity":
+            parameters["expect_sub_type"] = payload.get("ExpectSubType") or ""
+        operand = _condition_operand(
+            context, fact_kind, subject_ids=(target_id,), parameters=parameters
+        )
+        if operand.status != "resolved" or operand.value_type != "boolean":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            bool(operand.value),
+            condition_id,
+            opcode,
+            "committed_boolean_fact_checked",
+            {"operand": operand.to_json()},
+            source_trace,
+        )
+    if opcode == "ByTargetIsStanceWeak":
+        target_id, target_details = _condition_single_target(
+            payload.get("TargetType"), context
+        )
+        attacker_id, attacker_details = _condition_single_target(
+            payload.get("AttackerType"), context
+        )
+        if target_id is None or attacker_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "stance_weak_requires_singleton_targets",
+                {"target": target_details, "attacker": attacker_details},
+                source_trace,
+            )
+        operand = _condition_operand(
+            context,
+            "unit.stance_weak",
+            subject_ids=(target_id, attacker_id),
+        )
+        if operand.status != "resolved" or operand.value_type != "boolean":
+            return _condition_operand_blocked(
+                condition_id, opcode, operand, source_trace
+            )
+        return _condition_result(
+            bool(operand.value),
+            condition_id,
+            opcode,
+            "stance_weak_checked",
+            {"operand": operand.to_json()},
+            source_trace,
+        )
+    return _condition_blocked(
+        condition_id,
+        opcode,
+        f"committed_condition_handler_missing:{opcode}",
+        {},
+        source_trace,
+    )
+
+
+def _evaluate_committed_quantifier(
+    evaluator: RuleEvaluator,
+    opcode: str,
+    payload: dict[str, Any],
+    context: EvaluationContext,
+    *,
+    condition_id: str,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    target_ids, target_details = _condition_target_ids(
+        payload.get("TargetType"), context
+    )
+    predicate = payload.get("Predicate")
+    if target_ids is None:
+        return _condition_blocked(
+            condition_id,
+            opcode,
+            "quantifier_collection_unresolved",
+            target_details,
+            source_trace,
+        )
+    if not isinstance(predicate, dict):
+        return _condition_blocked(
+            condition_id, opcode, "quantifier_predicate_missing", {}, source_trace
+        )
+    children: list[ConditionEvaluationResult] = []
+    blocked: ConditionEvaluationResult | None = None
+    for target_id in target_ids:
+        child = _evaluate_typed_condition_node(
+            evaluator,
+            predicate,
+            replace(
+                context,
+                target_id=target_id,
+                param_entity_id=target_id,
+                resolved_target_groups={},
+                target_resolution_errors={},
+            ),
+            condition_id=condition_id,
+            source_trace=source_trace,
+        )
+        children.append(child)
+        if opcode == "ByTargetListAny" and child.ok and child.result is True:
+            return _condition_result(
+                True,
+                condition_id,
+                opcode,
+                "quantifier_any_true",
+                {"target_ids": list(target_ids), "children": [item.to_json() for item in children]},
+                source_trace,
+            )
+        if opcode == "ByTargetListAll" and child.ok and child.result is False:
+            return _condition_result(
+                False,
+                condition_id,
+                opcode,
+                "quantifier_all_false",
+                {"target_ids": list(target_ids), "children": [item.to_json() for item in children]},
+                source_trace,
+            )
+        if not child.ok and blocked is None:
+            blocked = child
+    if blocked is not None:
+        return _condition_blocked(
+            condition_id,
+            opcode,
+            f"quantifier_child_blocked:{blocked.reason}",
+            {"target_ids": list(target_ids), "children": [item.to_json() for item in children]},
+            source_trace,
+        )
+    result = opcode == "ByTargetListAll"
+    return _condition_result(
+        result,
+        condition_id,
+        opcode,
+        "quantifier_empty_or_complete",
+        {"target_ids": list(target_ids), "children": [item.to_json() for item in children]},
+        source_trace,
+    )
+
+
+def _condition_single_target(
+    value: object,
+    context: EvaluationContext,
+) -> tuple[str | None, dict[str, Any]]:
+    target_ids, details = _condition_target_ids(value, context)
+    if target_ids is None:
+        return None, details
+    if len(target_ids) != 1:
+        return None, {**details, "target_ids": list(target_ids)}
+    return target_ids[0], details
+
+
+def _condition_operand(
+    context: EvaluationContext,
+    fact_kind: str,
+    *,
+    subject_ids: tuple[str, ...] = (),
+    parameters: dict[str, Any] | None = None,
+) -> ConditionOperandResolution:
+    provider = context.committed_condition_provider
+    if provider is None or context.state is None:
+        return ConditionOperandResolution.blocked(
+            "committed_condition_provider_missing",
+            fact_kind=fact_kind,
+            authority="committed_condition_provider",
+        )
+    try:
+        request = ConditionOperandRequest(
+            fact_kind=fact_kind,
+            subject_ids=subject_ids,
+            parameters=parameters,
+        )
+        result = provider.resolve(context.state, request)
+    except (TypeError, ValueError):
+        return ConditionOperandResolution.blocked(
+            "committed_condition_provider_contract_rejected",
+            fact_kind=fact_kind,
+            authority="committed_condition_provider",
+        )
+    if type(result) is not ConditionOperandResolution:
+        return ConditionOperandResolution.blocked(
+            "committed_condition_provider_result_invalid",
+            fact_kind=fact_kind,
+            authority="committed_condition_provider",
+        )
+    if result.fact_kind != request.fact_kind:
+        return ConditionOperandResolution.blocked(
+            "committed_condition_provider_fact_mismatch",
+            fact_kind=fact_kind,
+            authority="committed_condition_provider",
+        )
+    return result
+
+
+def _condition_operand_blocked(
+    condition_id: str,
+    opcode: str,
+    operand: ConditionOperandResolution,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    reason = (
+        operand.blocked_reason
+        if operand.status == "blocked"
+        else "condition_operand_type_mismatch"
+    )
+    return _condition_blocked(
+        condition_id,
+        opcode,
+        reason,
+        {"operand": operand.to_json()},
+        source_trace,
+    )
 
 
 def _evaluate_typed_condition_node(

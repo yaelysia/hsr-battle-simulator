@@ -66,6 +66,7 @@ from ..resource_event_contract import (
     resource_scope_for_callback,
 )
 from ..rules.evaluator import (
+    COMMITTED_STATE_CONDITION_OPCODES,
     EXECUTABLE_CONDITION_OPCODES,
     NumericEvaluationContext,
     RuleEvaluator,
@@ -15989,11 +15990,24 @@ def _typed_condition_execution_node(
         )
     else:
         family_stage = character_condition_family_stage(opcode, raw)
-        family_admitted = family_stage == "existing_family"
+        family_admitted = family_stage in {
+            "existing_family",
+            "p9_s6b_committed_state",
+        }
         family_blocked_reason = character_condition_family_blocked_reason(
             opcode, raw
         )
-    executable = family_admitted and _condition_payload_executable(opcode, payload)
+    local_aliases = frozenset(
+        name
+        for name, definition in (target_alias_registry or {}).items()
+        if isinstance(name, str) and name and isinstance(definition, dict)
+    )
+    payload_executable = _condition_payload_executable(
+        opcode,
+        payload,
+        local_aliases=local_aliases,
+    )
+    executable = family_admitted and payload_executable
     target_blocked_reason = _condition_payload_target_blocked_reason(payload)
     executable = executable and not target_blocked_reason
     return {
@@ -16008,7 +16022,11 @@ def _typed_condition_execution_node(
             else (
                 target_blocked_reason
                 or (
-                    family_blocked_reason
+                    (
+                        f"condition_payload_not_admitted:{opcode}"
+                        if family_admitted and not payload_executable
+                        else family_blocked_reason
+                    )
                     or f"condition_not_admitted:{opcode}"
                 )
             )
@@ -16048,6 +16066,7 @@ def _typed_condition_payload(
             "CompareValue",
             "CompareNumber",
             "Number",
+            "TargetBattleEventID",
             "TargetCharacterID",
             "TargetMonsterID",
         }:
@@ -18976,11 +18995,150 @@ def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status
     return f"effect_coverage_status:{coverage_status}:{opcode}"
 
 
-def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
+_CONDITION_COMPARE_TYPES = frozenset(
+    {"Less", "LessEqual", "Greater", "GreaterEqual", "Equal", "NotEqual"}
+)
+
+
+def _committed_condition_payload_executable(
+    opcode: str,
+    payload: dict[str, Any],
+    *,
+    local_aliases: frozenset[str] = frozenset(),
+) -> bool:
+    if "Inverse" in payload and type(payload.get("Inverse")) is not bool:
+        return False
+    numeric_contracts = {
+        "ByCompareBP": ("", "CompareValue"),
+        "ByCompareBattleEventID": ("TargetType", "TargetBattleEventID"),
+        "ByCompareHP": ("TargetType", "CompareValue"),
+        "ByCompareMonsterRank": ("TargetType", "CompareValue"),
+        "ByCompareSpecialSPRatio": ("TargetType", "CompareValue"),
+        "ByCompareStance": ("TargetType", "CompareValue"),
+        "ByCompareStanceCount": ("TargetType", "CompareValue"),
+        "ByCompareStanceRatio": ("TargetType", "CompareValue"),
+    }
+    numeric = numeric_contracts.get(opcode)
+    if numeric is not None:
+        target_field, value_field = numeric
+        return (
+            (
+                not target_field
+                or _condition_target_value_executable(
+                    payload.get(target_field), local_aliases=local_aliases
+                )
+            )
+            and (
+                payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+                or opcode == "ByCompareBattleEventID"
+                and "CompareType" not in payload
+            )
+            and _numeric_expr_can_be_runtime_bound(payload.get(value_field))
+            and (
+                opcode != "ByCompareStanceRatio"
+                or type(payload.get("IncludeRedStance", False)) is bool
+            )
+        )
+    if opcode == "ByCompareResistChance":
+        flags = payload.get("BehaviorFlagList")
+        return (
+            _condition_target_value_executable(
+                payload.get("TargetType"), local_aliases=local_aliases
+            )
+            and isinstance(flags, list)
+            and bool(flags)
+            and all(isinstance(flag, str) and flag for flag in flags)
+            and len(flags) == len(set(flags))
+            and payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+            and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
+        )
+    if opcode == "ByAvatarBaseType":
+        base_types = payload.get("BaseTypeList")
+        return (
+            _condition_target_value_executable(
+                payload.get("TargetType"), local_aliases=local_aliases
+            )
+            and isinstance(base_types, list)
+            and bool(base_types)
+            and all(isinstance(item, str) and item for item in base_types)
+            and len(base_types) == len(set(base_types))
+            and payload.get("BaseTypeKind") in {None, "All"}
+        )
+    if opcode == "ByCasterAliveOrLimbo":
+        return payload.get("AliveStateMask") in {
+            "Mask_AliveOnly",
+            "Mask_AliveOrLimbo",
+        }
+    if opcode == "ByHasSummonRelation":
+        return _condition_target_value_executable(
+            payload.get("ServantType"), local_aliases=local_aliases
+        ) and _condition_target_value_executable(
+            payload.get("SummonerType"), local_aliases=local_aliases
+        )
+    if opcode == "ByIsEnemy":
+        return _condition_target_value_executable(
+            payload.get("TargetTypeA"), local_aliases=local_aliases
+        ) and _condition_target_value_executable(
+            payload.get("TargetTypeB"), local_aliases=local_aliases
+        )
+    if opcode == "ByIsTargetUnselectable":
+        source = payload.get("SourceEntity")
+        return _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        ) and (
+            source is None
+            or _condition_target_value_executable(
+                source, local_aliases=local_aliases
+            )
+        )
+    if opcode in {"ByTargetListAll", "ByTargetListAny"}:
+        return _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        ) and _raw_condition_payload_executable(
+            payload.get("Predicate"), local_aliases=local_aliases
+        )
+    if opcode in {
+        "ByContainsRedStance",
+        "ByIsBodyPart",
+        "ByIsSubTargetOfHpSharedGroup",
+    }:
+        return _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        )
+    if opcode == "ByIsBattleEventEntity":
+        expected_sub_type = payload.get("ExpectSubType")
+        return _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        ) and (
+            expected_sub_type is None
+            or isinstance(expected_sub_type, str)
+            and bool(expected_sub_type)
+        )
+    if opcode == "ByTargetIsStanceWeak":
+        return _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        ) and _condition_target_value_executable(
+            payload.get("AttackerType"), local_aliases=local_aliases
+        )
+    return False
+
+
+def _condition_payload_executable(
+    opcode: str,
+    payload: dict[str, Any],
+    *,
+    local_aliases: frozenset[str] = frozenset(),
+) -> bool:
     if opcode not in EXECUTABLE_CONDITION_OPCODES:
         return False
     if opcode == "AlwaysTrue":
         return True
+    if opcode in COMMITTED_STATE_CONDITION_OPCODES:
+        return _committed_condition_payload_executable(
+            opcode,
+            payload,
+            local_aliases=local_aliases,
+        )
     condition_aliases = (
         EXECUTABLE_TARGET_ALIASES
         | ADD_MODIFIER_TARGET_ALIASES
@@ -18997,7 +19155,10 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         if not _condition_target_value_executable(payload.get("TargetType")):
             return False
         if opcode == "ByTargetAliveState":
-            return payload.get("AliveStateMask") == "Mask_AliveOrRevivable"
+            return payload.get("AliveStateMask") in {
+                "Mask_AliveOnly",
+                "Mask_AliveOrRevivable",
+            }
         return True
     if opcode == "ByCharacterDamageType":
         return (
@@ -19178,24 +19339,49 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         )
     if opcode in {"ByAnd", "ByAny"}:
         predicates = payload.get("PredicateList")
-        return isinstance(predicates, list) and all(_raw_condition_payload_executable(item) for item in predicates)
+        return isinstance(predicates, list) and all(
+            _raw_condition_payload_executable(
+                item, local_aliases=local_aliases
+            )
+            for item in predicates
+        )
     if opcode == "ByNot":
-        return _raw_condition_payload_executable(payload.get("Predicate"))
+        return _raw_condition_payload_executable(
+            payload.get("Predicate"), local_aliases=local_aliases
+        )
     return False
 
 
-def _condition_target_node_executable(node: TargetExpressionNodeIR) -> bool:
+def _condition_target_node_executable(
+    node: TargetExpressionNodeIR,
+    *,
+    local_aliases: frozenset[str] = frozenset(),
+) -> bool:
     if node.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return False
     if node.runtime_blocked_reason:
         return False
     if node.expression_kind == "TargetAlias":
-        return _target_alias_admitted(node.alias) or node.alias == "AllUnselectable"
+        return (
+            _target_alias_admitted(node.alias)
+            or node.alias == "AllUnselectable"
+            or node.alias in local_aliases
+        )
     if node.expression_kind in {"TargetSequence", "TargetConcat"}:
-        return bool(node.children) and all(_condition_target_node_executable(child) for child in node.children)
+        return bool(node.children) and all(
+            _condition_target_node_executable(
+                child, local_aliases=local_aliases
+            )
+            for child in node.children
+        )
     if node.expression_kind == "TargetFilter":
         return (
-            (node.candidate is None or _condition_target_node_executable(node.candidate))
+            (
+                node.candidate is None
+                or _condition_target_node_executable(
+                    node.candidate, local_aliases=local_aliases
+                )
+            )
             and node.predicate is not None
             and node.predicate.coverage_status == "executable"
         )
@@ -19206,8 +19392,12 @@ def _condition_target_node_executable(node: TargetExpressionNodeIR) -> bool:
             node.query_entity_type_mask == "Servant"
             and node.query_target is not None
             and node.query_compare is not None
-            and _condition_target_node_executable(node.query_target)
-            and _condition_target_node_executable(node.query_compare)
+            and _condition_target_node_executable(
+                node.query_target, local_aliases=local_aliases
+            )
+            and _condition_target_node_executable(
+                node.query_compare, local_aliases=local_aliases
+            )
         )
     return False
 
@@ -19231,14 +19421,24 @@ def _condition_payload_target_blocked_reason(value: Any) -> str:
     return ""
 
 
-def _condition_target_value_executable(value: Any) -> bool:
+def _condition_target_value_executable(
+    value: Any,
+    *,
+    local_aliases: frozenset[str] = frozenset(),
+) -> bool:
     if isinstance(value, TargetExpressionNodeIR):
-        return _condition_target_node_executable(value)
+        return _condition_target_node_executable(
+            value, local_aliases=local_aliases
+        )
     alias = _target_alias(value)
     return bool(alias and _target_alias_admitted(alias))
 
 
-def _raw_condition_payload_executable(value: Any) -> bool:
+def _raw_condition_payload_executable(
+    value: Any,
+    *,
+    local_aliases: frozenset[str] = frozenset(),
+) -> bool:
     if not isinstance(value, dict):
         return False
     if value.get("schema_version") == CONDITION_EXPRESSION_NODE_SCHEMA:
@@ -19255,10 +19455,14 @@ def _raw_condition_payload_executable(value: Any) -> bool:
                 "blocked_reason",
             }
         }
-        return _condition_payload_executable(opcode, payload)
+        return _condition_payload_executable(
+            opcode, payload, local_aliases=local_aliases
+        )
     opcode = _short_gamecore_type(value.get("$type"))
     payload = _compact_payload(value)
-    return _condition_payload_executable(opcode, payload)
+    return _condition_payload_executable(
+        opcode, payload, local_aliases=local_aliases
+    )
 
 
 def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:

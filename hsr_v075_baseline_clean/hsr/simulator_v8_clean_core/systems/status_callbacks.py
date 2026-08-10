@@ -12,10 +12,9 @@ from ..rules.evaluator import (
     NumericEvaluationContext,
     NumericEvaluationResult,
     RuleEvaluator,
-    _condition_target_key,
 )
 from ..rules.expression_ir import numeric_dynamic_hashes, numeric_fixed, numeric_missing
-from ..rules.ir import ActionDelayEmissionIR, ConditionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR, TargetExpressionNodeIR
+from ..rules.ir import ActionDelayEmissionIR, ConditionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..unit_eligibility import (
@@ -4242,33 +4241,24 @@ def _condition_context(
             excluded_names=current_names,
         ),
     )
-    resolved_target_groups: dict[str, tuple[str, ...]] = {}
-    target_resolution_errors: dict[str, str] = {}
     if condition is not None and targets is not None:
-        for node in _condition_target_nodes(condition):
-            key = _condition_target_key(node)
-            if key in resolved_target_groups or key in target_resolution_errors:
-                continue
-            resolution = targets.resolve_target_expression(
-                state,
-                node,
-                context=TargetEvaluationContext(
-                    caster_id=caster_id,
-                    effect_owner_id=owner_id or None,
-                    parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
-                    selected_target_ids=((target_id,) if target_id else ()),
-                    current_target_id=target_id or None,
-                    event_source_id=(event.source_id if event is not None else None),
-                    event_target_id=(event.target_id if event is not None else None),
-                    turn_owner_id=committed_turn_owner_id(state),
-                ),
-                condition_event_payload=payload,
-                binding_sources=callback_binding_sources,
-            )
-            if resolution.resolved:
-                resolved_target_groups[key] = resolution.target_ids
-            else:
-                target_resolution_errors[key] = resolution.blocked_reason
+        return targets.condition_evaluation_context(
+            state,
+            condition,
+            context=TargetEvaluationContext(
+                caster_id=caster_id,
+                effect_owner_id=owner_id or None,
+                parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
+                selected_target_ids=((target_id,) if target_id else ()),
+                current_target_id=target_id or None,
+                event_source_id=(event.source_id if event is not None else None),
+                event_target_id=(event.target_id if event is not None else None),
+                turn_owner_id=committed_turn_owner_id(state),
+            ),
+            condition_event_payload=payload,
+            binding_sources=callback_binding_sources,
+            status_detail=detail,
+        )
     return EvaluationContext(
         state=state,
         actor_id=caster_id,
@@ -4283,29 +4273,11 @@ def _condition_context(
         # them as unauditable ``explicit_dynamic_values`` and would let that
         # ad-hoc channel shadow the real status-instance source.
         dynamic_values=None,
-        resolved_target_groups=resolved_target_groups,
-        target_resolution_errors=target_resolution_errors,
         binding_sources=callback_binding_sources,
+        committed_condition_provider=(
+            targets.condition_facts if targets is not None else None
+        ),
     )
-
-
-def _condition_target_nodes(condition: ConditionIR) -> tuple[TargetExpressionNodeIR, ...]:
-    nodes: list[TargetExpressionNodeIR] = []
-
-    def visit(value: object) -> None:
-        if isinstance(value, TargetExpressionNodeIR):
-            nodes.append(value)
-            return
-        if isinstance(value, dict):
-            for item in value.values():
-                visit(item)
-            return
-        if isinstance(value, (list, tuple)):
-            for item in value:
-                visit(item)
-
-    visit(condition.payload)
-    return tuple(nodes)
 
 
 def _effect_context(

@@ -27,7 +27,11 @@ from .target import TargetSystem
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_relation import is_opposing_combat_team
-from .unit_stats import effective_unit_stat
+from .unit_stats import (
+    control_kind_from_behavior_flags,
+    effective_status_resistance,
+    effective_unit_stat,
+)
 
 
 SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
@@ -3701,6 +3705,7 @@ def _runtime_chance_admission(
             category = "debuff"
             category_source = "engine_rule:explicit_chance_opposing_target"
     control_kind = str(metadata.get("control_kind") or "")
+    target_unit = state.units.get(target_id)
     if category == "buff":
         classification = "positive_status"
         effect_hit = 0.0
@@ -3708,21 +3713,38 @@ def _runtime_chance_admission(
         control_resistance = 0.0
         specific_resistance = 0.0
     elif category == "debuff":
+        if target_unit is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "status_probability_target_missing",
+                "source_trace": source_trace,
+                "numeric_evaluation": chance_result,
+                "value_resolution": chance_value_resolution,
+            }
         classification = "debuff"
         effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
-        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
-        control_resistance = 0.0
-        specific_resistance = 0.0
+        resistance = effective_status_resistance(target_unit)
+        effect_resistance = resistance.effect_resistance
+        control_resistance = resistance.control_resistance
+        specific_resistance = resistance.specific_resistance
     elif category == "control":
+        if target_unit is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "status_probability_target_missing",
+                "source_trace": source_trace,
+                "numeric_evaluation": chance_result,
+                "value_resolution": chance_value_resolution,
+            }
         classification = "control"
         effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
-        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
-        control_resistance = _clamped_unit_resource(state, target_id, "control_resistance")
-        specific_resistance = (
-            _clamped_unit_resource(state, target_id, f"control_resistance:{control_kind}")
-            if control_kind
-            else 0.0
+        resistance = effective_status_resistance(
+            target_unit,
+            control_kind=control_kind or "control",
         )
+        effect_resistance = resistance.effect_resistance
+        control_resistance = resistance.control_resistance
+        specific_resistance = resistance.specific_resistance
     elif category == "other":
         resistance_key = standard.get("special_resistance_key")
         resistance_source = standard.get("special_resistance_source")
@@ -3735,11 +3757,23 @@ def _runtime_chance_admission(
                 "numeric_evaluation": chance_result,
                 "value_resolution": chance_value_resolution,
             }
+        if target_unit is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "status_probability_target_missing",
+                "source_trace": source_trace,
+                "numeric_evaluation": chance_result,
+                "value_resolution": chance_value_resolution,
+            }
         classification = "special_debuff"
         effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
-        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
-        control_resistance = 0.0
-        specific_resistance = _clamped_unit_resource(state, target_id, resistance_key)
+        resistance = effective_status_resistance(
+            target_unit,
+            special_resistance_key=resistance_key,
+        )
+        effect_resistance = resistance.effect_resistance
+        control_resistance = resistance.control_resistance
+        specific_resistance = resistance.specific_resistance
     else:
         return {
             "admission_status": "blocked",
@@ -5552,7 +5586,7 @@ def _status_metadata(rules: RuleBook, modifier_name: str, definition: RuleEntity
             if isinstance(definition_status_type, str) and definition_status_type
             else "Unknown"
         )
-        control_kind = _control_kind_from_behavior_flags(behavior_flags)
+        control_kind = control_kind_from_behavior_flags(behavior_flags)
         status_category = _status_category(status_type)
         if status_category == "unknown":
             status_category = _status_category_from_behavior_flags(behavior_flags)
@@ -5571,7 +5605,7 @@ def _status_metadata(rules: RuleBook, modifier_name: str, definition: RuleEntity
     can_dispel = entity.fields.get("CanDispel")
     control_kind = str(entity.fields.get("ControlKind") or entity.fields.get("control_kind") or "")
     status_category = _status_category(status_type)
-    control_flag = _control_kind_from_behavior_flags(behavior_flags)
+    control_flag = control_kind_from_behavior_flags(behavior_flags)
     if control_flag:
         status_category = "control"
         control_kind = control_kind or control_flag
@@ -5625,16 +5659,6 @@ def _status_category_from_behavior_flags(
     ):
         return "buff"
     return "unknown"
-
-
-def _control_kind_from_behavior_flags(behavior_flags: tuple[str, ...]) -> str:
-    if not ({"STAT_CTRL", "DisableAction"} & set(behavior_flags)):
-        return ""
-    for flag in behavior_flags:
-        if not flag.startswith("STAT_") or flag == "STAT_CTRL":
-            continue
-        return flag.removeprefix("STAT_")
-    return "control"
 
 
 def _json_safe(value: object) -> JSONValue:

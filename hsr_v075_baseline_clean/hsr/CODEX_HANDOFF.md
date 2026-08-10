@@ -116,8 +116,13 @@ settlement、来源审计和 replay。原 S6 已按权威边界拆为 S6A、S6B�
 和 47 条明确非战斗 occurrence，未分类为零。这里的“现有 family”不代表每个 payload 已可执行。
 表现分支排除会保留 `TriggerAbility`、`IncludeTaskListTemplate` 等未解析跳转；审查中因此纠正了
 姿态倒计时模板内真实击破伤害被误排除的问题。lowering 已使用 evaluator 的唯一 family 权威，
-未知 family/字段/嵌套责任均 fail-closed。当前下一张唯一可执行卡为
-`P9-S6B_COMMITTED_STATE_CONDITION_EVALUATION.md`。
+未知 family/字段/嵌套责任均 fail-closed。S6B 已完整继承同一来源指纹下的 178 条责任记录和
+21 个条件 family：145 条已有正式事实的记录进入统一三态求值；其余 33 条分别精确等待 S11、
+S15、S17 的领域生产者，没有伪造状态。生命、战技点、特殊资源、角色命途、怪物档位、状态抗性、
+召唤/阵营关系、目标可选性和列表量词统一读取已提交状态、RuleBook 与 S5B 目标关系权威；业务
+false 只选择失败分支，缺事实或非法身份会阻断并保持原子失败。正式 ability、trigger、status
+callback、target filter 和伤害 modifier 条件入口均携带同一事实提供器。当前下一张唯一可执行卡为
+`P9-S7_CONTEXTUAL_CONDITION_CLOSURE.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

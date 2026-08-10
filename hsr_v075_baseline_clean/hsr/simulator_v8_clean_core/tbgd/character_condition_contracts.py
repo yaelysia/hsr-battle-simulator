@@ -10,7 +10,10 @@ from ..rules.condition_contract import (
     CharacterConditionResponsibilityIR,
     ConditionResponsibilityIssueIR,
 )
-from ..rules.evaluator import EXECUTABLE_CONDITION_OPCODES
+from ..rules.evaluator import (
+    COMMITTED_STATE_CONDITION_OPCODES,
+    EXECUTABLE_CONDITION_OPCODES,
+)
 from ..rules.ir import CharacterAbilityScopeRecordIR
 from .character_ability_scope import (
     CharacterAbilityRawSnapshot,
@@ -261,36 +264,43 @@ _EXISTING_COMMITTED_CHILDREN = frozenset(
     }
 )
 
+if any(
+    opcode not in _MISSING_FAMILY_SIGNATURES
+    or _MISSING_FAMILY_SPECS.get(opcode) is None
+    or _MISSING_FAMILY_SPECS[opcode].evaluation_stage != _S6
+    for opcode in COMMITTED_STATE_CONDITION_OPCODES
+):
+    raise RuntimeError("committed condition source registry is incomplete")
+
 
 def character_condition_family_stage(opcode: str, raw: Mapping[str, Any]) -> str:
     """Return the planned evaluator stage without claiming source completeness."""
 
-    if opcode in EXECUTABLE_CONDITION_OPCODES:
-        return "existing_family"
     spec = _MISSING_FAMILY_SPECS.get(opcode)
     signatures = _MISSING_FAMILY_SIGNATURES.get(opcode)
-    if spec is None or signatures is None:
-        return "blocked_unclassified"
-    signature = frozenset(key for key in raw if key != "$type")
-    if signature not in signatures:
-        return "blocked_unclassified"
-    return spec.evaluation_stage
+    if spec is not None and signatures is not None:
+        signature = frozenset(key for key in raw if key != "$type")
+        if signature not in signatures:
+            return "blocked_unclassified"
+        return spec.evaluation_stage
+    if opcode in EXECUTABLE_CONDITION_OPCODES:
+        return "existing_family"
+    return "blocked_unclassified"
 
 
 def character_condition_family_blocked_reason(
     opcode: str, raw: Mapping[str, Any]
 ) -> str:
-    if opcode in EXECUTABLE_CONDITION_OPCODES:
-        return ""
     spec = _MISSING_FAMILY_SPECS.get(opcode)
     signatures = _MISSING_FAMILY_SIGNATURES.get(opcode)
-    if spec is None or signatures is None:
-        return f"condition_family_unclassified:{opcode}"
-    signature = frozenset(key for key in raw if key != "$type")
-    if signature not in signatures:
-        return f"condition_field_signature_unclassified:{opcode}"
-    stage = spec.evaluation_stage
-    return f"condition_deferred_to_{stage}:{opcode}"
+    if spec is not None and signatures is not None:
+        signature = frozenset(key for key in raw if key != "$type")
+        if signature not in signatures:
+            return f"condition_field_signature_unclassified:{opcode}"
+        return f"condition_owned_by_{spec.evaluation_stage}:{opcode}"
+    if opcode in EXECUTABLE_CONDITION_OPCODES:
+        return ""
+    return f"condition_family_unclassified:{opcode}"
 
 
 def build_character_condition_responsibility_catalog(
@@ -330,7 +340,10 @@ def build_character_condition_responsibility_catalog(
     responsibilities: list[CharacterConditionResponsibilityIR] = []
     issues: list[ConditionResponsibilityIssueIR] = []
     for record in condition_records:
-        if record.family in EXECUTABLE_CONDITION_OPCODES:
+        if (
+            record.family in EXECUTABLE_CONDITION_OPCODES
+            and record.family not in _MISSING_FAMILY_SPECS
+        ):
             existing_ids.append(record.record_id)
             continue
         source_path = record.source.source_path

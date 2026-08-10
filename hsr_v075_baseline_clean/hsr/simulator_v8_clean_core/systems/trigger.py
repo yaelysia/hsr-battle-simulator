@@ -5,11 +5,13 @@ from dataclasses import dataclass, field
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.evaluator import EvaluationContext, RuleEvaluator
+from ..rules.evaluator import RuleEvaluator
 from ..rules.ir import ActionDefinitionIR, ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
+from .target import TargetSystem
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,7 @@ class TriggerSystem:
         self.effect_registry = effect_registry
         self.evaluator = evaluator or RuleEvaluator()
         self.reducer = reducer or MutationReducer()
+        self.targets = TargetSystem(rules)
 
     def match(self, rules: RuleBook, event: GameEvent) -> tuple[str, ...]:
         return tuple(trigger.trigger_id for trigger in rules.triggers_for_event(event.event_type))
@@ -161,7 +164,7 @@ class TriggerSystem:
                     self._append_process_record(records, window_records, record)
                     continue
 
-                condition_results, blocked_reason = self._evaluate_conditions(
+                condition_results, conditions_match, blocked_reason = self._evaluate_conditions(
                     trigger,
                     state=current,
                     status_detail=detail,
@@ -169,6 +172,7 @@ class TriggerSystem:
                     action_definition=action_definition,
                     owner_id=owner_id,
                     primary_target=primary_target,
+                    target_resolution=target_resolution,
                     canonical_window=canonical_window,
                     tbgd_event=tbgd_event,
                 )
@@ -180,6 +184,23 @@ class TriggerSystem:
                         trigger_id=trigger.trigger_id,
                         condition_results=tuple(condition_results),
                         blocked_reason=blocked_reason,
+                        metadata=_window_metadata(
+                            command=command,
+                            action_definition=action_definition,
+                            primary_target=primary_target,
+                            selected_targets=selected_targets,
+                        ),
+                    )
+                    self._append_process_record(records, window_records, record)
+                    continue
+                if not conditions_match:
+                    record = _window_record(
+                        canonical_window,
+                        tbgd_event,
+                        detail,
+                        trigger_id=trigger.trigger_id,
+                        condition_results=tuple(condition_results),
+                        skipped_reason="condition_false",
                         metadata=_window_metadata(
                             command=command,
                             action_definition=action_definition,
@@ -333,42 +354,55 @@ class TriggerSystem:
         action_definition: ActionDefinitionIR,
         owner_id: str,
         primary_target: str | None,
+        target_resolution: TargetResolution,
         canonical_window: str,
         tbgd_event: str,
-    ) -> tuple[list[dict[str, JSONValue]], str]:
+    ) -> tuple[list[dict[str, JSONValue]], bool, str]:
         results: list[dict[str, JSONValue]] = []
         for condition_id in trigger.conditions:
             condition = self.rules.condition(condition_id)
             if condition is None:
                 results.append({"condition_id": condition_id, "result": None, "reason": "missing_condition"})
-                return results, f"blocked_condition:{condition_id}:missing"
+                return results, False, f"blocked_condition:{condition_id}:missing"
+            event_payload = _condition_event_payload(
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                canonical_window=canonical_window,
+                tbgd_event=tbgd_event,
+            )
+            binding_sources = _condition_binding_sources(
+                state,
+                command.actor_id,
+                owner_id,
+                primary_target,
+            )
             result = self.evaluator.evaluate_condition_result(
                 condition,
-                EvaluationContext(
-                    state=state,
-                    actor_id=command.actor_id,
-                    target_id=primary_target,
-                    owner_id=owner_id,
-                    param_entity_id=primary_target or command.actor_id,
-                    current_action_target_id=primary_target,
-                    status_detail=status_detail,
-                    event_payload=_condition_event_payload(
-                        command=command,
-                        action_definition=action_definition,
-                        primary_target=primary_target,
-                        canonical_window=canonical_window,
-                        tbgd_event=tbgd_event,
+                self.targets.condition_evaluation_context(
+                    state,
+                    condition,
+                    context=TargetEvaluationContext(
+                        caster_id=command.actor_id,
+                        effect_owner_id=owner_id,
+                        parameter_entity_ids=((primary_target or command.actor_id),),
+                        selected_target_ids=tuple(target_resolution.selected),
+                        current_target_id=primary_target,
+                        turn_owner_id=committed_turn_owner_id(state),
                     ),
-                    binding_sources=_condition_binding_sources(state, command.actor_id, owner_id, primary_target),
+                    target_resolution=target_resolution,
+                    condition_event_payload=event_payload,
+                    binding_sources=binding_sources,
+                    status_detail=status_detail,
                 ),
             )
             results.append(result.to_json())
             if result.ok and result.result is True:
                 continue
             if result.ok and result.result is False:
-                return results, f"blocked_condition:{condition.condition_id}:false"
-            return results, f"blocked_condition:{condition.condition_id}:{result.reason}"
-        return results, ""
+                return results, False, ""
+            return results, False, f"blocked_condition:{condition.condition_id}:{result.reason}"
+        return results, True, ""
 
     def _skipped_window(
         self,

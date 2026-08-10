@@ -27,8 +27,10 @@ from ..rules.ir import (
     TargetExpressionIR,
     TargetExpressionNodeIR,
 )
+from ..rules.rulebook import RuleBook
 from ..unit_eligibility import runtime_unit_is_unselectable
 from .rng import rng_choices_from_payload, rng_mode_from_payload
+from .condition_state import CommittedConditionFactProvider
 from .target_random import TargetRandomPlan, TargetRandomSampler
 from .unit_relation import (
     EntityRelationResolver,
@@ -267,6 +269,9 @@ class TargetSystem:
         self.lifecycle = UnitLifecycleSystem()
         self.relations = EntityRelationResolver()
         self.random_sampler = TargetRandomSampler()
+        self.condition_facts = CommittedConditionFactProvider(
+            rules if type(rules) is RuleBook else None
+        )
         self.alias_definitions: dict[str, TargetExpressionIR] = {}
         self.scoped_alias_definitions: dict[tuple[str, str], TargetExpressionIR] = {}
         self.operation_definitions: dict[str, TargetExpressionIR] = {}
@@ -374,6 +379,7 @@ class TargetSystem:
             scoped_alias_definitions=self.scoped_alias_definitions,
             definition_source_path=expression.source.source_path,
             random_sampler=self.random_sampler,
+            condition_facts=self.condition_facts,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -450,6 +456,7 @@ class TargetSystem:
             definition_source_path=node.source.source_path,
             ambiguous_definition_names=self.ambiguous_definition_names,
             random_sampler=self.random_sampler,
+            condition_facts=self.condition_facts,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -475,6 +482,7 @@ class TargetSystem:
         condition: ConditionIR,
         *,
         context: TargetEvaluationContext,
+        target_resolution: TargetResolution | None = None,
         condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
@@ -496,6 +504,7 @@ class TargetSystem:
                 state,
                 node,
                 context=context,
+                target_resolution=target_resolution,
                 condition_event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
@@ -505,6 +514,45 @@ class TargetSystem:
             else:
                 errors[key] = result.blocked_reason
         return resolved, errors
+
+    def condition_evaluation_context(
+        self,
+        state: BattleState,
+        condition: ConditionIR,
+        *,
+        context: TargetEvaluationContext,
+        target_resolution: TargetResolution | None = None,
+        condition_event_payload: dict[str, JSONValue] | None = None,
+        dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
+        status_detail: dict[str, JSONValue] | None = None,
+    ) -> EvaluationContext:
+        """Build the one formal evaluator context from typed target identities."""
+
+        resolved, errors = self.resolve_condition_target_groups(
+            state,
+            condition,
+            context=context,
+            target_resolution=target_resolution,
+            condition_event_payload=condition_event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+        )
+        return EvaluationContext(
+            state=state,
+            actor_id=context.caster_id,
+            target_id=context.current_target_id,
+            owner_id=context.effect_owner_id,
+            param_entity_id=context.parameter_entity_id,
+            current_action_target_id=context.current_target_id,
+            status_detail=status_detail,
+            event_payload=condition_event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            resolved_target_groups=resolved,
+            target_resolution_errors=errors,
+            committed_condition_provider=self.condition_facts,
+        )
 
     def resolve_bounce_hit_target(
         self,
@@ -722,6 +770,7 @@ class _TargetRelationRuntime:
     scoped_alias_definitions: Mapping[tuple[str, str], TargetExpressionIR]
     definition_source_path: str
     random_sampler: TargetRandomSampler
+    condition_facts: CommittedConditionFactProvider
     ambiguous_definition_names: frozenset[str] = frozenset()
     alias_stack: tuple[str, ...] = ()
     include_limbo: bool = False
@@ -824,6 +873,7 @@ def _resolve_expression_payload(
     definition_source_path: str,
     ambiguous_definition_names: frozenset[str],
     random_sampler: TargetRandomSampler,
+    condition_facts: CommittedConditionFactProvider,
 ) -> _ExpressionResolution:
     if raw is None or raw.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return _ExpressionResolution(blocked_reason="target_expression_typed_node_missing")
@@ -850,6 +900,7 @@ def _resolve_expression_payload(
             scoped_alias_definitions=scoped_alias_definitions,
             definition_source_path=definition_source_path,
             random_sampler=random_sampler,
+            condition_facts=condition_facts,
             ambiguous_definition_names=ambiguous_definition_names,
         ),
     )
@@ -1440,6 +1491,7 @@ def _resolve_filter_candidates(
                 binding_sources=binding_sources,
                 resolved_target_groups=resolved_target_groups,
                 target_resolution_errors=target_resolution_errors,
+                committed_condition_provider=relation_runtime.condition_facts,
             ),
         )
         condition_results.append(result.to_json())

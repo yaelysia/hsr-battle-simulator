@@ -6,8 +6,8 @@ from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutat
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
-from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
-from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource, TargetExpressionNodeIR
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
+from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
@@ -1099,43 +1099,23 @@ class AbilityTaskSystem:
             "hit_index": task.task_index,
             "rng_decision_index": task.task_index,
         }
-        resolved_target_groups: dict[str, tuple[str, ...]] = {}
-        target_resolution_errors: dict[str, str] = {}
-        for field_name, node in condition.payload.items():
-            if not isinstance(node, TargetExpressionNodeIR):
-                continue
-            target_result = self.targets.resolve_target_expression(
+        target_context = TargetEvaluationContext(
+            caster_id=command.actor_id,
+            effect_owner_id=command.actor_id,
+            parameter_entity_ids=((primary_target or command.actor_id),),
+            selected_target_ids=tuple(target_resolution.selected),
+            current_target_id=primary_target,
+            turn_owner_id=committed_turn_owner_id(state),
+        )
+        result = self.evaluator.evaluate_condition_result(
+            condition,
+            self.targets.condition_evaluation_context(
                 state,
-                node,
-                context=TargetEvaluationContext(
-                    caster_id=command.actor_id,
-                    effect_owner_id=command.actor_id,
-                    parameter_entity_ids=((primary_target or command.actor_id),),
-                    selected_target_ids=tuple(target_resolution.selected),
-                    current_target_id=primary_target,
-                    turn_owner_id=committed_turn_owner_id(state),
-                ),
+                condition,
+                context=target_context,
                 target_resolution=target_resolution,
                 condition_event_payload=event_payload,
                 binding_sources=binding_sources,
-            )
-            if target_result.resolved:
-                resolved_target_groups[field_name] = target_result.target_ids
-            else:
-                target_resolution_errors[field_name] = target_result.blocked_reason
-        result = self.evaluator.evaluate_condition_result(
-            condition,
-            EvaluationContext(
-                state=state,
-                actor_id=command.actor_id,
-                target_id=primary_target,
-                owner_id=command.actor_id,
-                param_entity_id=primary_target or command.actor_id,
-                current_action_target_id=primary_target,
-                event_payload=event_payload,
-                binding_sources=binding_sources,
-                resolved_target_groups=resolved_target_groups,
-                target_resolution_errors=target_resolution_errors,
             ),
         )
         if not result.ok or result.result is None:

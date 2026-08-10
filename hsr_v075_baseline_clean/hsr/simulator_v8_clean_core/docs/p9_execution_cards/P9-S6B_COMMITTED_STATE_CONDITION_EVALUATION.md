@@ -5,7 +5,7 @@
 - 对应问题：P9-I07 第一部分；机制包 M05 committed-state 求值层。
 - 硬前置：P9-S6A 已验收，责任目录来源指纹仍与当前 raw 一致。
 - 推荐：5.6 Sol / max / Goal。
-- 本卡未开始；执行前必须先核对 S6A 目录，没有用户确认不得修改代码。
+- 状态：accepted。
 
 ## 阶段目标
 
@@ -66,9 +66,9 @@
 
 ## 唯一执行清单
 
-- [ ] S6A committed-state 责任集合被当前指纹完整继承。
-- [ ] 全部 S6B family 完成严格 lowering 与统一三态求值。
-- [ ] 当前生产事实正例、非法输入负例和外部 producer blocker 均诚实。
-- [ ] comparator、关系和目标集合复用现有权威，无角色专属分支。
-- [ ] 正式 evaluator 调用者完成迁移且无旧语义残留。
-- [ ] 聚焦验证、必要 direct、代码审查与资源审计通过。
+- [x] S6A committed-state 责任集合被当前指纹完整继承。
+- [x] 全部 S6B family 完成严格 lowering 与统一三态求值。
+- [x] 当前生产事实正例、非法输入负例和外部 producer blocker 均诚实。
+- [x] comparator、关系和目标集合复用现有权威，无角色专属分支。
+- [x] 正式 evaluator 调用者完成迁移且无旧语义残留。
+- [x] 聚焦验证、必要 direct、代码审查与资源审计通过。

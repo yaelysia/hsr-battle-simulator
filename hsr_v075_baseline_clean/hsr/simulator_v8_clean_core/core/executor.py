@@ -24,7 +24,7 @@ from .model import (
 from .reducer import MutationReducer
 from .settlement import SettlementRecord
 from .transition_outcome import ExecutionNodeResult
-from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolution, ValueResolver
@@ -58,6 +58,7 @@ from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.summon_runtime import validate_summon_runtime
 from ..systems.target import TargetSystem, resolve_action_bounce_policy
+from ..systems.unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
@@ -88,7 +89,7 @@ class CombatExecutor:
         self.rules = rules
         self.reducer = MutationReducer()
         self.resources = ResourceSystem()
-        self.targets = TargetSystem()
+        self.targets = TargetSystem(rules)
         self.action_targets = ActionTargetSelectionSystem(rules)
         self.timeline = TimelineSystem()
         self.lifecycle = UnitLifecycleSystem()
@@ -1068,14 +1069,31 @@ class CombatExecutor:
                         listener_dispatch_results.append(dispatch_result)
                         ordered_mutations.extend(dispatch_result.mutations)
                         runtime_records.extend(dispatch_result.records)
-                        modifier_terms, modifier_records = _collect_direct_damage_modifiers(
+                        modifier_terms, modifier_records, modifier_blockers = _collect_direct_damage_modifiers(
                             current_state,
                             self.rules,
+                            self.targets,
                             command.actor_id,
                             damage_packet.target_id,
                             damage_packet,
                         )
-                        if modifier_terms or modifier_records:
+                        if modifier_records:
+                            runtime_records.extend(modifier_records)
+                        if modifier_blockers:
+                            execution_node_results.extend(
+                                ExecutionNodeResult(
+                                    node_kind="damage_modifier",
+                                    node_id=(
+                                        f"damage_modifier:{command.actor_id}:"
+                                        f"{damage_packet.target_id}:{damage_plan.hit_index}:{index}"
+                                    ),
+                                    status="blocked",
+                                    reason_code=reason,
+                                )
+                                for index, reason in enumerate(modifier_blockers)
+                            )
+                            continue
+                        if modifier_terms:
                             damage_packet = replace(
                                 damage_packet,
                                 metadata={
@@ -1085,7 +1103,6 @@ class CombatExecutor:
                                     "modifier_collection_after_before_hit": True,
                                 },
                             )
-                            runtime_records.extend(modifier_records)
                         damage_result = self.damage.apply_packet(
                             current_state,
                             damage_packet,
@@ -2771,19 +2788,25 @@ def _damage_value_resolution(
 def _collect_direct_damage_modifiers(
     state: BattleState,
     rules: RuleBook,
+    targets: TargetSystem,
     actor_id: str,
     target_id: str,
     packet: DamagePacket,
-) -> tuple[tuple[dict[str, JSONValue], ...], tuple[dict[str, JSONValue], ...]]:
+) -> tuple[
+    tuple[dict[str, JSONValue], ...],
+    tuple[dict[str, JSONValue], ...],
+    tuple[str, ...],
+]:
     if packet.damage_formula_family != "direct":
-        return (), ()
+        return (), (), ()
     actor = state.units.get(actor_id)
     target = state.units.get(target_id)
     if actor is None or target is None:
-        return (), ()
+        return (), (), ()
     evaluator = RuleEvaluator()
     terms: list[dict[str, JSONValue]] = []
     records: list[dict[str, JSONValue]] = []
+    blockers: list[str] = []
     event_payload = {
         **packet.metadata,
         "target_id": target_id,
@@ -2824,10 +2847,11 @@ def _collect_direct_damage_modifiers(
                         if callback.callback_id in callback_ids
                     )
                 for callback in callbacks:
-                    callback_terms, callback_records = _collect_callback_damage_modifiers(
+                    callback_terms, callback_records, callback_blockers = _collect_callback_damage_modifiers(
                         state,
                         rules,
                         evaluator,
+                        targets,
                         callback_id=callback.callback_id,
                         callback_event=callback_event,
                         actor_id=actor_id,
@@ -2838,13 +2862,15 @@ def _collect_direct_damage_modifiers(
                     )
                     terms.extend(callback_terms)
                     records.extend(callback_records)
-    return tuple(terms), tuple(records)
+                    blockers.extend(callback_blockers)
+    return tuple(terms), tuple(records), tuple(blockers)
 
 
 def _collect_callback_damage_modifiers(
     state: BattleState,
     rules: RuleBook,
     evaluator: RuleEvaluator,
+    targets: TargetSystem,
     *,
     callback_id: str,
     callback_event: str,
@@ -2853,11 +2879,16 @@ def _collect_callback_damage_modifiers(
     target_id: str,
     detail: dict[str, JSONValue],
     event_payload: dict[str, JSONValue],
-) -> tuple[tuple[dict[str, JSONValue], ...], tuple[dict[str, JSONValue], ...]]:
+) -> tuple[
+    tuple[dict[str, JSONValue], ...],
+    tuple[dict[str, JSONValue], ...],
+    tuple[str, ...],
+]:
     tasks = {task.task_id: task for task in rules.status_callback_tasks_for_callback(callback_id)}
     roots = tuple(sorted((task for task in tasks.values() if not task.parent_task_id), key=lambda item: (item.task_index, item.task_id)))
     terms: list[dict[str, JSONValue]] = []
     records: list[dict[str, JSONValue]] = []
+    blockers: list[str] = []
     binding_sources = (
         *status_binding_sources(state, tuple(unit_id for unit_id in (actor_id, owner_id, target_id) if unit_id)),
         binding_source_from_store(store_from_state(state)),
@@ -2868,41 +2899,56 @@ def _collect_callback_damage_modifiers(
         if root.opcode == "PredicateTaskList":
             condition = rules.condition(root.condition_id) if root.condition_id else None
             if condition is None:
-                records.append(_damage_modifier_record(root.task_id, "blocked", "missing_predicate_condition", {}, ()))
+                reason = "missing_predicate_condition"
+                records.append(_damage_modifier_record(root.task_id, "blocked", reason, {}, ()))
+                blockers.append(f"damage_modifier:{root.task_id}:{reason}")
                 continue
             result = evaluator.evaluate_condition_result(
                 condition,
-                EvaluationContext(
-                    state=state,
-                    actor_id=actor_id,
-                    owner_id=owner_id,
-                    target_id=target_id,
-                    param_entity_id=target_id,
-                    current_action_target_id=target_id,
-                    status_detail=detail,
-                    event_payload=dict(event_payload),
+                targets.condition_evaluation_context(
+                    state,
+                    condition,
+                    context=TargetEvaluationContext(
+                        caster_id=actor_id,
+                        effect_owner_id=owner_id,
+                        parameter_entity_ids=(target_id,),
+                        selected_target_ids=(target_id,),
+                        current_target_id=target_id,
+                        turn_owner_id=committed_turn_owner_id(state),
+                    ),
+                    condition_event_payload=dict(event_payload),
                     binding_sources=binding_sources,
+                    status_detail=detail,
                 ),
             )
             condition_result = result.to_json()
             if not result.ok or result.result is None:
                 records.append(_damage_modifier_record(root.task_id, "blocked", result.reason, condition_result, ()))
+                blockers.append(f"damage_modifier:{root.task_id}:{result.reason}")
                 continue
-            if not result.result:
-                records.append(_damage_modifier_record(root.task_id, "skipped", "condition_false", condition_result, ()))
+            selected_ids = (
+                root.success_task_ids if result.result else root.failed_task_ids
+            )
+            if not selected_ids:
+                reason = "selected_condition_branch_empty"
+                records.append(_damage_modifier_record(root.task_id, "skipped", reason, condition_result, ()))
                 continue
-            selected_ids = root.success_task_ids
         else:
             selected_ids = (root.task_id,)
         for child_id in selected_ids:
             child = tasks.get(child_id)
             if child is None:
+                reason = f"missing_child_task:{child_id}"
+                records.append(_damage_modifier_record(root.task_id, "blocked", reason, condition_result, ()))
+                blockers.append(f"damage_modifier:{root.task_id}:{reason}")
                 continue
             for modifier in rules.damage_modifiers_for_callback(callback_id):
                 if modifier.source_task_id != child.task_id:
                     continue
                 if modifier.coverage_status != "executable":
-                    records.append(_damage_modifier_record(child.task_id, "blocked", modifier.blocked_reason or "damage_modifier_not_executable", condition_result, (modifier.to_json(),)))
+                    reason = modifier.blocked_reason or "damage_modifier_not_executable"
+                    records.append(_damage_modifier_record(child.task_id, "blocked", reason, condition_result, (modifier.to_json(),)))
+                    blockers.append(f"damage_modifier:{child.task_id}:{reason}")
                     continue
                 applied_terms: list[dict[str, JSONValue]] = []
                 for term in modifier.modifier_terms:
@@ -2914,7 +2960,9 @@ def _collect_callback_damage_modifiers(
                         ),
                     )
                     if not evaluation.ok or evaluation.value is None:
-                        records.append(_damage_modifier_record(child.task_id, "blocked", evaluation.blocked_reason or "damage_modifier_numeric_blocked", condition_result, (modifier.to_json(),)))
+                        reason = evaluation.blocked_reason or "damage_modifier_numeric_blocked"
+                        records.append(_damage_modifier_record(child.task_id, "blocked", reason, condition_result, (modifier.to_json(),)))
+                        blockers.append(f"damage_modifier:{child.task_id}:{reason}")
                         continue
                     applied = {
                         **term,
@@ -2931,7 +2979,7 @@ def _collect_callback_damage_modifiers(
                     terms.append(applied)
                     applied_terms.append(applied)
                 records.append(_damage_modifier_record(child.task_id, "applied" if applied_terms else "skipped", "", condition_result, tuple(applied_terms)))
-    return tuple(terms), tuple(records)
+    return tuple(terms), tuple(records), tuple(blockers)
 
 
 def _damage_modifier_record(
