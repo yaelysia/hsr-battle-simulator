@@ -33,7 +33,12 @@ from .ir import (
     TargetExpressionNodeIR,
     TriggerIR,
 )
-from .evaluator import EvaluationContext, RuleEvaluator
+from .evaluator import (
+    CONTEXTUAL_CONDITION_FACTS_BY_OPCODE,
+    CONTEXTUAL_CONDITION_OPCODES,
+    EvaluationContext,
+    RuleEvaluator,
+)
 from .condition_contract import (
     CharacterConditionResponsibilityCatalog,
     CharacterConditionResponsibilityIR,
@@ -41,9 +46,15 @@ from .condition_contract import (
 )
 from .condition_state import (
     COMMITTED_CONDITION_FACT_KINDS,
+    TRANSIENT_CONDITION_FACT_KINDS,
+    TRANSIENT_CONDITION_FACT_SPECS,
     ConditionOperandProvider,
     ConditionOperandRequest,
     ConditionOperandResolution,
+    TransientConditionOperandProvider,
+    TransientConditionOperandRequest,
+    TransientConditionOperandResolution,
+    TransientConditionContextKind,
 )
 from .action_target_contract import (
     ActionTargetContractCatalogIR,
@@ -95,10 +106,18 @@ __all__ = [
     "CharacterConditionResponsibilityIR",
     "ConditionResponsibilityIssueIR",
     "COMMITTED_CONDITION_FACT_KINDS",
+    "TRANSIENT_CONDITION_FACT_KINDS",
+    "TRANSIENT_CONDITION_FACT_SPECS",
     "ConditionOperandProvider",
     "ConditionOperandRequest",
     "ConditionOperandResolution",
+    "TransientConditionOperandProvider",
+    "TransientConditionOperandRequest",
+    "TransientConditionOperandResolution",
+    "TransientConditionContextKind",
     "ConditionIR",
+    "CONTEXTUAL_CONDITION_FACTS_BY_OPCODE",
+    "CONTEXTUAL_CONDITION_OPCODES",
     "EffectIR",
     "EvaluationContext",
     "FormulaIR",

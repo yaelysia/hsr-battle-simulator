@@ -67,6 +67,7 @@ from ..resource_event_contract import (
 )
 from ..rules.evaluator import (
     COMMITTED_STATE_CONDITION_OPCODES,
+    CONTEXTUAL_CONDITION_OPCODES,
     EXECUTABLE_CONDITION_OPCODES,
     NumericEvaluationContext,
     RuleEvaluator,
@@ -5217,6 +5218,7 @@ class TBGDLowering:
         payload = _condition_payload_with_tbgd_defaults(
             opcode,
             _typed_condition_payload(
+                opcode,
                 _compact_payload(predicate),
                 target_alias_registry,
                 source=condition_source,
@@ -7198,6 +7200,7 @@ class TBGDLowering:
         payload = _condition_payload_with_tbgd_defaults(
             opcode,
             _typed_condition_payload(
+                opcode,
                 _compact_payload(predicate),
                 equipment_scope=equipment_source_admitted,
                 damage_tag_registry=self._damage_tag_registry,
@@ -15973,6 +15976,7 @@ def _typed_condition_execution_node(
     payload = _condition_payload_with_tbgd_defaults(
         opcode,
         _typed_condition_payload(
+            opcode,
             _compact_payload(raw),
             target_alias_registry,
             equipment_scope=equipment_scope,
@@ -15993,6 +15997,7 @@ def _typed_condition_execution_node(
         family_admitted = family_stage in {
             "existing_family",
             "p9_s6b_committed_state",
+            "p9_s7_transient_context",
         }
         family_blocked_reason = character_condition_family_blocked_reason(
             opcode, raw
@@ -16035,6 +16040,7 @@ def _typed_condition_execution_node(
 
 
 def _typed_condition_payload(
+    opcode: str,
     payload: dict[str, Any],
     target_alias_registry: dict[str, Any] | None = None,
     *,
@@ -16061,6 +16067,12 @@ def _typed_condition_payload(
                     "blocked_reason": "nested_target_source_missing",
                     "source_path": condition_source.source_path,
                 }
+        elif opcode == "ByCompareParamString" and key == "CompareValue":
+            lowered[key] = _condition_string_literal(value)
+        elif opcode == "ByCompareSPChangeTag" and key == "TagList":
+            lowered[key] = _condition_tag_identities(value)
+        elif opcode == "ByCurrentSkillTargetType" and key == "IsDynamic":
+            lowered[key] = _condition_strict_bool(value)
         elif key in {
             "Chance",
             "CompareValue",
@@ -16103,6 +16115,74 @@ def _typed_condition_payload(
         else:
             lowered[key] = _json_safe(value)
     return lowered
+
+
+def _condition_string_literal(value: Any) -> str | dict[str, Any]:
+    if (
+        isinstance(value, dict)
+        and set(value) == {"Value"}
+        and isinstance(value.get("Value"), str)
+        and value["Value"]
+    ):
+        return str(value["Value"])
+    return {
+        "blocked_reason": "condition_string_literal_invalid",
+        "raw": _json_safe(value),
+    }
+
+
+def _condition_strict_bool(value: Any) -> bool | dict[str, Any]:
+    if type(value) is bool:
+        return value
+    if value == "True":
+        return True
+    if value == "False":
+        return False
+    return {
+        "blocked_reason": "condition_boolean_literal_invalid",
+        "raw": _json_safe(value),
+    }
+
+
+def _condition_tag_identities(value: Any) -> list[str] | dict[str, Any]:
+    if not isinstance(value, list) or not value:
+        return {
+            "blocked_reason": "condition_tag_list_invalid",
+            "raw": _json_safe(value),
+        }
+    identities: list[str] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"EnumIndex", "Value"}:
+            return {
+                "blocked_reason": "condition_tag_entry_invalid",
+                "raw": _json_safe(value),
+            }
+        enum_index = item.get("EnumIndex")
+        enum_value = item.get("Value")
+        if (
+            not isinstance(enum_index, int)
+            or isinstance(enum_index, bool)
+            or enum_index < 0
+            or not isinstance(enum_value, int)
+            or isinstance(enum_value, bool)
+            or enum_value < 0
+        ):
+            return {
+                "blocked_reason": "condition_tag_entry_invalid",
+                "raw": _json_safe(value),
+            }
+        identities.append(f"enum:{enum_index}:{enum_value}")
+    if len(identities) != 1:
+        return {
+            "blocked_reason": "condition_tag_multi_value_semantics_not_admitted",
+            "raw": _json_safe(value),
+        }
+    if len(identities) != len(set(identities)):
+        return {
+            "blocked_reason": "condition_tag_entry_duplicate",
+            "raw": _json_safe(value),
+        }
+    return identities
 
 
 def _condition_source_from_parent(source: IRSource, field_name: str) -> IRSource:
@@ -19123,6 +19203,135 @@ def _committed_condition_payload_executable(
     return False
 
 
+def _contextual_condition_payload_executable(
+    opcode: str,
+    payload: dict[str, Any],
+    *,
+    local_aliases: frozenset[str],
+) -> bool:
+    keys = frozenset(payload)
+    inverse = payload.get("Inverse")
+    if "Inverse" in payload and type(inverse) is not bool:
+        return False
+    if opcode == "ByCheckModifierCallBackModifierValue":
+        return (
+            keys == {"CompareType", "CompareValue", "ValueType"}
+            and payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+            and payload.get("ValueType") in {"Layer", "LifeTime"}
+            and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
+        )
+    if opcode == "ByCompareNextUnusedInsertAction":
+        return (
+            keys == {"ActionTypeIs", "CasterIs"}
+            and isinstance(payload.get("ActionTypeIs"), str)
+            and bool(payload.get("ActionTypeIs"))
+            and _condition_target_value_executable(
+                payload.get("CasterIs"), local_aliases=local_aliases
+            )
+        ) or (
+            keys == {"CustomTagIs", "Inverse"}
+            and isinstance(payload.get("CustomTagIs"), str)
+            and bool(payload.get("CustomTagIs"))
+        )
+    if opcode == "ByCompareParamString":
+        return keys == {"CompareValue"} and isinstance(
+            payload.get("CompareValue"), str
+        ) and bool(payload.get("CompareValue"))
+    if opcode == "ByCompareSPChangeTag":
+        tags = payload.get("TagList")
+        return (
+            keys == {"TagList"}
+            and isinstance(tags, list)
+            and bool(tags)
+            and all(isinstance(item, str) and bool(item) for item in tags)
+            and len(tags) == len(set(tags))
+        )
+    if opcode == "ByCompareTurnActionEntityTeamType":
+        return keys == {"Team"} and payload.get("Team") in {
+            "TeamLight",
+            "TeamDark",
+        }
+    if opcode == "ByCompareUnusedInsertAbilityCount":
+        return (
+            keys == {"CompareType", "CompareValue"}
+            and payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+            and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
+        )
+    if opcode == "ByCompareUnusedUltraSkillCount":
+        if keys not in {
+            frozenset({"CompareType", "CompareValue", "IncludeInsertAction"}),
+            frozenset({"CompareType", "CompareValue", "SkillOwnerType"}),
+            frozenset(
+                {
+                    "CompareType",
+                    "CompareValue",
+                    "IncludeInsertAction",
+                    "SkillOwnerType",
+                }
+            ),
+        }:
+            return False
+        return (
+            payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+            and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
+            and (
+                "IncludeInsertAction" not in payload
+                or type(payload.get("IncludeInsertAction")) is bool
+            )
+            and (
+                "SkillOwnerType" not in payload
+                or _condition_target_value_executable(
+                    payload.get("SkillOwnerType"), local_aliases=local_aliases
+                )
+            )
+        )
+    if opcode == "ByCurrentSkillTargetType":
+        return (
+            keys == {"TargetType"}
+            and isinstance(payload.get("TargetType"), str)
+            and bool(payload.get("TargetType"))
+        ) or (keys == {"IsDynamic"} and type(payload.get("IsDynamic")) is bool)
+    if opcode == "ByDamageSourceContainBehaviorFlag":
+        flags = payload.get("BehaviorFlags")
+        return (
+            keys == {"BehaviorFlags"}
+            and isinstance(flags, list)
+            and bool(flags)
+            and all(isinstance(item, str) and bool(item) for item in flags)
+            and len(flags) == len(set(flags))
+        )
+    if opcode == "ByHasInsertActionByTarget":
+        return keys == {"TargetType"} and _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        )
+    if opcode == "ByIsDamageType":
+        types = payload.get("DamageTypeList")
+        return (
+            keys == {"DamageTypeList", "TargetType"}
+            and isinstance(types, list)
+            and bool(types)
+            and all(isinstance(item, str) and bool(item) for item in types)
+            and len(types) == len(set(types))
+            and _condition_target_value_executable(
+                payload.get("TargetType"), local_aliases=local_aliases
+            )
+        )
+    if opcode == "ByIsInCharmAction":
+        return not keys
+    if opcode in {"ByIsSplitDamage", "ByIsTurnActionEntity"}:
+        return keys in {
+            frozenset({"TargetType"}),
+            frozenset({"Inverse", "TargetType"}),
+        } and _condition_target_value_executable(
+            payload.get("TargetType"), local_aliases=local_aliases
+        )
+    if opcode in {"ByTurnOwnerActionPhaseEnd", "ByTurnOwnerHasPendingOneMore"}:
+        return keys in {frozenset(), frozenset({"Inverse"})}
+    if opcode == "ByTurnOwnerHasActionInTurn":
+        return not keys
+    return False
+
+
 def _condition_payload_executable(
     opcode: str,
     payload: dict[str, Any],
@@ -19135,6 +19344,12 @@ def _condition_payload_executable(
         return True
     if opcode in COMMITTED_STATE_CONDITION_OPCODES:
         return _committed_condition_payload_executable(
+            opcode,
+            payload,
+            local_aliases=local_aliases,
+        )
+    if opcode in CONTEXTUAL_CONDITION_OPCODES:
+        return _contextual_condition_payload_executable(
             opcode,
             payload,
             local_aliases=local_aliases,

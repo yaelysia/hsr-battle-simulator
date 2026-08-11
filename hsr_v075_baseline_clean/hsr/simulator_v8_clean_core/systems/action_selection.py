@@ -11,6 +11,10 @@ from ..rules.action_target_contract import ActionTargetContractIR
 from ..rules.ir import ActionEventIR
 from ..rules.rulebook import RuleBook
 from .summon_runtime import validate_summon_runtime
+from .action_event_contract import (
+    ActionConditionFactProvider,
+    action_condition_fact_provider,
+)
 from .target import TargetSystem, resolve_action_bounce_policy
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext
@@ -485,7 +489,24 @@ class ActionTargetSelectionSystem:
                 revision,
                 "action_target_duplicate_selection_semantics_not_admitted",
             )
-        candidates, reason = self._candidate_ids(state, actor_id, contract)
+        transient_provider = action_condition_fact_provider(
+            self.rules,
+            state,
+            actor_id=actor_id,
+            action_id=action_id,
+            action_level=action_level,
+            invocation_id=(
+                f"action_query:{revision}:{actor_id}:{action_id}:"
+                f"{action_level}:{contract.contract_fingerprint}"
+            ),
+            window="action_target_query",
+        )
+        candidates, reason = self._candidate_ids(
+            state,
+            actor_id,
+            contract,
+            transient_provider=transient_provider,
+        )
         if reason:
             return self._blocked_query(
                 actor_id,
@@ -852,6 +873,8 @@ class ActionTargetSelectionSystem:
         state: BattleState,
         actor_id: str,
         contract: ActionTargetContractIR,
+        *,
+        transient_provider: ActionConditionFactProvider,
     ) -> tuple[tuple[str, ...], str]:
         context = TargetEvaluationContext(
             caster_id=actor_id,
@@ -893,6 +916,7 @@ class ActionTargetSelectionSystem:
                 state,
                 contract.selection_filter,
                 context=context,
+                transient_condition_provider=transient_provider,
             )
             if filter_result.blocked:
                 return (), filter_result.blocked_reason

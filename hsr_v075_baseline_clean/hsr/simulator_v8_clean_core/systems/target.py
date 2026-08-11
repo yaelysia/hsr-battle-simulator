@@ -15,6 +15,7 @@ from ..rules.evaluator import (
     RuleEvaluator,
     _condition_target_key,
 )
+from ..rules.condition_state import TransientConditionOperandProvider
 from ..rules.expression_ir import (
     TARGET_EXPRESSION_NODE_SCHEMA,
     numeric_fixed_value,
@@ -262,6 +263,27 @@ class TargetExpressionResult:
         }
 
 
+def _validated_transient_provider(
+    provider: TransientConditionOperandProvider | None,
+) -> tuple[
+    TransientConditionOperandProvider | None,
+    str | None,
+    str | None,
+]:
+    if provider is None:
+        return None, None, None
+    invocation_id = getattr(provider, "invocation_id", None)
+    window = getattr(provider, "window", None)
+    resolver = getattr(provider, "resolve_transient", None)
+    if (
+        not isinstance(invocation_id, str)
+        or not invocation_id
+        or not isinstance(window, str)
+        or not window
+        or not callable(resolver)
+    ):
+        return None, None, None
+    return provider, invocation_id, window
 
 
 class TargetSystem:
@@ -316,6 +338,7 @@ class TargetSystem:
         condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
+        transient_condition_provider: TransientConditionOperandProvider | None = None,
     ) -> TargetExpressionResult:
         if type(expression) is TargetExpressionNodeIR:
             return self._resolve_expression_node(
@@ -326,6 +349,7 @@ class TargetSystem:
                 condition_event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                transient_condition_provider=transient_condition_provider,
             )
         if type(expression) is not TargetExpressionIR:
             raise TypeError("target expression must be exact IR or node IR")
@@ -380,6 +404,7 @@ class TargetSystem:
             definition_source_path=expression.source.source_path,
             random_sampler=self.random_sampler,
             condition_facts=self.condition_facts,
+            transient_condition_facts=transient_condition_provider,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -411,6 +436,7 @@ class TargetSystem:
         condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
+        transient_condition_provider: TransientConditionOperandProvider | None = None,
     ) -> TargetExpressionResult:
         """Resolve an already-typed inline node for condition consumers."""
 
@@ -457,6 +483,7 @@ class TargetSystem:
             ambiguous_definition_names=self.ambiguous_definition_names,
             random_sampler=self.random_sampler,
             condition_facts=self.condition_facts,
+            transient_condition_facts=transient_condition_provider,
         )
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
@@ -486,6 +513,7 @@ class TargetSystem:
         condition_event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
+        transient_condition_provider: TransientConditionOperandProvider | None = None,
     ) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
         """Resolve every typed target operand required by a condition.
 
@@ -508,6 +536,7 @@ class TargetSystem:
                 condition_event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                transient_condition_provider=transient_condition_provider,
             )
             if result.resolved:
                 resolved[key] = result.target_ids
@@ -526,9 +555,13 @@ class TargetSystem:
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
         status_detail: dict[str, JSONValue] | None = None,
+        transient_condition_provider: TransientConditionOperandProvider | None = None,
     ) -> EvaluationContext:
         """Build the one formal evaluator context from typed target identities."""
 
+        transient_condition_provider, transient_invocation_id, transient_window = (
+            _validated_transient_provider(transient_condition_provider)
+        )
         resolved, errors = self.resolve_condition_target_groups(
             state,
             condition,
@@ -537,6 +570,7 @@ class TargetSystem:
             condition_event_payload=condition_event_payload,
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
+            transient_condition_provider=transient_condition_provider,
         )
         return EvaluationContext(
             state=state,
@@ -552,6 +586,9 @@ class TargetSystem:
             resolved_target_groups=resolved,
             target_resolution_errors=errors,
             committed_condition_provider=self.condition_facts,
+            transient_invocation_id=transient_invocation_id,
+            transient_window=transient_window,
+            transient_condition_provider=transient_condition_provider,
         )
 
     def resolve_bounce_hit_target(
@@ -771,6 +808,7 @@ class _TargetRelationRuntime:
     definition_source_path: str
     random_sampler: TargetRandomSampler
     condition_facts: CommittedConditionFactProvider
+    transient_condition_facts: TransientConditionOperandProvider | None
     ambiguous_definition_names: frozenset[str] = frozenset()
     alias_stack: tuple[str, ...] = ()
     include_limbo: bool = False
@@ -874,6 +912,7 @@ def _resolve_expression_payload(
     ambiguous_definition_names: frozenset[str],
     random_sampler: TargetRandomSampler,
     condition_facts: CommittedConditionFactProvider,
+    transient_condition_facts: TransientConditionOperandProvider | None,
 ) -> _ExpressionResolution:
     if raw is None or raw.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return _ExpressionResolution(blocked_reason="target_expression_typed_node_missing")
@@ -901,6 +940,7 @@ def _resolve_expression_payload(
             definition_source_path=definition_source_path,
             random_sampler=random_sampler,
             condition_facts=condition_facts,
+            transient_condition_facts=transient_condition_facts,
             ambiguous_definition_names=ambiguous_definition_names,
         ),
     )
@@ -1477,6 +1517,11 @@ def _resolve_filter_candidates(
                 target_resolution_errors[key] = target_result.blocked_reason
             else:
                 resolved_target_groups[key] = target_result.target_ids
+        transient_provider, transient_invocation_id, transient_window = (
+            _validated_transient_provider(
+                relation_runtime.transient_condition_facts
+            )
+        )
         result = evaluator.evaluate_condition_result(
             condition,
             EvaluationContext(
@@ -1492,6 +1537,9 @@ def _resolve_filter_candidates(
                 resolved_target_groups=resolved_target_groups,
                 target_resolution_errors=target_resolution_errors,
                 committed_condition_provider=relation_runtime.condition_facts,
+                transient_invocation_id=transient_invocation_id,
+                transient_window=transient_window,
+                transient_condition_provider=transient_provider,
             ),
         )
         condition_results.append(result.to_json())

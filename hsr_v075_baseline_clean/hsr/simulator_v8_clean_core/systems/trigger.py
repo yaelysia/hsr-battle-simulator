@@ -10,6 +10,7 @@ from ..rules.ir import ActionDefinitionIR, ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
+from .action_event_contract import admitted_action_condition_fact_provider
 from .target import TargetSystem
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
@@ -359,6 +360,14 @@ class TriggerSystem:
         tbgd_event: str,
     ) -> tuple[list[dict[str, JSONValue]], bool, str]:
         results: list[dict[str, JSONValue]] = []
+        transient_provider = admitted_action_condition_fact_provider(
+            self.rules,
+            state,
+            command=command,
+            action_definition=action_definition,
+            target_resolution=target_resolution,
+            window=canonical_window,
+        )
         for condition_id in trigger.conditions:
             condition = self.rules.condition(condition_id)
             if condition is None:
@@ -394,6 +403,7 @@ class TriggerSystem:
                     condition_event_payload=event_payload,
                     binding_sources=binding_sources,
                     status_detail=status_detail,
+                    transient_condition_provider=transient_provider,
                 ),
             )
             results.append(result.to_json())

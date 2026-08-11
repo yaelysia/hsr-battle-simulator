@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import json
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any
 
 from ..unit_eligibility import (
@@ -18,6 +19,9 @@ from .condition_state import (
     ConditionOperandProvider,
     ConditionOperandRequest,
     ConditionOperandResolution,
+    TransientConditionOperandProvider,
+    TransientConditionOperandRequest,
+    TransientConditionOperandResolution,
 )
 from .expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
@@ -43,6 +47,9 @@ class EvaluationContext:
     resolved_target_groups: dict[str, tuple[str, ...]] | None = None
     target_resolution_errors: dict[str, str] | None = None
     committed_condition_provider: ConditionOperandProvider | None = None
+    transient_invocation_id: str | None = None
+    transient_window: str | None = None
+    transient_condition_provider: TransientConditionOperandProvider | None = None
 
 
 @dataclass(frozen=True)
@@ -171,9 +178,32 @@ COMMITTED_STATE_CONDITION_OPCODES = frozenset(
     }
 )
 
+CONTEXTUAL_CONDITION_FACTS_BY_OPCODE = MappingProxyType({
+    "ByCheckModifierCallBackModifierValue": ("status_callback.modifier_value",),
+    "ByCompareNextUnusedInsertAction": ("queue.next_unused_insert_action_matches",),
+    "ByCompareParamString": ("event.param_string",),
+    "ByCompareSPChangeTag": ("resource_change.tags",),
+    "ByCompareTurnActionEntityTeamType": ("turn.action_entity.team",),
+    "ByCompareUnusedInsertAbilityCount": ("queue.unused_insert_ability_count",),
+    "ByCompareUnusedUltraSkillCount": ("queue.unused_ultimate_count",),
+    "ByCurrentSkillTargetType": ("action.target_type", "action.dynamic_target"),
+    "ByDamageSourceContainBehaviorFlag": ("damage.source_behavior_flags",),
+    "ByHasInsertActionByTarget": ("queue.has_insert_action_by_target",),
+    "ByIsDamageType": ("damage.type",),
+    "ByIsInCharmAction": ("action.charm_phase",),
+    "ByIsSplitDamage": ("damage.is_split",),
+    "ByIsTurnActionEntity": ("turn.action_entity.identity",),
+    "ByTurnOwnerActionPhaseEnd": ("turn.owner.action_phase_end",),
+    "ByTurnOwnerHasActionInTurn": ("turn.owner.has_action",),
+    "ByTurnOwnerHasPendingOneMore": ("turn.owner.pending_one_more",),
+})
+CONTEXTUAL_CONDITION_OPCODES = frozenset(
+    CONTEXTUAL_CONDITION_FACTS_BY_OPCODE
+)
+
 EXECUTABLE_CONDITION_OPCODES = frozenset(
     _PRE_P9_EXECUTABLE_CONDITION_OPCODES
-) | COMMITTED_STATE_CONDITION_OPCODES
+) | COMMITTED_STATE_CONDITION_OPCODES | CONTEXTUAL_CONDITION_OPCODES
 
 
 class RuleEvaluator:
@@ -642,6 +672,15 @@ def _evaluate_condition_payload(
         return _condition_result(True, condition_id, opcode, "condition_true", {}, source_trace)
     if opcode in COMMITTED_STATE_CONDITION_OPCODES:
         return _evaluate_committed_state_condition(
+            evaluator,
+            opcode,
+            payload,
+            context,
+            condition_id=condition_id,
+            source_trace=source_trace,
+        )
+    if opcode in CONTEXTUAL_CONDITION_OPCODES:
+        return _evaluate_contextual_condition(
             evaluator,
             opcode,
             payload,
@@ -2060,6 +2099,428 @@ def _evaluate_committed_quantifier(
         opcode,
         "quantifier_empty_or_complete",
         {"target_ids": list(target_ids), "children": [item.to_json() for item in children]},
+        source_trace,
+    )
+
+
+def _evaluate_contextual_condition(
+    evaluator: RuleEvaluator,
+    opcode: str,
+    payload: dict[str, Any],
+    context: EvaluationContext,
+    *,
+    condition_id: str,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    if opcode == "ByCheckModifierCallBackModifierValue":
+        operand = _transient_operand(
+            context,
+            "status_callback.modifier_value",
+            parameters={"value_type": payload.get("ValueType")},
+        )
+        return _contextual_numeric_comparison(
+            evaluator, condition_id, opcode, payload, context, operand, source_trace
+        )
+    if opcode == "ByCompareNextUnusedInsertAction":
+        parameters: dict[str, Any] = {}
+        if "ActionTypeIs" in payload:
+            caster_ids, details = _condition_target_ids(payload.get("CasterIs"), context)
+            if caster_ids is None:
+                return _condition_blocked(
+                    condition_id, opcode, "insert_action_caster_unresolved", details, source_trace
+                )
+            parameters = {
+                "action_type": payload.get("ActionTypeIs"),
+                "caster_ids": list(caster_ids),
+            }
+        else:
+            parameters = {"custom_tag": payload.get("CustomTagIs")}
+        return _contextual_boolean_result(
+            condition_id,
+            opcode,
+            _transient_operand(
+                context,
+                "queue.next_unused_insert_action_matches",
+                parameters=parameters,
+            ),
+            "next_unused_insert_action_checked",
+            source_trace,
+        )
+    if opcode == "ByCompareParamString":
+        operand = _transient_operand(context, "event.param_string")
+        expected = payload.get("CompareValue")
+        if operand.status != "resolved" or operand.value_type != "string":
+            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        return _condition_result(
+            operand.value == expected,
+            condition_id,
+            opcode,
+            "event_param_string_compared",
+            {"operand": operand.to_json(), "expected": expected},
+            source_trace,
+        )
+    if opcode == "ByCompareSPChangeTag":
+        operand = _transient_operand(context, "resource_change.tags")
+        expected = payload.get("TagList")
+        if operand.status != "resolved" or operand.value_type != "identity_set":
+            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        if not isinstance(expected, list):
+            return _condition_blocked(
+                condition_id, opcode, "resource_change_tag_list_invalid", {}, source_trace
+            )
+        actual_tags = tuple(operand.value)
+        return _condition_result(
+            all(tag in actual_tags for tag in expected),
+            condition_id,
+            opcode,
+            "resource_change_tags_checked",
+            {"operand": operand.to_json(), "expected": expected},
+            source_trace,
+        )
+    if opcode == "ByCompareTurnActionEntityTeamType":
+        return _contextual_string_comparison(
+            condition_id,
+            opcode,
+            _transient_operand(context, "turn.action_entity.team"),
+            payload.get("Team"),
+            "turn_action_entity_team_compared",
+            source_trace,
+        )
+    if opcode in {
+        "ByCompareUnusedInsertAbilityCount",
+        "ByCompareUnusedUltraSkillCount",
+    }:
+        fact_kind = (
+            "queue.unused_insert_ability_count"
+            if opcode == "ByCompareUnusedInsertAbilityCount"
+            else "queue.unused_ultimate_count"
+        )
+        parameters: dict[str, Any] = {}
+        if opcode == "ByCompareUnusedUltraSkillCount":
+            parameters["include_insert_action"] = payload.get(
+                "IncludeInsertAction", False
+            )
+            if payload.get("SkillOwnerType") is not None:
+                owner_ids, details = _condition_target_ids(
+                    payload.get("SkillOwnerType"), context
+                )
+                if owner_ids is None:
+                    return _condition_blocked(
+                        condition_id,
+                        opcode,
+                        "unused_ultimate_owner_unresolved",
+                        details,
+                        source_trace,
+                    )
+                parameters["skill_owner_ids"] = list(owner_ids)
+        return _contextual_numeric_comparison(
+            evaluator,
+            condition_id,
+            opcode,
+            payload,
+            context,
+            _transient_operand(context, fact_kind, parameters=parameters),
+            source_trace,
+        )
+    if opcode == "ByCurrentSkillTargetType":
+        fact_kind = (
+            "action.dynamic_target" if "IsDynamic" in payload else "action.target_type"
+        )
+        operand = _transient_operand(context, fact_kind)
+        if fact_kind == "action.dynamic_target":
+            if operand.status != "resolved" or operand.value_type != "boolean":
+                return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+            matched = operand.value is payload.get("IsDynamic")
+        else:
+            if operand.status != "resolved" or operand.value_type != "string":
+                return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+            matched = operand.value == payload.get("TargetType")
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "current_skill_target_contract_checked",
+            {"operand": operand.to_json()},
+            source_trace,
+        )
+    if opcode == "ByDamageSourceContainBehaviorFlag":
+        operand = _transient_operand(context, "damage.source_behavior_flags")
+        expected = payload.get("BehaviorFlags")
+        if operand.status != "resolved" or operand.value_type != "identity_set":
+            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        if not isinstance(expected, list):
+            return _condition_blocked(
+                condition_id, opcode, "damage_behavior_flags_invalid", {}, source_trace
+            )
+        actual_flags = tuple(operand.value)
+        return _condition_result(
+            all(flag in actual_flags for flag in expected),
+            condition_id,
+            opcode,
+            "damage_source_behavior_flags_checked",
+            {"operand": operand.to_json(), "expected": expected},
+            source_trace,
+        )
+    if opcode == "ByHasInsertActionByTarget":
+        target_ids, details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids is None:
+            return _condition_blocked(
+                condition_id, opcode, "insert_action_targets_unresolved", details, source_trace
+            )
+        return _contextual_boolean_result(
+            condition_id,
+            opcode,
+            _transient_operand(
+                context,
+                "queue.has_insert_action_by_target",
+                subject_ids=target_ids,
+            ),
+            "insert_action_targets_checked",
+            source_trace,
+        )
+    if opcode == "ByIsDamageType":
+        target_id, details = _condition_single_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(
+                condition_id, opcode, "damage_type_target_requires_singleton", details, source_trace
+            )
+        operand = _transient_operand(
+            context, "damage.type", subject_ids=(target_id,)
+        )
+        expected = payload.get("DamageTypeList")
+        if operand.status != "resolved" or operand.value_type != "string":
+            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        return _condition_result(
+            isinstance(expected, list) and operand.value in expected,
+            condition_id,
+            opcode,
+            "damage_type_checked",
+            {"operand": operand.to_json(), "expected": expected},
+            source_trace,
+        )
+    if opcode == "ByIsInCharmAction":
+        return _contextual_boolean_result(
+            condition_id,
+            opcode,
+            _transient_operand(context, "action.charm_phase"),
+            "charm_action_checked",
+            source_trace,
+        )
+    if opcode == "ByIsSplitDamage":
+        target_id, details = _condition_single_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(
+                condition_id, opcode, "split_damage_target_requires_singleton", details, source_trace
+            )
+        return _contextual_boolean_result(
+            condition_id,
+            opcode,
+            _transient_operand(
+                context, "damage.is_split", subject_ids=(target_id,)
+            ),
+            "split_damage_checked",
+            source_trace,
+        )
+    if opcode == "ByIsTurnActionEntity":
+        target_ids, details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids is None:
+            return _condition_blocked(
+                condition_id, opcode, "turn_action_targets_unresolved", details, source_trace
+            )
+        operand = _transient_operand(context, "turn.action_entity.identity")
+        if operand.status != "resolved" or operand.value_type != "string":
+            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        return _condition_result(
+            operand.value in target_ids,
+            condition_id,
+            opcode,
+            "turn_action_entity_checked",
+            {"operand": operand.to_json(), "target_ids": list(target_ids)},
+            source_trace,
+        )
+    boolean_facts = {
+        "ByTurnOwnerActionPhaseEnd": "turn.owner.action_phase_end",
+        "ByTurnOwnerHasActionInTurn": "turn.owner.has_action",
+        "ByTurnOwnerHasPendingOneMore": "turn.owner.pending_one_more",
+    }
+    if opcode in boolean_facts:
+        return _contextual_boolean_result(
+            condition_id,
+            opcode,
+            _transient_operand(context, boolean_facts[opcode]),
+            "turn_owner_fact_checked",
+            source_trace,
+        )
+    return _condition_blocked(
+        condition_id,
+        opcode,
+        f"contextual_condition_handler_missing:{opcode}",
+        {},
+        source_trace,
+    )
+
+
+def _contextual_numeric_comparison(
+    evaluator: RuleEvaluator,
+    condition_id: str,
+    opcode: str,
+    payload: dict[str, Any],
+    context: EvaluationContext,
+    operand: TransientConditionOperandResolution,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    if operand.status != "resolved" or operand.value_type != "number":
+        return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+    expected = evaluator.evaluate_numeric(
+        payload.get("CompareValue"),
+        NumericEvaluationContext(
+            dynamic_values=context.dynamic_values,
+            binding_sources=context.binding_sources,
+            source_trace=source_trace,
+        ),
+    )
+    if not expected.ok or expected.value is None:
+        return _condition_blocked(
+            condition_id,
+            opcode,
+            expected.blocked_reason or "compare_value_blocked",
+            {"numeric_evaluation": expected.to_json()},
+            source_trace,
+        )
+    return _comparison_condition(
+        condition_id,
+        opcode,
+        float(operand.value),
+        payload.get("CompareType"),
+        expected.value,
+        source_trace,
+    )
+
+
+def _contextual_boolean_result(
+    condition_id: str,
+    opcode: str,
+    operand: TransientConditionOperandResolution,
+    reason: str,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    if operand.status != "resolved" or operand.value_type != "boolean":
+        return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+    return _condition_result(
+        bool(operand.value),
+        condition_id,
+        opcode,
+        reason,
+        {"operand": operand.to_json()},
+        source_trace,
+    )
+
+
+def _contextual_string_comparison(
+    condition_id: str,
+    opcode: str,
+    operand: TransientConditionOperandResolution,
+    expected: object,
+    reason: str,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    if operand.status != "resolved" or operand.value_type != "string":
+        return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+    return _condition_result(
+        operand.value == expected,
+        condition_id,
+        opcode,
+        reason,
+        {"operand": operand.to_json(), "expected": expected},
+        source_trace,
+    )
+
+
+def _transient_operand(
+    context: EvaluationContext,
+    fact_kind: str,
+    *,
+    subject_ids: tuple[str, ...] = (),
+    parameters: dict[str, Any] | None = None,
+) -> TransientConditionOperandResolution:
+    invocation_id = context.transient_invocation_id
+    if not isinstance(invocation_id, str) or not invocation_id:
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_invocation_missing",
+            fact_kind=fact_kind,
+            invocation_id="unbound",
+        )
+    window = context.transient_window
+    if not isinstance(window, str) or not window:
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_window_missing",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    provider = context.transient_condition_provider
+    if provider is None:
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_provider_missing",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    resolver = getattr(provider, "resolve_transient", None)
+    if not callable(resolver):
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_provider_contract_rejected",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    try:
+        request = TransientConditionOperandRequest(
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+            window=window,
+            subject_ids=subject_ids,
+            parameters=parameters,
+        )
+        result = resolver(request)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_provider_contract_rejected",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    if type(result) is not TransientConditionOperandResolution:
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_provider_result_invalid",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    if (
+        result.fact_kind != fact_kind
+        or result.invocation_id != invocation_id
+        or (result.status == "resolved" and result.window != window)
+    ):
+        return TransientConditionOperandResolution.blocked(
+            "transient_condition_provider_identity_mismatch",
+            fact_kind=fact_kind,
+            invocation_id=invocation_id,
+        )
+    return result
+
+
+def _transient_operand_blocked(
+    condition_id: str,
+    opcode: str,
+    operand: TransientConditionOperandResolution,
+    source_trace: dict[str, Any],
+) -> ConditionEvaluationResult:
+    reason = (
+        operand.blocked_reason
+        if operand.status == "blocked"
+        else "transient_condition_operand_type_mismatch"
+    )
+    return _condition_blocked(
+        condition_id,
+        opcode,
+        reason,
+        {"operand": operand.to_json()},
         source_trace,
     )
 

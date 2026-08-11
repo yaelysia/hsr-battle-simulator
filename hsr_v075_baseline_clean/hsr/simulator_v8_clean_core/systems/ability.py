@@ -18,7 +18,10 @@ from .dynamic_values import (
 )
 from .effect import EffectExecutionContext, EffectRegistry
 from .event_dispatch import EventDispatchResult, EventDispatchSystem
-from .action_event_contract import damage_listener_window_event
+from .action_event_contract import (
+    admitted_action_condition_fact_provider,
+    damage_listener_window_event,
+)
 from .summon import SummonSystem
 from .toughness import ToughnessPacket, ToughnessSystem
 from .ability_task_contract import (
@@ -1107,6 +1110,14 @@ class AbilityTaskSystem:
             current_target_id=primary_target,
             turn_owner_id=committed_turn_owner_id(state),
         )
+        transient_provider = admitted_action_condition_fact_provider(
+            self.rules,
+            state,
+            command=command,
+            action_definition=action_definition,
+            target_resolution=target_resolution,
+            window=f"ability_task:{task.task_id}",
+        )
         result = self.evaluator.evaluate_condition_result(
             condition,
             self.targets.condition_evaluation_context(
@@ -1116,6 +1127,7 @@ class AbilityTaskSystem:
                 target_resolution=target_resolution,
                 condition_event_payload=event_payload,
                 binding_sources=binding_sources,
+                transient_condition_provider=transient_provider,
             ),
         )
         if not result.ok or result.result is None:
