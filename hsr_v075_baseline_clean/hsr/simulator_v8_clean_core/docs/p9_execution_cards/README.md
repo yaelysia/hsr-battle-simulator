@@ -14,6 +14,11 @@ P9-S5 已按目标 IR、实体关系、动作目标来源、动作选择权威�
 原 P9-S6 同时包含完整来源分区和 evaluator 实现，已按权威边界拆为 S6A、S6B。S6A 只建立
 条件责任目录和精确 blocker；S6B 才实现 committed-state 求值。旧 S6 总卡不再是执行入口。
 
+原 P9-S8 同时修改完整来源字段归属、通用任务图事务以及命中/RNG 时序，首次实时分母重建还
+证明旧 `31 / 8,651` 数字混合了过期来源与不同物化角色。现按权威边界拆为 S8A、S8B、S8C：
+S8A 只建立来源与类型化目录，S8B 只建立通用原子任务图事务，S8C 才处理命中、barrier、
+parallel 和随机顺序。旧 S8 总卡只保留聚合说明，不再是执行入口。
+
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程
 通过代码审查和聚焦 evidence 后才更新卡片与总 checklist，并建立阶段检查点。
 
@@ -144,7 +149,9 @@ S5C1-S5C2 两段主入口墙钟合计目标 12 分钟、evidence 合计 4 MiB、
 | S6A | `P9-S6A_CONDITION_RESPONSIBILITY_CONTRACT.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S6B | `P9-S6B_COMMITTED_STATE_CONDITION_EVALUATION.md` | 5.6 Sol / max / Goal |
 | S7 | `P9-S7_CONTEXTUAL_CONDITION_CLOSURE.md` | 5.6 Sol / max / Goal |
-| S8 | `P9-S8_CONTROL_FLOW_SEQUENCE_CLOSURE.md` | 5.6 Sol / max / Goal |
+| S8A | `P9-S8A_CONTROL_FLOW_SOURCE_CONTRACT.md` | 5.6 Sol / max / 普通聚焦 |
+| S8B | `P9-S8B_ATOMIC_TASK_GRAPH_RUNTIME.md` | 5.6 Sol / max / Goal |
+| S8C | `P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md` | 5.6 Sol / max / Goal |
 | S9 | `P9-S9_EVENT_CONTRACT_ACTION_WINDOWS.md` | 5.6 Sol / max / 普通聚焦 |
 | S10 | `P9-S10_STATUS_CALLBACK_LIFECYCLE_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S11 | `P9-S11_DAMAGE_HEAL_SHIELD_CLOSURE.md` | 5.6 Sol / max / Goal |

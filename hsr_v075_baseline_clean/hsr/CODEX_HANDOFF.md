@@ -127,8 +127,12 @@ resource change、status callback 与 turn 七类 typed transient fact 契约；
 为零，缺事实、错调用身份、错窗口和不完整动作准入身份均 fail-closed。当前两条动作事实只有
 source-backed 组件证据，真实 gameplay end-to-end 仍为 0：动态目标等待 S8，callback/context 运输
 等待 S9；其余 46 条按来源精确归属 S9-S13 或 S16，没有用 fixture 冒充正式内容。S7 唯一主验证
-22/22，一次通过，约 7.5 秒、峰值约 436 MiB、完整 Canonical IR build 为 0。当前下一张唯一可执行卡为
-`P9-S8_CONTROL_FLOW_SEQUENCE_CLOSURE.md`。
+22/22，一次通过，约 7.5 秒、峰值约 436 MiB、完整 Canonical IR build 为 0。原 S8 已按独立权威
+边界拆为 S8A-S8C。S8A 已验收：当前完整来源中的 8,651 个类型化控制流/时序节点与 1,215 个结构
+容器分离，31 个实际 family 的全部同级字段、232 个模板、16 个模板参数、443 个引用、4,428 个分支
+和 6,960 个 child 均来源闭合；1,315 个节点完成本阶段职责，7,336 个节点保留精确下游义务，不表示
+executable。唯一主验证一次通过，约 5.14 秒、峰值约 327 MiB、完整 Canonical IR build 为 0。当前
+下一张唯一可执行卡为 `P9-S8B_ATOMIC_TASK_GRAPH_RUNTIME.md`，不得提前进入 S8C。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

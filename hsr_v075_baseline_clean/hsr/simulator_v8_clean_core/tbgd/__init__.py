@@ -20,6 +20,10 @@ from .character_condition_contracts import (
     character_condition_family_blocked_reason,
     character_condition_family_stage,
 )
+from .character_control_flow_contracts import (
+    build_character_control_flow_contract_catalog,
+    classify_control_flow_peer_fields,
+)
 from .discovery import DiscoveryReport, TBGDDiscovery
 from .lowering import (
     OwnedCombatantAdmissionProjection,
@@ -43,6 +47,8 @@ __all__ = [
     "build_character_ability_source_graph",
     "build_character_ability_source_resolution",
     "build_character_condition_responsibility_catalog",
+    "build_character_control_flow_contract_catalog",
+    "classify_control_flow_peer_fields",
     "character_condition_family_blocked_reason",
     "character_condition_family_stage",
     "character_ability_path_from_config",

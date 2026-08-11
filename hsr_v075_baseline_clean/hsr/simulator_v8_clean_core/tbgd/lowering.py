@@ -33,6 +33,9 @@ from .character_condition_contracts import (
     character_condition_family_blocked_reason,
     character_condition_family_stage,
 )
+from .character_control_flow_contracts import (
+    build_character_control_flow_contract_catalog,
+)
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
@@ -73,6 +76,7 @@ from ..rules.evaluator import (
     RuleEvaluator,
 )
 from ..rules.action_target_contract import ActionTargetContractCatalogIR
+from ..rules.control_flow_contract import CharacterControlFlowContractCatalog
 from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
@@ -541,6 +545,50 @@ class TBGDLowering:
         self._character_ability_scope_catalog = scope_catalog
         self._character_ability_source_graph_catalog = source_graph_catalog
         self._character_ability_source_resolution_catalog = catalog
+        return catalog
+
+    def build_character_control_flow_contract_catalog(
+        self,
+        *,
+        snapshot: CharacterAbilityRawSnapshot | None = None,
+        scope_catalog: CharacterAbilityScopeProjectionCatalog | None = None,
+    ) -> CharacterControlFlowContractCatalog:
+        """Build the complete P9 control-flow source contract without full IR."""
+
+        cached = getattr(self, "_character_control_flow_contract_catalog", None)
+        if cached is not None:
+            if type(cached) is not CharacterControlFlowContractCatalog:
+                raise TypeError("invalid cached character control-flow catalog")
+            if snapshot is not None:
+                if type(snapshot) is not CharacterAbilityRawSnapshot:
+                    raise TypeError("cached control-flow lowering requires the exact S0 snapshot")
+                if snapshot.snapshot_id != cached.snapshot_id:
+                    raise ValueError("cached control-flow snapshot mismatch")
+            if scope_catalog is not None:
+                if type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog:
+                    raise TypeError("cached control-flow lowering requires the exact S0 scope catalog")
+                if scope_catalog.catalog_id != cached.scope_catalog_id:
+                    raise ValueError("cached control-flow scope mismatch")
+            return cached
+        if snapshot is None:
+            snapshot = build_character_ability_raw_snapshot(self.tbgd_root)
+        if type(snapshot) is not CharacterAbilityRawSnapshot:
+            raise TypeError("control-flow lowering requires the exact S0 snapshot")
+        if scope_catalog is None:
+            scope_catalog = build_character_ability_scope_projection(
+                self.tbgd_root,
+                snapshot=snapshot,
+            )
+        if type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog:
+            raise TypeError("control-flow lowering requires the exact S0 scope catalog")
+        catalog = build_character_control_flow_contract_catalog(
+            self.tbgd_root,
+            snapshot=snapshot,
+            scope_catalog=scope_catalog,
+        )
+        self._character_ability_raw_snapshot = snapshot
+        self._character_ability_scope_catalog = scope_catalog
+        self._character_control_flow_contract_catalog = catalog
         return catalog
 
     def build_action_target_contract_catalog(self) -> ActionTargetContractCatalogIR:

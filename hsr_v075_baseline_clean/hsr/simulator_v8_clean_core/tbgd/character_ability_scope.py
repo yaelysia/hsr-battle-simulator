@@ -353,6 +353,29 @@ _OPCODE_SEMANTIC_KIND = {
 }
 
 
+def character_ability_semantic_kind(family: str) -> CharacterAbilitySemanticKind | None:
+    """Return the compiler taxonomy fact for one exact source family."""
+
+    if not isinstance(family, str) or not family:
+        raise ValueError("character ability family is required")
+    return _OPCODE_SEMANTIC_KIND.get(family)
+
+
+def character_control_flow_families() -> tuple[str, ...]:
+    """Return semantic families eligible for P9 control-flow classification.
+
+    The occurrence denominator still comes from the complete scope projection;
+    structural containers must not be inferred to be typed task nodes.
+    """
+
+    return tuple(
+        sorted(
+            _SEMANTIC_OPCODE_GROUPS["combat_control_flow"]
+            | _SEMANTIC_OPCODE_GROUPS["simulation_sequence"]
+        )
+    )
+
+
 @dataclass(frozen=True)
 class CharacterAbilityProjectionIssue:
     code: str
