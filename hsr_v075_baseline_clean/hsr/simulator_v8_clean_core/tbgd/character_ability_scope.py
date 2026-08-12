@@ -60,7 +60,8 @@ _SEMANTIC_OPCODE_GROUPS: dict[CharacterAbilitySemanticKind, frozenset[str]] = {
         "ByAnimatorParam ByCompareTargetCountClientOnly ByHasStanceWeakPreview "
         "ByIsAutoBattle ByIsBodyPartClientOnly ByPreShowStanceBreak "
         "BySimulateSpeedUp SetDynamicValueByPropertyClientOnly "
-        "SetDynamicValueClientOnly TargetSortByCustomFormationIndexClientOnly"
+        "SetDynamicValueClientOnly TargetSortByCustomFormationIndexClientOnly "
+        "WaitCustomStringBattleClientOnly"
     ),
     "combat_condition": _names(
         "ByAnd ByAny ByAttackType ByAvatarBaseType ByCasterAliveOrLimbo "
@@ -102,6 +103,7 @@ _SEMANTIC_OPCODE_GROUPS: dict[CharacterAbilitySemanticKind, frozenset[str]] = {
         "IncludeGlobalTaskListTemplate IncludeTaskListTemplate "
         "LoopExecuteTaskList LoopExecuteTaskListWithInterval LoopTargetList "
         "MakeSuccess NewFireProjectile PredicateTaskList RandomConfig "
+        "PredicateToMakeFail TaskTemplateFetchParamSequence "
         "SwitchByCommandType SwitchCaseByAttackDamageType "
         "SwitchCaseByDynamicValue TriggerAbility TriggerParallelAbility "
         "TriggerParallelTaskListTemplate TriggerSkipDeadHandler "
@@ -245,10 +247,11 @@ _SEMANTIC_OPCODE_GROUPS: dict[CharacterAbilitySemanticKind, frozenset[str]] = {
         "VCameraNoiseChange"
     ),
     "simulation_sequence": _names(
-        "ByDieAnimFinished DamagePerformFinish PerformDelayExecute "
+        "ByDieAnimFinished DamagePerformFinish PauseToTurnEnd PerformDelayExecute "
         "SkillPerformFinish WaitAnimState WaitFor WaitFrame "
         "WaitFrameForBattleServer WaitParallelTimeStamp WaitSecond "
-        "WaitSkillPerformAbilityFinish WaitTimelineFinish"
+        "WaitCustomString WaitForTurnEnd WaitSkillPerformAbilityFinish "
+        "WaitTimelineFinish"
     ),
     "telemetry_excluded": _names(
         "DebugLog WriteCustomValueToStatistic"

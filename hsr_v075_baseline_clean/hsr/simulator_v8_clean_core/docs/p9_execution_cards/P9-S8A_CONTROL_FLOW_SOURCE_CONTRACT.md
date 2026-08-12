@@ -1,5 +1,8 @@
 # P9-S8A 控制流完整来源与类型化责任目录执行卡
 
+> 状态：`accepted`。本卡旧分母中的实现证据保留；来源完整性口径已由已验收的 S8A-R1 修订，
+> 后续阶段必须消费 R1 的完整目录，不得恢复旧数量或旧选择规则。
+
 ## 执行配置
 
 - 对应问题：P9-I08；机制包 M06 来源与 IR。
@@ -55,7 +58,7 @@
 - 不运行循环、选择随机分支、触发 ability 或生成 projectile hit。
 - 不把下游 effect blocked 解释成控制流 lowering 失败。
 - 不把纯视觉飞行参数、帧数、动画、timeline 名称带入战斗内核。
-- 不将完整目录默认塞入 runtime RuleBook；S8B 只 materialize 正式动作需要的节点。
+- 不将完整目录默认塞入 runtime RuleBook；S8B1 只 materialize 正式入口需要的节点。
 
 ## 验收门
 

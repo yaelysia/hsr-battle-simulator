@@ -36,6 +36,27 @@ from .expression_lowering import lower_numeric_expression
 
 _GLOBAL_TEMPLATE_DIR = "Config/ConfigGlobalTaskListTemplate"
 _COMPLETED_OWNERS = frozenset({"excluded", "p9_s4", "p9_s5b", "p9_s6b", "p9_s8a"})
+_NON_GAMEPLAY_SEMANTICS = frozenset(
+    {"presentation_only", "client_only_excluded", "ai_excluded", "telemetry_excluded"}
+)
+
+# These families remain owned by their original gameplay domain. Only source
+# occurrences carrying one of these continuation fields join the task graph.
+_HYBRID_BRANCH_FIELDS: dict[str, tuple[str, ...]] = {
+    "AddBuffPerform": ("TaskList",),
+    "AddModifier": ("SuccessTaskList", "FailTaskList"),
+    "AddWeakByTeamAttackType": ("OnNoNewWeak",),
+    "CharacterChangeModel": ("OnSuccess",),
+    "CreateBattleEvent": ("OnBattleEventCreate",),
+    "GLOABNLLLEL": ("TaskList",),
+    "Remodifier": ("TaskList",),
+    "Retarget": ("TaskList", "FailedTaskList"),
+    "SortTargets": ("TaskList",),
+    "TurnInsertAction": ("OnInsertAbort",),
+}
+_PRESENTATION_FALLBACK_OWNER = {
+    ("FireWaveProjectile", "OnProjectileHitClientOnly"): "p9_s8c",
+}
 
 
 def _rules(
@@ -47,12 +68,35 @@ def _rules(
 
 
 _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
+    "AddBuffPerform": {
+        **_rules("presentation_excluded", "excluded", "AddPerformTime"),
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "TaskList"),
+    },
+    "AddModifier": {
+        **_rules("numeric_contract", "p9_s10", "Chance", "LayerAddWhenStack", "LifeStepImmediately", "LifeTime", "MaxLayer"),
+        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
+        **_rules("downstream_gameplay", "p9_s10", "ModifierName"),
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "SuccessTaskList", "FailTaskList"),
+    },
+    "AddWeakByTeamAttackType": {
+        **_rules("numeric_contract", "p9_s10", "AddWeakCountMax", "ResistanceDeltaValue"),
+        **_rules("downstream_gameplay", "p9_s10", "PreferWeak", "ReturnWeakType"),
+        **_rules("presentation_excluded", "excluded", "BlockUIRefresh"),
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "OnNoNewWeak"),
+    },
     "ByCompareDynamicValue": {
         **_rules("condition_contract", "p9_s6b", "CompareType", "ContextScope", "Inverse"),
         **_rules("numeric_contract", "p9_s4", "CompareValue", "DynamicKey"),
         **_rules("target_contract", "p9_s5b", "TargetType"),
     },
     "ByDieAnimFinished": _rules("downstream_gameplay", "p9_s14", "EntityTypeMask", "TeamTypeMask"),
+    "CharacterChangeModel": {
+        **_rules("presentation_excluded", "excluded", "IsAsyncLoad", "PrefabPath"),
+        **_rules("child_graph", "p9_s8b", "OnSuccess"),
+    },
     "ConditionLoopExecuteTaskList": {
         **_rules("condition_contract", "p9_s6b", "Predicate"),
         **_rules("child_graph", "p9_s8b", "TaskList"),
@@ -66,6 +110,10 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     "DamagePerformFinish": _rules(
         "downstream_gameplay", "p9_s11", "IsFakeAvatarAttack", "SkipDeathSettlement"
     ),
+    "CreateBattleEvent": {
+        **_rules("downstream_gameplay", "p9_s9", "AllowDuplicate", "EventID", "IsDynamicPreload", "PropertyFromTarget", "SpecifyCaster", "Team"),
+        **_rules("child_graph", "p9_s8b", "OnBattleEventCreate"),
+    },
     "FireMultiProjectiles": {
         **_rules("target_contract", "p9_s5b", "CasterTargetType", "TargetType"),
         **_rules("control_structure", "p9_s8c", "ProjectileConfigList"),
@@ -83,6 +131,13 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("presentation_excluded", "excluded", "OnProjectileHitClientOnly"),
     },
     "GoNextTargetInList": {},
+    "GLOABNLLLEL": {
+        **_rules("control_structure", "p9_s8c", "ByRandom"),
+        **_rules("condition_contract", "p9_s6b", "Predicate"),
+        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
+        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "TaskList"),
+    },
     "IncludeGlobalTaskListTemplate": {
         **_rules("control_structure", "p9_s8a", "Name"),
         **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
@@ -91,7 +146,7 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("control_structure", "p9_s8a", "Name"),
         **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
         **_rules("target_contract", "p9_s5b", "ParamTarget"),
-        **_rules("control_structure", "p9_s8b", "TemplateParamSequences"),
+        **_rules("child_graph", "p9_s8b", "TemplateParamSequences"),
     },
     "LoopExecuteTaskList": {
         **_rules("numeric_contract", "p9_s8b", "MaxLoopCount"),
@@ -110,15 +165,45 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("child_graph", "p9_s8c", "OnProjectileHit"),
         **_rules("target_contract", "p9_s5b", "TargetType"),
     },
+    "PauseToTurnEnd": _rules("control_structure", "p9_s13", "Pause"),
+    "PerformDelayExecute": {
+        **_rules("numeric_contract", "p9_s8c", "Delay"),
+        **_rules("child_graph", "p9_s8b", "PerformTaskList"),
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+    },
     "PredicateTaskList": {
         **_rules("condition_contract", "p9_s6b", "Predicate"),
         **_rules("child_graph", "p9_s8b", "SuccessTaskList", "FailedTaskList"),
+    },
+    "PredicateToMakeFail": {
+        **_rules("condition_contract", "p9_s6b", "Predicate"),
+        **_rules("child_graph", "p9_s8b", "OnSuccess"),
     },
     "RandomConfig": {
         **_rules("numeric_contract", "p9_s8c", "OddsList"),
         **_rules("child_graph", "p9_s8c", "TaskList"),
     },
     "SkillPerformFinish": _rules("downstream_gameplay", "p9_s11", "SkipAttackSettlement"),
+    "Remodifier": {
+        **_rules("condition_contract", "p9_s10", "BehaviorFlagFilter", "CasterFilter", "PredicateFilter", "StatusTypeMask"),
+        **_rules("downstream_gameplay", "p9_s10", "ModifierName"),
+        **_rules("numeric_contract", "p9_s10", "MaxNumber"),
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "TaskList"),
+    },
+    "Retarget": {
+        **_rules("control_structure", "p9_s8c", "ByRandom", "IgnoreParallelWarning"),
+        **_rules("condition_contract", "p9_s6b", "Predicate"),
+        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
+        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "TaskList", "FailedTaskList"),
+    },
+    "SortTargets": {
+        **_rules("control_structure", "p9_s5b", "SortConfig"),
+        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
+        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "TaskList"),
+    },
     "SwitchByCommandType": {},
     "SwitchCaseByAttackDamageType": {
         **_rules("child_graph", "p9_s8b", "CaseTaskList"),
@@ -126,6 +211,7 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     },
     "SwitchCaseByDynamicValue": {
         **_rules("child_graph", "p9_s8b", "CaseTaskList"),
+        **_rules("child_graph", "p9_s8b", "DefaultTaskList"),
         **_rules("numeric_contract", "p9_s4", "Switch"),
         **_rules("control_structure", "p9_s8b", "CompareType"),
     },
@@ -136,6 +222,14 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     },
     "TriggerParallelTaskListTemplate": _rules("control_structure", "p9_s8c", "Templates"),
     "TriggerSkipDeadHandler": {},
+    "TaskTemplateFetchParamSequence": _rules("control_structure", "p9_s8b", "ParamName"),
+    "TurnInsertAction": {
+        **_rules("condition_contract", "p9_s6b", "ActivePredicate", "PreCheck"),
+        **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
+        **_rules("target_contract", "p9_s5b", "AutoCastTargetType", "TargetType"),
+        **_rules("control_structure", "p9_s13", "AbortBehaviorFlags", "AutoCast", "CanInsertUltraSkill", "CopyAbortContext", "CustomTag", "FollowSameTagNormalAction", "IgnoreBPDec", "PrepareAbilityName", "SkillIndex", "SkillType"),
+        **_rules("child_graph", "p9_s8b", "OnInsertAbort"),
+    },
     "TurnInsertAbilityCondition": _rules("downstream_gameplay", "p9_s13", "Count", "Type"),
     "WaitAnimState": _rules(
         "presentation_excluded",
@@ -150,6 +244,9 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     ),
     "WaitFor": _rules("condition_contract", "p9_s8b", "Predicate"),
     "WaitFrame": _rules("presentation_excluded", "excluded", "RealFrame", "WaitFrameCount"),
+    "WaitFrameForBattleServer": {},
+    "WaitCustomString": _rules("control_structure", "p9_s8c", "CustomString", "GoNextImmediately"),
+    "WaitForTurnEnd": _rules("control_structure", "p9_s13", "GoNextImmediately"),
     "WaitSecond": _rules("presentation_excluded", "excluded", "IsRealtime", "WaitTime"),
     "WaitTimelineFinish": _rules(
         "presentation_excluded", "excluded", "IgnoreWarning", "TimelineName", "TriggerBeforeFinish"
@@ -158,15 +255,21 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
 
 
 _ROLE_BY_FAMILY = {
+    "AddBuffPerform": "presentation_child_wrapper",
+    "AddModifier": "effect_continuation",
+    "AddWeakByTeamAttackType": "effect_continuation",
     "ByCompareDynamicValue": "condition_delegate",
     "ByDieAnimFinished": "condition_delegate",
+    "CharacterChangeModel": "effect_continuation",
     "ConditionLoopExecuteTaskList": "conditional_loop",
     "ConditionLoopExecuteTaskListWithInterval": "conditional_loop",
     "DamagePerformFinish": "settlement_barrier",
+    "CreateBattleEvent": "event_creation_continuation",
     "FireMultiProjectiles": "projectile_sequence",
     "FireProjectile": "projectile_sequence",
     "FireWaveProjectile": "projectile_sequence",
     "GoNextTargetInList": "target_cursor",
+    "GLOABNLLLEL": "target_scope",
     "IncludeGlobalTaskListTemplate": "template_include",
     "IncludeTaskListTemplate": "template_include",
     "LoopExecuteTaskList": "counted_loop",
@@ -174,25 +277,43 @@ _ROLE_BY_FAMILY = {
     "LoopTargetList": "target_loop",
     "MakeSuccess": "wrapped_task",
     "NewFireProjectile": "projectile_sequence",
+    "PauseToTurnEnd": "turn_barrier",
+    "PerformDelayExecute": "delayed_sequence",
     "PredicateTaskList": "predicate_branch",
+    "PredicateToMakeFail": "predicate_branch",
     "RandomConfig": "random_branch",
     "SkillPerformFinish": "settlement_barrier",
+    "Remodifier": "status_scope",
+    "Retarget": "target_scope",
+    "SortTargets": "ordered_target_scope",
     "SwitchByCommandType": "event_switch",
     "SwitchCaseByAttackDamageType": "switch_branch",
     "SwitchCaseByDynamicValue": "switch_branch",
     "TriggerAbility": "ability_trigger",
     "TriggerParallelTaskListTemplate": "parallel_templates",
     "TriggerSkipDeadHandler": "death_barrier",
+    "TaskTemplateFetchParamSequence": "template_parameter_fetch",
+    "TurnInsertAction": "action_abort_continuation",
     "TurnInsertAbilityCondition": "queue_condition",
     "WaitAnimState": "presentation_barrier",
     "WaitFor": "condition_barrier",
     "WaitFrame": "presentation_barrier",
+    "WaitFrameForBattleServer": "server_sync_barrier",
+    "WaitCustomString": "custom_sync_barrier",
+    "WaitForTurnEnd": "turn_barrier",
     "WaitSecond": "presentation_barrier",
     "WaitTimelineFinish": "presentation_barrier",
 }
 
 
 _ROLE_OWNER = {
+    "effect_continuation": "p9_s8b",
+    "status_scope": "p9_s8b",
+    "target_scope": "p9_s8b",
+    "ordered_target_scope": "p9_s8b",
+    "action_abort_continuation": "p9_s8b",
+    "event_creation_continuation": "p9_s8b",
+    "template_parameter_fetch": "p9_s8b",
     "conditional_loop": "p9_s8b",
     "counted_loop": "p9_s8b",
     "target_loop": "p9_s8b",
@@ -201,15 +322,20 @@ _ROLE_OWNER = {
     "switch_branch": "p9_s8b",
     "ability_trigger": "p9_s8b",
     "condition_barrier": "p9_s8b",
+    "delayed_sequence": "p9_s8c",
+    "custom_sync_barrier": "p9_s8c",
+    "server_sync_barrier": "p9_s8c",
     "projectile_sequence": "p9_s8c",
     "random_branch": "p9_s8c",
     "parallel_templates": "p9_s8c",
     "target_cursor": "p9_s8c",
     "presentation_barrier": "p9_s8c",
+    "presentation_child_wrapper": "excluded",
     "settlement_barrier": "p9_s11",
     "event_switch": "p9_s9",
     "death_barrier": "p9_s14",
     "queue_condition": "p9_s13",
+    "turn_barrier": "p9_s13",
 }
 
 
@@ -245,6 +371,20 @@ class _TemplateProblem:
     detail: str
 
 
+@dataclass(frozen=True)
+class _ControlFlowOccurrence:
+    occurrence_id: str
+    family: str
+    semantic_kind: str
+    effective_scope: str
+    source_path: str
+    json_path: str
+    content_sha256: str
+    raw: Mapping[str, Any]
+    source_kind: str
+    materialization_role: str
+
+
 def _stable_id(prefix: str, *parts: object) -> str:
     encoded = json.dumps([str(item) for item in parts], ensure_ascii=True, separators=(",", ":")).encode()
     return f"{prefix}:{sha256(encoded).hexdigest()}"
@@ -252,6 +392,58 @@ def _stable_id(prefix: str, *parts: object) -> str:
 
 def _short_type(value: object) -> str:
     return str(value or "").rsplit(".", 1)[-1]
+
+
+def _typed_subtree_is_non_gameplay(value: object) -> tuple[bool, bool]:
+    found = False
+    safe = True
+
+    def walk(item: object) -> None:
+        nonlocal found, safe
+        if isinstance(item, Mapping):
+            family = _short_type(item.get("$type"))
+            if family:
+                found = True
+                if character_ability_semantic_kind(family) not in _NON_GAMEPLAY_SEMANTICS:
+                    safe = False
+            for child in item.values():
+                walk(child)
+        elif isinstance(item, (tuple, list)):
+            for child in item:
+                walk(child)
+
+    walk(value)
+    return found, safe
+
+
+def classify_control_flow_materialization_role(
+    family: str,
+    raw: Mapping[str, Any],
+    *,
+    occurrence_semantic_kind: str | None = None,
+) -> str:
+    """Return the occurrence role; an empty string means it is not a task-graph node."""
+
+    if not isinstance(family, str) or not family or not isinstance(raw, Mapping):
+        raise TypeError("control-flow materialization classification requires typed source")
+    semantic = (
+        occurrence_semantic_kind
+        if occurrence_semantic_kind is not None
+        else character_ability_semantic_kind(family)
+    )
+    if semantic == "combat_control_flow":
+        return "semantic_control"
+    if semantic == "simulation_sequence":
+        return "semantic_sequence"
+    branch_fields = _HYBRID_BRANCH_FIELDS.get(family, ())
+    present = tuple(field for field in branch_fields if field in raw)
+    if not present:
+        return ""
+    if semantic == "presentation_only":
+        closures = tuple(_typed_subtree_is_non_gameplay(raw[field]) for field in present)
+        if closures and all(found and safe for found, safe in closures):
+            return "presentation_child_wrapper"
+    return "hybrid_child_wrapper"
 
 
 def _at_path(document: Mapping[str, Any], path: str) -> Any:
@@ -316,6 +508,7 @@ def classify_control_flow_peer_fields(
     """Classify every peer field; unknown fields remain explicit and blocking."""
 
     rules = _FIELD_RULES.get(family)
+    materialization_role = classify_control_flow_materialization_role(family, raw)
     fields = tuple(sorted(key for key in raw if key != "$type"))
     blockers: list[str] = []
     responsibilities: list[ControlFlowFieldResponsibilityIR] = []
@@ -325,6 +518,29 @@ def classify_control_flow_peer_fields(
             rule = ("unclassified", "p9_s8a", True)
             blockers.append(f"control_flow_peer_field_unclassified:{family}:{field_name}")
         responsibility, owner_stage, covers_subtree = rule
+        if (
+            field_name in _HYBRID_BRANCH_FIELDS.get(family, ())
+            and materialization_role == "presentation_child_wrapper"
+        ):
+            responsibility, owner_stage = "presentation_excluded", "excluded"
+        elif responsibility == "presentation_excluded" and (
+            field_name in _HYBRID_BRANCH_FIELDS.get(family, ())
+            or (family, field_name) in _PRESENTATION_FALLBACK_OWNER
+        ):
+            has_typed_child, subtree_is_non_gameplay = _typed_subtree_is_non_gameplay(
+                raw[field_name]
+            )
+            if has_typed_child and not subtree_is_non_gameplay:
+                fallback_owner = _PRESENTATION_FALLBACK_OWNER.get(
+                    (family, field_name)
+                )
+                if fallback_owner is None:
+                    responsibility, owner_stage = "unclassified", "p9_s8a"
+                    blockers.append(
+                        f"presentation_exclusion_descendant_not_closed:{family}:{field_name}"
+                    )
+                else:
+                    responsibility, owner_stage = "child_graph", fallback_owner
         responsibilities.append(
             ControlFlowFieldResponsibilityIR(
                 field_name=field_name,
@@ -379,6 +595,69 @@ def _branch_specs(
     if family == "PredicateTaskList":
         task_list("success", "SuccessTaskList")
         task_list("failed", "FailedTaskList")
+    elif family == "IncludeTaskListTemplate":
+        sequences = raw.get("TemplateParamSequences")
+        if sequences is not None and not isinstance(sequences, Mapping):
+            blockers.append("control_flow_template_param_sequences_invalid")
+        elif isinstance(sequences, Mapping):
+            for name, sequence in sequences.items():
+                entry_path = f"{path}.TemplateParamSequences.{name}"
+                if not isinstance(name, str) or not name:
+                    blockers.append("control_flow_template_param_sequence_name_invalid")
+                    continue
+                if not isinstance(sequence, Mapping) or set(sequence) != {"TaskList"}:
+                    blockers.append(f"control_flow_template_param_sequence_invalid:{name}")
+                    result.append(("template_parameter_sequence", name, entry_path, []))
+                    continue
+                values = sequence.get("TaskList")
+                if not isinstance(values, list):
+                    blockers.append(f"control_flow_branch_list_invalid:TemplateParamSequences:{name}")
+                    result.append(("template_parameter_sequence", name, entry_path, []))
+                    continue
+                if any(not isinstance(item, Mapping) for item in values):
+                    blockers.append(f"control_flow_branch_child_invalid:TemplateParamSequences:{name}")
+                result.append(
+                    (
+                        "template_parameter_sequence",
+                        name,
+                        entry_path,
+                        [
+                            (item, f"{entry_path}.TaskList[{index}]")
+                            for index, item in enumerate(values)
+                            if isinstance(item, Mapping)
+                        ],
+                    )
+                )
+    elif family == "TaskTemplateFetchParamSequence":
+        name = raw.get("ParamName")
+        if not isinstance(name, str) or not name:
+            blockers.append("control_flow_template_param_fetch_name_invalid")
+            name = "<missing>"
+        result.append(("template_parameter_fetch", name, f"{path}.ParamName", []))
+    elif family == "AddModifier":
+        task_list("effect_success", "SuccessTaskList")
+        task_list("effect_failed", "FailTaskList")
+    elif family == "AddWeakByTeamAttackType":
+        task_list("no_new_weakness", "OnNoNewWeak")
+    elif family == "AddBuffPerform":
+        task_list("presentation_continuation", "TaskList")
+    elif family == "CharacterChangeModel":
+        task_list("effect_success", "OnSuccess")
+    elif family == "CreateBattleEvent":
+        task_list("event_created", "OnBattleEventCreate")
+    elif family in {"Retarget", "GLOABNLLLEL"}:
+        task_list("target_scope", "TaskList")
+        task_list("target_scope_failed", "FailedTaskList")
+    elif family == "Remodifier":
+        task_list("status_scope", "TaskList")
+    elif family == "SortTargets":
+        task_list("ordered_target_scope", "TaskList")
+    elif family == "TurnInsertAction":
+        task_list("insert_abort", "OnInsertAbort")
+    elif family == "PerformDelayExecute":
+        task_list("delayed_sequence", "PerformTaskList")
+    elif family == "PredicateToMakeFail":
+        task_list("success", "OnSuccess")
     elif family in {
         "ConditionLoopExecuteTaskList",
         "ConditionLoopExecuteTaskListWithInterval",
@@ -423,6 +702,7 @@ def _branch_specs(
         elif cases is not None:
             blockers.append("control_flow_branch_list_invalid:CaseTaskList")
             result.append(("case", "invalid", f"{path}.CaseTaskList", []))
+        task_list("default", "DefaultTaskList")
     elif family in {"FireProjectile", "NewFireProjectile"}:
         task_list("projectile_hit", "OnProjectileHit")
     elif family == "FireMultiProjectiles":
@@ -691,6 +971,114 @@ def _discover_shared_templates(
     return drafts, problems, digest.hexdigest(), read_count
 
 
+def _effective_scope_for_semantic(semantic_kind: str) -> str:
+    if semantic_kind in _NON_GAMEPLAY_SEMANTICS:
+        return "non_gameplay"
+    if semantic_kind == "combat_decode_required":
+        return "decode_required"
+    return "gameplay"
+
+
+def _scope_control_occurrences(
+    snapshot: CharacterAbilityRawSnapshot,
+    scope_catalog: CharacterAbilityScopeProjectionCatalog,
+    content_hashes: Mapping[str, str],
+) -> tuple[_ControlFlowOccurrence, ...]:
+    occurrences: list[_ControlFlowOccurrence] = []
+    for record in scope_catalog.scope_records:
+        if record.materialization_role != "selected" or record.occurrence_kind != "typed_node":
+            continue
+        source_path = record.source.source_path
+        json_path = _object_path(record)
+        try:
+            raw = _at_path(snapshot.documents[source_path], json_path)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"control-flow scope occurrence source missing:{record.record_id}"
+            ) from exc
+        if not isinstance(raw, Mapping) or _short_type(raw.get("$type")) != record.family:
+            raise ValueError(
+                f"control-flow scope occurrence source mismatch:{record.record_id}"
+            )
+        materialization_role = classify_control_flow_materialization_role(
+            record.family,
+            raw,
+            occurrence_semantic_kind=record.semantic_kind,
+        )
+        if not materialization_role:
+            continue
+        occurrences.append(
+            _ControlFlowOccurrence(
+                record.record_id,
+                record.family,
+                record.semantic_kind,
+                record.effective_scope,
+                source_path,
+                json_path,
+                content_hashes[source_path],
+                raw,
+                "character_scope",
+                materialization_role,
+            )
+        )
+    return tuple(sorted(occurrences, key=lambda item: item.occurrence_id))
+
+
+def _shared_template_control_occurrences(
+    drafts: tuple[_TemplateDraft, ...],
+) -> tuple[_ControlFlowOccurrence, ...]:
+    occurrences: dict[str, _ControlFlowOccurrence] = {}
+
+    def walk(draft: _TemplateDraft, value: object, path: str) -> None:
+        if isinstance(value, Mapping):
+            family = _short_type(value.get("$type"))
+            if family:
+                materialization_role = classify_control_flow_materialization_role(
+                    family,
+                    value,
+                )
+                if materialization_role:
+                    occurrence_id = character_ability_scope_record_id(
+                        "typed_node",
+                        draft.source_path,
+                        f"{path}.$type",
+                        family,
+                    )
+                    occurrence = _ControlFlowOccurrence(
+                        occurrence_id,
+                        family,
+                        character_ability_semantic_kind(family)
+                        or "combat_decode_required",
+                        _effective_scope_for_semantic(
+                            character_ability_semantic_kind(family)
+                            or "combat_decode_required"
+                        ),
+                        draft.source_path,
+                        path,
+                        draft.content_sha256,
+                        value,
+                        "shared_template",
+                        materialization_role,
+                    )
+                    prior = occurrences.setdefault(occurrence_id, occurrence)
+                    if prior != occurrence:
+                        raise ValueError(
+                            f"shared template control-flow occurrence conflicts:{occurrence_id}"
+                        )
+            for field_name, child in value.items():
+                walk(draft, child, f"{path}.{field_name}")
+        elif isinstance(value, (tuple, list)):
+            for index, child in enumerate(value):
+                walk(draft, child, f"{path}[{index}]")
+
+    for draft in drafts:
+        if draft.scope_kind != "shared_global":
+            continue
+        for index, task in enumerate(draft.tasks):
+            walk(draft, task, f"{draft.task_list_path}[{index}]")
+    return tuple(sorted(occurrences.values(), key=lambda item: item.occurrence_id))
+
+
 def _scope_child(
     record_lookup: Mapping[tuple[str, str], CharacterAbilityScopeRecordIR],
     *,
@@ -726,13 +1114,7 @@ def _scope_child(
         return None
     semantic = character_ability_semantic_kind(family)
     semantic_kind = semantic or "combat_decode_required"
-    effective_scope = (
-        "non_gameplay"
-        if semantic_kind in {"presentation_only", "client_only_excluded", "ai_excluded", "telemetry_excluded"}
-        else "decode_required"
-        if semantic_kind == "combat_decode_required"
-        else "gameplay"
-    )
+    effective_scope = _effective_scope_for_semantic(semantic_kind)
     record_id = character_ability_scope_record_id("typed_node", source_path, json_path, family)
     return ControlFlowChildSourceIR(
         record_id,
@@ -979,12 +1361,6 @@ def build_character_control_flow_contract_catalog(
         raise ValueError("control-flow catalog requires one complete matching source closure")
 
     selected_records = tuple(item for item in scope_catalog.scope_records if item.materialization_role == "selected")
-    direct_records = tuple(
-        item
-        for item in selected_records
-        if item.occurrence_kind == "typed_node"
-        and item.semantic_kind in {"combat_control_flow", "simulation_sequence"}
-    )
     ancestor_context_count = sum(
         item.semantic_kind in {"combat_control_flow", "simulation_sequence"}
         and item.materialization_role == "ancestor_context"
@@ -998,6 +1374,30 @@ def build_character_control_flow_contract_catalog(
     local_drafts, local_template_problems = _discover_local_templates(snapshot)
     shared_drafts, shared_template_problems, dependency_fingerprint, dependency_read_count = _discover_shared_templates(tbgd_root)
     drafts = tuple(sorted((*local_drafts, *shared_drafts), key=lambda item: item.template_id))
+    scope_occurrences = _scope_control_occurrences(
+        snapshot,
+        scope_catalog,
+        content_hashes,
+    )
+    shared_occurrences = _shared_template_control_occurrences(drafts)
+    occurrence_groups: dict[str, list[_ControlFlowOccurrence]] = defaultdict(list)
+    for occurrence in (*scope_occurrences, *shared_occurrences):
+        occurrence_groups[occurrence.occurrence_id].append(occurrence)
+    conflicts = {
+        occurrence_id: values
+        for occurrence_id, values in occurrence_groups.items()
+        if len(values) != 1
+    }
+    if conflicts:
+        raise ValueError(
+            f"control-flow source occurrence materialized multiple times:{next(iter(sorted(conflicts)))}"
+        )
+    occurrences = tuple(
+        sorted(
+            (values[0] for values in occurrence_groups.values()),
+            key=lambda item: item.occurrence_id,
+        )
+    )
     templates = tuple(_template_ir(item, record_lookup) for item in drafts)
     issues: list[ControlFlowContractIssueIR] = []
     for problem in (*local_template_problems, *shared_template_problems):
@@ -1041,31 +1441,27 @@ def build_character_control_flow_contract_catalog(
     nodes: list[CharacterControlFlowNodeIR] = []
     references: list[ControlFlowTemplateReferenceIR] = []
 
-    for record in direct_records:
-        node_id = _stable_id("character_control_flow_node", record.record_id)
-        node_path = _object_path(record)
-        source_path = record.source.source_path
-        content_sha256 = content_hashes[source_path]
+    for occurrence in occurrences:
+        node_id = _stable_id("character_control_flow_node", occurrence.occurrence_id)
+        node_path = occurrence.json_path
+        source_path = occurrence.source_path
+        content_sha256 = occurrence.content_sha256
         node_source = _source(
             source_path=source_path,
-            raw_type=record.family,
+            raw_type=occurrence.family,
             raw_id=node_id,
             json_path=node_path,
             content_sha256=content_sha256,
-            extra={"scope_record_id": record.record_id},
+            extra={
+                "scope_record_id": occurrence.occurrence_id,
+                "source_kind": occurrence.source_kind,
+                "materialization_role": occurrence.materialization_role,
+            },
         )
         blockers: list[str] = []
-        try:
-            raw = _at_path(snapshot.documents[source_path], node_path)
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raw = {}
-            blockers.append("control_flow_source_object_missing")
-            issues.append(ControlFlowContractIssueIR("source_object_missing", node_id, "p9_s8a", str(exc), node_source))
-        if not isinstance(raw, Mapping) or _short_type(raw.get("$type")) != record.family:
-            blockers.append("control_flow_source_type_mismatch")
-            raw = raw if isinstance(raw, Mapping) else {}
+        raw = occurrence.raw
         responsibilities, field_blockers = classify_control_flow_peer_fields(
-            record.family,
+            occurrence.family,
             raw,
             node_id=node_id,
             source_path=source_path,
@@ -1076,7 +1472,7 @@ def build_character_control_flow_contract_catalog(
         for reason in field_blockers:
             issues.append(ControlFlowContractIssueIR("field_unclassified", node_id, "p9_s8a", reason, node_source))
         branches: list[ControlFlowBranchIR] = []
-        branch_specs, branch_blockers = _branch_specs(record.family, raw, node_path)
+        branch_specs, branch_blockers = _branch_specs(occurrence.family, raw, node_path)
         blockers.extend(branch_blockers)
         for reason in branch_blockers:
             issues.append(ControlFlowContractIssueIR("branch_source_invalid", node_id, "p9_s8a", reason, node_source))
@@ -1090,6 +1486,7 @@ def build_character_control_flow_contract_catalog(
                     path=child_path,
                     ordinal=child_index,
                     content_sha256=content_sha256,
+                    external=occurrence.source_kind == "shared_template",
                 )
                 if child is None:
                     reason = f"control_flow_child_source_missing:{child_path}"
@@ -1108,7 +1505,7 @@ def build_character_control_flow_contract_catalog(
                     tuple(children),
                     _source(
                         source_path=source_path,
-                        raw_type=record.family,
+                        raw_type=occurrence.family,
                         raw_id=branch_id,
                         json_path=branch_path,
                         content_sha256=content_sha256,
@@ -1118,7 +1515,7 @@ def build_character_control_flow_contract_catalog(
             )
         node_references = _template_references_for_node(
             node_id,
-            record.family,
+            occurrence.family,
             raw,
             source_path=source_path,
             node_path=node_path,
@@ -1126,13 +1523,18 @@ def build_character_control_flow_contract_catalog(
             drafts=drafts,
         )
         references.extend(node_references)
-        termination = _termination(node_id, record.family, raw, node_source)
+        termination = _termination(node_id, occurrence.family, raw, node_source)
         if termination.status == "blocked":
             blockers.append(termination.blocked_reason)
             issues.append(ControlFlowContractIssueIR("termination_source_invalid", node_id, "p9_s8a", termination.blocked_reason, node_source))
-        role = _ROLE_BY_FAMILY.get(record.family, "unclassified")
+        role = _ROLE_BY_FAMILY.get(occurrence.family, "unclassified")
+        if (
+            role == "presentation_child_wrapper"
+            and occurrence.materialization_role != "presentation_child_wrapper"
+        ):
+            role = "effect_continuation"
         if role == "unclassified":
-            blockers.append(f"control_flow_role_unclassified:{record.family}")
+            blockers.append(f"control_flow_role_unclassified:{occurrence.family}")
         stages = {
             item.owner_stage
             for item in responsibilities
@@ -1150,8 +1552,8 @@ def build_character_control_flow_contract_catalog(
         nodes.append(
             CharacterControlFlowNodeIR(
                 node_id,
-                record.record_id,
-                record.family,
+                occurrence.occurrence_id,
+                occurrence.family,
                 role,
                 tuple(sorted(key for key in raw if key != "$type")),
                 responsibilities,
@@ -1184,6 +1586,85 @@ def build_character_control_flow_contract_catalog(
             for node in nodes
         ]
 
+    fetch_names_by_template: dict[str, set[str]] = {
+        item.template_id: set() for item in templates
+    }
+    for node in nodes:
+        node_path = str(node.source.evidence["json_path"])
+        owner_candidates = tuple(
+            item
+            for item in templates
+            if item.source.source_path == node.source.source_path
+            and node_path.startswith(f'{item.source.evidence["json_path"]}.TaskList[')
+        )
+        if not owner_candidates:
+            continue
+        owner = max(
+            owner_candidates,
+            key=lambda item: len(str(item.source.evidence["json_path"])),
+        )
+        fetch_names_by_template[owner.template_id].update(
+            branch.label
+            for branch in node.branches
+            if branch.branch_kind == "template_parameter_fetch"
+        )
+    node_by_id = {item.node_id: item for item in nodes}
+    closed_references: list[ControlFlowTemplateReferenceIR] = []
+    parameter_blocked_nodes: dict[str, str] = {}
+    for reference in references:
+        if reference.coverage_status != "lowered":
+            closed_references.append(reference)
+            continue
+        caller = node_by_id[reference.node_id]
+        provided = {
+            branch.label
+            for branch in caller.branches
+            if branch.branch_kind == "template_parameter_sequence"
+        }
+        required = fetch_names_by_template[reference.resolved_template_id]
+        if provided == required:
+            closed_references.append(reference)
+            continue
+        missing = sorted(required - provided)
+        extra = sorted(provided - required)
+        reason = (
+            "control_flow_template_parameter_subgraph_missing"
+            if missing
+            else "control_flow_template_parameter_subgraph_unconsumed"
+        )
+        detail = json.dumps(
+            {"missing": missing, "unconsumed": extra},
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        closed_references.append(
+            replace(
+                reference,
+                resolved_template_id="",
+                coverage_status="blocked",
+                blocked_reason=reason,
+            )
+        )
+        parameter_blocked_nodes[reference.node_id] = reason
+        issues.append(
+            ControlFlowContractIssueIR(
+                "template_parameter_subgraph_not_closed",
+                reference.reference_id,
+                "p9_s8a",
+                detail,
+                reference.source,
+            )
+        )
+    references = closed_references
+    nodes = [
+        replace(node, coverage_status="blocked", blocked_reason=reason)
+        if (reason := parameter_blocked_nodes.get(node.node_id)) is not None
+        and node.coverage_status != "blocked"
+        else node
+        for node in nodes
+    ]
+
     family_counts = Counter(item.family for item in nodes)
     return CharacterControlFlowContractCatalog(
         snapshot_id=snapshot.snapshot_id,
@@ -1194,7 +1675,10 @@ def build_character_control_flow_contract_catalog(
         template_definitions=templates,
         template_references=tuple(references),
         issues=tuple(issues),
-        direct_record_count=len(direct_records),
+        denominator_record_ids=tuple(
+            sorted(item.occurrence_id for item in occurrences)
+        ),
+        direct_record_count=len(occurrences),
         ancestor_context_count=ancestor_context_count,
         family_counts=dict(sorted(family_counts.items())),
         build_counters={
@@ -1202,6 +1686,23 @@ def build_character_control_flow_contract_catalog(
             "scope_projection_build_count": 1,
             "control_flow_contract_build_count": 1,
             "shared_template_source_read_count": dependency_read_count,
+            "scope_control_occurrence_count": len(scope_occurrences),
+            "shared_template_control_occurrence_count": len(shared_occurrences),
+            "hybrid_control_occurrence_count": sum(
+                item.materialization_role
+                in {"hybrid_child_wrapper", "presentation_child_wrapper"}
+                for item in occurrences
+            ),
+            "template_parameter_sequence_branch_count": sum(
+                branch.branch_kind == "template_parameter_sequence"
+                for node in nodes
+                for branch in node.branches
+            ),
+            "template_parameter_fetch_count": sum(
+                branch.branch_kind == "template_parameter_fetch"
+                for node in nodes
+                for branch in node.branches
+            ),
             "full_canonical_ir_build_count": 0,
         },
     )

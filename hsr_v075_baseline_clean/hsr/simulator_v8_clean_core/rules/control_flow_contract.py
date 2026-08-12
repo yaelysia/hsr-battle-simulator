@@ -548,6 +548,7 @@ class CharacterControlFlowContractCatalog:
     template_definitions: tuple[ControlFlowTemplateDefinitionIR, ...]
     template_references: tuple[ControlFlowTemplateReferenceIR, ...]
     issues: tuple[ControlFlowContractIssueIR, ...]
+    denominator_record_ids: tuple[str, ...]
     direct_record_count: int
     ancestor_context_count: int
     family_counts: Mapping[str, Any]
@@ -587,6 +588,13 @@ class CharacterControlFlowContractCatalog:
         scope_record_ids = tuple(item.scope_record_id for item in nodes)
         if len(scope_record_ids) != len(set(scope_record_ids)):
             raise ValueError("control-flow catalog contains duplicate source records")
+        denominator_record_ids = _strings(
+            self.denominator_record_ids,
+            "control-flow denominator records",
+            sorted_values=True,
+        )
+        if set(denominator_record_ids) != set(scope_record_ids):
+            raise ValueError("control-flow catalog omits a denominator source record")
         template_ids = {item.template_id for item in templates}
         reference_ids = {item.reference_id for item in references}
         if any(item.node_id not in node_ids for item in references):
@@ -604,6 +612,28 @@ class CharacterControlFlowContractCatalog:
         ):
             raise ValueError("control-flow node and template references are not bidirectionally closed")
         node_by_id = {item.node_id: item for item in nodes}
+        node_by_source_record = {item.scope_record_id: item for item in nodes}
+        selected_children = tuple(
+            child
+            for node in nodes
+            for branch in node.branches
+            for child in branch.children
+            if child.record_id in node_by_source_record
+        )
+        selected_child_ids = tuple(item.record_id for item in selected_children)
+        if len(selected_child_ids) != len(set(selected_child_ids)):
+            raise ValueError("control-flow source occurrence has multiple parent branches")
+        if any(
+            child.family != node_by_source_record[child.record_id].family
+            or child.source.source_path
+            != node_by_source_record[child.record_id].source.source_path
+            or child.source.evidence.get("content_sha256")
+            != node_by_source_record[child.record_id].source.evidence.get("content_sha256")
+            or str(child.source.evidence.get("json_path", "")).removesuffix(".$type")
+            != node_by_source_record[child.record_id].source.evidence.get("json_path")
+            for child in selected_children
+        ):
+            raise ValueError("control-flow selected child source is not closed to its node")
         if any(
             item.source.source_path != node_by_id[item.node_id].source.source_path
             or item.source.raw_type != node_by_id[item.node_id].family
@@ -616,6 +646,42 @@ class CharacterControlFlowContractCatalog:
             for item in references
         ):
             raise ValueError("control-flow template reference source is inconsistent")
+        template_fetch_names: dict[str, set[str]] = {
+            item.template_id: set() for item in templates
+        }
+        for node in nodes:
+            node_path = str(node.source.evidence["json_path"])
+            owners = tuple(
+                item
+                for item in templates
+                if item.source.source_path == node.source.source_path
+                and node_path.startswith(
+                    f'{item.source.evidence["json_path"]}.TaskList['
+                )
+            )
+            if not owners:
+                continue
+            owner = max(
+                owners,
+                key=lambda item: len(str(item.source.evidence["json_path"])),
+            )
+            template_fetch_names[owner.template_id].update(
+                branch.label
+                for branch in node.branches
+                if branch.branch_kind == "template_parameter_fetch"
+            )
+        for reference in references:
+            if reference.coverage_status != "lowered":
+                continue
+            caller = node_by_id[reference.node_id]
+            provided = {
+                branch.label
+                for branch in caller.branches
+                if branch.branch_kind == "template_parameter_sequence"
+            }
+            required = template_fetch_names[reference.resolved_template_id]
+            if provided != required:
+                raise ValueError("control-flow template parameter subgraph is not closed")
         if type(self.direct_record_count) is not int or self.direct_record_count != len(nodes):
             raise ValueError("control-flow direct record count is inconsistent")
         if type(self.ancestor_context_count) is not int or self.ancestor_context_count < 0:
@@ -656,6 +722,7 @@ class CharacterControlFlowContractCatalog:
         object.__setattr__(self, "template_definitions", tuple(sorted(templates, key=lambda item: item.template_id)))
         object.__setattr__(self, "template_references", tuple(sorted(references, key=lambda item: item.reference_id)))
         object.__setattr__(self, "issues", tuple(sorted(issues, key=lambda item: (item.code, item.subject, item.detail))))
+        object.__setattr__(self, "denominator_record_ids", denominator_record_ids)
         object.__setattr__(self, "family_counts", family_counts)
         object.__setattr__(self, "build_counters", build_counters)
         object.__setattr__(self, "catalog_id", f"character_control_flow_catalog:{sha256(identity).hexdigest()}")
@@ -677,6 +744,7 @@ class CharacterControlFlowContractCatalog:
             "template_definitions": [item.to_json() for item in self.template_definitions],
             "template_references": [item.to_json() for item in self.template_references],
             "issues": [item.to_json() for item in self.issues],
+            "denominator_record_ids": list(self.denominator_record_ids),
             "direct_record_count": self.direct_record_count,
             "ancestor_context_count": self.ancestor_context_count,
             "family_counts": cast(JSONValue, thaw_json(self.family_counts)),

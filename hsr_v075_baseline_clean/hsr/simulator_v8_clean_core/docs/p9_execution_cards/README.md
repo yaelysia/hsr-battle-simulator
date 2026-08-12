@@ -15,9 +15,13 @@ P9-S5 已按目标 IR、实体关系、动作目标来源、动作选择权威�
 条件责任目录和精确 blocker；S6B 才实现 committed-state 求值。旧 S6 总卡不再是执行入口。
 
 原 P9-S8 同时修改完整来源字段归属、通用任务图事务以及命中/RNG 时序，首次实时分母重建还
-证明旧 `31 / 8,651` 数字混合了过期来源与不同物化角色。现按权威边界拆为 S8A、S8B、S8C：
-S8A 只建立来源与类型化目录，S8B 只建立通用原子任务图事务，S8C 才处理命中、barrier、
-parallel 和随机顺序。旧 S8 总卡只保留聚合说明，不再是执行入口。
+证明旧 `31 / 8,651` 数字混合了过期来源与不同物化角色。S8A 曾独立建立来源目录；S8B1
+开工审查随后发现其分母仍遗漏 hybrid child-bearing task、命名 template 参数子图和 shared
+template 内部节点。S8A-R1 已完成修订并验收，原 S8A 分母只保留为历史证据。2026-08-12
+试运行进一步证明原 S8B 同时改变任务图 IR、共享执行器、ability、status callback 和跨入口上下文
+五个行为边界以及一个独立兼容债务退出边界，因此继续拆为 S8B1-S8B6；S8C 才处理命中、
+barrier、parallel 和随机顺序。
+旧 S8 与 S8B 文件都只保留聚合说明，不再是执行入口。
 
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程
 通过代码审查和聚焦 evidence 后才更新卡片与总 checklist，并建立阶段检查点。
@@ -68,6 +72,10 @@ parallel 和随机顺序。旧 S8 总卡只保留聚合说明，不再是执行�
 
 修复后只做差量代码复核，但必须重跑来源范围门和 gap 归属门。若一次集中修复后仍出现新的系统性
 问题类别，立即返回规划线程重写闭合地图或拆卡；不再连续进入局部补丁循环。
+
+执行线程在 45 分钟内必须形成卡内定义的可编译纵切；90 分钟仍不能提交该纵切时必须停止并返回
+`plan_mismatch` 或 `context_gap`。首次审查若同时发现三个以上独立系统性类别，直接判定执行卡
+分解失败，备份并回退未验收实现；不得把长整改清单继续塞给同一执行线程。
 
 ## 5. 共用验证协议
 
@@ -121,6 +129,10 @@ S5C1-S5C2 两段主入口墙钟合计目标 12 分钟、evidence 合计 4 MiB、
 不得通过压缩可读性满足行数。
 超过任一总量应暂停重新划分证据，不能通过增加 CLI mode 或重复矩阵继续扩张。
 
+S8B1-S8B6 同样共享原 S8B 的预算：主入口累计目标 6 分钟、硬上限 8 分钟，单进程峰值
+768 MiB，evidence 合计 3 MiB，新增验证代码合计目标 1,650 非空行。S8B1 后不得重跑前序
+主入口或完整 S8A 目录；后序卡只证明新增消费边界和必要的最小集成链。
+
 ## 7. Gap 口径
 
 - `source_gap_blocked`：raw 确实缺失或无法唯一证明；必须排除扫描/lowering/谓词错误。
@@ -150,7 +162,13 @@ S5C1-S5C2 两段主入口墙钟合计目标 12 分钟、evidence 合计 4 MiB、
 | S6B | `P9-S6B_COMMITTED_STATE_CONDITION_EVALUATION.md` | 5.6 Sol / max / Goal |
 | S7 | `P9-S7_CONTEXTUAL_CONDITION_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S8A | `P9-S8A_CONTROL_FLOW_SOURCE_CONTRACT.md` | 5.6 Sol / max / 普通聚焦 |
-| S8B | `P9-S8B_ATOMIC_TASK_GRAPH_RUNTIME.md` | 5.6 Sol / max / Goal |
+| S8A-R1 | `P9-S8A-R1_CONTROL_FLOW_DENOMINATOR_COMPLETENESS.md` | 5.6 Sol / max / 普通聚焦 |
+| S8B1 | `P9-S8B1_TASK_GRAPH_IR_MATERIALIZATION.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B2 | `P9-S8B2_ATOMIC_EXECUTOR_CORE.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B3 | `P9-S8B3_ABILITY_STANDALONE_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B4 | `P9-S8B4_STATUS_CALLBACK_MIGRATION.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B5 | `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B6 | `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md` | 5.6 Sol / high / 普通聚焦 |
 | S8C | `P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md` | 5.6 Sol / max / Goal |
 | S9 | `P9-S9_EVENT_CONTRACT_ACTION_WINDOWS.md` | 5.6 Sol / max / 普通聚焦 |
 | S10 | `P9-S10_STATUS_CALLBACK_LIFECYCLE_CLOSURE.md` | 5.6 Sol / max / Goal |

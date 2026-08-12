@@ -128,11 +128,14 @@ resource change、status callback 与 turn 七类 typed transient fact 契约；
 source-backed 组件证据，真实 gameplay end-to-end 仍为 0：动态目标等待 S8，callback/context 运输
 等待 S9；其余 46 条按来源精确归属 S9-S13 或 S16，没有用 fixture 冒充正式内容。S7 唯一主验证
 22/22，一次通过，约 7.5 秒、峰值约 436 MiB、完整 Canonical IR build 为 0。原 S8 已按独立权威
-边界拆为 S8A-S8C。S8A 已验收：当前完整来源中的 8,651 个类型化控制流/时序节点与 1,215 个结构
-容器分离，31 个实际 family 的全部同级字段、232 个模板、16 个模板参数、443 个引用、4,428 个分支
-和 6,960 个 child 均来源闭合；1,315 个节点完成本阶段职责，7,336 个节点保留精确下游义务，不表示
-executable。唯一主验证一次通过，约 5.14 秒、峰值约 327 MiB、完整 Canonical IR build 为 0。当前
-下一张唯一可执行卡为 `P9-S8B_ATOMIC_TASK_GRAPH_RUNTIME.md`，不得提前进入 S8C。
+边界拆为 S8A-S8C。S8A 原检查点只在旧分母内闭合；S8A-R1 已补齐携带子图的混合 gameplay task、
+31 个命名 template 参数子图和 shared template 内部控制节点并完成验收。当前完整分母为 9,432 个
+来源 occurrence，其中角色 scope 9,052 个、shared template 380 个、跨领域混合节点 429 个；5 个
+template 参数 fetch 与调用方子图一一闭合，目录 issue/blocked 均为 0。聚焦验证约 5.86 秒、峰值
+约 327 MiB、完整 Canonical IR build 为 0，runtime 未改动。原 S8B 子代理试运行因同时跨越任务图
+IR、共享执行器、ability、status callback 和跨入口上下文五个生产边界而停止，未验收实现已撤回。
+S8B 现严格拆为 S8B1-S8B6；下一张唯一执行卡是
+`P9-S8B1_TASK_GRAPH_IR_MATERIALIZATION.md`，不得执行旧 S8B 聚合说明或提前进入后序子卡/S8C。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

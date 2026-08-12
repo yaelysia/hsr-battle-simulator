@@ -1,8 +1,10 @@
 # P9-S8C 命中、barrier、parallel 与随机顺序执行卡
 
+硬前置：P9-S8B1 至 P9-S8B6 均已验收；仅有原 S8B 聚合说明或部分子卡通过时不得开工。
+
 ## 阶段结果
 
-在 S8B 原子事务上闭合 projectile 命中身份、目标迭代、真正影响结算窗口的 barrier、parallel
+在 S8B6 已收口的原子事务上闭合 projectile 命中身份、目标迭代、真正影响结算窗口的 barrier、parallel
 确定性合并和 RandomConfig。所有 gameplay 随机消费统一 RNG ledger；物理飞行和演出等待退役。
 
 ## 完成边界
