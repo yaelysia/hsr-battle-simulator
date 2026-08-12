@@ -139,9 +139,14 @@ S8B 现严格拆为 S8B1-S8B6。S8B1 已完成验收：完整 10,113 条来源�
 来源 family 均进入严格模型，未知角色或责任未闭合时 fail-closed。Canonical IR 与 RuleBook 已支持
 完整目录、正式多 entry 目录和单图查询；S8B1 不改变 runtime。S8A 同步修正 WaitFor/条件屏障归属
 为 S8C，并令目录身份覆盖完整规范内容。S8B1 唯一主验证 10/10，通过约 24.2 秒、峰值约 500 MiB，
-完整 Canonical IR build 为 0。下一张唯一执行卡是 `P9-S8B2_ATOMIC_EXECUTOR_CORE.md`；不得提前
-迁移 ability/status 正式消费者，S8B3 必须按一次来源扫描、流式多 entry 物化和一次账本合并构建
-正式目录，禁止逐图复制完整来源账本。
+完整 Canonical IR build 为 0。S8B2 已完成验收：领域中立执行器统一拥有有序路径、确定性分支、
+固定/条件/目标循环、template frame 和嵌套图调用栈；领域 hook 不能获得 child runner，也不能返回
+候选状态。任一选中节点失败会返回入口状态并清空 mutation、event、RNG 和 settlement，未选中的
+deferred 分支不会预先阻断。无上限条件循环必须提供严格递减的有限进度量，S8C 节点继续精确
+blocked。最终聚焦验证 15/15，通过约 0.006 秒、峰值约 77 MiB、完整 Canonical IR 和来源扫描均为 0。
+下一张唯一执行卡是 `P9-S8B3_ABILITY_STANDALONE_MIGRATION.md`；它必须按一次来源扫描、流式多
+entry 物化和一次账本合并构建正式目录，禁止逐图复制完整来源账本，也不得按 child 数量猜测分支
+语义。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

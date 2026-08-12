@@ -38,6 +38,9 @@
 1. `AbilityTaskSystem.execute_callback` 通过 RuleBook 取得正式任务图并调用 S8B2；不得再按
    `parent_task_id` 搜 root 或在 `_execute_task` 中解释 Predicate、循环、template、TriggerAbility。
 2. ability 领域适配器只负责一个 leaf 的准入和结果，不持有 child runner，不递归调用旧 task 树。
+   适配器必须返回 S8B2 精确 hook result：mutation/event/RNG/settlement 和来源语义 outcome；不得
+   返回候选状态、child ID 或执行投影。存在 continuation 时 outcome 必须精确匹配 branch kind/label，
+   禁止因当前只有一个 child 分支就将其视为无条件后续。
 3. `execute_standalone` 与 scheduler 复用同一图入口。queue 只提供已准入 ability、actor、target 和
    queue 身份，不创建临时 action 规则来绕过图准入。
 4. standalone root 在进入时写入 active graph stack；A 直接调用 A、A 调 B 再回 A 均 fail-closed。
@@ -45,6 +48,8 @@
 5. 删除或退役 ability 域旧 Predicate、固定循环、template 和 TriggerAbility 控制解释路径；
    leaf 专用执行代码可以保留，但必须只由共享执行器适配器调用。
 6. 任一图、leaf 或下游领域 blocker 使整个 callback 事务遵守 S8B2 原子失败，不能保留前半段动作结果。
+   ability adapter 产生的非 process-only settlement 必须关联同 leaf mutation；重复 mutation/event/RNG
+   身份和伪造 task-graph 身份必须在返回 S8B2 前阻断。
 7. `_ability_task_damage_graph_authoritative` 等只读旧拓扑的派生消费者统一由 S8B6 在移除旧字段
    时迁移；本卡不得新增对旧字段的依赖。
 8. 正式 lowering 一次生成完整多 entry 目录并安装到 RuleBook。重复图身份、同一来源位置对应不同

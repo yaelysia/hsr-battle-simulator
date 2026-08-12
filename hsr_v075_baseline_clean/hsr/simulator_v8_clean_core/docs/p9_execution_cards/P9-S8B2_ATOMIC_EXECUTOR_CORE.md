@@ -28,6 +28,11 @@
    blocker。
 3. condition/count/target/leaf/graph resolver 通过类型化 hook 提供。hook 返回结果，不能接收 child
    runner，也不能决定控制结构的后继节点。
+   - hook request 只暴露节点身份、类型化引用、当前状态和不可变上下文，不暴露 child ID。
+   - branch hook 只返回来源语义的 branch kind/label，condition hook 只返回布尔值和可选进度量；
+     具体 branch 与 child 的唯一匹配由执行器完成。
+   - leaf hook 只返回 mutation/event/RNG/settlement 和领域 outcome，不返回候选状态；候选状态只能
+     由执行器调用现有 reducer 产生。
 4. 事务使用不可变候选状态向前计算；只有完整选中路径成功才发布结果。选中路径任一失败必须返回：
    - 原入口状态；
    - 零正式 mutation、event、RNG 和成功 settlement；
@@ -38,11 +43,16 @@
    上限。嵌套节点投影必须带图身份，不能只用局部 task id 合并。
 7. 循环只能使用 S8B1 已准入的有限次数、有限目标集合或可证明进展依据；缺依据、非整数、负数、
    空转无进展均在首次 leaf 前 blocked。
+   - `condition_progress_required` 的每次 true 结果必须携带非负整数有限进度量；首次执行 body 前
+     必须大于零，后续 true 结果必须严格递减。不得以任意最大深度代替来源或 runtime 进展证明。
+   - template call 只执行 `template_body`；参数 sequence 存入不可变 frame，在对应 fetch 节点被
+     请求时执行，禁止在进入 template 时预先执行全部参数分支。
 
 ## 生产边界必须拒绝
 
 - graph/root、上下文或 hook 类型错配。
 - hook 返回未知字段、状态与 mutation 不一致、伪造 graph/node 身份或可变结果。
+- 非 process-only settlement 未关联本 leaf mutation，或 mutation/event/RNG/节点执行身份重复。
 - child runner 被领域 hook 持有或调用。
 - 选中路径失败后仍泄露 mutation、event、RNG、成功 settlement 或候选状态。
 - 调用环、跨图节点投影冲突、重复执行身份和无进展循环。
@@ -84,7 +94,9 @@ source_scan_count=0
 - 一个主入口：`validate_p9_s8b2_atomic_executor_core.py`。
 - 使用明确标注的最小 `validation_fixture` 图证明通用协议；不得据此宣称真实内容执行完成。
 - 一个控制结构一个最小正例或反例，不复制领域战斗世界，不构建 Canonical IR/RuleBook。
-- 预算：10 秒、256 MiB、192 KiB evidence、验证器目标不超过 250 非空行。
+- 预算：10 秒、256 MiB、192 KiB evidence、验证器目标不超过 390 非空行、硬上限 400 行。
+  S8B1 严格 IR fixture 必须通过正式构造器建立，不允许把构图 helper 拆到第二个文件或压缩排版
+  规避统计；达到 390 行后只能删除重复证据，不能继续扩大矩阵。
 - 主入口只在 API 自审、失败原子性审查和调用边界审查后运行一次。
 - 45 分钟内必须形成可编译执行器，并通过“单 leaf 成功”和“第二 leaf 失败后全回滚”两个最小探针；
   否则停止，不能靠扩大 fixture 或阅读领域实现继续拖延。
