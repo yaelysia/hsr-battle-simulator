@@ -21,6 +21,18 @@
 | 结果 | `AbilityTaskExecutionResult` 运输共享事务结果和 graph-qualified 节点投影 |
 | 后续归属 | status callback 归 S8B4；跨 event active stack 最终运输归 S8B5 |
 
+### 目录基数与构建方式
+
+- 正式 RuleBook 消费的是包含全部 ability graph entry 的单一 `formal_catalog`，不是主验证中的
+  单 entry `formal_slice`。单 slice 只能证明一个图的模型语义，不能冒充生产目录集成。
+- S8A 来源 snapshot、控制流目录和来源查找索引在本阶段各构建一次；随后以流式方式物化各正式
+  graph entry，最后只合并一次完整来源账本。禁止每物化一个 action/ability 就复制、重建或比较
+  全部来源责任记录。
+- 开工预检必须估算“正式 graph entry 数量 × 完整来源账本记录数”的对象规模。任何实现若让
+  完整账本随 entry 线性复制，必须在修改正式消费者前停止并返回 `plan_mismatch`。
+- 主验证必须记录来源扫描次数、控制流目录构建次数、formal catalog 构建次数和峰值内存；不能只
+  记录最终查询成功数。
+
 ## 阶段目标
 
 1. `AbilityTaskSystem.execute_callback` 通过 RuleBook 取得正式任务图并调用 S8B2；不得再按
@@ -35,6 +47,8 @@
 6. 任一图、leaf 或下游领域 blocker 使整个 callback 事务遵守 S8B2 原子失败，不能保留前半段动作结果。
 7. `_ability_task_damage_graph_authoritative` 等只读旧拓扑的派生消费者统一由 S8B6 在移除旧字段
    时迁移；本卡不得新增对旧字段的依赖。
+8. 正式 lowering 一次生成完整多 entry 目录并安装到 RuleBook。重复图身份、同一来源位置对应不同
+   图内容、来源账本冲突或截断目录均在安装前 fail-closed；不得按“最后一个覆盖前一个”处理。
 
 ## 本卡明确不做
 
@@ -64,6 +78,10 @@ standalone_root_is_present_in_active_graph_stack=true
 ability_selected_path_failure_is_atomic=true
 status_callback_behavior_changed=false
 full_canonical_ir_build_count=0
+control_flow_source_scan_count=1
+formal_catalog_build_count=1
+complete_source_ledger_merge_count=1
+complete_source_ledger_not_copied_per_graph=true
 ```
 
 ## 验证与止损
@@ -75,6 +93,8 @@ full_canonical_ir_build_count=0
   代替行为正例。
 - 不跑 S8B1/S8B2 主入口；只运行其稳定小型 active-contract slice（若已明确保留）。
 - 预算：90 秒、640 MiB、512 KiB evidence、验证器目标不超过 300 非空行。
+- 验证器只保留少量 graph 样本和目录统计，不序列化完整来源账本或全部任务图。若完整正式目录在
+  640 MiB 内无法构建，先检查是否发生逐 entry 账本复制；不得提高预算掩盖对象生命周期错误。
 - 45 分钟内必须使普通 callback 的一个 root 经共享执行器形成可编译纵切；否则停止并报告缺少的
   精确 API 或调用者，不得继续全项目探索。
 

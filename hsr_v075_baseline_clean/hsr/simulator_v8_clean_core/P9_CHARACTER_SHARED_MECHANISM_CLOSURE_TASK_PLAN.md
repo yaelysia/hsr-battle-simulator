@@ -296,7 +296,7 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S7 transient-context 条件族完成验收。
 - [x] P9-S8A 控制流来源、逐字段责任和类型化目录完成验收（旧分母证据由 S8A-R1 修订）。
 - [x] P9-S8A-R1 混合子任务、命名 template 子图和 shared template 内部节点完成验收。
-- [ ] P9-S8B1 任务图 IR、物化账本和唯一查询完成验收。
+- [x] P9-S8B1 任务图 IR、物化账本和唯一查询完成验收。
 - [ ] P9-S8B2 领域中立原子任务图执行器完成验收。
 - [ ] P9-S8B3 普通动作和 standalone ability 迁移完成验收。
 - [ ] P9-S8B4 状态 callback 迁移完成验收。

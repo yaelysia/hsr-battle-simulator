@@ -704,28 +704,51 @@ class CharacterControlFlowContractCatalog:
             )
         ):
             raise ValueError("control-flow build counters are invalid")
-        identity = json.dumps(
+        canonical_nodes = tuple(sorted(nodes, key=lambda item: item.node_id))
+        canonical_templates = tuple(sorted(templates, key=lambda item: item.template_id))
+        canonical_references = tuple(sorted(references, key=lambda item: item.reference_id))
+        canonical_issues = tuple(
+            sorted(issues, key=lambda item: (item.code, item.subject, item.detail))
+        )
+        identity = sha256()
+
+        def update_identity(label: str, value: JSONValue) -> None:
+            identity.update(json.dumps(
+                [label, value],
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"))
+            identity.update(b"\n")
+
+        update_identity(
+            "header",
             {
                 "snapshot_id": self.snapshot_id,
                 "scope_catalog_id": self.scope_catalog_id,
                 "source_fingerprint": self.source_fingerprint,
                 "dependency_fingerprint": self.dependency_fingerprint,
-                "node_ids": sorted(node_ids),
-                "template_ids": sorted(template_ids),
-                "reference_ids": sorted(reference_ids),
+                "denominator_record_ids": list(denominator_record_ids),
+                "direct_record_count": self.direct_record_count,
+                "ancestor_context_count": self.ancestor_context_count,
             },
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        object.__setattr__(self, "nodes", tuple(sorted(nodes, key=lambda item: item.node_id)))
-        object.__setattr__(self, "template_definitions", tuple(sorted(templates, key=lambda item: item.template_id)))
-        object.__setattr__(self, "template_references", tuple(sorted(references, key=lambda item: item.reference_id)))
-        object.__setattr__(self, "issues", tuple(sorted(issues, key=lambda item: (item.code, item.subject, item.detail))))
+        )
+        for label, values in (
+            ("node", canonical_nodes),
+            ("template", canonical_templates),
+            ("reference", canonical_references),
+            ("issue", canonical_issues),
+        ):
+            for value in values:
+                update_identity(label, value.to_json())
+        object.__setattr__(self, "nodes", canonical_nodes)
+        object.__setattr__(self, "template_definitions", canonical_templates)
+        object.__setattr__(self, "template_references", canonical_references)
+        object.__setattr__(self, "issues", canonical_issues)
         object.__setattr__(self, "denominator_record_ids", denominator_record_ids)
         object.__setattr__(self, "family_counts", family_counts)
         object.__setattr__(self, "build_counters", build_counters)
-        object.__setattr__(self, "catalog_id", f"character_control_flow_catalog:{sha256(identity).hexdigest()}")
+        object.__setattr__(self, "catalog_id", f"character_control_flow_catalog:{identity.hexdigest()}")
 
     @property
     def complete(self) -> bool:

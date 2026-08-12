@@ -56,7 +56,7 @@ ROLE_OWNER = {
     "predicate_branch": "p9_s8b",
     "switch_branch": "p9_s8b",
     "ability_trigger": "p9_s8b",
-    "condition_barrier": "p9_s8b",
+    "condition_barrier": "p9_s8c",
     "delayed_sequence": "p9_s8c",
     "custom_sync_barrier": "p9_s8c",
     "server_sync_barrier": "p9_s8c",

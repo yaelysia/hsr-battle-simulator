@@ -29,6 +29,7 @@ from .expression_ir import DynamicValueOperationIR, is_exact_numeric_expression
 
 if TYPE_CHECKING:
     from .action_target_contract import ActionTargetContractCatalogIR
+    from .task_graph import TaskGraphCatalogIR
 
 
 def _ir_json_value(value: Any) -> JSONValue:
@@ -7422,6 +7423,7 @@ class CanonicalIR:
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
     ability_phases: tuple[AbilityPhaseIR, ...] = ()
     ability_tasks: tuple[AbilityTaskIR, ...] = ()
+    task_graph_catalog: TaskGraphCatalogIR | None = None
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
     skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = ()
@@ -7529,6 +7531,197 @@ class CanonicalIR:
             "character_build_selector_gaps",
             tuple(sorted(gaps, key=lambda item: item.selector_gap_id)),
         )
+        task_graph_catalog = self.task_graph_catalog
+        if task_graph_catalog is not None:
+            from .task_graph import TaskGraphCatalogIR
+
+            if type(task_graph_catalog) is not TaskGraphCatalogIR:
+                raise TypeError("CanonicalIR task graph catalog must be the exact internal type")
+            ability_tasks = {item.task_id: item for item in self.ability_tasks}
+            status_tasks = {item.task_id: item for item in self.status_callback_tasks}
+            if len(ability_tasks) != len(self.ability_tasks) or len(status_tasks) != len(self.status_callback_tasks):
+                raise ValueError("CanonicalIR formal task identities must be unique")
+            phases = {item.phase_id: item for item in self.ability_phases}
+            callbacks = {item.callback_id: item for item in self.status_callbacks}
+            if len(phases) != len(self.ability_phases) or len(callbacks) != len(self.status_callbacks):
+                raise ValueError("CanonicalIR task graph owners must be unique")
+            reference_definitions = {
+                "condition": {item.condition_id: item for item in self.conditions},
+                "target": {
+                    item.target_expression_id: item for item in self.target_expressions
+                },
+                "effect": {item.effect_id: item for item in self.effects},
+                "ability": {
+                    item.standalone_ability_graph_id: item
+                    for item in self.standalone_ability_graphs
+                },
+            }
+            if any(
+                len(reference_definitions[kind]) != len(values)
+                for kind, values in (
+                    ("condition", self.conditions),
+                    ("target", self.target_expressions),
+                    ("effect", self.effects),
+                    ("ability", self.standalone_ability_graphs),
+                )
+            ):
+                raise ValueError("CanonicalIR task graph definitions must be unique")
+            for entry in task_graph_catalog.entry_materializations:
+                if entry.entry_kind == "ability_phase_callback":
+                    owner = phases.get(entry.owner_id)
+                    selected_tasks = ability_tasks
+                    if owner is None:
+                        raise ValueError("task graph ability phase owner is missing")
+                    formal_tasks = tuple(
+                        item
+                        for item in self.ability_tasks
+                        if item.phase_id == entry.owner_id
+                        and item.callback_kind == entry.callback_kind
+                    )
+                    selected_task_ids = {
+                        item.task_id for item in formal_tasks
+                    }
+                    ordered_task_ids = tuple(
+                        task_id
+                        for task_id in owner.task_ids
+                        if task_id in selected_task_ids
+                    )
+                else:
+                    owner = callbacks.get(entry.owner_id)
+                    selected_tasks = status_tasks
+                    if owner is None:
+                        raise ValueError("task graph status callback owner is missing")
+                    if owner.event != entry.callback_kind:
+                        raise ValueError("task graph status callback event is inconsistent")
+                    formal_tasks = tuple(
+                        item
+                        for item in self.status_callback_tasks
+                        if item.callback_id == entry.owner_id
+                    )
+                    selected_task_ids = {
+                        item.task_id for item in formal_tasks
+                    }
+                    ordered_task_ids = tuple(owner.task_ids)
+                if (
+                    not formal_tasks
+                    or len(ordered_task_ids) != len(formal_tasks)
+                    or set(ordered_task_ids) != selected_task_ids
+                ):
+                    raise ValueError("task graph formal owner ledger is incomplete")
+                if entry.status != "materialized":
+                    continue
+                graph = next(
+                    (item for item in task_graph_catalog.graphs if item.graph_id == entry.graph_id),
+                    None,
+                )
+                if graph is None:
+                    raise ValueError("task graph materialization graph is missing")
+                nodes_by_task = {
+                    item.formal_task_id: item for item in graph.nodes
+                }
+                if (
+                    len(nodes_by_task) != len(graph.nodes)
+                    or set(nodes_by_task) != selected_task_ids
+                    or entry.formal_task_ids != ordered_task_ids
+                    or entry.source_occurrence_ids
+                    != tuple(
+                        nodes_by_task[task_id].source_occurrence_id
+                        for task_id in ordered_task_ids
+                    )
+                ):
+                    raise ValueError("task graph formal materialization scope is inconsistent")
+                first_node = nodes_by_task[ordered_task_ids[0]]
+                if graph.source != first_node.source or entry.source != first_node.source:
+                    raise ValueError("task graph entry source is inconsistent")
+                expected_roots = tuple(
+                    nodes_by_task[task_id].graph_node_id
+                    for task_id in ordered_task_ids
+                    if not selected_tasks[task_id].parent_task_id
+                )
+                if graph.root_node_ids != expected_roots:
+                    raise ValueError("task graph formal roots are inconsistent")
+                for node in graph.nodes:
+                    task = selected_tasks.get(node.formal_task_id)
+                    if (
+                        task is None
+                        or node.formal_task_id not in selected_task_ids
+                        or task.opcode != node.opcode
+                        or task.source.source_path != node.source.source_path
+                        or task.source.raw_type != node.source.raw_type
+                        or task.source.raw_id != node.source.raw_id
+                        or task.source.evidence.get("json_path")
+                        != node.source.evidence.get("json_path")
+                    ):
+                        raise ValueError("task graph formal task source is inconsistent")
+                    child_node_ids = tuple(
+                        child_id
+                        for branch in node.branches
+                        for child_id in branch.child_node_ids
+                    )
+                    expected_child_node_ids = tuple(
+                        nodes_by_task[task_id].graph_node_id
+                        for task_id in task.child_task_ids
+                    )
+                    if child_node_ids != expected_child_node_ids:
+                        raise ValueError("task graph formal child topology is inconsistent")
+                    for branch_kind, task_ids in (
+                        ("success", task.success_task_ids),
+                        ("failed", task.failed_task_ids),
+                    ):
+                        branch_node_ids = tuple(
+                            child_id
+                            for branch in node.branches
+                            if branch.branch_kind == branch_kind
+                            for child_id in branch.child_node_ids
+                        )
+                        if branch_node_ids != tuple(
+                            nodes_by_task[task_id].graph_node_id
+                            for task_id in task_ids
+                        ):
+                            raise ValueError("task graph formal branch topology is inconsistent")
+                    expected_references = {
+                        "condition": task.condition_id,
+                        "target": getattr(task, "target_expression_id", ""),
+                        "effect": task.effect_id,
+                        "ability": getattr(task, "linked_standalone_graph_id", ""),
+                    }
+                    formal_source_family = task.source.evidence.get(
+                        "source_opcode"
+                        if entry.entry_kind == "ability_phase_callback"
+                        else "raw_opcode"
+                    )
+                    if formal_source_family != node.source_family:
+                        raise ValueError("task graph formal source family is inconsistent")
+                    actual_references = {
+                        kind: tuple(
+                            reference.definition_id
+                            for reference in node.references
+                            if reference.reference_kind == kind
+                        )
+                        for kind in expected_references
+                    }
+                    if any(
+                        actual_references[kind]
+                        != ((definition_id,) if definition_id else ())
+                        for kind, definition_id in expected_references.items()
+                    ):
+                        raise ValueError("task graph formal definition references are inconsistent")
+                    for reference in node.references:
+                        if reference.reference_kind in {"numeric", "template"}:
+                            continue
+                        definition = reference_definitions[reference.reference_kind].get(
+                            reference.definition_id
+                        )
+                        if definition is None:
+                            raise ValueError("task graph definition reference is dangling")
+                        admitted = getattr(definition, "coverage_status", "blocked") in {
+                            "executable",
+                            "lowered",
+                        }
+                        if admitted != (reference.resolution_status == "resolved"):
+                            raise ValueError(
+                                "task graph definition admission is inconsistent"
+                            )
         catalog = self.character_ability_source_graph_catalog
         resolution_catalog = self.character_ability_source_resolution_catalog
         if resolution_catalog is not None and (
@@ -7785,6 +7978,11 @@ class CanonicalIR:
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
             "ability_phases": [phase.to_json() for phase in self.ability_phases],
             "ability_tasks": [task.to_json() for task in self.ability_tasks],
+            "task_graph_catalog": (
+                self.task_graph_catalog.to_json()
+                if self.task_graph_catalog is not None
+                else None
+            ),
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "skill_formula_bindings": [binding.to_json() for binding in self.skill_formula_bindings],

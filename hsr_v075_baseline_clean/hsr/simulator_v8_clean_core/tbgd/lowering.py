@@ -36,6 +36,7 @@ from .character_condition_contracts import (
 from .character_control_flow_contracts import (
     build_character_control_flow_contract_catalog,
 )
+from .task_graph_materializer import build_complete_task_graph_catalog
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
@@ -77,6 +78,7 @@ from ..rules.evaluator import (
 )
 from ..rules.action_target_contract import ActionTargetContractCatalogIR
 from ..rules.control_flow_contract import CharacterControlFlowContractCatalog
+from ..rules.task_graph import TaskGraphCatalogIR
 from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
@@ -571,14 +573,15 @@ class TBGDLowering:
                     raise ValueError("cached control-flow scope mismatch")
             return cached
         if snapshot is None:
+            snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+        if snapshot is None:
             snapshot = build_character_ability_raw_snapshot(self.tbgd_root)
         if type(snapshot) is not CharacterAbilityRawSnapshot:
             raise TypeError("control-flow lowering requires the exact S0 snapshot")
         if scope_catalog is None:
-            scope_catalog = build_character_ability_scope_projection(
-                self.tbgd_root,
-                snapshot=snapshot,
-            )
+            scope_catalog = getattr(self, "_character_ability_scope_catalog", None)
+        if scope_catalog is None:
+            scope_catalog = build_character_ability_scope_projection(self.tbgd_root, snapshot=snapshot)
         if type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog:
             raise TypeError("control-flow lowering requires the exact S0 scope catalog")
         catalog = build_character_control_flow_contract_catalog(
@@ -589,6 +592,48 @@ class TBGDLowering:
         self._character_ability_raw_snapshot = snapshot
         self._character_ability_scope_catalog = scope_catalog
         self._character_control_flow_contract_catalog = catalog
+        return catalog
+
+    def build_character_task_graph_catalog(
+        self,
+        *,
+        source_catalog: CharacterControlFlowContractCatalog | None = None,
+        source_snapshot: CharacterAbilityRawSnapshot | None = None,
+    ) -> TaskGraphCatalogIR:
+        """Build the complete B1 source ledger without formal runtime graphs."""
+
+        cached = getattr(self, "_character_task_graph_catalog", None)
+        if cached is not None:
+            if type(cached) is not TaskGraphCatalogIR:
+                raise TypeError("invalid cached character task graph catalog")
+            cached_source = getattr(self, "_character_control_flow_contract_catalog", None)
+            cached_snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+            if type(cached_source) is not CharacterControlFlowContractCatalog or type(
+                cached_snapshot
+            ) is not CharacterAbilityRawSnapshot:
+                raise TypeError("cached task graph source authority is invalid")
+            if source_catalog is not None and (
+                type(source_catalog) is not CharacterControlFlowContractCatalog
+                or source_catalog != cached_source
+            ):
+                raise ValueError("cached task graph source catalog mismatch")
+            if source_snapshot is not None and (
+                type(source_snapshot) is not CharacterAbilityRawSnapshot
+                or source_snapshot != cached_snapshot
+            ):
+                raise ValueError("cached task graph source snapshot mismatch")
+            return cached
+        if source_catalog is None:
+            source_catalog = self.build_character_control_flow_contract_catalog()
+        if type(source_catalog) is not CharacterControlFlowContractCatalog:
+            raise TypeError("task graph lowering requires the exact S8A catalog")
+        if source_snapshot is None:
+            source_snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+        if type(source_snapshot) is not CharacterAbilityRawSnapshot:
+            raise TypeError("task graph lowering requires the exact raw snapshot")
+        catalog = build_complete_task_graph_catalog(source_catalog, source_snapshot)
+        self._character_control_flow_contract_catalog = source_catalog
+        self._character_task_graph_catalog = catalog
         return catalog
 
     def build_action_target_contract_catalog(self) -> ActionTargetContractCatalogIR:
@@ -1656,6 +1701,7 @@ class TBGDLowering:
         character_ability_source_resolution_catalog = (
             self.build_character_ability_source_resolution_catalog()
         )
+        character_task_graph_catalog = self.build_character_task_graph_catalog()
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         relic_catalog_result = build_relic_catalog(self.tbgd_root)
@@ -2104,6 +2150,7 @@ class TBGDLowering:
             action_ability_bindings=tuple(action_ability_bindings),
             ability_phases=tuple(ability_phases),
             ability_tasks=tuple(ability_tasks),
+            task_graph_catalog=character_task_graph_catalog,
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
             skill_formula_bindings=tuple(skill_formula_bindings),
@@ -2172,6 +2219,11 @@ class TBGDLowering:
                         item.typed_operation is not None
                         for item in character_ability_source_resolution_catalog.decoded_items
                     ),
+                },
+                "character_task_graph": {
+                    "catalog_id": character_task_graph_catalog.catalog_id,
+                    "source_catalog_id": character_task_graph_catalog.source_catalog_id,
+                    "scope_mode": character_task_graph_catalog.scope_mode,
                 },
                 "limits": {
                     "max_records_per_table": self.limits.max_records_per_table,

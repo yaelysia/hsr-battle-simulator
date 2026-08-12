@@ -38,6 +38,7 @@ from .engine_rule_registry import (
     ULTIMATE_COST_RULE_APPLICABILITY,
     engine_rule_admission_reason,
 )
+from .task_graph import TaskGraphQuery, TaskGraphQueryResult
 from .action_target_contract import (
     ActionTargetContractIR,
     ActionTargetContractQueryResult,
@@ -554,6 +555,12 @@ class RuleBook:
     ir: CanonicalIR
 
     def __post_init__(self) -> None:
+        task_graph_catalog = self.ir.task_graph_catalog
+        object.__setattr__(
+            self,
+            "_task_graph_query",
+            TaskGraphQuery(task_graph_catalog) if task_graph_catalog is not None else None,
+        )
         catalog = self.ir.character_ability_source_graph_catalog
         object.__setattr__(
             self,
@@ -2166,6 +2173,29 @@ class RuleBook:
         self,
     ) -> CharacterAbilitySourceGraphQuery | None:
         return self._character_ability_source_graph_query
+
+    def task_graph_query(self) -> TaskGraphQuery | None:
+        return self._task_graph_query
+
+    def query_task_graph(self, graph_id: str) -> TaskGraphQueryResult:
+        if self._task_graph_query is None:
+            return TaskGraphQueryResult("blocked", "graph", (), None, "task_graph_catalog_not_installed")
+        return self._task_graph_query.query_graph(graph_id)
+
+    def query_task_graph_entry(
+        self,
+        entry_kind: Literal["ability_phase_callback", "status_callback"],
+        owner_id: str,
+        callback_kind: str,
+    ) -> TaskGraphQueryResult:
+        if self._task_graph_query is None:
+            return TaskGraphQueryResult("blocked", "entry", (), None, "task_graph_catalog_not_installed")
+        return self._task_graph_query.query_entry(entry_kind, owner_id, callback_kind)
+
+    def query_task_graph_node(self, graph_node_id: str) -> TaskGraphQueryResult:
+        if self._task_graph_query is None:
+            return TaskGraphQueryResult("blocked", "node", (), None, "task_graph_catalog_not_installed")
+        return self._task_graph_query.query_node(graph_node_id)
 
     def query_character_action_source(
         self,
