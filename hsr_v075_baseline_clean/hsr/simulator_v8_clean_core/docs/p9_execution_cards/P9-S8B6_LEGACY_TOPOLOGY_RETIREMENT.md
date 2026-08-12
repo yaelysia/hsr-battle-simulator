@@ -15,26 +15,27 @@
 | 项目 | 本卡权威 |
 |---|---|
 | 唯一 runtime 拓扑 | S8B1 通用任务图 |
-| 待退役对象 | AbilityTaskIR/StatusCallbackTaskIR 旧父子字段、codec、lowering 双写和残余生产消费者 |
+| 待退役对象 | P9 角色和状态来源分母中的旧父子权威、lowering 双写和残余生产消费者 |
 | 保留来源 | 原始路径、节点身份和结构审计信息已在任务图来源账本中保留 |
 | 聚合结果 | B1-B5 状态与当前旧权威残留审计形成 S8B 唯一完成账本 |
 | 后续归属 | S8C 时序/RNG；其他领域 gap 保持原 owner，不在本卡修复 |
 
 ## 阶段目标
 
-1. 从 `AbilityTaskIR` 和 `StatusCallbackTaskIR` 的公共模型、JSON codec 与构造器中删除旧
-   `parent_task_id`、`child_task_ids`、`success_task_ids`、`failed_task_ids` 拓扑字段；不保留
-   兼容别名、默认空字段或双写层。
-2. lowering/compiler 只生产 S8B1 任务图拓扑。领域 task 只保留 leaf 执行与来源所需字段，不能
-   继续携带另一份可推导父子结构。
+1. 对 S8A 完整角色来源分母和 S8B4 状态分母，移除 runtime 对旧
+   `parent_task_id`、`child_task_ids`、`success_task_ids`、`failed_task_ids` 的控制依赖；缺正式图
+   必须 blocked，不能回退。
+2. 若怪物、关卡或其他未纳入当前来源图的内容仍构造同一公共 task 类型，暂不全局删除公共字段；
+   必须形成类型化 `external_content_dependency` 账本，并把最终公共模型删除交给对应内容来源闭包。
+   不得为制造“字段为零”而破坏外部内容。
 3. 迁移或删除所有生产调用者。除 S8B1 materializer 和通用执行器读取任务图自身边外，
    `core/`、`systems/`、RuleBook 与 scenario 不得依据旧字段决定 root、后继、分支或执行状态。
    已知起始点至少包括 `core/executor.py::_ability_task_damage_graph_authoritative` 和
    `systems/status.py::_on_create_define_dynamic_values`；完整分母仍以当前 CodeGraph 结果为准。
 4. 旧 JSON 字段必须被 exact-field codec 拒绝，不能静默忽略。历史验证器不是兼容目标；只有仍为
    active contract 且直接触达新模型的最小 fixture 才迁移。
-5. 形成 S8B 聚合账本：B1 物化、B2 执行器、B3 ability、B4 status、B5 跨入口均为已验收检查点；
-   当前旧拓扑模型/生产消费者为零；S8C 义务仍精确 deferred。
+5. 形成 S8B 聚合账本：B1、B2、B3A-C、B4、B5 均为已验收检查点；P9 角色/状态旧 runtime
+   消费者为零；外部内容字段与消费者有精确来源范围和 owner；S8C 义务仍精确 deferred。
 
 ## 本卡明确不做
 
@@ -55,10 +56,10 @@
 ## 验收谓词
 
 ```text
-legacy_task_topology_model_field_count=0
-legacy_task_topology_codec_field_count=0
-legacy_task_topology_lowering_write_count=0
-legacy_runtime_topology_consumer_count=0
+p9_character_legacy_runtime_fallback_count=0
+p9_status_legacy_runtime_fallback_count=0
+external_content_legacy_dependency_ledger_complete=true
+uncovered_content_domain_was_not_broken=true
 task_graph_source_audit_remains_complete=true
 legacy_json_payload_is_rejected=true
 s8b_substage_ledger_is_complete=true

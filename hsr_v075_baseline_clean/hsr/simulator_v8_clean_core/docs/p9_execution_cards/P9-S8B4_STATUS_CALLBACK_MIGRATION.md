@@ -3,7 +3,7 @@
 ## 执行配置
 
 - 对应问题：P9-I08；原 P9-S8B 的 status callback 消费域迁移。
-- 硬前置：P9-S8B3 已验收并提交检查点。
+- 硬前置：P9-S8B3A、S8B3B、S8B3C 均已验收并提交检查点。
 - 推荐：5.6 Sol / `xhigh` / 普通聚焦。
 - 本卡只迁移 status callback 控制流，不改 ability、scheduler 或最终跨入口上下文协议。
 - 开工只读：本卡、S8B1/S8B2 公共 API、`StatusCallbackSystem` 正式入口和

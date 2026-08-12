@@ -13,6 +13,7 @@ from ..rules.control_flow_contract import (
     ControlFlowTemplateReferenceIR,
 )
 from ..rules.ir import (
+    AbilityPhaseIR,
     AbilityTaskIR,
     CanonicalIR,
     ConditionIR,
@@ -114,8 +115,34 @@ class _FormalTask:
     condition_id: str
     target_expression_id: str
     effect_id: str
-    ability_graph_id: str
+    ability_definition_id: str
+    ability_definition_kind: str
+    execution_mode: str
+    coverage_status: str
     source: IRSource
+
+
+@dataclass(frozen=True)
+class _DefinitionIndexes:
+    conditions: Mapping[str, tuple[ConditionIR, ...]]
+    targets: Mapping[str, tuple[TargetExpressionIR, ...]]
+    effects: Mapping[str, tuple[EffectIR, ...]]
+    abilities: Mapping[
+        str, tuple[AbilityPhaseIR | StandaloneAbilityGraphIR, ...]
+    ]
+
+
+@dataclass(frozen=True)
+class _MaterializationContext:
+    source_catalog: CharacterControlFlowContractCatalog
+    base: TaskGraphCatalogIR
+    digest_by_path: Mapping[str, str]
+    control_by_location: Mapping[
+        tuple[str, object, str], CharacterControlFlowNodeIR
+    ]
+    template_by_id: Mapping[str, ControlFlowTemplateDefinitionIR]
+    template_refs_by_node: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]]
+    definitions: _DefinitionIndexes
 
 
 def build_complete_task_graph_catalog(
@@ -178,6 +205,101 @@ def build_complete_task_graph_catalog(
     if {item.source_record_id for item in dispositions} != expected:
         raise ValueError("task graph source disposition ledger is incomplete")
     return _catalog(source_catalog, "complete_catalog", tuple(dispositions), (), ())
+
+
+_FORMAL_ABILITY_INVOCATION_ROLES = frozenset(
+    {"action_root", "nested_only", "standalone_root"}
+)
+
+
+def materialize_ability_task_graph_catalog(
+    source_catalog: CharacterControlFlowContractCatalog,
+    canonical: CanonicalIR,
+    *,
+    source_snapshot: CharacterAbilityRawSnapshot,
+) -> TaskGraphCatalogIR:
+    """Materialize every formally admitted ability entry with one prepared source context."""
+
+    if type(canonical) is not CanonicalIR:
+        raise TypeError("ability task graph catalog requires exact CanonicalIR")
+    context = _prepare_materialization(
+        source_catalog,
+        canonical,
+        source_snapshot,
+    )
+    phases = tuple(
+        phase
+        for phase in canonical.ability_phases
+        if phase.invocation_role in _FORMAL_ABILITY_INVOCATION_ROLES
+    )
+    if not phases:
+        raise ValueError("formal ability task graph phase selection is empty")
+    if len({item.phase_id for item in phases}) != len(phases):
+        raise ValueError("formal ability task graph phases contain duplicate identities")
+    tasks_by_id = {item.task_id: item for item in canonical.ability_tasks}
+    if len(tasks_by_id) != len(canonical.ability_tasks):
+        raise ValueError("formal ability task graph tasks contain duplicate identities")
+    entries: list[TaskGraphEntryMaterializationIR] = []
+    graphs: list[TaskGraphIR] = []
+    selected_task_ids: set[str] = set()
+    for phase in sorted(phases, key=lambda item: item.phase_id):
+        phase_tasks = tuple(
+            tasks_by_id[task_id]
+            for task_id in phase.task_ids
+            if task_id in tasks_by_id
+        )
+        if (
+            not phase_tasks
+            or len(phase_tasks) != len(phase.task_ids)
+            or any(item.phase_id != phase.phase_id for item in phase_tasks)
+        ):
+            raise ValueError("formal ability phase task ledger is incomplete")
+        callback_kinds = tuple(
+            dict.fromkeys(item.callback_kind for item in phase_tasks)
+        )
+        if not callback_kinds or any(not value for value in callback_kinds):
+            raise ValueError("formal ability phase callback denominator is invalid")
+        selected_task_ids.update(item.task_id for item in phase_tasks)
+        for callback_kind in callback_kinds:
+            callback_tasks = tuple(
+                item for item in phase_tasks if item.callback_kind == callback_kind
+            )
+            entry, graph = _materialize_entry(
+                context,
+                "ability_phase_callback",
+                phase.phase_id,
+                callback_kind,
+                tuple(item.task_id for item in callback_tasks),
+                tuple(_ability_task(item) for item in callback_tasks),
+            )
+            if entry.status != "materialized" or graph is None:
+                raise ValueError(
+                    "formal ability catalog entry is not materializable:"
+                    f"{entry.entry_id}:{entry.blocked_reason or 'graph_missing'}"
+                )
+            entries.append(entry)
+            graphs.append(graph)
+    formal_task_ids = {
+        item.task_id
+        for item in canonical.ability_tasks
+        if item.phase_id in {phase.phase_id for phase in phases}
+    }
+    if selected_task_ids != formal_task_ids:
+        raise ValueError("formal ability task graph phase denominator is incomplete")
+    if len({item.entry_id for item in entries}) != len(entries):
+        raise ValueError("formal ability task graph entries contain duplicate identities")
+    dispositions = _materialization_dispositions(
+        context.base.source_dispositions,
+        tuple(entries),
+        tuple(graphs),
+    )
+    return _catalog(
+        source_catalog,
+        "formal_catalog",
+        dispositions,
+        tuple(entries),
+        tuple(graphs),
+    )
 
 
 def materialize_ability_phase_task_graph(
@@ -352,6 +474,8 @@ def _ability_task(task: AbilityTaskIR) -> _FormalTask:
     if type(task) is not AbilityTaskIR:
         raise TypeError("ability graph requires exact AbilityTaskIR values")
     family = task.source.evidence.get("source_opcode")
+    if task.linked_ability_phase_id and task.linked_standalone_graph_id:
+        raise ValueError("ability task call target is ambiguous")
     return _FormalTask(
         task.task_id,
         task.opcode,
@@ -363,7 +487,16 @@ def _ability_task(task: AbilityTaskIR) -> _FormalTask:
         task.condition_id,
         "",
         task.effect_id,
-        task.linked_standalone_graph_id,
+        task.linked_ability_phase_id or task.linked_standalone_graph_id,
+        (
+            "ability_phase"
+            if task.linked_ability_phase_id
+            else "standalone_ability"
+            if task.linked_standalone_graph_id
+            else ""
+        ),
+        task.execution_mode,
+        task.coverage_status,
         task.source,
     )
 
@@ -384,6 +517,9 @@ def _status_task(task: StatusCallbackTaskIR) -> _FormalTask:
         task.target_expression_id,
         task.effect_id,
         "",
+        "",
+        "runtime_effect",
+        task.coverage_status,
         task.source,
     )
 
@@ -398,11 +534,36 @@ def _materialize(
     tasks: tuple[_FormalTask, ...],
     source_snapshot: CharacterAbilityRawSnapshot,
 ) -> TaskGraphCatalogIR:
+    context = _prepare_materialization(source_catalog, canonical, source_snapshot)
+    entry, graph = _materialize_entry(
+        context,
+        entry_kind,
+        owner_id,
+        callback_kind,
+        ordered_task_ids,
+        tasks,
+    )
+    graphs = (graph,) if graph is not None else ()
+    dispositions = _materialization_dispositions(
+        context.base.source_dispositions,
+        (entry,),
+        graphs,
+    )
+    return _catalog(
+        source_catalog,
+        "formal_slice",
+        dispositions,
+        (entry,),
+        graphs,
+    )
+
+
+def _prepare_materialization(
+    source_catalog: CharacterControlFlowContractCatalog,
+    canonical: CanonicalIR,
+    source_snapshot: CharacterAbilityRawSnapshot,
+) -> _MaterializationContext:
     base = build_complete_task_graph_catalog(source_catalog, source_snapshot)
-    if len({item.task_id for item in tasks}) != len(tasks):
-        raise ValueError("formal task graph contains duplicate task identities")
-    entry_id = task_graph_entry_id(entry_kind, owner_id, callback_kind)
-    graph_id = task_graph_id(source_catalog.catalog_id, entry_id, source_catalog.source_fingerprint)
     digest_by_path = _source_digest_by_path(source_catalog)
     for item in source_snapshot.sources:
         path, digest = item.source.source_path, item.content_sha256
@@ -419,17 +580,89 @@ def _materialize(
         ].append(item)
     if any(len(items) != 1 for items in controls_by_location.values()):
         raise ValueError("task graph source catalog contains ambiguous source occurrences")
-    control_by_location = {
-        location: items[0] for location, items in controls_by_location.items()
-    }
+    templates: dict[str, list[ControlFlowTemplateDefinitionIR]] = defaultdict(list)
+    for item in source_catalog.template_definitions:
+        templates[item.template_id].append(item)
+    if any(len(items) != 1 for items in templates.values()):
+        raise ValueError("task graph template definition identity is ambiguous")
+    refs_by_node: dict[str, list[ControlFlowTemplateReferenceIR]] = defaultdict(list)
+    for item in source_catalog.template_references:
+        refs_by_node[item.node_id].append(item)
+    return _MaterializationContext(
+        source_catalog,
+        base,
+        digest_by_path,
+        {key: values[0] for key, values in controls_by_location.items()},
+        {key: values[0] for key, values in templates.items()},
+        {key: tuple(values) for key, values in refs_by_node.items()},
+        _DefinitionIndexes(
+            _definition_multimap(canonical.conditions, ConditionIR, "condition_id"),
+            _definition_multimap(
+                canonical.target_expressions,
+                TargetExpressionIR,
+                "target_expression_id",
+            ),
+            _definition_multimap(canonical.effects, EffectIR, "effect_id"),
+            _definition_multimap(
+                (*canonical.ability_phases, *canonical.standalone_ability_graphs),
+                (AbilityPhaseIR, StandaloneAbilityGraphIR),
+                ("phase_id", "standalone_ability_graph_id"),
+            ),
+        ),
+    )
+
+
+def _definition_multimap(
+    values: Iterable[object],
+    expected_type: type[object] | tuple[type[object], ...],
+    identity_field: str | tuple[str, ...],
+) -> dict[str, tuple[Any, ...]]:
+    result: dict[str, list[Any]] = defaultdict(list)
+    fields = (identity_field,) if isinstance(identity_field, str) else identity_field
+    for value in values:
+        if not isinstance(value, expected_type) or type(value) not in (
+            expected_type if isinstance(expected_type, tuple) else (expected_type,)
+        ):
+            raise TypeError("task graph definition catalog contains an invalid type")
+        identity = next(
+            (
+                candidate
+                for field_name in fields
+                if isinstance((candidate := getattr(value, field_name, None)), str)
+                and candidate
+            ),
+            "",
+        )
+        if not identity:
+            raise ValueError("task graph definition identity is missing")
+        result[identity].append(value)
+    return {key: tuple(items) for key, items in result.items()}
+
+
+def _materialize_entry(
+    context: _MaterializationContext,
+    entry_kind: EntryKind,
+    owner_id: str,
+    callback_kind: str,
+    ordered_task_ids: tuple[str, ...],
+    tasks: tuple[_FormalTask, ...],
+) -> tuple[TaskGraphEntryMaterializationIR, TaskGraphIR | None]:
+    if not ordered_task_ids or len({item.task_id for item in tasks}) != len(tasks):
+        raise ValueError("formal task graph contains empty or duplicate task identities")
+    entry_id = task_graph_entry_id(entry_kind, owner_id, callback_kind)
+    graph_id = task_graph_id(
+        context.base.source_catalog_id,
+        entry_id,
+        context.base.source_fingerprint,
+    )
     source_by_task: dict[str, IRSource] = {}
     occurrence_by_task: dict[str, str] = {}
     control_by_task: dict[str, CharacterControlFlowNodeIR] = {}
     for task in tasks:
-        source = _formal_source(task, digest_by_path)
+        source = _formal_source(task, context.digest_by_path)
         source_by_task[task.task_id] = source
         location = (source.source_path, source.evidence["json_path"], task.family)
-        control = control_by_location.get(location)
+        control = context.control_by_location.get(location)
         if control is not None:
             control_by_task[task.task_id] = control
         occurrence_by_task[task.task_id] = task_graph_source_occurrence_id(source, task.family)
@@ -442,8 +675,7 @@ def _materialize(
     entry_source = source_by_task[ordered_task_ids[0]]
     try:
         graph = _build_graph(
-            source_catalog,
-            canonical,
+            context.source_catalog,
             graph_id,
             entry_id,
             entry_kind,
@@ -454,6 +686,9 @@ def _materialize(
             source_by_task,
             occurrence_by_task,
             control_by_task,
+            context.template_by_id,
+            context.template_refs_by_node,
+            context.definitions,
         )
     except _Blocked as exc:
         entry = TaskGraphEntryMaterializationIR(
@@ -469,7 +704,7 @@ def _materialize(
             entry_source,
             str(exc),
         )
-        return _catalog(source_catalog, "formal_slice", base.source_dispositions, (entry,), ())
+        return entry, None
     entry = TaskGraphEntryMaterializationIR(
         materialization_id,
         entry_id,
@@ -482,17 +717,11 @@ def _materialize(
         "materialized",
         entry_source,
     )
-    dispositions = _materialization_dispositions(
-        base.source_dispositions,
-        (entry,),
-        (graph,),
-    )
-    return _catalog(source_catalog, "formal_slice", dispositions, (entry,), (graph,))
+    return entry, graph
 
 
 def _build_graph(
     source_catalog: CharacterControlFlowContractCatalog,
-    canonical: CanonicalIR,
     graph_id: str,
     entry_id: str,
     entry_kind: EntryKind,
@@ -503,6 +732,9 @@ def _build_graph(
     sources: Mapping[str, IRSource],
     occurrences: Mapping[str, str],
     controls: Mapping[str, CharacterControlFlowNodeIR],
+    template_by_id: Mapping[str, ControlFlowTemplateDefinitionIR],
+    refs_by_node: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]],
+    definitions: _DefinitionIndexes,
 ) -> TaskGraphIR:
     task_by_id = {item.task_id: item for item in tasks}
     if set(ordered_task_ids) != set(task_by_id):
@@ -515,10 +747,6 @@ def _build_graph(
     roots = tuple(node_ids[task_id] for task_id in ordered_task_ids if not task_by_id[task_id].parent_task_id)
     if not roots:
         raise _Blocked("formal_entry_root_missing")
-    template_by_id = {item.template_id: item for item in source_catalog.template_definitions}
-    refs_by_node: dict[str, list[ControlFlowTemplateReferenceIR]] = defaultdict(list)
-    for reference in source_catalog.template_references:
-        refs_by_node[reference.node_id].append(reference)
     numeric: list[TaskGraphNumericDefinitionIR] = []
     nodes: list[TaskGraphNodeIR] = []
     for task in tasks:
@@ -536,7 +764,14 @@ def _build_graph(
             task_by_id,
             node_ids,
         )
-        references = list(_references(task, control, node_ids[task.task_id], sources[task.task_id], canonical, refs_by_node))
+        references = list(_references(
+            task,
+            control,
+            node_ids[task.task_id],
+            sources[task.task_id],
+            definitions,
+            refs_by_node,
+        ))
         termination_kind = "not_applicable"
         termination_status = "not_applicable"
         termination_numeric_definition_id = ""
@@ -562,7 +797,7 @@ def _build_graph(
                 "task_graph_execution",
                 control.termination.source,
             ))
-        node_kind, status, owner_domains, reason = _node_status(control)
+        node_kind, status, owner_domains, reason = _node_status(control, task)
         nodes.append(TaskGraphNodeIR(
             node_ids[task.task_id],
             graph_id,
@@ -716,22 +951,39 @@ def _references(
     control: CharacterControlFlowNodeIR | None,
     node_id: str,
     source: IRSource,
-    canonical: CanonicalIR,
-    template_refs: Mapping[str, list[ControlFlowTemplateReferenceIR]],
+    indexes: _DefinitionIndexes,
+    template_refs: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]],
 ) -> tuple[TaskGraphDefinitionReferenceIR, ...]:
-    definitions: tuple[tuple[str, str, tuple[object, ...], type[object], str, str], ...] = (
-        ("condition", task.condition_id, tuple(canonical.conditions), ConditionIR, "condition_id", "condition_evaluation"),
-        ("target", task.target_expression_id, tuple(canonical.target_expressions), TargetExpressionIR, "target_expression_id", "target_resolution"),
-        ("effect", task.effect_id, tuple(canonical.effects), EffectIR, "effect_id", "event_effect_execution"),
-        ("ability", task.ability_graph_id, tuple(canonical.standalone_ability_graphs), StandaloneAbilityGraphIR, "standalone_ability_graph_id", "ability_graph_resolution"),
+    definitions: tuple[
+        tuple[str, str, Mapping[str, tuple[Any, ...]], str], ...
+    ] = (
+        ("condition", task.condition_id, indexes.conditions, "condition_evaluation"),
+        ("target", task.target_expression_id, indexes.targets, "target_resolution"),
+        ("effect", task.effect_id, indexes.effects, "event_effect_execution"),
+        (
+            "ability",
+            task.ability_definition_id,
+            indexes.abilities,
+            "ability_graph_resolution",
+        ),
     )
     result: list[TaskGraphDefinitionReferenceIR] = []
-    for kind, definition_id, values, expected_type, identity_field, default_owner in definitions:
+    for kind, definition_id, values, default_owner in definitions:
         if not definition_id:
             continue
-        matches = tuple(item for item in values if type(item) is expected_type and getattr(item, identity_field) == definition_id)
+        matches = values.get(definition_id, ())
         if len(matches) != 1:
             raise _Blocked(f"task_graph_definition_{'missing' if not matches else 'ambiguous'}:{kind}:{definition_id}")
+        if kind == "ability" and type(matches[0]) is not (
+            AbilityPhaseIR
+            if task.ability_definition_kind == "ability_phase"
+            else StandaloneAbilityGraphIR
+            if task.ability_definition_kind == "standalone_ability"
+            else object
+        ):
+            raise _Blocked(
+                f"task_graph_ability_definition_kind_mismatch:{definition_id}"
+            )
         coverage = getattr(matches[0], "coverage_status", "blocked")
         status = "resolved" if coverage in {"executable", "lowered"} else "deferred"
         owner = _reference_owner(control, cast(Any, kind), default_owner)
@@ -764,7 +1016,12 @@ def _references(
             ref.source,
             "task_graph_parallel_template_requires_hit_random_sequence" if status == "deferred" else "",
         ))
-    if control is not None and control.control_role == "ability_trigger" and not task.ability_graph_id:
+    if (
+        control is not None
+        and control.control_role == "ability_trigger"
+        and task.execution_mode != "process_only"
+        and not task.ability_definition_id
+    ):
         raise _Blocked(f"task_graph_ability_reference_not_lowered:{control.node_id}")
     return tuple(result)
 
@@ -787,6 +1044,7 @@ def _reference_owner(control: CharacterControlFlowNodeIR | None, kind: str, defa
 
 def _node_status(
     control: CharacterControlFlowNodeIR | None,
+    task: _FormalTask,
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
         return "leaf", "materialized", ("task_graph_execution",), ""
@@ -803,6 +1061,8 @@ def _node_status(
             open_domains,
             f"task_graph_control_requires_domains:{','.join(open_domains)}",
         )
+    if task.execution_mode == "process_only":
+        return "leaf", "materialized", ("task_graph_execution",), ""
     node_kind = _NODE_KIND_BY_ROLE.get(control.control_role)
     if node_kind is None:
         raise _Blocked(f"task_graph_control_role_not_materializable:{control.control_role}")
@@ -906,13 +1166,15 @@ def _materialization_dispositions(
             if reference.source_contract_record_id
         )
         linked_by_materialization[entry.materialization_id] = linked
+    materializations_by_record: dict[str, list[str]] = defaultdict(list)
+    for materialization_id, linked in linked_by_materialization.items():
+        for record_id in linked:
+            materializations_by_record[record_id].append(materialization_id)
     result: list[TaskGraphSourceDispositionIR] = []
     for item in base:
-        materialization_ids = tuple(sorted(
-            materialization_id
-            for materialization_id, linked in linked_by_materialization.items()
-            if item.source_record_id in linked
-        ))
+        materialization_ids = tuple(
+            sorted(materializations_by_record.get(item.source_record_id, ()))
+        )
         if not materialization_ids:
             result.append(item)
             continue

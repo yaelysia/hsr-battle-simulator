@@ -994,13 +994,15 @@ class TaskGraphCatalogIR:
                     if definition is None or definition.source_kind != "template_definition":
                         raise ValueError("task graph template definition is outside the source ledger")
             expected_links[entry.materialization_id] = linked
+        expected_materializations_by_record: dict[str, set[str]] = {}
+        for materialization_id, records in expected_links.items():
+            for record_id in records:
+                expected_materializations_by_record.setdefault(record_id, set()).add(
+                    materialization_id
+                )
         if any(
             set(item.formal_materialization_ids)
-            != {
-                materialization_id
-                for materialization_id, records in expected_links.items()
-                if item.source_record_id in records
-            }
+            != expected_materializations_by_record.get(item.source_record_id, set())
             for item in dispositions
         ):
             raise ValueError("task graph source and formal materialization ledgers are not bidirectionally closed")

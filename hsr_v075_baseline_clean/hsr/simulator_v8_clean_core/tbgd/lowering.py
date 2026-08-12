@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from operator import attrgetter
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple, cast
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
@@ -36,7 +37,10 @@ from .character_condition_contracts import (
 from .character_control_flow_contracts import (
     build_character_control_flow_contract_catalog,
 )
-from .task_graph_materializer import build_complete_task_graph_catalog
+from .task_graph_materializer import (
+    build_complete_task_graph_catalog,
+    materialize_ability_task_graph_catalog,
+)
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
@@ -77,7 +81,12 @@ from ..rules.evaluator import (
     RuleEvaluator,
 )
 from ..rules.action_target_contract import ActionTargetContractCatalogIR
-from ..rules.control_flow_contract import CharacterControlFlowContractCatalog
+from ..rules.control_flow_contract import (
+    CharacterControlFlowContractCatalog,
+    CharacterControlFlowNodeIR,
+    ControlFlowTemplateDefinitionIR,
+    ControlFlowTemplateReferenceIR,
+)
 from ..rules.task_graph import TaskGraphCatalogIR
 from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
@@ -353,6 +362,32 @@ class LoweringLimits:
     max_callbacks_per_file: int | None = None
 
 
+@dataclass(frozen=True)
+class _AbilityFormalTaskSourceContext:
+    catalog_id: str
+    control_by_location: Mapping[
+        tuple[str, str, str], CharacterControlFlowNodeIR
+    ]
+    template_by_id: Mapping[str, ControlFlowTemplateDefinitionIR]
+    references_by_node: Mapping[
+        str, tuple[ControlFlowTemplateReferenceIR, ...]
+    ]
+    documents: Mapping[str, Mapping[str, Any]]
+    content_sha256_by_path: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class _AbilityFormalTaskChild:
+    branch_kind: str
+    branch_label: str
+    ordinal: int
+    raw: Mapping[str, Any]
+    source_path: str
+    json_path: str
+    family: str
+    template_stack: tuple[str, ...]
+
+
 class OwnedCombatantProjectionIssue(NamedTuple):
     code: str
     subject: str
@@ -594,6 +629,107 @@ class TBGDLowering:
         self._character_control_flow_contract_catalog = catalog
         return catalog
 
+    def _character_formal_task_source_context(
+        self,
+    ) -> _AbilityFormalTaskSourceContext:
+        cached = getattr(self, "_character_formal_task_source_context_cache", None)
+        if cached is not None:
+            if type(cached) is not _AbilityFormalTaskSourceContext:
+                raise TypeError("invalid cached character formal task source context")
+            return cached
+
+        catalog = self.build_character_control_flow_contract_catalog()
+        snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+        if type(snapshot) is not CharacterAbilityRawSnapshot:
+            raise TypeError("formal character task lowering requires the exact S0 snapshot")
+
+        digests: dict[str, set[str]] = {
+            item.source.source_path: {item.content_sha256}
+            for item in snapshot.sources
+        }
+        controls: dict[
+            tuple[str, str, str], list[CharacterControlFlowNodeIR]
+        ] = {}
+        for node in catalog.nodes:
+            json_path = node.source.evidence.get("json_path")
+            digest = node.source.evidence.get("content_sha256")
+            if not isinstance(json_path, str) or not json_path.startswith("$"):
+                raise ValueError("formal character task control source path is invalid")
+            if not isinstance(digest, str):
+                raise ValueError("formal character task control source digest is missing")
+            controls.setdefault(
+                (node.source.source_path, json_path, node.family), []
+            ).append(node)
+            digests.setdefault(node.source.source_path, set()).add(digest)
+        if any(len(values) != 1 for values in controls.values()):
+            raise ValueError("formal character task control source is ambiguous")
+
+        templates: dict[str, list[ControlFlowTemplateDefinitionIR]] = {}
+        for template in catalog.template_definitions:
+            templates.setdefault(template.template_id, []).append(template)
+            digest = template.source.evidence.get("content_sha256")
+            if not isinstance(digest, str):
+                raise ValueError("formal character task template digest is missing")
+            digests.setdefault(template.source.source_path, set()).add(digest)
+        if any(len(values) != 1 for values in templates.values()):
+            raise ValueError("formal character task template identity is ambiguous")
+        if any(len(values) != 1 for values in digests.values()):
+            raise ValueError("formal character task source digest is ambiguous")
+        digest_by_path = {
+            path: next(iter(values)) for path, values in digests.items()
+        }
+
+        references: dict[str, list[ControlFlowTemplateReferenceIR]] = {}
+        for reference in catalog.template_references:
+            references.setdefault(reference.node_id, []).append(reference)
+
+        documents: dict[str, Mapping[str, Any]] = {
+            path: document for path, document in snapshot.documents.items()
+        }
+        for source_path, expected_digest in digest_by_path.items():
+            if source_path in documents:
+                snapshot_source = next(
+                    (
+                        item
+                        for item in snapshot.sources
+                        if item.source.source_path == source_path
+                    ),
+                    None,
+                )
+                if (
+                    snapshot_source is None
+                    or snapshot_source.content_sha256 != expected_digest
+                ):
+                    raise ValueError(
+                        "formal character task snapshot source fingerprint mismatch"
+                    )
+                continue
+            raw_bytes = (self.tbgd_root / source_path).read_bytes()
+            if sha256(raw_bytes).hexdigest() != expected_digest:
+                raise ValueError(
+                    "formal character task shared template fingerprint mismatch"
+                )
+            document = json.loads(raw_bytes)
+            if not isinstance(document, Mapping):
+                raise TypeError("formal character task source document must be an object")
+            frozen_document = freeze_json(dict(document))
+            if not isinstance(frozen_document, Mapping):
+                raise TypeError("formal character task source document did not freeze")
+            documents[source_path] = frozen_document
+
+        context = _AbilityFormalTaskSourceContext(
+            catalog.catalog_id,
+            MappingProxyType({key: values[0] for key, values in controls.items()}),
+            MappingProxyType({key: values[0] for key, values in templates.items()}),
+            MappingProxyType(
+                {key: tuple(values) for key, values in references.items()}
+            ),
+            MappingProxyType(documents),
+            MappingProxyType(digest_by_path),
+        )
+        self._character_formal_task_source_context_cache = context
+        return context
+
     def build_character_task_graph_catalog(
         self,
         *,
@@ -724,6 +860,12 @@ class TBGDLowering:
             toughness_emissions,
             hit_profiles,
         )
+        ability_tasks = _link_trigger_ability_graphs(
+            ability_tasks,
+            lowered.effects,
+            [],
+            phases,
+        )
         avatar_rows = [
             item
             for item in self._avatar_config_rows_prefer_enhanced()
@@ -803,15 +945,20 @@ class TBGDLowering:
         ability_index: int | None,
         task_path: str,
         source_opcode: str,
+        source_json_path: str = "",
     ) -> tuple[str, dict[str, JSONValue], IRSource, str] | None:
-        if ability_index is None:
+        if ability_index is None and not source_json_path:
             return None
         catalog = getattr(
             self,
             "_character_ability_source_resolution_catalog",
             None,
         )
-        json_path = f"$.AbilityList[{ability_index}].{task_path}.$type"
+        json_path = (
+            f"{source_json_path}.$type"
+            if source_json_path
+            else f"$.AbilityList[{ability_index}].{task_path}.$type"
+        )
         decoded_id = ""
         if type(catalog) is CharacterAbilitySourceResolutionCatalogIR:
             matches = tuple(
@@ -1701,7 +1848,6 @@ class TBGDLowering:
         character_ability_source_resolution_catalog = (
             self.build_character_ability_source_resolution_catalog()
         )
-        character_task_graph_catalog = self.build_character_task_graph_catalog()
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         relic_catalog_result = build_relic_catalog(self.tbgd_root)
@@ -2035,6 +2181,12 @@ class TBGDLowering:
             standalone_graphs=standalone_ability_graphs,
             combatant_action_sets=combatant_action_sets,
         )
+        ability_phases = _assign_character_ability_invocation_roles(
+            ability_phases,
+            ability_tasks,
+            standalone_ability_graphs,
+            queue_resolutions,
+        )
         assistant_ability_resolutions = _lower_assistant_ability_resolutions(queue_intents, queue_resolutions)
         servant_spawn_sources = _discover_servant_spawn_sources(
             self.tbgd_root,
@@ -2102,6 +2254,28 @@ class TBGDLowering:
             close_target_expression_language(expression, target_language_definitions)
             for expression in target_expressions
         ]
+        control_flow_catalog = self.build_character_control_flow_contract_catalog(
+            snapshot=self._character_ability_raw_snapshot,
+            scope_catalog=self._character_ability_scope_catalog,
+        )
+        task_graph_view = CanonicalIR(
+            version=BASELINE_VERSION,
+            action_ability_bindings=tuple(action_ability_bindings),
+            ability_phases=tuple(ability_phases),
+            ability_tasks=tuple(ability_tasks),
+            standalone_ability_graphs=tuple(standalone_ability_graphs),
+            effects=tuple(effects),
+            conditions=tuple(conditions),
+            target_expressions=tuple(
+                _dedupe_target_expressions(target_expressions).values()
+            ),
+        )
+        character_task_graph_catalog = materialize_ability_task_graph_catalog(
+            control_flow_catalog,
+            task_graph_view,
+            source_snapshot=self._character_ability_raw_snapshot,
+        )
+        self._character_formal_task_graph_catalog = character_task_graph_catalog
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -3638,9 +3812,8 @@ class TBGDLowering:
                 continue
             if not isinstance(data, dict):
                 continue
-            ability_map = _ability_map(data)
             source_mode = _standalone_ability_source_mode(relative)
-            for ability_index, (ability_name, ability) in enumerate(sorted(ability_map.items())):
+            for ability_index, ability_name, ability in _indexed_ability_rows(data):
                 action_id = f"standalone_ability:{ability_name}"
                 phase_id = f"standalone_ability_phase:{_safe_id(relative)}:{ability_index}:{_safe_id(ability_name)}"
                 graph_id = f"standalone_ability_graph:{_safe_id(relative)}:{_safe_id(ability_name)}"
@@ -3651,10 +3824,16 @@ class TBGDLowering:
                     ability_name=ability_name,
                     ability=ability,
                     ability_path=relative,
+                    ability_index=ability_index,
                     target_alias_registry=(
                         data.get("GlobalTargetAlias")
                         if isinstance(data.get("GlobalTargetAlias"), dict)
                         else {}
+                    ),
+                    formal_source_context=(
+                        self._character_formal_task_source_context()
+                        if source_mode == "mainline_avatar"
+                        else None
                     ),
                 )
                 tasks.extend(lowered.ability_tasks)
@@ -3677,7 +3856,10 @@ class TBGDLowering:
                     phase_index=0,
                     target_info=_json_safe(ability.get("TargetInfo")) if isinstance(ability.get("TargetInfo"), dict) else {},
                     opcode_summary=_ability_opcode_summary(ability),
-                    callback_summaries=_ability_callback_summaries(ability),
+                    callback_summaries=_ability_callback_summaries(
+                        ability,
+                        include_discovered=(source_mode == "mainline_avatar"),
+                    ),
                     source=IRSource(
                         source_path=relative,
                         raw_type="StandaloneAbilityList",
@@ -3692,6 +3874,13 @@ class TBGDLowering:
                     coverage_status="lowered",
                     blocked_reason="",
                     task_ids=task_ids,
+                    invocation_role=(
+                        "unbound_definition"
+                        if task_ids and source_mode == "mainline_avatar"
+                        else "non_gameplay_noop"
+                        if not task_ids and source_mode == "mainline_avatar"
+                        else "external_legacy"
+                    ),
                 )
                 phases.append(phase)
                 graphs.append(
@@ -4347,6 +4536,11 @@ class TBGDLowering:
             return _blocked_action_binding(
                 definition, "character_action_has_no_gameplay_definition"
             )
+        root_definition_ids = {
+            binding.ability_definition_id
+            for binding in gameplay_bindings
+            if binding.binding_kind == "entry"
+        }
 
         graph = next(
             graph
@@ -4507,6 +4701,7 @@ class TBGDLowering:
                         if isinstance(ability_data.get("GlobalTargetAlias"), dict)
                         else {}
                     ),
+                    formal_source_context=self._character_formal_task_source_context(),
                 )
                 if lower_tasks
                 else _LoweredAbility()
@@ -4518,6 +4713,9 @@ class TBGDLowering:
                     client_only_ability_path=camera_paths[0] if camera_paths else "",
                 )
             lowered.merge(phase_lowered)
+            phase_task_ids = tuple(
+                task.task_id for task in phase_lowered.ability_tasks
+            )
             binding_phases.append(
                 AbilityPhaseIR(
                     phase_id=phase_id,
@@ -4528,11 +4726,23 @@ class TBGDLowering:
                     phase_index=phase_index,
                     target_info=_json_safe(ability.get("TargetInfo")) if isinstance(ability.get("TargetInfo"), dict) else {},
                     opcode_summary=_ability_opcode_summary(ability),
-                    callback_summaries=_ability_callback_summaries(ability),
+                    callback_summaries=_ability_callback_summaries(
+                        ability,
+                        include_discovered=True,
+                    ),
                     source=source,
                     coverage_status="lowered",
                     blocked_reason="",
-                    task_ids=tuple(task.task_id for task in phase_lowered.ability_tasks),
+                    task_ids=phase_task_ids,
+                    invocation_role=(
+                        "external_legacy"
+                        if not lower_tasks
+                        else "non_gameplay_noop"
+                        if not phase_task_ids
+                        else "action_root"
+                        if ability_definition.definition_id in root_definition_ids
+                        else "nested_only"
+                    ),
                 )
             )
         blocked_reason = "" if binding_phases else "character_action_has_no_gameplay_definition"
@@ -4965,9 +5175,20 @@ class TBGDLowering:
         ability_index: int | None = None,
         source_context: dict[str, Any] | None = None,
         target_alias_registry: dict[str, Any] | None = None,
+        formal_source_context: _AbilityFormalTaskSourceContext | None = None,
     ) -> "_LoweredAbility":
+        if (
+            formal_source_context is not None
+            and formal_source_context is not self._character_formal_task_source_context()
+        ):
+            raise ValueError("formal ability task source context is not authoritative")
         lowered = _LoweredAbility()
-        for callback_kind in ABILITY_TASK_CALLBACKS:
+        callback_kinds = (
+            _ability_task_callback_kinds(ability)
+            if formal_source_context is not None
+            else ABILITY_TASK_CALLBACKS
+        )
+        for callback_kind in callback_kinds:
             callback_tasks = ability.get(callback_kind)
             if not isinstance(callback_tasks, list):
                 continue
@@ -4986,6 +5207,13 @@ class TBGDLowering:
                     parent_task_id="",
                     source_context=source_context,
                     target_alias_registry=target_alias_registry,
+                    formal_source_context=formal_source_context,
+                    source_json_path=(
+                        f"$.AbilityList[{ability_index}].{callback_kind}[{task_index}]"
+                        if isinstance(ability_index, int)
+                        else ""
+                    ),
+                    template_stack=(),
                 )
                 lowered.merge(task_lowered)
         return lowered
@@ -5006,16 +5234,40 @@ class TBGDLowering:
         parent_task_id: str,
         source_context: dict[str, Any] | None = None,
         target_alias_registry: dict[str, Any] | None = None,
+        formal_source_context: _AbilityFormalTaskSourceContext | None = None,
+        source_json_path: str = "",
+        template_stack: tuple[str, ...] = (),
+        lower_children: bool = True,
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         if not isinstance(task, dict):
             return lowered
+        if formal_source_context is not None:
+            return self._lower_formal_ability_task_tree(
+                task,
+                definition=definition,
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability_path=ability_path,
+                ability_index=ability_index,
+                callback_kind=callback_kind,
+                task_index=task_index,
+                task_path=task_path,
+                branch=branch,
+                parent_task_id=parent_task_id,
+                source_context=source_context,
+                target_alias_registry=target_alias_registry,
+                formal_source_context=formal_source_context,
+                source_json_path=source_json_path,
+                template_stack=template_stack,
+            )
         source_opcode = _short_gamecore_type(task.get("$type"))
         decoded_dynamic = self._decoded_dynamic_task_projection(
             ability_path=ability_path,
             ability_index=ability_index,
             task_path=task_path,
             source_opcode=source_opcode,
+            source_json_path=source_json_path,
         )
         opcode = decoded_dynamic[0] if decoded_dynamic is not None else source_opcode
         task_id = f"ability_task:{phase_id}:{callback_kind}:{task_path}:{opcode}"
@@ -5031,7 +5283,7 @@ class TBGDLowering:
                 "task_index": task_index,
                 "task_path": task_path,
                 "ability_index": ability_index,
-                "json_path": (
+                "json_path": source_json_path or (
                     f"$.AbilityList[{ability_index}].{task_path}"
                     if isinstance(ability_index, int)
                     else ""
@@ -5061,7 +5313,9 @@ class TBGDLowering:
                 lowered.conditions.append(condition)
             success_ids: list[str] = []
             failed_ids: list[str] = []
-            for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+            for child_index, child in enumerate(
+                (task.get("SuccessTaskList") or []) if lower_children else ()
+            ):
                 child_lowered = self._lower_ability_task_tree(
                     child,
                     definition=definition,
@@ -5083,7 +5337,9 @@ class TBGDLowering:
                     for item in child_lowered.ability_tasks
                     if item.parent_task_id == task_id
                 )
-            for child_index, child in enumerate(task.get("FailedTaskList") or []):
+            for child_index, child in enumerate(
+                (task.get("FailedTaskList") or []) if lower_children else ()
+            ):
                 child_lowered = self._lower_ability_task_tree(
                     child,
                     definition=definition,
@@ -5143,7 +5399,7 @@ class TBGDLowering:
             )
             child_ids: list[str] = []
             raw_children = task.get("TaskList")
-            if isinstance(raw_children, list):
+            if isinstance(raw_children, list) and lower_children:
                 for child_index, child in enumerate(raw_children):
                     child_lowered = self._lower_ability_task_tree(
                         child,
@@ -5302,6 +5558,251 @@ class TBGDLowering:
             )
         )
         return lowered
+
+    def _lower_formal_ability_task_tree(
+        self,
+        task: dict[str, Any],
+        *,
+        definition: ActionDefinitionIR,
+        phase_id: str,
+        ability_name: str,
+        ability_path: str,
+        ability_index: int | None,
+        callback_kind: str,
+        task_index: int,
+        task_path: str,
+        branch: str,
+        parent_task_id: str,
+        source_context: dict[str, Any] | None,
+        target_alias_registry: dict[str, Any] | None,
+        formal_source_context: _AbilityFormalTaskSourceContext,
+        source_json_path: str,
+        template_stack: tuple[str, ...],
+    ) -> "_LoweredAbility":
+        if not source_json_path.startswith("$"):
+            raise ValueError("formal ability task source JSON path is missing")
+        source_document = formal_source_context.documents.get(ability_path)
+        if source_document is None:
+            raise ValueError("formal ability task source document is missing")
+        source_task = _value_at_rooted_json_path(
+            source_document,
+            source_json_path,
+        )
+        if not isinstance(source_task, Mapping) or dict(source_task) != task:
+            raise ValueError("formal ability task payload does not match its source")
+        if ability_path not in formal_source_context.content_sha256_by_path:
+            raise ValueError("formal ability task source fingerprint is missing")
+        source_opcode = _short_gamecore_type(task.get("$type"))
+        if not source_opcode:
+            raise ValueError("formal ability task source family is missing")
+        formal_children, topology_blocked_reason = (
+            self._formal_ability_task_children(
+                task,
+                source_path=ability_path,
+                source_json_path=source_json_path,
+                source_opcode=source_opcode,
+                context=formal_source_context,
+                template_stack=template_stack,
+            )
+        )
+        lowered = self._lower_ability_task_tree(
+            task,
+            definition=definition,
+            phase_id=phase_id,
+            ability_name=ability_name,
+            ability_path=ability_path,
+            ability_index=ability_index,
+            callback_kind=callback_kind,
+            task_index=task_index,
+            task_path=task_path,
+            branch=branch,
+            parent_task_id=parent_task_id,
+            source_context=source_context,
+            target_alias_registry=target_alias_registry,
+            formal_source_context=None,
+            source_json_path=source_json_path,
+            template_stack=template_stack,
+            lower_children=False,
+        )
+        if len(lowered.ability_tasks) != 1:
+            raise ValueError("formal ability task node lowering is not singular")
+        parent = lowered.ability_tasks[0]
+        child_task_ids: list[str] = []
+        success_task_ids: list[str] = []
+        failed_task_ids: list[str] = []
+        for branch_ordinal, child in enumerate(formal_children):
+            child_task_path = (
+                f"{task_path}.formal_branch[{branch_ordinal}]"
+                f".child[{child.ordinal}]"
+            )
+            child_ability_index = (
+                ability_index
+                if child.source_path == ability_path
+                and isinstance(ability_index, int)
+                and child.json_path.startswith(f"$.AbilityList[{ability_index}].")
+                else None
+            )
+            child_lowered = self._lower_ability_task_tree(
+                dict(child.raw),
+                definition=definition,
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability_path=child.source_path,
+                ability_index=child_ability_index,
+                callback_kind=callback_kind,
+                task_index=child.ordinal,
+                task_path=child_task_path,
+                branch=child.branch_kind,
+                parent_task_id=parent.task_id,
+                source_context=source_context,
+                target_alias_registry=target_alias_registry,
+                formal_source_context=formal_source_context,
+                source_json_path=child.json_path,
+                template_stack=child.template_stack,
+            )
+            direct_ids = [
+                item.task_id
+                for item in child_lowered.ability_tasks
+                if item.parent_task_id == parent.task_id
+            ]
+            if len(direct_ids) != 1:
+                raise ValueError("formal ability branch child lowering is not singular")
+            child_task_ids.extend(direct_ids)
+            if child.branch_kind == "success":
+                success_task_ids.extend(direct_ids)
+            elif child.branch_kind == "failed":
+                failed_task_ids.extend(direct_ids)
+            lowered.merge(child_lowered)
+
+        coverage_status = parent.coverage_status
+        blocked_reason = parent.blocked_reason
+        parent_source = parent.source
+        if parent.opcode == "LoopExecuteTaskListWithInterval":
+            if parent.repeat_count <= 0:
+                coverage_status = "blocked"
+                blocked_reason = "fixed_positive_loop_count_required"
+            elif not child_task_ids:
+                coverage_status = "blocked"
+                blocked_reason = "loop_task_list_missing_or_empty"
+            else:
+                coverage_status = "executable"
+                blocked_reason = ""
+            parent_source = IRSource(
+                parent.source.source_path,
+                parent.source.raw_type,
+                parent.source.raw_id,
+                {
+                    **dict(parent.source.evidence),
+                    "child_task_count": len(child_task_ids),
+                },
+            )
+        if topology_blocked_reason:
+            coverage_status = "blocked"
+            blocked_reason = topology_blocked_reason
+        lowered.ability_tasks[0] = replace(
+            parent,
+            child_task_ids=tuple(child_task_ids),
+            success_task_ids=tuple(success_task_ids),
+            failed_task_ids=tuple(failed_task_ids),
+            source=parent_source,
+            coverage_status=coverage_status,
+            blocked_reason=blocked_reason,
+        )
+        return lowered
+
+    def _formal_ability_task_children(
+        self,
+        task: Mapping[str, Any],
+        *,
+        source_path: str,
+        source_json_path: str,
+        source_opcode: str,
+        context: _AbilityFormalTaskSourceContext,
+        template_stack: tuple[str, ...],
+    ) -> tuple[tuple[_AbilityFormalTaskChild, ...], str]:
+        control = context.control_by_location.get(
+            (source_path, source_json_path, source_opcode)
+        )
+        if control is None:
+            return (), ""
+        expected_digest = context.content_sha256_by_path.get(source_path)
+        if (
+            control.source.evidence.get("content_sha256") != expected_digest
+            or control.source.evidence.get("json_path") != source_json_path
+        ):
+            raise ValueError("formal ability task control source is inconsistent")
+        if control.coverage_status == "blocked":
+            return (), control.blocked_reason
+
+        rows: list[_AbilityFormalTaskChild] = []
+
+        def append_children(
+            branch_kind: str,
+            branch_label: str,
+            children: tuple[Any, ...],
+            child_template_stack: tuple[str, ...],
+        ) -> None:
+            for child in children:
+                child_json_path = str(
+                    child.source.evidence.get("json_path", "")
+                ).removesuffix(".$type")
+                child_document = context.documents.get(child.source.source_path)
+                if child_document is None or not child_json_path.startswith("$"):
+                    raise ValueError("formal ability task child source is missing")
+                raw_child = _value_at_rooted_json_path(
+                    child_document,
+                    child_json_path,
+                )
+                if not isinstance(raw_child, Mapping):
+                    raise TypeError("formal ability task child source is not an object")
+                family = _short_gamecore_type(raw_child.get("$type"))
+                if family != child.family:
+                    raise ValueError("formal ability task child family is inconsistent")
+                if (
+                    child.source.evidence.get("content_sha256")
+                    != context.content_sha256_by_path.get(child.source.source_path)
+                ):
+                    raise ValueError("formal ability task child fingerprint is inconsistent")
+                rows.append(
+                    _AbilityFormalTaskChild(
+                        branch_kind,
+                        branch_label,
+                        child.ordinal,
+                        raw_child,
+                        child.source.source_path,
+                        child_json_path,
+                        family,
+                        child_template_stack,
+                    )
+                )
+
+        for source_branch in control.branches:
+            append_children(
+                source_branch.branch_kind,
+                source_branch.label,
+                source_branch.children,
+                template_stack,
+            )
+        if control.control_role == "template_include":
+            references = context.references_by_node.get(control.node_id, ())
+            if len(references) != 1:
+                return (), "formal_task_template_reference_missing_or_ambiguous"
+            reference = references[0]
+            if reference.coverage_status != "lowered":
+                return (), reference.blocked_reason
+            template_id = reference.resolved_template_id
+            if template_id in template_stack:
+                return (), "formal_task_template_cycle"
+            template = context.template_by_id.get(template_id)
+            if template is None:
+                return (), "formal_task_template_definition_missing"
+            append_children(
+                "template_body",
+                template_id,
+                template.children,
+                (*template_stack, template_id),
+            )
+        return tuple(rows), ""
 
     def _lower_ability_task_condition(
         self,
@@ -11024,6 +11525,106 @@ def build_character_action_definition_ir(
     return tuple(definitions)
 
 
+def _assign_character_ability_invocation_roles(
+    phases: list[AbilityPhaseIR],
+    tasks: list[AbilityTaskIR],
+    standalone_graphs: list[StandaloneAbilityGraphIR],
+    queue_resolutions: list[QueueResolutionIR],
+) -> list[AbilityPhaseIR]:
+    """Classify character definitions from real roots and typed call reachability."""
+
+    phases_by_id: dict[str, AbilityPhaseIR] = {}
+    for phase in phases:
+        if phase.phase_id in phases_by_id:
+            raise ValueError("ability invocation phase identity is ambiguous")
+        phases_by_id[phase.phase_id] = phase
+
+    graphs_by_id: dict[str, StandaloneAbilityGraphIR] = {}
+    graph_by_phase_id: dict[str, StandaloneAbilityGraphIR] = {}
+    for graph in standalone_graphs:
+        if graph.standalone_ability_graph_id in graphs_by_id:
+            raise ValueError("standalone ability graph identity is ambiguous")
+        graphs_by_id[graph.standalone_ability_graph_id] = graph
+        for phase_id in graph.phase_ids:
+            if phase_id in graph_by_phase_id:
+                raise ValueError("standalone ability phase ownership is ambiguous")
+            graph_by_phase_id[phase_id] = graph
+
+    tasks_by_phase: dict[str, list[AbilityTaskIR]] = {}
+    for task in tasks:
+        tasks_by_phase.setdefault(task.phase_id, []).append(task)
+
+    queue_root_graph_ids: set[str] = set()
+    for resolution in queue_resolutions:
+        if (
+            resolution.coverage_status != "executable"
+            or resolution.resolved_kind != "standalone_ability_graph"
+        ):
+            continue
+        graph_id = resolution.resolved_ids.get("standalone_ability_graph_id")
+        if not isinstance(graph_id, str) or not graph_id:
+            raise ValueError("executable queue ability resolution has no graph identity")
+        graph = graphs_by_id.get(graph_id)
+        if graph is None or graph.coverage_status != "executable":
+            raise ValueError("executable queue ability resolution has no admitted graph")
+        if graph.source_mode == "mainline_avatar":
+            queue_root_graph_ids.add(graph_id)
+
+    queue_root_phase_ids = {
+        phase_id
+        for graph_id in queue_root_graph_ids
+        for phase_id in graphs_by_id[graph_id].phase_ids
+    }
+    reachable_phase_ids = {
+        phase.phase_id
+        for phase in phases
+        if phase.invocation_role in {"action_root", "nested_only"}
+    } | queue_root_phase_ids
+    pending = list(reachable_phase_ids)
+    while pending:
+        phase_id = pending.pop()
+        for task in tasks_by_phase.get(phase_id, ()):
+            targets: tuple[str, ...] = ()
+            if task.linked_ability_phase_id:
+                targets = (task.linked_ability_phase_id,)
+            elif task.linked_standalone_graph_id:
+                graph = graphs_by_id.get(task.linked_standalone_graph_id)
+                if graph is None:
+                    raise ValueError("typed ability call target graph disappeared")
+                targets = graph.phase_ids
+            for target_id in targets:
+                if target_id not in phases_by_id:
+                    raise ValueError("typed ability call target phase disappeared")
+                if target_id not in reachable_phase_ids:
+                    reachable_phase_ids.add(target_id)
+                    pending.append(target_id)
+
+    replacements: dict[str, AbilityPhaseIR] = {}
+    for graph in standalone_graphs:
+        if graph.source_mode != "mainline_avatar":
+            continue
+        for phase_id in graph.phase_ids:
+            phase = phases_by_id.get(phase_id)
+            if (
+                phase is None
+                or phase.binding_id != graph.standalone_ability_graph_id
+                or phase.task_ids != graph.task_ids
+            ):
+                raise ValueError("character standalone graph phase ledger is inconsistent")
+            role = (
+                "standalone_root"
+                if phase_id in queue_root_phase_ids
+                else "nested_only"
+                if phase_id in reachable_phase_ids
+                else "unbound_definition"
+                if phase.task_ids
+                else "non_gameplay_noop"
+            )
+            replacements[phase_id] = replace(phase, invocation_role=role)
+
+    return [replacements.get(phase.phase_id, phase) for phase in phases]
+
+
 def _link_trigger_ability_graphs(
     tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
@@ -11062,6 +11663,7 @@ def _link_trigger_ability_graphs(
                     coverage_status="executable",
                     blocked_reason="",
                     linked_standalone_graph_id="",
+                    linked_ability_phase_id=bound_phase_candidates[0].phase_id,
                 )
             )
             continue
@@ -11072,6 +11674,7 @@ def _link_trigger_ability_graphs(
                     coverage_status="blocked",
                     blocked_reason="trigger_ability_bound_phase_ambiguous",
                     linked_standalone_graph_id="",
+                    linked_ability_phase_id="",
                 )
             )
             continue
@@ -11079,7 +11682,11 @@ def _link_trigger_ability_graphs(
         exact = tuple(graph for graph in candidates if graph.source.source_path == task.source.source_path)
         selected = exact if len(exact) == 1 else tuple(candidates) if len(candidates) == 1 else ()
         if selected:
-            linked.append(replace(task, linked_standalone_graph_id=selected[0].standalone_ability_graph_id))
+            linked.append(replace(
+                task,
+                linked_standalone_graph_id=selected[0].standalone_ability_graph_id,
+                linked_ability_phase_id="",
+            ))
             continue
         reason = "trigger_ability_graph_missing" if not candidates else "trigger_ability_graph_link_ambiguous"
         linked.append(
@@ -11088,6 +11695,7 @@ def _link_trigger_ability_graphs(
                 coverage_status="blocked",
                 blocked_reason=reason,
                 linked_standalone_graph_id="",
+                linked_ability_phase_id="",
             )
         )
     return linked
@@ -12428,6 +13036,22 @@ def _ability_map(ability_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _indexed_ability_rows(
+    ability_data: dict[str, Any],
+) -> tuple[tuple[int, str, dict[str, Any]], ...]:
+    ability_list = ability_data.get("AbilityList")
+    if not isinstance(ability_list, list):
+        return ()
+    rows: list[tuple[int, str, dict[str, Any]]] = []
+    for index, ability in enumerate(ability_list):
+        if not isinstance(ability, dict):
+            continue
+        name = ability.get("Name") or ability.get("AbilityName")
+        if isinstance(name, str) and name:
+            rows.append((index, name, ability))
+    return tuple(sorted(rows, key=lambda item: (item[1], item[0])))
+
+
 def _lower_equipment_parameter_reads(
     *,
     graph_ref_id: str,
@@ -12709,13 +13333,37 @@ def _ability_opcode_summary(ability: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _ability_callback_summaries(ability: dict[str, Any]) -> dict[str, Any]:
+def _ability_callback_summaries(
+    ability: dict[str, Any],
+    *,
+    include_discovered: bool = False,
+) -> dict[str, Any]:
+    if include_discovered:
+        return {
+            callback_kind: _callback_summary(ability.get(callback_kind))
+            for callback_kind in _ability_task_callback_kinds(ability)
+        }
     return {
         "on_start": _callback_summary(ability.get("OnStart")),
         "on_attack": _callback_summary(ability.get("OnAttack")),
         "on_hit": _callback_summary(ability.get("OnHit")),
         "on_end": _callback_summary(ability.get("OnEnd")),
     }
+
+
+def _ability_task_callback_kinds(ability: Mapping[str, Any]) -> tuple[str, ...]:
+    callbacks: list[str] = []
+    for field_name, value in ability.items():
+        if not isinstance(field_name, str) or not isinstance(value, list):
+            continue
+        if any(
+            isinstance(item, Mapping)
+            and isinstance(item.get("$type"), str)
+            and bool(item.get("$type"))
+            for item in value
+        ):
+            callbacks.append(field_name)
+    return tuple(callbacks)
 
 
 def _callback_summary(value: Any) -> dict[str, Any]:
@@ -14422,6 +15070,45 @@ def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:
     if limit is None:
         return items
     return items[:limit]
+
+
+def _value_at_rooted_json_path(document: Mapping[str, Any], path: str) -> Any:
+    if not path.startswith("$"):
+        raise ValueError("source JSON path must start at the document root")
+    value: Any = document
+    index = 1
+    while index < len(path):
+        if path[index] == ".":
+            index += 1
+            end = index
+            while end < len(path) and path[end] not in ".[":
+                end += 1
+            key = path[index:end]
+            if not key or not isinstance(value, Mapping) or key not in value:
+                raise KeyError(path)
+            value = value[key]
+            index = end
+            continue
+        if path[index] != "[":
+            raise ValueError(f"invalid source JSON path:{path}")
+        end = path.find("]", index)
+        if end < 0:
+            raise ValueError(f"invalid source JSON path:{path}")
+        token = path[index + 1 : end]
+        if token.startswith('"'):
+            key = json.loads(token)
+            if not isinstance(value, Mapping) or key not in value:
+                raise KeyError(path)
+            value = value[key]
+        else:
+            if not token.isdigit() or not isinstance(value, (list, tuple)):
+                raise KeyError(path)
+            child_index = int(token)
+            if child_index >= len(value):
+                raise IndexError(path)
+            value = value[child_index]
+        index = end + 1
+    return value
 
 
 def _number_value(value: Any, default: float) -> float:

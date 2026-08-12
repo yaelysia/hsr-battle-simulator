@@ -11,10 +11,13 @@
 
 1. `P9-S8B1_TASK_GRAPH_IR_MATERIALIZATION.md`
 2. `P9-S8B2_ATOMIC_EXECUTOR_CORE.md`
-3. `P9-S8B3_ABILITY_STANDALONE_MIGRATION.md`
-4. `P9-S8B4_STATUS_CALLBACK_MIGRATION.md`
-5. `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md`
-6. `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md`
+3. `P9-S8B1-R2_FORMAL_TASK_TREE_COMPLETENESS.md`
+4. `P9-S8B3A_ABILITY_INVOCATION_FORMAL_CATALOG.md`
+5. `P9-S8B3B_ACTION_CALLBACK_MIGRATION.md`
+6. `P9-S8B3C_STANDALONE_QUEUE_MIGRATION.md`
+7. `P9-S8B4_STATUS_CALLBACK_MIGRATION.md`
+8. `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md`
+9. `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md`
 
 六张卡全部验收后，才能勾选总计划中的 P9-S8B。任何子卡都不得提前宣称原子任务图事务
 已经完整接管正式战斗。
@@ -25,7 +28,10 @@
 |---|---|---|
 | S8B1 | S8A 来源与正式 task 形成不可变任务图 IR、物化账本及 RuleBook 查询 | runtime 执行 |
 | S8B2 | 单一通用执行器完成选中路径的原子事务语义 | 领域系统迁移 |
-| S8B3 | 普通动作和队列 standalone ability 只消费共享任务图 | 状态 callback |
+| S8B1-R2 | 正式角色 ability task 完整保留 S8A 分支和模板子树 | runtime 执行 |
+| S8B3A | 能力入口/嵌套关系和正式多 entry 目录 | runtime 执行 |
+| S8B3B | 普通角色动作只消费共享任务图 | queue standalone、状态 callback |
+| S8B3C | queue standalone 只消费共享任务图 | 状态 callback |
 | S8B4 | 状态 callback、确定性分支和目标迭代只消费共享任务图 | 跨入口最终聚合 |
 | S8B5 | 调用栈、执行投影和跨同步入口上下文统一收口 | 旧拓扑模型退役 |
 | S8B6 | 旧 task 拓扑字段、双写及消费者退役，形成 S8B 聚合账本 | S8C 随机与命中时序 |
@@ -35,7 +41,8 @@
 - S8A 的完整来源分母在 S8B1 中有且只有一个责任结果；正式物化身份与来源发生身份分离。
 - S8B2 的事务执行器自身保证失败后状态不变且 mutation、event、RNG、成功 settlement 为零。
 - 动作、standalone ability 和状态 callback 不再拥有 Predicate、循环、模板或子图的第二套解释器。
-- `core/` 与 `systems/` 中除共享执行器外，不再读取正式 task 的父子字段决定运行时拓扑。
+- P9 角色域的 `core/` 与 `systems/` 除共享执行器外，不再读取正式 task 的父子字段决定运行时
+  拓扑；未纳入 S8A 来源分母的外部内容域必须单列，不能冒充角色回退或被本阶段误删。
 - 同步跨入口调用持续运输 active graph stack 和 graph-qualified executed projection。
 - S8C 的 projectile、parallel、barrier 和随机分支仍诚实 deferred，不被 S8B 伪执行。
 - 每张子卡的验证只证明该卡新增权威；不得在最后一张卡重跑前四张卡的完整主入口。

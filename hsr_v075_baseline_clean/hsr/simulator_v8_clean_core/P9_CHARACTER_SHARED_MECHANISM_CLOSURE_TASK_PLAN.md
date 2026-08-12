@@ -209,7 +209,7 @@ evaluator、event 和 runtime 共享边界，并行合并会增加遗漏和重�
 
 ```text
 S0 -> S1 -> S2 -> S3 -> S4 -> S5A -> S5B -> S5C1 -> S5C2 -> S5D1 -> S5D2 -> S6A -> S6B -> S7
- -> S8A -> S8A-R1 -> S8B1 -> S8B2 -> S8B3 -> S8B4 -> S8B5 -> S8B6 -> S8C -> S9
+ -> S8A -> S8A-R1 -> S8B1 -> S8B2 -> S8B1-R2 -> S8B3 -> S8B4 -> S8B5 -> S8B6 -> S8C -> S9
  -> S10 -> S11 -> S12 -> S13 -> S14 -> S15 -> S16 -> S17
  -> S18 -> S19 -> S20
 ```
@@ -298,7 +298,11 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8A-R1 混合子任务、命名 template 子图和 shared template 内部节点完成验收。
 - [x] P9-S8B1 任务图 IR、物化账本和唯一查询完成验收。
 - [x] P9-S8B2 领域中立原子任务图执行器完成验收。
-- [ ] P9-S8B3 普通动作和 standalone ability 迁移完成验收。
+- [x] P9-S8B1-R2 正式角色能力任务树完整性修复完成验收。
+- [x] P9-S8B3A 能力入口拓扑与正式多 entry 目录完成验收。
+- [ ] P9-S8B3B 普通角色动作任务图迁移完成验收。
+- [ ] P9-S8B3C queue standalone ability 任务图迁移完成验收。
+- [ ] P9-S8B3 聚合完成验收（仅在 S8B3A-S8B3C 全部通过后勾选）。
 - [ ] P9-S8B4 状态 callback 迁移完成验收。
 - [ ] P9-S8B5 跨入口上下文和执行投影运输完成验收。
 - [ ] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。

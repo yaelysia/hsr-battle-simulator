@@ -6922,6 +6922,34 @@ class AbilityPhaseIR:
     coverage_status: CoverageStatus = "audit_only"
     blocked_reason: str = ""
     task_ids: tuple[str, ...] = ()
+    invocation_role: Literal[
+        "action_root",
+        "nested_only",
+        "standalone_root",
+        "unbound_definition",
+        "non_gameplay_noop",
+        "external_legacy",
+    ] = "external_legacy"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.invocation_role, str) or self.invocation_role not in {
+            "action_root",
+            "nested_only",
+            "standalone_root",
+            "unbound_definition",
+            "non_gameplay_noop",
+            "external_legacy",
+        }:
+            raise ValueError("ability phase invocation role is invalid")
+        if self.invocation_role == "non_gameplay_noop" and self.task_ids:
+            raise ValueError("non-gameplay ability phase cannot carry gameplay tasks")
+        if self.invocation_role in {
+            "action_root",
+            "nested_only",
+            "standalone_root",
+            "unbound_definition",
+        } and not self.task_ids:
+            raise ValueError("gameplay ability phase requires tasks")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6938,6 +6966,7 @@ class AbilityPhaseIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "task_ids": list(self.task_ids),
+            "invocation_role": self.invocation_role,
         }
 
 
@@ -6965,6 +6994,19 @@ class AbilityTaskIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     linked_standalone_graph_id: str = ""
+    linked_ability_phase_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.linked_standalone_graph_id, str) or not isinstance(
+            self.linked_ability_phase_id, str
+        ):
+            raise TypeError("ability task call targets must be strings")
+        if self.linked_standalone_graph_id and self.linked_ability_phase_id:
+            raise ValueError("ability task call target is ambiguous")
+        if self.opcode != "TriggerAbility" and (
+            self.linked_standalone_graph_id or self.linked_ability_phase_id
+        ):
+            raise ValueError("non-trigger task cannot carry an ability call target")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6990,6 +7032,7 @@ class AbilityTaskIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "linked_standalone_graph_id": self.linked_standalone_graph_id,
+            "linked_ability_phase_id": self.linked_ability_phase_id,
         }
 
 
@@ -7545,16 +7588,29 @@ class CanonicalIR:
             callbacks = {item.callback_id: item for item in self.status_callbacks}
             if len(phases) != len(self.ability_phases) or len(callbacks) != len(self.status_callbacks):
                 raise ValueError("CanonicalIR task graph owners must be unique")
+            ability_reference_values = (
+                *self.ability_phases,
+                *self.standalone_ability_graphs,
+            )
+            ability_reference_definitions: dict[str, object] = {}
+            for value in ability_reference_values:
+                identity = (
+                    value.phase_id
+                    if type(value) is AbilityPhaseIR
+                    else value.standalone_ability_graph_id
+                )
+                if identity in ability_reference_definitions:
+                    raise ValueError(
+                        "CanonicalIR ability reference identity is ambiguous"
+                    )
+                ability_reference_definitions[identity] = value
             reference_definitions = {
                 "condition": {item.condition_id: item for item in self.conditions},
                 "target": {
                     item.target_expression_id: item for item in self.target_expressions
                 },
                 "effect": {item.effect_id: item for item in self.effects},
-                "ability": {
-                    item.standalone_ability_graph_id: item
-                    for item in self.standalone_ability_graphs
-                },
+                "ability": ability_reference_definitions,
             }
             if any(
                 len(reference_definitions[kind]) != len(values)
@@ -7562,21 +7618,67 @@ class CanonicalIR:
                     ("condition", self.conditions),
                     ("target", self.target_expressions),
                     ("effect", self.effects),
-                    ("ability", self.standalone_ability_graphs),
+                    ("ability", ability_reference_values),
                 )
             ):
                 raise ValueError("CanonicalIR task graph definitions must be unique")
+            ability_tasks_by_entry: dict[
+                tuple[str, str], list[AbilityTaskIR]
+            ] = {}
+            for task in self.ability_tasks:
+                ability_tasks_by_entry.setdefault(
+                    (task.phase_id, task.callback_kind), []
+                ).append(task)
+            status_tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
+            for task in self.status_callback_tasks:
+                status_tasks_by_callback.setdefault(task.callback_id, []).append(task)
+            formal_roles = {"action_root", "nested_only", "standalone_root"}
+            expected_ability_entries = {
+                key
+                for key, values in ability_tasks_by_entry.items()
+                if phases.get(key[0]) is not None
+                and phases[key[0]].invocation_role in formal_roles
+                and values
+            }
+            actual_ability_entries = {
+                (item.owner_id, item.callback_kind)
+                for item in task_graph_catalog.entry_materializations
+                if item.entry_kind == "ability_phase_callback"
+            }
+            if any(
+                item.entry_kind == "ability_phase_callback"
+                and item.status != "materialized"
+                for item in task_graph_catalog.entry_materializations
+            ):
+                raise ValueError(
+                    "CanonicalIR formal ability catalog contains a blocked entry"
+                )
+            formal_phase_ids = {
+                item.phase_id
+                for item in self.ability_phases
+                if item.invocation_role in formal_roles
+            }
+            if (
+                expected_ability_entries != actual_ability_entries
+                or any(
+                    not any(key[0] == phase_id for key in expected_ability_entries)
+                    for phase_id in formal_phase_ids
+                )
+            ):
+                raise ValueError(
+                    "CanonicalIR formal ability graph denominator is incomplete"
+                )
+            graph_by_id = {item.graph_id: item for item in task_graph_catalog.graphs}
             for entry in task_graph_catalog.entry_materializations:
                 if entry.entry_kind == "ability_phase_callback":
                     owner = phases.get(entry.owner_id)
                     selected_tasks = ability_tasks
-                    if owner is None:
+                    if owner is None or owner.invocation_role not in formal_roles:
                         raise ValueError("task graph ability phase owner is missing")
                     formal_tasks = tuple(
-                        item
-                        for item in self.ability_tasks
-                        if item.phase_id == entry.owner_id
-                        and item.callback_kind == entry.callback_kind
+                        ability_tasks_by_entry.get(
+                            (entry.owner_id, entry.callback_kind), ()
+                        )
                     )
                     selected_task_ids = {
                         item.task_id for item in formal_tasks
@@ -7594,9 +7696,7 @@ class CanonicalIR:
                     if owner.event != entry.callback_kind:
                         raise ValueError("task graph status callback event is inconsistent")
                     formal_tasks = tuple(
-                        item
-                        for item in self.status_callback_tasks
-                        if item.callback_id == entry.owner_id
+                        status_tasks_by_callback.get(entry.owner_id, ())
                     )
                     selected_task_ids = {
                         item.task_id for item in formal_tasks
@@ -7610,10 +7710,7 @@ class CanonicalIR:
                     raise ValueError("task graph formal owner ledger is incomplete")
                 if entry.status != "materialized":
                     continue
-                graph = next(
-                    (item for item in task_graph_catalog.graphs if item.graph_id == entry.graph_id),
-                    None,
-                )
+                graph = graph_by_id.get(entry.graph_id)
                 if graph is None:
                     raise ValueError("task graph materialization graph is missing")
                 nodes_by_task = {
@@ -7683,7 +7780,10 @@ class CanonicalIR:
                         "condition": task.condition_id,
                         "target": getattr(task, "target_expression_id", ""),
                         "effect": task.effect_id,
-                        "ability": getattr(task, "linked_standalone_graph_id", ""),
+                        "ability": (
+                            getattr(task, "linked_ability_phase_id", "")
+                            or getattr(task, "linked_standalone_graph_id", "")
+                        ),
                     }
                     formal_source_family = task.source.evidence.get(
                         "source_opcode"

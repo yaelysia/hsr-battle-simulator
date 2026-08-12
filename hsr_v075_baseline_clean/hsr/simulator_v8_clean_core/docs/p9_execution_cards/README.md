@@ -19,9 +19,12 @@ P9-S5 已按目标 IR、实体关系、动作目标来源、动作选择权威�
 开工审查随后发现其分母仍遗漏 hybrid child-bearing task、命名 template 参数子图和 shared
 template 内部节点。S8A-R1 已完成修订并验收，原 S8A 分母只保留为历史证据。2026-08-12
 试运行进一步证明原 S8B 同时改变任务图 IR、共享执行器、ability、status callback 和跨入口上下文
-五个行为边界以及一个独立兼容债务退出边界，因此继续拆为 S8B1-S8B6；S8C 才处理命中、
-barrier、parallel 和随机顺序。
-旧 S8 与 S8B 文件都只保留聚合说明，不再是执行入口。
+五个行为边界以及一个独立兼容债务退出边界，因此继续拆为 S8B1-S8B6。S8B3 开工预检又发现
+“能力入口/正式目录、普通动作消费、queue standalone 消费”是三个独立边界，并确认 S8A 分母
+只覆盖 P9 角色能力，不能据此全局删除怪物等内容域的旧执行路径，因此 S8B3 再拆为严格顺序的
+S8B3A-S8B3C。该预检同时发现旧 ability task lowering 会丢通用分支和模板子树，因此在迁移前
+增加 S8B1-R2 根因修复；S8C 才处理命中、barrier、parallel 和随机顺序。
+旧 S8、S8B 与 S8B3 文件都只保留聚合说明，不再是执行入口。
 
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程
 通过代码审查和聚焦 evidence 后才更新卡片与总 checklist，并建立阶段检查点。
@@ -165,7 +168,11 @@ S8B1-S8B6 同样共享原 S8B 的预算：主入口累计目标 6 分钟、硬�
 | S8A-R1 | `P9-S8A-R1_CONTROL_FLOW_DENOMINATOR_COMPLETENESS.md` | 5.6 Sol / max / 普通聚焦 |
 | S8B1 | `P9-S8B1_TASK_GRAPH_IR_MATERIALIZATION.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B2 | `P9-S8B2_ATOMIC_EXECUTOR_CORE.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B1-R2 | `P9-S8B1-R2_FORMAL_TASK_TREE_COMPLETENESS.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B3 | `P9-S8B3_ABILITY_STANDALONE_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B3A | `P9-S8B3A_ABILITY_INVOCATION_FORMAL_CATALOG.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B3B | `P9-S8B3B_ACTION_CALLBACK_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B3C | `P9-S8B3C_STANDALONE_QUEUE_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B4 | `P9-S8B4_STATUS_CALLBACK_MIGRATION.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S8B5 | `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S8B6 | `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md` | 5.6 Sol / high / 普通聚焦 |
