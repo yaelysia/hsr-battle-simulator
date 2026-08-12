@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from typing import cast
 
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
@@ -9,6 +12,7 @@ from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
+from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
@@ -29,6 +33,19 @@ from .ability_task_contract import (
     is_process_only_ability_task,
 )
 from .target import TargetSystem
+from .task_graph import (
+    TaskGraphBranchResult,
+    TaskGraphConditionResult,
+    TaskGraphCountResult,
+    TaskGraphExecutionContext,
+    TaskGraphExecutionHooks,
+    TaskGraphExecutor,
+    TaskGraphGraphResult,
+    TaskGraphHookRequest,
+    TaskGraphLeafResult,
+    TaskGraphSettlementRecord,
+    TaskGraphTargetResult,
+)
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
 
@@ -64,8 +81,63 @@ class AbilityTaskSystem:
         self.toughness = ToughnessSystem(rules)
         self.summons = SummonSystem(rules)
         self.targets = TargetSystem(rules)
+        self.task_graph_executor = TaskGraphExecutor()
 
     def execute_callback(
+        self,
+        state: BattleState,
+        *,
+        phases: tuple[AbilityPhaseIR, ...],
+        callback_kind: str,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> AbilityTaskExecutionResult:
+        roles = {phase.invocation_role for phase in phases}
+        formal_roles = {"action_root", "nested_only"}
+        if "action_root" in roles:
+            invalid_roles = roles - formal_roles - {"non_gameplay_noop"}
+            if invalid_roles:
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    f"ability_action_invocation_roles_mixed:{','.join(sorted(invalid_roles))}",
+                )
+            return self._execute_formal_action_callback(
+                state,
+                phases=phases,
+                callback_kind=callback_kind,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            )
+        if "nested_only" in roles and not roles.intersection(
+            {"standalone_root", "external_legacy"}
+        ):
+            return self._formal_callback_blocked(
+                state,
+                callback_kind,
+                command,
+                "nested_ability_phase_cannot_be_invoked_as_root",
+            )
+        if "unbound_definition" in roles:
+            return self._formal_callback_blocked(
+                state,
+                callback_kind,
+                command,
+                "unbound_ability_definition_cannot_be_invoked",
+            )
+        return self._execute_legacy_callback(
+            state,
+            phases=phases,
+            callback_kind=callback_kind,
+            command=command,
+            action_definition=action_definition,
+            target_resolution=target_resolution,
+        )
+
+    def _execute_legacy_callback(
         self,
         state: BattleState,
         *,
@@ -139,6 +211,622 @@ class AbilityTaskSystem:
             records=tuple(records),
             task_records=tuple(task_records),
             node_results=_node_results_from_task_records(task_records),
+        )
+
+    def _execute_formal_action_callback(
+        self,
+        state: BattleState,
+        *,
+        phases: tuple[AbilityPhaseIR, ...],
+        callback_kind: str,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> AbilityTaskExecutionResult:
+        roots = tuple(phase for phase in phases if phase.invocation_role == "action_root")
+        if not roots:
+            return self._formal_callback_blocked(
+                state,
+                callback_kind,
+                command,
+                "ability_action_root_missing",
+            )
+        if any(
+            phase.action_id != command.action_id
+            or phase.level != command.action_level
+            or phase.action_id != action_definition.action_id
+            or phase.level != action_definition.level
+            for phase in phases
+            if phase.invocation_role in {"action_root", "nested_only"}
+        ):
+            return self._formal_callback_blocked(
+                state,
+                callback_kind,
+                command,
+                "ability_action_phase_identity_mismatch",
+            )
+
+        selected_roots = tuple(
+            phase
+            for phase in roots
+            if any(
+                task.callback_kind == callback_kind
+                for task in self.rules.ability_tasks_for_phase(phase.phase_id)
+            )
+        )
+        if not selected_roots:
+            return AbilityTaskExecutionResult(after_state=state)
+
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        task_records: list[dict[str, JSONValue]] = []
+        node_results: list[ExecutionNodeResult] = []
+        mutation_ids: set[str] = set()
+        event_ids: set[str] = set()
+        rng_event_ids: set[str] = set()
+        for ordinal, phase in enumerate(selected_roots):
+            entry_result = self.rules.query_task_graph_entry(
+                "ability_phase_callback",
+                phase.phase_id,
+                callback_kind,
+            )
+            if entry_result.status != "resolved":
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    entry_result.blocked_reason or "ability_action_task_graph_entry_missing",
+                    node_results=tuple(node_results),
+                )
+            entry = entry_result.value
+            if (
+                entry is None
+                or entry.owner_id != phase.phase_id
+                or entry.callback_kind != callback_kind
+                or entry.entry_kind != "ability_phase_callback"
+            ):
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    "ability_action_task_graph_entry_identity_mismatch",
+                    node_results=tuple(node_results),
+                )
+            graph_result = self.rules.query_task_graph(entry.graph_id)
+            graph = graph_result.value
+            if (
+                graph_result.status != "resolved"
+                or type(graph) is not TaskGraphIR
+                or graph.entry_id != entry.entry_id
+                or graph.owner_id != phase.phase_id
+                or graph.callback_kind != callback_kind
+            ):
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    graph_result.blocked_reason
+                    or "ability_action_task_graph_identity_mismatch",
+                    node_results=tuple(node_results),
+                )
+            invocation_id = (
+                f"ability_action:{state.event_index}:{command.actor_id}:"
+                f"{command.action_id}:{command.action_level}:{callback_kind}:"
+                f"{ordinal}:{phase.phase_id}"
+            )
+            execution = self.task_graph_executor.execute(
+                current,
+                graph,
+                TaskGraphExecutionContext(
+                    invocation_id,
+                    {
+                        "actor_id": command.actor_id,
+                        "action_id": command.action_id,
+                        "action_level": command.action_level,
+                        "callback_kind": callback_kind,
+                        "primary_target_id": target_resolution.primary,
+                        "selected_target_ids": list(target_resolution.selected),
+                    },
+                ),
+                self._formal_task_graph_hooks(
+                    command=command,
+                    action_definition=action_definition,
+                    target_resolution=target_resolution,
+                    callback_kind=callback_kind,
+                ),
+            )
+            node_results.extend(execution.outcome.node_results)
+            if not execution.ok:
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    execution.errors[0]
+                    if execution.errors
+                    else "ability_action_task_graph_execution_blocked",
+                    node_results=tuple(node_results),
+                )
+            new_mutation_ids = tuple(item.stable_id() for item in execution.mutations)
+            new_event_ids = tuple(
+                cast(str, item.to_json()["event_id"]) for item in execution.events
+            )
+            new_rng_event_ids = tuple(
+                cast(str, item.to_json()["event_id"]) for item in execution.rng_events
+            )
+            duplicate_channel = next(
+                (
+                    channel
+                    for channel, values, seen in (
+                        ("mutation", new_mutation_ids, mutation_ids),
+                        ("event", new_event_ids, event_ids),
+                        ("rng", new_rng_event_ids, rng_event_ids),
+                    )
+                    if any(value in seen for value in values)
+                ),
+                "",
+            )
+            if duplicate_channel:
+                return self._formal_callback_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    f"ability_action_task_graph_duplicate_{duplicate_channel}_identity",
+                    node_results=tuple(node_results),
+                )
+            mutation_ids.update(new_mutation_ids)
+            event_ids.update(new_event_ids)
+            rng_event_ids.update(new_rng_event_ids)
+            current = execution.after_state
+            mutations.extend(execution.mutations)
+            events.extend(execution.events)
+            rng_events.extend(execution.rng_events)
+            graph_records = tuple(item.to_json() for item in execution.settlement_records)
+            records.extend(graph_records)
+            task_records.extend(
+                cast(dict[str, JSONValue], record["payload"])
+                for record in graph_records
+                if record.get("record_type") == "ability_task"
+                and isinstance(record.get("payload"), dict)
+            )
+        return AbilityTaskExecutionResult(
+            after_state=current,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+            task_records=tuple(task_records),
+            node_results=tuple(node_results),
+        )
+
+    def _formal_task_graph_hooks(
+        self,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+        callback_kind: str,
+    ) -> TaskGraphExecutionHooks:
+        return TaskGraphExecutionHooks(
+            leaf=lambda request, state: self._execute_formal_leaf(
+                request,
+                state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            ),
+            condition=lambda request, state: self._evaluate_formal_condition(
+                request,
+                state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            ),
+            branch=lambda _request, _state: TaskGraphBranchResult(
+                "blocked",
+                blocked_reason="ability_task_graph_branch_domain_not_admitted",
+            ),
+            count=lambda request, definition, state: self._resolve_formal_count(
+                request,
+                definition,
+                state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            ),
+            targets=lambda request, state: self._resolve_formal_targets(
+                request,
+                state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            ),
+            graph=lambda request, state: self._resolve_formal_nested_graph(
+                request,
+                state,
+                callback_kind=callback_kind,
+            ),
+        )
+
+    def _execute_formal_leaf(
+        self,
+        request: TaskGraphHookRequest,
+        state: BattleState,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> TaskGraphLeafResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphLeafResult("blocked", outcome_kind="", blocked_reason=reason)
+        if not is_process_only_ability_task(task):
+            unresolved = tuple(
+                reference
+                for reference in request.references
+                if reference.resolution_status != "resolved"
+            )
+            if unresolved:
+                return TaskGraphLeafResult(
+                    "blocked",
+                    outcome_kind="",
+                    blocked_reason=unresolved[0].blocked_reason
+                    or "ability_task_graph_leaf_reference_not_resolved",
+                )
+        scoped_resolution = _task_graph_target_resolution(request, target_resolution)
+        scoped_command = replace(
+            command,
+            metadata={
+                **command.metadata,
+                "ability_task_execution_path": _task_graph_execution_path(request),
+                "ability_task_iteration_index": request.iteration_index,
+            },
+        )
+        _, mutations, events, rng_events, records = self._execute_ability_leaf_task(
+            state,
+            task,
+            command=scoped_command,
+            action_definition=action_definition,
+            primary_target=scoped_resolution.primary,
+            target_resolution=scoped_resolution,
+        )
+        blocker = _ability_task_records_blocked_reason(records)
+        if blocker:
+            return TaskGraphLeafResult("blocked", outcome_kind="", blocked_reason=blocker)
+        try:
+            settlement = _task_graph_settlement_records(records)
+        except (TypeError, ValueError):
+            return TaskGraphLeafResult(
+                "blocked",
+                outcome_kind="",
+                blocked_reason="ability_task_graph_leaf_settlement_invalid",
+            )
+        return TaskGraphLeafResult(
+            "resolved",
+            tuple(mutations),
+            tuple(events),
+            tuple(rng_events),
+            settlement,
+        )
+
+    def _evaluate_formal_condition(
+        self,
+        request: TaskGraphHookRequest,
+        state: BattleState,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> TaskGraphConditionResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphConditionResult("blocked", blocked_reason=reason)
+        condition_refs = tuple(
+            reference
+            for reference in request.references
+            if reference.reference_kind == "condition"
+        )
+        if (
+            len(condition_refs) != 1
+            or condition_refs[0].resolution_status != "resolved"
+            or condition_refs[0].definition_id != task.condition_id
+        ):
+            return TaskGraphConditionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_condition_reference_not_resolved",
+            )
+        scoped = _task_graph_target_resolution(request, target_resolution)
+        value, blocker, _evidence = self._evaluate_ability_task_condition(
+            state,
+            task,
+            command=command,
+            action_definition=action_definition,
+            primary_target=scoped.primary,
+            target_resolution=scoped,
+        )
+        if value is None:
+            return TaskGraphConditionResult("blocked", blocked_reason=blocker)
+        return TaskGraphConditionResult("resolved", value)
+
+    def _resolve_formal_count(
+        self,
+        request: TaskGraphHookRequest,
+        definition: TaskGraphNumericDefinitionIR,
+        state: BattleState,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> TaskGraphCountResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphCountResult("blocked", blocked_reason=reason)
+        numeric_refs = tuple(
+            reference
+            for reference in request.references
+            if reference.reference_kind == "numeric"
+        )
+        if (
+            len(numeric_refs) != 1
+            or numeric_refs[0].resolution_status != "resolved"
+            or numeric_refs[0].definition_id != definition.definition_id
+        ):
+            return TaskGraphCountResult(
+                "blocked",
+                blocked_reason="ability_task_graph_numeric_reference_not_resolved",
+            )
+        scoped = _task_graph_target_resolution(request, target_resolution)
+        result = self.evaluator.evaluate_numeric(
+            definition.expression,
+            NumericEvaluationContext(
+                binding_sources=_binding_sources(
+                    self.rules,
+                    state,
+                    command.actor_id,
+                    scoped.primary,
+                    action_level=command.action_level,
+                    current_action_trigger_key=_action_trigger_key(action_definition),
+                ),
+                source_trace=definition.source.to_json(),
+            ),
+        )
+        if (
+            not result.ok
+            or result.value is None
+            or not math.isfinite(result.value)
+            or result.value < 0
+            or not result.value.is_integer()
+        ):
+            return TaskGraphCountResult(
+                "blocked",
+                blocked_reason=result.blocked_reason
+                or "ability_task_graph_count_not_nonnegative_integer",
+            )
+        return TaskGraphCountResult("resolved", int(result.value))
+
+    def _resolve_formal_targets(
+        self,
+        request: TaskGraphHookRequest,
+        state: BattleState,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        target_resolution: TargetResolution,
+    ) -> TaskGraphTargetResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphTargetResult("blocked", blocked_reason=reason)
+        target_refs = tuple(
+            reference
+            for reference in request.references
+            if reference.reference_kind == "target"
+        )
+        if len(target_refs) != 1 or target_refs[0].resolution_status != "resolved":
+            return TaskGraphTargetResult(
+                "blocked",
+                blocked_reason="ability_task_graph_target_reference_not_resolved",
+            )
+        expression, lookup_reason = self.rules.target_expression_resolution(
+            target_refs[0].definition_id
+        )
+        if expression is None:
+            return TaskGraphTargetResult("blocked", blocked_reason=lookup_reason)
+        scoped = _task_graph_target_resolution(request, target_resolution)
+        primary = scoped.primary
+        target_context = TargetEvaluationContext(
+            caster_id=command.actor_id,
+            effect_owner_id=command.actor_id,
+            parameter_entity_ids=((primary or command.actor_id),),
+            selected_target_ids=scoped.selected,
+            current_target_id=primary,
+            turn_owner_id=committed_turn_owner_id(state),
+        )
+        result = self.targets.resolve_target_expression(
+            state,
+            expression,
+            context=target_context,
+            target_resolution=scoped,
+            condition_event_payload={
+                **_event_payload(command, action_definition, primary, scoped),
+                "task_id": task.task_id,
+            },
+            binding_sources=_binding_sources(
+                self.rules,
+                state,
+                command.actor_id,
+                primary,
+                action_level=command.action_level,
+                current_action_trigger_key=_action_trigger_key(action_definition),
+            ),
+            transient_condition_provider=admitted_action_condition_fact_provider(
+                self.rules,
+                state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=scoped,
+                window=f"ability_task_graph:{task.task_id}",
+            ),
+        )
+        if result.blocked:
+            return TaskGraphTargetResult("blocked", blocked_reason=result.blocked_reason)
+        if result.rng_events:
+            return TaskGraphTargetResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_target_requires_hit_sequence",
+            )
+        return TaskGraphTargetResult("resolved", result.target_ids)
+
+    def _resolve_formal_nested_graph(
+        self,
+        request: TaskGraphHookRequest,
+        _state: BattleState,
+        *,
+        callback_kind: str,
+    ) -> TaskGraphGraphResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphGraphResult("blocked", blocked_reason=reason)
+        ability_refs = tuple(
+            reference
+            for reference in request.references
+            if reference.reference_kind == "ability"
+        )
+        if len(ability_refs) != 1 or ability_refs[0].resolution_status != "resolved":
+            return TaskGraphGraphResult(
+                "blocked",
+                blocked_reason="ability_task_graph_nested_reference_not_resolved",
+            )
+        reference = ability_refs[0]
+        phase_ids: tuple[str, ...]
+        if task.linked_ability_phase_id:
+            if reference.definition_id != task.linked_ability_phase_id:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason="ability_task_graph_nested_phase_identity_mismatch",
+                )
+            phase_ids = (task.linked_ability_phase_id,)
+        elif task.linked_standalone_graph_id:
+            if reference.definition_id != task.linked_standalone_graph_id:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason="ability_task_graph_nested_standalone_identity_mismatch",
+                )
+            standalone = self.rules.standalone_ability_graph(
+                task.linked_standalone_graph_id
+            )
+            if standalone is None:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason="ability_task_graph_nested_standalone_missing",
+                )
+            phase_ids = standalone.phase_ids
+        else:
+            return TaskGraphGraphResult(
+                "blocked",
+                blocked_reason="ability_task_graph_nested_target_missing",
+            )
+        candidates: list[TaskGraphIR] = []
+        for phase_id in phase_ids:
+            phase = self.rules.ability_phase(phase_id)
+            if phase is None or phase.invocation_role != "nested_only":
+                continue
+            if not any(
+                task.callback_kind == callback_kind
+                for task in self.rules.ability_tasks_for_phase(phase_id)
+            ):
+                continue
+            entry_result = self.rules.query_task_graph_entry(
+                "ability_phase_callback",
+                phase_id,
+                callback_kind,
+            )
+            if entry_result.status != "resolved" or entry_result.value is None:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason=entry_result.blocked_reason
+                    or "ability_task_graph_nested_entry_missing",
+                )
+            graph_result = self.rules.query_task_graph(entry_result.value.graph_id)
+            if graph_result.status != "resolved" or type(graph_result.value) is not TaskGraphIR:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason=graph_result.blocked_reason
+                    or "ability_task_graph_nested_graph_missing",
+                )
+            candidates.append(graph_result.value)
+        if len(candidates) != 1:
+            return TaskGraphGraphResult(
+                "blocked",
+                blocked_reason=(
+                    "ability_task_graph_nested_callback_missing"
+                    if not candidates
+                    else "ability_task_graph_nested_callback_ambiguous"
+                ),
+            )
+        return TaskGraphGraphResult("resolved", reference.definition_id, candidates[0])
+
+    def _formal_task_for_request(
+        self,
+        request: TaskGraphHookRequest,
+    ) -> tuple[AbilityTaskIR | None, str]:
+        task = self.rules.ability_task(request.formal_task_id)
+        graph_result = self.rules.query_task_graph(request.graph_id)
+        graph = graph_result.value
+        node_result = self.rules.query_task_graph_node(request.graph_node_id)
+        node = node_result.value
+        if task is None:
+            return None, "ability_task_graph_formal_task_missing"
+        if (
+            graph_result.status != "resolved"
+            or type(graph) is not TaskGraphIR
+            or node_result.status != "resolved"
+            or node is None
+            or node.graph_id != request.graph_id
+            or node.formal_task_id != request.formal_task_id
+            or task.phase_id != graph.owner_id
+            or task.callback_kind != graph.callback_kind
+        ):
+            return None, "ability_task_graph_formal_task_identity_mismatch"
+        return task, ""
+
+    @staticmethod
+    def _formal_callback_blocked(
+        state: BattleState,
+        callback_kind: str,
+        command: ActionCommand,
+        reason: str,
+        *,
+        node_results: tuple[ExecutionNodeResult, ...] = (),
+    ) -> AbilityTaskExecutionResult:
+        blocked_node = ExecutionNodeResult(
+            node_kind="ability_task_graph_callback",
+            node_id=(
+                f"ability_task_graph_callback:{state.event_index}:"
+                f"{command.actor_id}:{command.action_id}:{callback_kind}"
+            ),
+            status="blocked",
+            reason_code=reason,
+        )
+        return AbilityTaskExecutionResult(
+            after_state=state,
+            records=(
+                SettlementRecord(
+                    record_type="ability_task_graph_blocked",
+                    source="ability_task_system",
+                    process_only=True,
+                    payload={
+                        "actor_id": command.actor_id,
+                        "action_id": command.action_id,
+                        "action_level": command.action_level,
+                        "callback_kind": callback_kind,
+                        "reason": reason,
+                    },
+                    trace={},
+                ).to_json(),
+            ),
+            node_results=(*node_results, blocked_node),
         )
 
     def execute_standalone(
@@ -335,6 +1023,53 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
+        return self._execute_ability_leaf_task(
+            state,
+            task,
+            command=command,
+            action_definition=action_definition,
+            primary_target=primary_target,
+            target_resolution=target_resolution,
+        )
+
+    def _execute_ability_leaf_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        if admission_reason:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason=admission_reason)
+            ]
+        if is_process_only_ability_task(task):
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=True,
+                    blocked_reason="process_only_ability_task",
+                    effect_id=task.effect_id,
+                    effect_opcode=task.opcode,
+                    effect_coverage="process_only",
+                )
+            ]
+        if task.opcode in {
+            "PredicateTaskList",
+            "LoopExecuteTaskListWithInterval",
+            "TriggerAbility",
+        }:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason="ability_task_graph_structural_node_reached_leaf",
+                )
+            ]
         if task.opcode == "SummonMonster":
             return self.execute_summon_monster_task(
                 state,
@@ -1073,21 +1808,19 @@ class AbilityTaskSystem:
                     )
         return current, mutations, events, rng_events, records
 
-    def _execute_predicate_task(
+    def _evaluate_ability_task_condition(
         self,
         state: BattleState,
         task: AbilityTaskIR,
-        tasks: dict[str, AbilityTaskIR],
         *,
         command: ActionCommand,
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+    ) -> tuple[bool | None, str, dict[str, JSONValue]]:
         condition = self.rules.condition(task.condition_id) if task.condition_id else None
         if condition is None:
-            record = _task_process_record(task, ok=False, blocked_reason="missing_predicate_condition")
-            return state, [], [], [], [record]
+            return None, "missing_predicate_condition", {}
         binding_sources = _binding_sources(
             self.rules,
             state,
@@ -1130,16 +1863,46 @@ class AbilityTaskSystem:
                 transient_condition_provider=transient_provider,
             ),
         )
+        evidence = cast(dict[str, JSONValue], result.to_json())
         if not result.ok or result.result is None:
+            return (
+                None,
+                f"blocked_condition:{condition.condition_id}:{result.reason}",
+                evidence,
+            )
+        return result.result, "", evidence
+
+    def _execute_predicate_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        tasks: dict[str, AbilityTaskIR],
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        condition_value, condition_blocker, condition_evidence = (
+            self._evaluate_ability_task_condition(
+                state,
+                task,
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+            )
+        )
+        if condition_value is None:
             record = _task_process_record(
                 task,
                 ok=False,
-                blocked_reason=f"blocked_condition:{condition.condition_id}:{result.reason}",
-                condition_result=result.to_json(),
+                blocked_reason=condition_blocker,
+                condition_result=condition_evidence,
             )
             return state, [], [], [], [record]
 
-        selected_child_ids = task.success_task_ids if result.result else task.failed_task_ids
+        selected_child_ids = task.success_task_ids if condition_value else task.failed_task_ids
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
@@ -1148,7 +1911,7 @@ class AbilityTaskSystem:
             _task_process_record(
                 task,
                 ok=True,
-                condition_result=result.to_json(),
+                condition_result=condition_evidence,
                 selected_child_ids=selected_child_ids,
             )
         ]
@@ -1171,6 +1934,89 @@ class AbilityTaskSystem:
             rng_events.extend(child_rng_events)
             records.extend(child_records)
         return current, mutations, events, rng_events, records
+
+
+def _task_graph_target_resolution(
+    request: TaskGraphHookRequest,
+    target_resolution: TargetResolution,
+) -> TargetResolution:
+    if not request.target_ids:
+        return target_resolution
+    return replace(
+        target_resolution,
+        requested=request.target_ids,
+        selectable=request.target_ids,
+        legal=request.target_ids,
+        primary=request.target_ids[0],
+        impact_group=request.target_ids,
+        selected=request.target_ids,
+        rejected=(),
+        reason="task_graph_target_scope",
+        source="task_graph_executor",
+        metadata={
+            **target_resolution.metadata,
+            "ability_task_invocation_id": request.invocation_id,
+            "ability_task_scope_node_id": request.graph_node_id,
+        },
+    )
+
+
+def _task_graph_execution_path(request: TaskGraphHookRequest) -> str:
+    parts = [
+        request.invocation_id,
+        *request.active_graph_stack,
+        request.graph_node_id,
+        *(f"frame:{item}" for item in request.frame_ids),
+        *(f"target:{item}" for item in request.target_ids),
+    ]
+    if request.iteration_index is not None:
+        parts.append(f"iteration:{request.iteration_index}")
+    return "/".join(parts)
+
+
+def _ability_task_records_blocked_reason(
+    records: list[dict[str, JSONValue]],
+) -> str:
+    for record in records:
+        if not isinstance(record, Mapping) or record.get("record_type") != "ability_task":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping) or payload.get("ok") is not False:
+            continue
+        return str(payload.get("blocked_reason") or "ability_task_graph_leaf_blocked")
+    return ""
+
+
+def _task_graph_settlement_records(
+    records: list[dict[str, JSONValue]],
+) -> tuple[TaskGraphSettlementRecord, ...]:
+    required = {
+        "record_type",
+        "source",
+        "mutation_id",
+        "process_only",
+        "payload",
+        "trace",
+    }
+    converted: list[TaskGraphSettlementRecord] = []
+    for record in records:
+        if not isinstance(record, Mapping) or set(record) != required:
+            raise ValueError("ability task settlement record shape is invalid")
+        payload = record.get("payload")
+        trace = record.get("trace")
+        if not isinstance(payload, Mapping) or not isinstance(trace, Mapping):
+            raise TypeError("ability task settlement payload is invalid")
+        converted.append(
+            TaskGraphSettlementRecord(
+                record_type=cast(str, record["record_type"]),
+                source=cast(str, record["source"]),
+                mutation_id=cast(str | None, record["mutation_id"]),
+                process_only=cast(bool, record["process_only"]),
+                payload=dict(payload),
+                trace=dict(trace),
+            )
+        )
+    return tuple(converted)
 
 
 def _task_process_record(

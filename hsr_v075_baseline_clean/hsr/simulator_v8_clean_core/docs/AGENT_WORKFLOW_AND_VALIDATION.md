@@ -284,6 +284,10 @@ gap 归属或证据独立性，验收结论必须是“规划/分解失败”，
 只运行与本次生产修改存在调用链或数据契约关系的现行回归：
 
 - reducer 改动：原子提交、before 冲突、replay。
+- 共享执行入口迁移：先按类型化 producer/invocation role 分离正式分支和未迁移内容域；正式分支
+  缺图或失败不得回退旧解释器，未迁移域不得因同名 API 被全局替换。
+- 原子任务图 hook：只运输 mutation/event/RNG/settlement/outcome；候选状态归并只有一个权威，
+  禁止 hook 额外返回候选状态或用第二次 reducer 重放来“验证”共享执行器。
 - target 改动：query-submit、目标基数、空集合和失败三态。
 - status 改动：生命周期、概率、callback、source audit。
 - scheduler/timeline 改动：阶段、队列、行动值和前进保证。

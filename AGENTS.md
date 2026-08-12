@@ -164,6 +164,11 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 - 真实内容被后续阶段阻断时，来源语义与执行上下文运输必须分开取证。允许用明确标注的最小
   validation fixture 证明通用调用链，但不得据此宣称真实角色、怪物或装备已经 executable；
   同样，真实来源目录闭合不能替代调度、提交、结算和 replay 连续性的生产证明。
+- 一个公开执行 API 同时服务已迁移正式内容和待迁移外部/旧内容域时，必须在最外层按类型化
+  producer 或 invocation role 分流；不得用名称、ID 形状或目录是否命中猜测，也不得全局替换后
+  迫使未迁移内容提前改变行为。正式分支缺图或执行失败时严禁回退旧解释器。
+- 共享原子执行器的领域 hook 只返回 mutation、event、RNG、settlement 和类型化 outcome；候选状态
+  只由共享执行器归并。hook 不得返回、比较或通过第二次 reducer 重放验证另一份候选状态。
 - 任何会创建队列项、切换阶段或提交状态的公开请求入口，都必须在第一条 mutation 前验证
   actor、动作所有权、submission admission 和输入上下文；不能指望后续 drain/executor 再阻断。
 - UI、适配器和外部推演器提交动作时，actor/action/level 必须来自所选内核 choice/template；
