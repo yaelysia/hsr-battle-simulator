@@ -104,11 +104,51 @@ class TaskGraphHookRequest:
         object.__setattr__(
             self, "context_values", _frozen_object(self.context_values, "task graph hook context")
         )
-        object.__setattr__(
-            self, "active_graph_stack", _strings(self.active_graph_stack, "task graph hook stack")
-        )
+        active_graph_stack = _strings(self.active_graph_stack, "task graph hook stack")
+        if not active_graph_stack or active_graph_stack[-1] != self.graph_id:
+            raise ValueError("task graph hook stack does not end at the current graph")
+        object.__setattr__(self, "active_graph_stack", active_graph_stack)
         object.__setattr__(self, "frame_ids", _strings(self.frame_ids, "task graph frame identities"))
         object.__setattr__(self, "target_ids", _strings(self.target_ids, "task graph hook targets"))
+
+
+@dataclass(frozen=True, init=False)
+class TaskGraphContinuation:
+    parent_invocation_id: str
+    parent_graph_id: str
+    parent_graph_node_id: str
+    parent_formal_task_id: str
+    context_values: Mapping[str, JSONValue]
+    active_graph_stack: tuple[str, ...]
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("task graph continuation must be derived from a hook request")
+
+    @classmethod
+    def from_hook_request(cls, request: TaskGraphHookRequest) -> "TaskGraphContinuation":
+        if cls is not TaskGraphContinuation or type(request) is not TaskGraphHookRequest:
+            raise TypeError("task graph continuation requires an exact hook request")
+        value = object.__new__(cls)
+        object.__setattr__(value, "parent_invocation_id", request.invocation_id)
+        object.__setattr__(value, "parent_graph_id", request.graph_id)
+        object.__setattr__(value, "parent_graph_node_id", request.graph_node_id)
+        object.__setattr__(value, "parent_formal_task_id", request.formal_task_id)
+        object.__setattr__(value, "context_values", request.context_values)
+        object.__setattr__(value, "active_graph_stack", request.active_graph_stack)
+        return value
+
+    def child_context(
+        self,
+        invocation_id: str,
+        context_values: Mapping[str, JSONValue] | None = None,
+    ) -> TaskGraphExecutionContext:
+        if type(self) is not TaskGraphContinuation:
+            raise TypeError("task graph continuation must use the exact runtime type")
+        return TaskGraphExecutionContext(
+            invocation_id,
+            self.context_values if context_values is None else context_values,
+            self.active_graph_stack,
+        )
 
 
 @dataclass(frozen=True)
@@ -312,6 +352,7 @@ class TaskGraphLeafResult:
     outcome_kind: str = "success"
     outcome_label: str = ""
     blocked_reason: str = ""
+    child_projections: tuple[TaskGraphNodeProjection, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphLeafResult:
@@ -341,6 +382,20 @@ class TaskGraphLeafResult:
             for item in records
         ):
             raise ValueError("task graph leaf settlement is not linked to its mutation")
+        projections: list[TaskGraphNodeProjection] = []
+        projection_by_id: dict[str, TaskGraphNodeProjection] = {}
+        for item in tuple(self.child_projections):
+            if type(item) is not TaskGraphNodeProjection:
+                raise TypeError("task graph child projections are invalid")
+            if item.status != "complete":
+                raise ValueError("task graph child projection is not complete")
+            previous = projection_by_id.get(item.execution_id)
+            if previous is not None:
+                if previous != item:
+                    raise ValueError("task graph child projection identity conflicts")
+                continue
+            projection_by_id[item.execution_id] = item
+            projections.append(item)
         if self.status == "resolved":
             if not self.outcome_kind or self.blocked_reason:
                 raise ValueError("resolved task graph leaf result is inconsistent")
@@ -350,6 +405,7 @@ class TaskGraphLeafResult:
                 or events
                 or rng_events
                 or records
+                or projections
                 or self.outcome_kind
                 or self.outcome_label
                 or not self.blocked_reason
@@ -361,6 +417,7 @@ class TaskGraphLeafResult:
         object.__setattr__(self, "events", events)
         object.__setattr__(self, "rng_events", rng_events)
         object.__setattr__(self, "settlement_records", records)
+        object.__setattr__(self, "child_projections", tuple(projections))
 
 
 @dataclass(frozen=True)
@@ -582,6 +639,8 @@ class _TaskGraphRun:
         self.rng_events: list[RNGEvent] = []
         self.records: list[TaskGraphSettlementRecord] = []
         self.projections: list[TaskGraphNodeProjection] = []
+        self.child_projections: list[TaskGraphNodeProjection] = []
+        self.child_projection_by_id: dict[str, TaskGraphNodeProjection] = {}
         self.execution_ids: set[str] = set()
         self.mutation_ids: set[str] = set()
         self.event_ids: set[str] = set()
@@ -762,6 +821,23 @@ class _TaskGraphRun:
         self._children(graph, node_by_id, children, (*path, "continuation"))
 
     def _admit_leaf(self, result: TaskGraphLeafResult) -> None:
+        own_projection_by_id = {item.execution_id: item for item in self.projections}
+        accepted_child_projections: list[TaskGraphNodeProjection] = []
+        for projection in result.child_projections:
+            previous = self.child_projection_by_id.get(projection.execution_id)
+            if previous is None:
+                previous = own_projection_by_id.get(projection.execution_id)
+            if previous is not None:
+                if previous != projection:
+                    raise _ExecutionBlocked(
+                        f"task_graph_child_projection_identity_conflict:{projection.execution_id}"
+                    )
+                continue
+            if projection.execution_id in self.execution_ids:
+                raise _ExecutionBlocked(
+                    f"task_graph_child_projection_identity_conflict:{projection.execution_id}"
+                )
+            accepted_child_projections.append(projection)
         for mutation in result.mutations:
             if _RESERVED_IDENTITY_FIELDS.intersection(mutation.metadata):
                 raise _ExecutionBlocked("task_graph_leaf_forged_execution_identity")
@@ -798,6 +874,10 @@ class _TaskGraphRun:
         self.events.extend(result.events)
         self.rng_events.extend(result.rng_events)
         self.records.extend(result.settlement_records)
+        for projection in accepted_child_projections:
+            self.child_projections.append(projection)
+            self.child_projection_by_id[projection.execution_id] = projection
+            self.execution_ids.add(projection.execution_id)
         self.mutation_ids.update(item.stable_id() for item in result.mutations)
         self.event_ids.update(cast(str, item.to_json()["event_id"]) for item in result.events)
         self.rng_event_ids.update(cast(str, item.to_json()["event_id"]) for item in result.rng_events)
@@ -1091,7 +1171,7 @@ class TaskGraphExecutor:
             run.execute_graph(graph, (f"invocation:{context.invocation_id}",))
         except _ExecutionBlocked as exc:
             return self._blocked(state, tuple(run.projections), str(exc))
-        projections = tuple(run.projections)
+        projections = (*run.projections, *run.child_projections)
         node_results = tuple(item.to_node_result() for item in projections)
         outcome = TransitionOutcome("committed", (), node_results)
         return TaskGraphExecutionResult(

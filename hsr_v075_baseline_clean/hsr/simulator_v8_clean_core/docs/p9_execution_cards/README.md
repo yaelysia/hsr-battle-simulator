@@ -176,7 +176,10 @@ S8B1-S8B6 同样共享原 S8B 的预算：主入口累计目标 6 分钟、硬�
 | S8B4 | `P9-S8B4_STATUS_CALLBACK_MIGRATION.md` | 聚合说明，不直接执行 |
 | S8B4A | `P9-S8B4A_STATUS_CALLBACK_FORMAL_CATALOG.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B4B | `P9-S8B4B_STATUS_CALLBACK_RUNTIME_MIGRATION.md` | 5.6 Sol / xhigh / 普通聚焦 |
-| S8B5 | `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B5 | `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md` | 聚合说明，不直接执行 |
+| S8B5A | `P9-S8B5A_CROSS_ENTRY_CONTINUATION_CONTRACT.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B5B | `P9-S8B5B_STATUS_TRIGGER_ABILITY_CATALOG_ADMISSION.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B5C | `P9-S8B5C_CROSS_ENTRY_RUNTIME_TRANSPORT.md` | 5.6 Sol / xhigh / Goal |
 | S8B6 | `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md` | 5.6 Sol / high / 普通聚焦 |
 | S8C | `P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md` | 5.6 Sol / max / Goal |
 | S9 | `P9-S9_EVENT_CONTRACT_ACTION_WINDOWS.md` | 5.6 Sol / max / 普通聚焦 |

@@ -51,6 +51,7 @@ from .target import TargetSystem
 from .task_graph import (
     TaskGraphBranchResult,
     TaskGraphConditionResult,
+    TaskGraphContinuation,
     TaskGraphCountResult,
     TaskGraphExecutionContext,
     TaskGraphExecutionHooks,
@@ -148,6 +149,7 @@ __all__ = [
     "TargetSystem",
     "TaskGraphBranchResult",
     "TaskGraphConditionResult",
+    "TaskGraphContinuation",
     "TaskGraphCountResult",
     "TaskGraphExecutionContext",
     "TaskGraphExecutionHooks",

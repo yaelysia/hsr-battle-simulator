@@ -157,8 +157,12 @@ entry 由同一生产目录安装。S8B4B 也已完成验收：角色正式状�
 mutation 前闭合，失败会回滚状态及四条正式结果通道，可变伤害窗口账本也只在整组成功后提交。
 确定性 Retarget 支持有序多目标作用域，随机目标、Remodifier 和嵌套能力分别精确留给 S8C、S10
 和 S8B5；装备、怪物和全局 callback 保留显式有界 legacy 路径。聚焦验证 11/11，通过约 12.5 秒、
-峰值约 336 MiB，完整 Canonical IR build 为 0。下一张唯一执行卡是
-`P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md`。
+峰值约 336 MiB，完整 Canonical IR build 为 0。S8B5 已在预检后按权威边界拆为 A/B/C；S8B5A
+已完成验收：跨入口 continuation 只能由当前类型化 hook request 派生，活动图栈可阻断直接与间接环，
+子图成功 projection 可原子归并且身份冲突不会提交 mutation；失败仍保留外层 blocked 诊断，但不会
+发布子调用的成功 projection。聚焦验证 6/6，通过约 0.27 秒、峰值约 33 MiB，完整 Canonical IR
+build 和来源扫描均为 0。当前下一张唯一执行卡是
+`docs/p9_execution_cards/P9-S8B5B_STATUS_TRIGGER_ABILITY_CATALOG_ADMISSION.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 
