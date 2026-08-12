@@ -164,6 +164,10 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 - 真实内容被后续阶段阻断时，来源语义与执行上下文运输必须分开取证。允许用明确标注的最小
   validation fixture 证明通用调用链，但不得据此宣称真实角色、怪物或装备已经 executable；
   同样，真实来源目录闭合不能替代调度、提交、结算和 replay 连续性的生产证明。
+- 来源结构分母与执行准入必须分离：上游 watcher、container 或 owner 被 blocked 只能阻止执行，
+  不能让真实 child/callback 从正式目录消失。生产目录边界与验收独立分母都必须对此做双向闭合。
+- 共享 template/include 在多个 owner 中展开时，原始来源 occurrence 与正式图位置必须使用不同身份；
+  来源审计跟随模板，task/effect/condition 唯一身份和相对引用解析跟随 owner 图位置。
 - 一个公开执行 API 同时服务已迁移正式内容和待迁移外部/旧内容域时，必须在最外层按类型化
   producer 或 invocation role 分流；不得用名称、ID 形状或目录是否命中猜测，也不得全局替换后
   迫使未迁移内容提前改变行为。正式分支缺图或执行失败时严禁回退旧解释器。
@@ -218,6 +222,8 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 - 第一次复用应局限在一个已确认的重调用链内。至少两个独立真实消费者证明边界相同后，才允许提取跨阶段通用框架。
 - 共享重构建前必须先证明单次构建能在预算内完成且没有加载无关领域；只消费少量目录集合时，应在 compiler/lowering 层建立来源真实的窄投影，不能让聚焦验证先构建完整 Canonical IR 再过滤。
 - 聚焦验证直接证明生产契约或真实目录结果，不再为大型验证工具另写同等规模的元验证。验证代码总量默认不得因纯治理而净增长。
+- 生产类型化构造器已完整验证树、图或状态机拓扑时，验证器只独立证明完整来源进入该边界，并为
+  新增生产不变量保留一个最小反例；不得复制第二套拓扑解释器。
 - 同一业务不变量只能有一条权威验收路径；不得用多个 CLI mode、direct probe 或重复
   matrix 反复证明同一件事。诊断入口不能升级为并列完成门。
 - 未触达的 codec、不可变性、fingerprint、scenario admission 等既有契约默认继承；

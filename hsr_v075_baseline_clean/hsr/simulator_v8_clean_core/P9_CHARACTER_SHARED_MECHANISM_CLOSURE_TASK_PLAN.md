@@ -182,7 +182,8 @@ P9 要得到以下结果：
 | P9-S8B1 | S8A 来源形成不可变任务图 IR、物化账本和唯一查询，不改变 runtime | M06 IR 物化 |
 | P9-S8B2 | 领域中立执行器建立选中路径原子事务、循环和子图调用语义 | M06 执行内核 |
 | P9-S8B3 | 普通动作与 standalone ability 迁移到共享任务图执行器 | M06 ability 消费 |
-| P9-S8B4 | 状态 callback、确定性选择与目标迭代迁移到共享任务图执行器 | M06 status 消费 |
+| P9-S8B4A | 角色状态 callback 的完整正式图目录与 lowering 安装闭合 | M06 status 目录 |
+| P9-S8B4B | 状态 callback、确定性选择与目标迭代迁移到共享任务图执行器 | M06 status 消费 |
 | P9-S8B5 | 跨入口调用栈和执行投影完成统一运输 | M06 跨入口集成 |
 | P9-S8B6 | 旧 task 拓扑字段、双写和消费者退役，完成 S8B 聚合审计 | M06 runtime 聚合 |
 | P9-S8C | projectile 命中序列、模拟 barrier、parallel 与随机分支统一到确定性顺序和 RNG ledger | M06 时序、M16 控制流部分 |
@@ -209,7 +210,7 @@ evaluator、event 和 runtime 共享边界，并行合并会增加遗漏和重�
 
 ```text
 S0 -> S1 -> S2 -> S3 -> S4 -> S5A -> S5B -> S5C1 -> S5C2 -> S5D1 -> S5D2 -> S6A -> S6B -> S7
- -> S8A -> S8A-R1 -> S8B1 -> S8B2 -> S8B1-R2 -> S8B3 -> S8B4 -> S8B5 -> S8B6 -> S8C -> S9
+ -> S8A -> S8A-R1 -> S8B1 -> S8B2 -> S8B1-R2 -> S8B3 -> S8B4A -> S8B4B -> S8B5 -> S8B6 -> S8C -> S9
  -> S10 -> S11 -> S12 -> S13 -> S14 -> S15 -> S16 -> S17
  -> S18 -> S19 -> S20
 ```
@@ -303,7 +304,9 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B3B 普通角色动作任务图迁移完成验收。
 - [x] P9-S8B3C queue standalone ability 任务图迁移完成验收。
 - [x] P9-S8B3 聚合完成验收（S8B3A-S8B3C 均已通过）。
-- [ ] P9-S8B4 状态 callback 迁移完成验收。
+- [x] P9-S8B4A 状态 callback 正式图目录与 lowering 安装完成验收。
+- [ ] P9-S8B4B 状态 callback runtime 迁移完成验收。
+- [ ] P9-S8B4 聚合完成验收（仅在 S8B4A-S8B4B 全部通过后勾选）。
 - [ ] P9-S8B5 跨入口上下文和执行投影运输完成验收。
 - [ ] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
 - [ ] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。

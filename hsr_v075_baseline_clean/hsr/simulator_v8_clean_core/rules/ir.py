@@ -6437,6 +6437,20 @@ class StatusCallbackTaskIR:
     blocked_reason: str = ""
     task_payload: dict[str, JSONValue] = field(default_factory=dict)
     retarget_policy: dict[str, JSONValue] = field(default_factory=dict)
+    linked_standalone_graph_id: str = ""
+    linked_ability_phase_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.linked_standalone_graph_id, str) or not isinstance(
+            self.linked_ability_phase_id, str
+        ):
+            raise TypeError("status callback task call targets must be strings")
+        if self.linked_standalone_graph_id and self.linked_ability_phase_id:
+            raise ValueError("status callback task call target is ambiguous")
+        if self.opcode != "TriggerAbility" and (
+            self.linked_standalone_graph_id or self.linked_ability_phase_id
+        ):
+            raise ValueError("non-trigger status task cannot carry an ability call target")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6460,6 +6474,8 @@ class StatusCallbackTaskIR:
             "blocked_reason": self.blocked_reason,
             "task_payload": self.task_payload,
             "retarget_policy": self.retarget_policy,
+            "linked_standalone_graph_id": self.linked_standalone_graph_id,
+            "linked_ability_phase_id": self.linked_ability_phase_id,
         }
 
 
@@ -7645,6 +7661,28 @@ class CanonicalIR:
                 for item in task_graph_catalog.entry_materializations
                 if item.entry_kind == "ability_phase_callback"
             }
+            actual_status_entries = {
+                (item.owner_id, item.callback_kind)
+                for item in task_graph_catalog.entry_materializations
+                if item.entry_kind == "status_callback"
+            }
+            status_scope_paths = (
+                {
+                    item.source.source_path
+                    for item in self.character_ability_source_graph_catalog.sources
+                }
+                if self.character_ability_source_graph_catalog is not None
+                else set()
+            )
+            expected_status_entries = {
+                (callback.callback_id, callback.event)
+                for callback in self.status_callbacks
+                if status_tasks_by_callback.get(callback.callback_id)
+                and (
+                    not status_scope_paths
+                    or callback.source.source_path in status_scope_paths
+                )
+            }
             if any(
                 item.entry_kind == "ability_phase_callback"
                 and item.status != "materialized"
@@ -7667,6 +7705,10 @@ class CanonicalIR:
             ):
                 raise ValueError(
                     "CanonicalIR formal ability graph denominator is incomplete"
+                )
+            if expected_status_entries != actual_status_entries:
+                raise ValueError(
+                    "CanonicalIR formal status graph denominator is incomplete"
                 )
             graph_by_id = {item.graph_id: item for item in task_graph_catalog.graphs}
             for entry in task_graph_catalog.entry_materializations:
@@ -7701,7 +7743,20 @@ class CanonicalIR:
                     selected_task_ids = {
                         item.task_id for item in formal_tasks
                     }
-                    ordered_task_ids = tuple(owner.task_ids)
+                    non_roots = tuple(
+                        sorted(
+                            (
+                                task
+                                for task in formal_tasks
+                                if task.parent_task_id
+                            ),
+                            key=lambda item: (item.task_path, item.task_id),
+                        )
+                    )
+                    ordered_task_ids = (
+                        *owner.task_ids,
+                        *(item.task_id for item in non_roots),
+                    )
                 if (
                     not formal_tasks
                     or len(ordered_task_ids) != len(formal_tasks)

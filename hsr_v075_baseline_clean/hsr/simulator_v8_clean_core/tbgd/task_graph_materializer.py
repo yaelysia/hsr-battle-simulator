@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
@@ -19,6 +19,7 @@ from ..rules.ir import (
     ConditionIR,
     EffectIR,
     StandaloneAbilityGraphIR,
+    StatusCallbackIR,
     StatusCallbackTaskIR,
     TargetExpressionIR,
 )
@@ -227,6 +228,70 @@ def materialize_ability_task_graph_catalog(
         canonical,
         source_snapshot,
     )
+    entries, graphs = _materialize_ability_entries(context, canonical)
+    dispositions = _materialization_dispositions(
+        context.base.source_dispositions,
+        entries,
+        graphs,
+    )
+    return _catalog(
+        source_catalog,
+        "formal_catalog",
+        dispositions,
+        entries,
+        graphs,
+    )
+
+
+def materialize_character_runtime_task_graph_catalog(
+    source_catalog: CharacterControlFlowContractCatalog,
+    canonical: CanonicalIR,
+    *,
+    source_snapshot: CharacterAbilityRawSnapshot,
+    definition_scope_complete: bool,
+) -> TaskGraphCatalogIR:
+    """Install ability and character-status entries under one source authority."""
+
+    if type(canonical) is not CanonicalIR:
+        raise TypeError("character runtime task graph catalog requires exact CanonicalIR")
+    if type(definition_scope_complete) is not bool:
+        raise TypeError("character task graph completeness marker must be bool")
+    if not definition_scope_complete:
+        raise ValueError("limited character task graph catalog cannot be complete")
+    context = _prepare_materialization(source_catalog, canonical, source_snapshot)
+    ability_entries, ability_graphs = _materialize_ability_entries(
+        context,
+        canonical,
+    )
+    status_entries, status_graphs = _materialize_status_entries(
+        context,
+        canonical,
+        source_snapshot,
+    )
+    entries = (*ability_entries, *status_entries)
+    graphs = (*ability_graphs, *status_graphs)
+    if len({item.entry_id for item in entries}) != len(entries):
+        raise ValueError("character task graph entries contain duplicate identities")
+    if len({item.graph_id for item in graphs}) != len(graphs):
+        raise ValueError("character task graphs contain duplicate identities")
+    dispositions = _materialization_dispositions(
+        context.base.source_dispositions,
+        entries,
+        graphs,
+    )
+    return _catalog(
+        source_catalog,
+        "formal_catalog",
+        dispositions,
+        entries,
+        graphs,
+    )
+
+
+def _materialize_ability_entries(
+    context: _MaterializationContext,
+    canonical: CanonicalIR,
+) -> tuple[tuple[TaskGraphEntryMaterializationIR, ...], tuple[TaskGraphIR, ...]]:
     phases = tuple(
         phase
         for phase in canonical.ability_phases
@@ -288,18 +353,152 @@ def materialize_ability_task_graph_catalog(
         raise ValueError("formal ability task graph phase denominator is incomplete")
     if len({item.entry_id for item in entries}) != len(entries):
         raise ValueError("formal ability task graph entries contain duplicate identities")
-    dispositions = _materialization_dispositions(
-        context.base.source_dispositions,
-        tuple(entries),
-        tuple(graphs),
+    return tuple(entries), tuple(graphs)
+
+
+def _materialize_status_entries(
+    context: _MaterializationContext,
+    canonical: CanonicalIR,
+    source_snapshot: CharacterAbilityRawSnapshot,
+) -> tuple[tuple[TaskGraphEntryMaterializationIR, ...], tuple[TaskGraphIR, ...]]:
+    root_source_paths = {
+        item.source.source_path for item in source_snapshot.sources
+    }
+    callbacks = tuple(
+        item
+        for item in canonical.status_callbacks
+        if item.source.source_path in root_source_paths
     )
-    return _catalog(
-        source_catalog,
-        "formal_catalog",
-        dispositions,
-        tuple(entries),
-        tuple(graphs),
+    _validate_status_callback_denominator(source_snapshot, callbacks)
+    callback_ids = tuple(item.callback_id for item in callbacks)
+    if len(callback_ids) != len(set(callback_ids)):
+        raise ValueError("formal status callbacks contain duplicate identities")
+    callback_by_id = {item.callback_id: item for item in callbacks}
+    tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = defaultdict(list)
+    task_ids: set[str] = set()
+    for task in canonical.status_callback_tasks:
+        if task.callback_id not in callback_by_id:
+            if task.source.evidence.get("admission_source_path") in root_source_paths:
+                raise ValueError("formal status task callback owner is missing")
+            continue
+        if task.task_id in task_ids:
+            raise ValueError("formal status tasks contain duplicate identities")
+        task_ids.add(task.task_id)
+        tasks_by_callback[task.callback_id].append(task)
+
+    entries: list[TaskGraphEntryMaterializationIR] = []
+    graphs: list[TaskGraphIR] = []
+    for callback in sorted(callbacks, key=lambda item: item.callback_id):
+        tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))
+        if not tasks:
+            if callback.task_ids:
+                raise ValueError("taskless status callback carries root task identities")
+            continue
+        ordered = _ordered_status_task_ids(callback, tasks)
+        entry, graph = _materialize_entry(
+            context,
+            "status_callback",
+            callback.callback_id,
+            callback.event,
+            ordered,
+            tuple(_status_task(item) for item in tasks),
+        )
+        entries.append(entry)
+        if graph is not None:
+            graphs.append(graph)
+    if len({item.entry_id for item in entries}) != len(entries):
+        raise ValueError("formal status entries contain duplicate identities")
+    return tuple(entries), tuple(graphs)
+
+
+def _validate_status_callback_denominator(
+    source_snapshot: CharacterAbilityRawSnapshot,
+    callbacks: tuple[StatusCallbackIR, ...],
+) -> None:
+    expected: set[tuple[str, str]] = set()
+
+    def visit(value: object, path: str, source_path: str) -> None:
+        if isinstance(value, Mapping):
+            callback_list = value.get("_CallbackList")
+            if "_CallbackList" in value:
+                if not isinstance(callback_list, Sequence) or isinstance(
+                    callback_list, str
+                ):
+                    raise ValueError("status callback source list is invalid")
+                for index, callback in enumerate(callback_list):
+                    if not isinstance(callback, Mapping):
+                        raise ValueError("status callback source record is invalid")
+                    expected.add((source_path, f"{path}._CallbackList[{index}]"))
+            watchers = value.get("OnAbilityPropertyChange")
+            if isinstance(watchers, Sequence) and not isinstance(watchers, str):
+                for watcher_index, watcher in enumerate(watchers):
+                    ranges = watcher.get("Ranges") if isinstance(watcher, Mapping) else None
+                    if not isinstance(ranges, Sequence) or isinstance(ranges, str):
+                        continue
+                    for range_index, item in enumerate(ranges):
+                        if not isinstance(item, Mapping):
+                            continue
+                        base = f"{path}.OnAbilityPropertyChange[{watcher_index}].Ranges[{range_index}]"
+                        for branch in ("OnEnterRange", "OnExitRange"):
+                            tasks = item.get(branch)
+                            if isinstance(tasks, Sequence) and not isinstance(tasks, str) and tasks:
+                                expected.add((source_path, f"{base}.{branch}"))
+            for key, child in value.items():
+                visit(child, f"{path}.{key}", source_path)
+        elif isinstance(value, Sequence) and not isinstance(value, str):
+            for index, child in enumerate(value):
+                visit(child, f"{path}[{index}]", source_path)
+
+    for source in source_snapshot.sources:
+        source_path = source.source.source_path
+        visit(source_snapshot.documents[source_path], "$", source_path)
+    actual = tuple(
+        (
+            callback.source.source_path,
+            callback.source.evidence.get("callback_json_path"),
+        )
+        for callback in callbacks
     )
+    if (
+        any(not isinstance(path, str) or not path for _, path in actual)
+        or len(actual) != len(set(actual))
+        or set(actual) != expected
+    ):
+        raise ValueError("formal status callback source denominator is incomplete")
+
+
+def _ordered_status_task_ids(
+    callback: StatusCallbackIR,
+    tasks: tuple[StatusCallbackTaskIR, ...],
+) -> tuple[str, ...]:
+    if any(
+        task.callback_id != callback.callback_id
+        or task.modifier_name != callback.modifier_name
+        or task.event != callback.event
+        or task.source.evidence.get("callback_id") != callback.callback_id
+        or task.source.evidence.get("admission_source_path")
+        != callback.source.source_path
+        or task.source.evidence.get("graph_task_path") != task.task_path
+        for task in tasks
+    ):
+        raise ValueError("status callback task owner identity is inconsistent")
+    task_paths = tuple(task.task_path for task in tasks)
+    if len(task_paths) != len(set(task_paths)):
+        raise ValueError("status callback graph positions contain duplicates")
+    root_ids = tuple(task.task_id for task in tasks if not task.parent_task_id)
+    if (
+        len(callback.task_ids) != len(set(callback.task_ids))
+        or len(root_ids) != len(set(root_ids))
+        or set(callback.task_ids) != set(root_ids)
+    ):
+        raise ValueError("status callback root task ledger is incomplete")
+    non_roots = tuple(
+        sorted(
+            (task for task in tasks if task.parent_task_id),
+            key=lambda item: (item.task_path, item.task_id),
+        )
+    )
+    return (*callback.task_ids, *(item.task_id for item in non_roots))
 
 
 def materialize_ability_phase_task_graph(
@@ -352,10 +551,7 @@ def materialize_status_callback_task_graph(
     tasks = tuple(item for item in canonical.status_callback_tasks if item.callback_id == callback_id)
     if not tasks:
         raise ValueError("status task graph callback selection is empty")
-    selected = {item.task_id for item in tasks}
-    ordered = tuple(item for item in callbacks[0].task_ids if item in selected)
-    if len(ordered) != len(tasks) or set(ordered) != selected:
-        raise ValueError("status callback task ledger is incomplete")
+    ordered = _ordered_status_task_ids(callbacks[0], tasks)
     return _materialize(
         source_catalog,
         canonical,
@@ -516,8 +712,14 @@ def _status_task(task: StatusCallbackTaskIR) -> _FormalTask:
         task.condition_id,
         task.target_expression_id,
         task.effect_id,
-        "",
-        "",
+        task.linked_ability_phase_id or task.linked_standalone_graph_id,
+        (
+            "ability_phase"
+            if task.linked_ability_phase_id
+            else "standalone_ability"
+            if task.linked_standalone_graph_id
+            else ""
+        ),
         "runtime_effect",
         task.coverage_status,
         task.source,

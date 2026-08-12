@@ -148,8 +148,12 @@ S8B1-R2、S8B3A-S8B3C 已完成验收。角色普通动作和 queue standalone �
 目录与 B2 原子任务图执行器；queue resolution 仍唯一提供 standalone graph、actor、targets 和 queue
 identity，scheduler 最外层 transition 是唯一发布门。正式 standalone 不构造临时动作对象，失败时
 只发布既有 queue terminalization。真实黑天鹅 queue 来源已进入正式路由，但随机命中序列仍诚实等待
-S8C；standalone damage context 也归 S8C，status callback 归 S8B4，跨事件上下文归 S8B5，外部
-legacy adapter 归 S8B6。下一张唯一执行卡是 `P9-S8B4_STATUS_CALLBACK_MIGRATION.md`。
+S8C；standalone damage context 也归 S8C，跨事件上下文归 S8B5，外部 legacy adapter 归 S8B6。
+S8B4A 已完成验收：完整角色来源中的 2,470 条状态 callback 与 9,392 条任务已进入正式任务图目录；
+2,390 条有任务 callback 各有唯一 entry，80 条无任务 callback 不生成 synthetic graph。共享模板的
+来源 occurrence 与 owner 图位置使用独立身份，上游 blocked 不再删除下游来源结构；ability 与 status
+entry 由同一生产目录安装，runtime 未改变。下一张唯一执行卡是
+`P9-S8B4B_STATUS_CALLBACK_RUNTIME_MIGRATION.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

@@ -39,7 +39,7 @@ from .character_control_flow_contracts import (
 )
 from .task_graph_materializer import (
     build_complete_task_graph_catalog,
-    materialize_ability_task_graph_catalog,
+    materialize_character_runtime_task_graph_catalog,
 )
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
@@ -1988,6 +1988,11 @@ class TBGDLowering:
 
         ability_files = self._ability_files()
         selected_ability_files = _limit_sequence(ability_files, self.limits.max_ability_files)
+        formal_status_source_context = self._character_formal_task_source_context()
+        formal_status_root_paths = {
+            item.source.source_path
+            for item in self._character_ability_raw_snapshot.sources
+        }
         for ability_file_order, path in enumerate(selected_ability_files):
             relative = relative_source_path(self.tbgd_root, path)
             selected_equipment_sources = None
@@ -2000,6 +2005,11 @@ class TBGDLowering:
                 queue_priority_lookup,
                 ability_file_order=ability_file_order,
                 selected_equipment_sources=selected_equipment_sources,
+                formal_status_source_context=(
+                    formal_status_source_context
+                    if relative in formal_status_root_paths
+                    else None
+                ),
             )
             entities.extend(lowered.entities)
             triggers.extend(lowered.triggers)
@@ -2068,6 +2078,12 @@ class TBGDLowering:
             effects,
             standalone_ability_graphs,
             ability_phases,
+        )
+        status_callback_tasks = _link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            effects,
+            standalone_ability_graphs,
         )
         standalone_task_ids = {task.task_id for task in standalone_tasks}
         linked_standalone_tasks = [task for task in ability_tasks if task.task_id in standalone_task_ids]
@@ -2269,11 +2285,26 @@ class TBGDLowering:
             target_expressions=tuple(
                 _dedupe_target_expressions(target_expressions).values()
             ),
+            status_callbacks=tuple(status_callbacks),
+            status_callback_tasks=tuple(status_callback_tasks),
         )
-        character_task_graph_catalog = materialize_ability_task_graph_catalog(
-            control_flow_catalog,
-            task_graph_view,
-            source_snapshot=self._character_ability_raw_snapshot,
+        task_graph_scope_complete = all(
+            value is None
+            for value in (
+                self.limits.max_records_per_table,
+                self.limits.max_ability_files,
+                self.limits.max_callbacks_per_file,
+            )
+        )
+        character_task_graph_catalog = (
+            materialize_character_runtime_task_graph_catalog(
+                control_flow_catalog,
+                task_graph_view,
+                source_snapshot=self._character_ability_raw_snapshot,
+                definition_scope_complete=True,
+            )
+            if task_graph_scope_complete
+            else None
         )
         self._character_formal_task_graph_catalog = character_task_graph_catalog
 
@@ -6717,8 +6748,20 @@ class TBGDLowering:
         ability_file_order: int,
         selected_equipment_sources: dict[int, IRSource] | None = None,
         raw_document: Mapping[str, Any] | None = None,
+        formal_status_source_context: _AbilityFormalTaskSourceContext | None = None,
     ) -> "_LoweredAbility":
         relative = relative_source_path(self.tbgd_root, path)
+        if (
+            formal_status_source_context is not None
+            and formal_status_source_context
+            is not self._character_formal_task_source_context()
+        ):
+            raise ValueError("formal status task source context is not authoritative")
+        if (
+            formal_status_source_context is not None
+            and relative not in formal_status_source_context.documents
+        ):
+            raise ValueError("formal status task source document is missing")
         if raw_document is None:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -6860,6 +6903,7 @@ class TBGDLowering:
                     queue_priority_lookup=queue_priority_lookup,
                     source_context=callback_source_context,
                     task_templates=task_templates,
+                    formal_source_context=formal_status_source_context,
                 )
                 lowered.merge(callback_lowered)
                 trigger_effects.extend(
@@ -7033,6 +7077,7 @@ class TBGDLowering:
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=source_context,
                 task_templates=task_templates,
+                formal_source_context=formal_status_source_context,
             )
             lowered.merge(watcher_lowered)
         return lowered
@@ -7049,6 +7094,7 @@ class TBGDLowering:
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any],
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]],
+        formal_source_context: _AbilityFormalTaskSourceContext | None,
     ) -> tuple["_LoweredAbility", int]:
         lowered = _LoweredAbility()
         if raw_watchers is None:
@@ -7111,8 +7157,10 @@ class TBGDLowering:
                 watcher_blocked_reason = (
                     f"ability_property_not_runtime_readable:{property_name or 'missing'}"
                 )
-            elif not isinstance(raw_ranges, list) or not raw_ranges:
-                watcher_blocked_reason = "ability_property_ranges_missing"
+            if not isinstance(raw_ranges, list) or not raw_ranges:
+                watcher_blocked_reason = (
+                    watcher_blocked_reason or "ability_property_ranges_missing"
+                )
             else:
                 for range_index, raw_range in enumerate(raw_ranges):
                     range_id = f"{watcher_id}:range:{range_index}"
@@ -7133,6 +7181,7 @@ class TBGDLowering:
                             queue_priority_lookup=queue_priority_lookup,
                             source_context=source_context,
                             task_templates=task_templates,
+                            formal_source_context=formal_source_context,
                         )
                     )
                     lowered.merge(branch_lowered)
@@ -7145,6 +7194,22 @@ class TBGDLowering:
                             property_range.blocked_reason
                             or "ability_property_range_not_executable"
                         )
+            if watcher_blocked_reason:
+                lowered.status_callbacks = [
+                    replace(
+                        callback,
+                        coverage_status="blocked",
+                        blocked_reason=watcher_blocked_reason,
+                        admission_status="blocked",
+                        blocking_dependency=watcher_blocked_reason,
+                    )
+                    if callback.source.evidence.get(
+                        "ability_property_watcher_id"
+                    )
+                    == watcher_id
+                    else callback
+                    for callback in lowered.status_callbacks
+                ]
             lowered.ability_property_watchers.append(
                 AbilityPropertyWatcherIR(
                     watcher_id=watcher_id,
@@ -7176,6 +7241,7 @@ class TBGDLowering:
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any],
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]],
+        formal_source_context: _AbilityFormalTaskSourceContext | None,
     ) -> tuple[AbilityPropertyRangeIR, "_LoweredAbility", int]:
         lowered = _LoweredAbility()
         source = IRSource(
@@ -7263,6 +7329,7 @@ class TBGDLowering:
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=callback_source_context,
                 task_templates=task_templates,
+                formal_source_context=formal_source_context,
             )
             lowered.merge(branch_lowered)
             callback_task_ids = tuple(
@@ -7305,7 +7372,12 @@ class TBGDLowering:
                     coverage_status=callback_status,
                     blocked_reason=callback_reason,
                     scope_kind="ability_property_range",
-                    source_mode="mainline_equipment",
+                    source_mode=_status_callback_source_mode(
+                        relative,
+                        equipment_source_admitted=bool(
+                            source_context.get("equipment_ability_source_admitted")
+                        ),
+                    ),
                     admission_status=callback_status,
                     blocking_dependency=callback_reason,
                 )
@@ -7355,7 +7427,14 @@ class TBGDLowering:
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any] | None = None,
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]] | None = None,
+        formal_source_context: _AbilityFormalTaskSourceContext | None = None,
     ) -> "_LoweredAbility":
+        if (
+            formal_source_context is not None
+            and formal_source_context
+            is not self._character_formal_task_source_context()
+        ):
+            raise ValueError("formal status task source context is not authoritative")
         lowered = _LoweredAbility()
         if not isinstance(tasks, list):
             return lowered
@@ -7375,6 +7454,9 @@ class TBGDLowering:
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=source_context,
                 task_templates=task_templates,
+                formal_source_context=formal_source_context,
+                source_json_path=f"{task_list_json_path}[{task_index}]",
+                admission_source_path=relative,
                 template_stack=(),
             )
             lowered.merge(task_lowered)
@@ -7397,11 +7479,36 @@ class TBGDLowering:
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any] | None = None,
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]] | None = None,
+        formal_source_context: _AbilityFormalTaskSourceContext | None = None,
+        source_json_path: str = "",
+        admission_source_path: str = "",
         template_stack: tuple[str, ...] = (),
+        lower_children: bool = True,
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         if not isinstance(task, dict):
             return lowered
+        if formal_source_context is not None:
+            return self._lower_formal_status_callback_task_tree(
+                task,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=task_index,
+                task_path=task_path,
+                branch=branch,
+                parent_task_id=parent_task_id,
+                queue_priority_lookup=queue_priority_lookup,
+                source_context=source_context,
+                task_templates=task_templates,
+                formal_source_context=formal_source_context,
+                source_json_path=source_json_path,
+                admission_source_path=admission_source_path or relative,
+                template_stack=template_stack,
+            )
         raw_task = task
         raw_opcode = _short_gamecore_type(raw_task.get("$type"))
         equipment_source_admitted = bool(
@@ -7412,7 +7519,7 @@ class TBGDLowering:
             raw_task,
             equipment_source_admitted=equipment_source_admitted,
         )
-        task_id = f"status_callback_task:{relative}:{modifier_name}:{callback_index}:{task_path}:{opcode}"
+        task_id = f"status_callback_task:{callback_id}:{task_path}:{opcode}"
         evidence: dict[str, Any] = {
             "callback_id": callback_id,
             "callback_index": callback_index,
@@ -7426,7 +7533,9 @@ class TBGDLowering:
             "task": _json_safe(raw_task),
             **schema_alias_evidence,
             **_json_safe(source_context or {}),
-            "json_path": task_path,
+            "json_path": source_json_path or task_path,
+            "graph_task_path": task_path,
+            "admission_source_path": admission_source_path or relative,
         }
         if opcode == "Retarget":
             evidence["retarget"] = _retarget_task_evidence(task)
@@ -7474,7 +7583,9 @@ class TBGDLowering:
                 lowered.conditions.append(condition)
             success_ids: list[str] = []
             failed_ids: list[str] = []
-            for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+            for child_index, child in enumerate(
+                (task.get("SuccessTaskList") or []) if lower_children else ()
+            ):
                 child_lowered = self._lower_status_callback_task_tree(
                     child,
                     relative=relative,
@@ -7494,7 +7605,9 @@ class TBGDLowering:
                 )
                 lowered.merge(child_lowered)
                 success_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
-            for child_index, child in enumerate(task.get("FailedTaskList") or []):
+            for child_index, child in enumerate(
+                (task.get("FailedTaskList") or []) if lower_children else ()
+            ):
                 child_lowered = self._lower_status_callback_task_tree(
                     child,
                     relative=relative,
@@ -7548,10 +7661,7 @@ class TBGDLowering:
         if retarget_condition:
             lowered.conditions.append(retarget_condition)
 
-        effect_id = (
-            f"effect:{relative}:{modifier_name}:{callback_index}:"
-            f"{task_path}:{opcode}"
-        )
+        effect_id = f"effect:{task_id}"
         child_task_ids: list[str] = []
         success_task_ids: list[str] = []
         failed_task_ids: list[str] = []
@@ -7559,7 +7669,7 @@ class TBGDLowering:
         child_task_list: Any = task.get("TaskList") or []
         child_task_list_json_path = f"{task_path}.TaskList"
         child_template_stack = template_stack
-        if opcode == "IncludeTaskListTemplate":
+        if opcode == "IncludeTaskListTemplate" and lower_children:
             template_name = task.get("Name")
             bindings = (
                 (task_templates or {}).get(template_name, ())
@@ -7590,7 +7700,9 @@ class TBGDLowering:
                     "scope": binding.scope,
                     "task_count": len(binding.task_list),
                 }
-        for child_index, child in enumerate(child_task_list):
+        for child_index, child in enumerate(
+            child_task_list if lower_children else ()
+        ):
             child_lowered = self._lower_status_callback_task_tree(
                 child,
                 relative=relative,
@@ -7610,7 +7722,9 @@ class TBGDLowering:
             )
             lowered.merge(child_lowered)
             child_task_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
-        for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+        for child_index, child in enumerate(
+            (task.get("SuccessTaskList") or []) if lower_children else ()
+        ):
             child_lowered = self._lower_status_callback_task_tree(
                 child,
                 relative=relative,
@@ -7632,7 +7746,9 @@ class TBGDLowering:
             child_ids = [item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id]
             child_task_ids.extend(child_ids)
             success_task_ids.extend(child_ids)
-        for child_index, child in enumerate(task.get("FailedTaskList") or []):
+        for child_index, child in enumerate(
+            (task.get("FailedTaskList") or []) if lower_children else ()
+        ):
             child_lowered = self._lower_status_callback_task_tree(
                 child,
                 relative=relative,
@@ -7666,10 +7782,10 @@ class TBGDLowering:
         else:
             coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
         source_admitted = (
-            _queue_intent_source_admitted(relative)
+            _queue_intent_source_admitted(admission_source_path or relative)
             if opcode in QUEUE_INTENT_OPCODES
             else _status_callback_task_source_admitted(
-                relative,
+                admission_source_path or relative,
                 event,
                 opcode,
                 equipment_source_admitted=equipment_source_admitted,
@@ -7701,7 +7817,11 @@ class TBGDLowering:
                 task_path=task_path,
                 branch=branch,
                 opcode=opcode,
-                effect_id="" if opcode == "Retarget" else effect_id,
+                effect_id=(
+                    ""
+                    if opcode in STATUS_CALLBACK_EFFECTLESS_OPCODES
+                    else effect_id
+                ),
                 condition_id=retarget_condition.condition_id if retarget_condition else "",
                 target_expression_id=(
                     task_target_expression_id
@@ -7790,6 +7910,158 @@ class TBGDLowering:
             )
         return lowered
 
+    def _lower_formal_status_callback_task_tree(
+        self,
+        task: dict[str, Any],
+        *,
+        relative: str,
+        map_name: str,
+        modifier_name: str,
+        callback_id: str,
+        event: str,
+        callback_index: int,
+        task_index: int,
+        task_path: str,
+        branch: str,
+        parent_task_id: str,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+        source_context: dict[str, Any] | None,
+        task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]] | None,
+        formal_source_context: _AbilityFormalTaskSourceContext,
+        source_json_path: str,
+        admission_source_path: str,
+        template_stack: tuple[str, ...],
+    ) -> "_LoweredAbility":
+        if not source_json_path.startswith("$"):
+            raise ValueError("formal status task source JSON path is missing")
+        source_document = formal_source_context.documents.get(relative)
+        if source_document is None:
+            raise ValueError("formal status task source document is missing")
+        source_task = _value_at_rooted_json_path(
+            source_document,
+            source_json_path,
+        )
+        if not isinstance(source_task, Mapping) or dict(source_task) != task:
+            raise ValueError("formal status task payload does not match its source")
+        if relative not in formal_source_context.content_sha256_by_path:
+            raise ValueError("formal status task source fingerprint is missing")
+        source_opcode = _short_gamecore_type(task.get("$type"))
+        if not source_opcode:
+            raise ValueError("formal status task source family is missing")
+        formal_children, topology_blocked_reason = (
+            self._formal_ability_task_children(
+                task,
+                source_path=relative,
+                source_json_path=source_json_path,
+                source_opcode=source_opcode,
+                context=formal_source_context,
+                template_stack=template_stack,
+            )
+        )
+        lowered = self._lower_status_callback_task_tree(
+            task,
+            relative=relative,
+            map_name=map_name,
+            modifier_name=modifier_name,
+            callback_id=callback_id,
+            event=event,
+            callback_index=callback_index,
+            task_index=task_index,
+            task_path=task_path,
+            branch=branch,
+            parent_task_id=parent_task_id,
+            queue_priority_lookup=queue_priority_lookup,
+            source_context=source_context,
+            task_templates=task_templates,
+            formal_source_context=None,
+            source_json_path=source_json_path,
+            admission_source_path=admission_source_path,
+            template_stack=template_stack,
+            lower_children=False,
+        )
+        if len(lowered.status_callback_tasks) != 1:
+            raise ValueError("formal status task node lowering is not singular")
+        parent = lowered.status_callback_tasks[0]
+        child_task_ids: list[str] = []
+        success_task_ids: list[str] = []
+        failed_task_ids: list[str] = []
+        for branch_ordinal, child in enumerate(formal_children):
+            child_task_path = (
+                f"{task_path}.formal_branch[{branch_ordinal}]"
+                f".child[{child.ordinal}]"
+            )
+            child_lowered = self._lower_status_callback_task_tree(
+                dict(child.raw),
+                relative=child.source_path,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=child.ordinal,
+                task_path=child_task_path,
+                branch=child.branch_kind,
+                parent_task_id=parent.task_id,
+                queue_priority_lookup=queue_priority_lookup,
+                source_context=source_context,
+                task_templates=task_templates,
+                formal_source_context=formal_source_context,
+                source_json_path=child.json_path,
+                admission_source_path=admission_source_path,
+                template_stack=child.template_stack,
+            )
+            direct_ids = [
+                item.task_id
+                for item in child_lowered.status_callback_tasks
+                if item.parent_task_id == parent.task_id
+            ]
+            if len(direct_ids) != 1:
+                raise ValueError("formal status branch child lowering is not singular")
+            child_task_ids.extend(direct_ids)
+            if child.branch_kind == "success":
+                success_task_ids.extend(direct_ids)
+            elif child.branch_kind == "failed":
+                failed_task_ids.extend(direct_ids)
+            lowered.merge(child_lowered)
+
+        coverage_status = parent.coverage_status
+        blocked_reason = parent.blocked_reason
+        if parent.opcode == "Retarget":
+            condition = next(
+                (
+                    item
+                    for item in lowered.conditions
+                    if item.condition_id == parent.condition_id
+                ),
+                None,
+            )
+            coverage_status, blocked_reason = _retarget_task_status(
+                condition,
+                child_task_ids,
+            )
+        if topology_blocked_reason:
+            coverage_status = "blocked"
+            blocked_reason = topology_blocked_reason
+        parent_source = IRSource(
+            parent.source.source_path,
+            parent.source.raw_type,
+            parent.source.raw_id,
+            {
+                **dict(parent.source.evidence),
+                "child_task_count": len(child_task_ids),
+            },
+        )
+        lowered.status_callback_tasks[0] = replace(
+            parent,
+            child_task_ids=tuple(child_task_ids),
+            success_task_ids=tuple(success_task_ids),
+            failed_task_ids=tuple(failed_task_ids),
+            source=parent_source,
+            coverage_status=coverage_status,
+            blocked_reason=blocked_reason,
+        )
+        return lowered
+
     def _lower_condition(self, predicate: Any, source: IRSource, task_index: int) -> ConditionIR | None:
         if not isinstance(predicate, dict):
             return None
@@ -7831,9 +8103,14 @@ class TBGDLowering:
             blocked_reason = (
                 "" if status == "executable" else f"condition_not_admitted:{opcode}"
             )
-        condition_path = str(source.evidence.get("task_path", task_index)) if isinstance(source.evidence, dict) else str(task_index)
+        condition_owner = source.evidence.get("callback_id")
+        condition_path = source.evidence.get("graph_task_path")
+        if not isinstance(condition_owner, str) or not condition_owner:
+            raise ValueError("status condition callback identity is missing")
+        if not isinstance(condition_path, str) or not condition_path:
+            raise ValueError("status condition graph position is missing")
         return ConditionIR(
-            condition_id=f"condition:{source.source_path}:{source.raw_id}:{source.evidence.get('callback_index')}:{condition_path}:{opcode}",
+            condition_id=f"condition:{condition_owner}:{condition_path}:{opcode}",
             opcode=opcode,
             payload=payload,
             source=condition_source,
@@ -11689,6 +11966,78 @@ def _link_trigger_ability_graphs(
             ))
             continue
         reason = "trigger_ability_graph_missing" if not candidates else "trigger_ability_graph_link_ambiguous"
+        linked.append(
+            replace(
+                task,
+                coverage_status="blocked",
+                blocked_reason=reason,
+                linked_standalone_graph_id="",
+                linked_ability_phase_id="",
+            )
+        )
+    return linked
+
+
+def _link_status_trigger_ability_graphs(
+    tasks: list[StatusCallbackTaskIR],
+    callbacks: list[StatusCallbackIR],
+    effects: list[EffectIR],
+    graphs: list[StandaloneAbilityGraphIR],
+) -> list[StatusCallbackTaskIR]:
+    callbacks_by_id: dict[str, StatusCallbackIR] = {}
+    for callback in callbacks:
+        existing = callbacks_by_id.get(callback.callback_id)
+        if existing is not None and existing != callback:
+            raise ValueError("status trigger ability callback identity is ambiguous")
+        callbacks_by_id[callback.callback_id] = callback
+    effects_by_id: dict[str, EffectIR] = {}
+    for effect in effects:
+        existing = effects_by_id.get(effect.effect_id)
+        if existing is not None:
+            raise ValueError("status trigger ability effect identity is ambiguous")
+        effects_by_id[effect.effect_id] = effect
+    graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
+    for graph in graphs:
+        graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+    linked: list[StatusCallbackTaskIR] = []
+    for task in tasks:
+        if task.opcode != "TriggerAbility":
+            linked.append(task)
+            continue
+        effect = effects_by_id.get(task.effect_id)
+        standard = effect.payload.get("standard") if effect is not None else None
+        ability_name = (
+            standard.get("ability_name") if isinstance(standard, dict) else None
+        )
+        candidates = tuple(graphs_by_name.get(str(ability_name or ""), ()))
+        owner = callbacks_by_id.get(task.callback_id)
+        if owner is None:
+            raise ValueError("status trigger ability callback owner is missing")
+        exact = tuple(
+            graph
+            for graph in candidates
+            if graph.source.source_path == owner.source.source_path
+        )
+        selected = exact if len(exact) == 1 else candidates if len(candidates) == 1 else ()
+        if selected:
+            linked.append(
+                replace(
+                    task,
+                    linked_standalone_graph_id=(
+                        selected[0].standalone_ability_graph_id
+                    ),
+                    linked_ability_phase_id="",
+                )
+            )
+            continue
+        if task.coverage_status != "executable":
+            linked.append(task)
+            continue
+        reason = (
+            "trigger_ability_graph_missing"
+            if not candidates
+            else "trigger_ability_graph_link_ambiguous"
+        )
         linked.append(
             replace(
                 task,

@@ -173,7 +173,9 @@ S8B1-S8B6 同样共享原 S8B 的预算：主入口累计目标 6 分钟、硬�
 | S8B3A | `P9-S8B3A_ABILITY_INVOCATION_FORMAL_CATALOG.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B3B | `P9-S8B3B_ACTION_CALLBACK_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
 | S8B3C | `P9-S8B3C_STANDALONE_QUEUE_MIGRATION.md` | 5.6 Sol / high / 普通聚焦 |
-| S8B4 | `P9-S8B4_STATUS_CALLBACK_MIGRATION.md` | 5.6 Sol / xhigh / 普通聚焦 |
+| S8B4 | `P9-S8B4_STATUS_CALLBACK_MIGRATION.md` | 聚合说明，不直接执行 |
+| S8B4A | `P9-S8B4A_STATUS_CALLBACK_FORMAL_CATALOG.md` | 5.6 Sol / high / 普通聚焦 |
+| S8B4B | `P9-S8B4B_STATUS_CALLBACK_RUNTIME_MIGRATION.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S8B5 | `P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S8B6 | `P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md` | 5.6 Sol / high / 普通聚焦 |
 | S8C | `P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md` | 5.6 Sol / max / Goal |
