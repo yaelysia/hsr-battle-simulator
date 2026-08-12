@@ -60,7 +60,7 @@ full_canonical_ir_build_count=0
 
 ## 唯一执行清单
 
-- [ ] 角色状态调用边纳入 phase 可达闭包。
-- [ ] nested entry 完整且不提升父 callback/task admission。
-- [ ] 外部内容和歧义 fail-closed。
-- [ ] 唯一主验证和资源门通过，提交 `ready_for_review`。
+- [x] 角色状态调用边纳入 phase 可达闭包。
+- [x] nested entry 完整且不提升父 callback/task admission。
+- [x] 外部内容和歧义 fail-closed。
+- [x] 唯一主验证和资源门通过，提交 `ready_for_review`。

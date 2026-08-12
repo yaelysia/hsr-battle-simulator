@@ -2202,6 +2202,8 @@ class TBGDLowering:
             ability_tasks,
             standalone_ability_graphs,
             queue_resolutions,
+            status_callback_tasks=status_callback_tasks,
+            status_callbacks=status_callbacks,
         )
         assistant_ability_resolutions = _lower_assistant_ability_resolutions(queue_intents, queue_resolutions)
         servant_spawn_sources = _discover_servant_spawn_sources(
@@ -11807,6 +11809,9 @@ def _assign_character_ability_invocation_roles(
     tasks: list[AbilityTaskIR],
     standalone_graphs: list[StandaloneAbilityGraphIR],
     queue_resolutions: list[QueueResolutionIR],
+    *,
+    status_callback_tasks: list[StatusCallbackTaskIR] | tuple[StatusCallbackTaskIR, ...] = (),
+    status_callbacks: list[StatusCallbackIR] | tuple[StatusCallbackIR, ...] = (),
 ) -> list[AbilityPhaseIR]:
     """Classify character definitions from real roots and typed call reachability."""
 
@@ -11852,11 +11857,18 @@ def _assign_character_ability_invocation_roles(
         for graph_id in queue_root_graph_ids
         for phase_id in graphs_by_id[graph_id].phase_ids
     }
+    status_nested_phase_ids = _status_trigger_ability_phase_roots(
+        phases_by_id,
+        graphs_by_id,
+        graph_by_phase_id,
+        status_callback_tasks,
+        status_callbacks,
+    )
     reachable_phase_ids = {
         phase.phase_id
         for phase in phases
         if phase.invocation_role in {"action_root", "nested_only"}
-    } | queue_root_phase_ids
+    } | queue_root_phase_ids | status_nested_phase_ids
     pending = list(reachable_phase_ids)
     while pending:
         phase_id = pending.pop()
@@ -11900,6 +11912,63 @@ def _assign_character_ability_invocation_roles(
             replacements[phase_id] = replace(phase, invocation_role=role)
 
     return [replacements.get(phase.phase_id, phase) for phase in phases]
+
+
+def _status_trigger_ability_phase_roots(
+    phases_by_id: dict[str, AbilityPhaseIR],
+    graphs_by_id: dict[str, StandaloneAbilityGraphIR],
+    graph_by_phase_id: dict[str, StandaloneAbilityGraphIR],
+    tasks: list[StatusCallbackTaskIR] | tuple[StatusCallbackTaskIR, ...],
+    callbacks: list[StatusCallbackIR] | tuple[StatusCallbackIR, ...],
+) -> set[str]:
+    callback_by_id: dict[str, StatusCallbackIR] = {}
+    for callback in callbacks:
+        if type(callback) is not StatusCallbackIR or callback.callback_id in callback_by_id:
+            raise ValueError("status ability invocation callback identity is ambiguous")
+        callback_by_id[callback.callback_id] = callback
+    task_ids: set[str] = set()
+    roots: set[str] = set()
+    for task in tasks:
+        if type(task) is not StatusCallbackTaskIR or task.task_id in task_ids:
+            raise ValueError("status ability invocation task identity is ambiguous")
+        task_ids.add(task.task_id)
+        if task.opcode != "TriggerAbility":
+            continue
+        owner = callback_by_id.get(task.callback_id)
+        if owner is None:
+            raise ValueError("status ability invocation callback owner is missing")
+        if owner.source_mode != "mainline_avatar_ability":
+            continue
+        if task.source.source_path != owner.source.source_path:
+            raise ValueError("status ability invocation task source is inconsistent")
+        if not task.linked_ability_phase_id and not task.linked_standalone_graph_id:
+            continue
+        if task.linked_standalone_graph_id:
+            graph = graphs_by_id.get(task.linked_standalone_graph_id)
+            if graph is None:
+                raise ValueError("status ability invocation target graph disappeared")
+            target_ids = graph.phase_ids
+        else:
+            target_ids = (task.linked_ability_phase_id,)
+            graph = graph_by_phase_id.get(task.linked_ability_phase_id)
+            if graph is None:
+                raise ValueError("status ability invocation target phase has no graph")
+        if (
+            graph.source_mode != "mainline_avatar"
+            or graph.source.source_path != owner.source.source_path
+            or not target_ids
+        ):
+            raise ValueError("status ability invocation target is outside character scope")
+        for phase_id in target_ids:
+            phase = phases_by_id.get(phase_id)
+            if (
+                phase is None
+                or graph_by_phase_id.get(phase_id) != graph
+                or phase.binding_id != graph.standalone_ability_graph_id
+            ):
+                raise ValueError("status ability invocation target phase is inconsistent")
+            roots.add(phase_id)
+    return roots
 
 
 def _link_trigger_ability_graphs(
