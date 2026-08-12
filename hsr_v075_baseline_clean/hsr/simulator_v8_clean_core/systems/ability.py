@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import cast
+from typing import Literal, cast
 
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
@@ -49,6 +49,9 @@ from .task_graph import (
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
 
+_STANDALONE_CALLBACK_ORDER = ("OnStart", "OnAttack", "OnHit", "OnEnd")
+
+
 @dataclass(frozen=True)
 class AbilityTaskExecutionResult:
     after_state: BattleState
@@ -58,6 +61,98 @@ class AbilityTaskExecutionResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     task_records: tuple[dict[str, JSONValue], ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
+
+
+@dataclass(frozen=True)
+class StandaloneAbilityInvocation:
+    graph_id: str
+    actor_id: str
+    target_ids: tuple[str, ...]
+    queue_name: str
+    queue_entry_id: str
+    queue_intent_id: str
+    queue_resolution_id: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not StandaloneAbilityInvocation:
+            raise TypeError("standalone ability invocation must not be subclassed")
+        values = (
+            self.graph_id,
+            self.actor_id,
+            self.queue_name,
+            self.queue_entry_id,
+            self.queue_intent_id,
+            self.queue_resolution_id,
+        )
+        if any(type(value) is not str or not value for value in values):
+            raise ValueError("standalone ability invocation identity is incomplete")
+        targets = tuple(self.target_ids)
+        if any(type(value) is not str or not value for value in targets):
+            raise ValueError("standalone ability invocation targets are invalid")
+        if len(targets) != len(set(targets)):
+            raise ValueError("standalone ability invocation targets are duplicated")
+        object.__setattr__(self, "target_ids", targets)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "graph_id": self.graph_id,
+            "actor_id": self.actor_id,
+            "target_ids": list(self.target_ids),
+            "queue_name": self.queue_name,
+            "queue_entry_id": self.queue_entry_id,
+            "queue_intent_id": self.queue_intent_id,
+            "queue_resolution_id": self.queue_resolution_id,
+        }
+
+
+@dataclass(frozen=True)
+class _FormalAbilityInvocation:
+    invocation_kind: Literal["action", "queue_standalone"]
+    actor_id: str
+    ability_id: str
+    ability_level: int
+    target_resolution: TargetResolution
+    action_command: ActionCommand | None = None
+    action_definition: ActionDefinitionIR | None = None
+    standalone: StandaloneAbilityInvocation | None = None
+    execution_path: str = ""
+    iteration_index: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self) is not _FormalAbilityInvocation:
+            raise TypeError("formal ability invocation must not be subclassed")
+        if (
+            type(self.actor_id) is not str
+            or not self.actor_id
+            or type(self.ability_id) is not str
+            or not self.ability_id
+            or type(self.ability_level) is not int
+            or self.ability_level < 0
+            or type(self.target_resolution) is not TargetResolution
+        ):
+            raise ValueError("formal ability invocation identity is invalid")
+        if self.invocation_kind == "action":
+            if (
+                type(self.action_command) is not ActionCommand
+                or type(self.action_definition) is not ActionDefinitionIR
+                or self.standalone is not None
+                or self.action_command.actor_id != self.actor_id
+                or self.action_command.action_id != self.ability_id
+                or self.action_command.action_level != self.ability_level
+                or self.action_definition.action_id != self.ability_id
+                or self.action_definition.level != self.ability_level
+            ):
+                raise ValueError("formal action invocation is inconsistent")
+        elif self.invocation_kind == "queue_standalone":
+            if (
+                self.action_command is not None
+                or self.action_definition is not None
+                or type(self.standalone) is not StandaloneAbilityInvocation
+                or self.standalone.actor_id != self.actor_id
+            ):
+                raise ValueError("formal standalone invocation is inconsistent")
+        else:
+            raise ValueError("formal ability invocation kind is invalid")
 
 
 class AbilityTaskSystem:
@@ -95,13 +190,36 @@ class AbilityTaskSystem:
     ) -> AbilityTaskExecutionResult:
         roles = {phase.invocation_role for phase in phases}
         formal_roles = {"action_root", "nested_only"}
+        formal_invocation = None
+        if roles.intersection(
+            {*formal_roles, "standalone_root", "unbound_definition"}
+        ):
+            if (
+                command.action_id != action_definition.action_id
+                or command.action_level != action_definition.level
+            ):
+                return self._formal_action_input_blocked(
+                    state,
+                    callback_kind,
+                    command,
+                    "ability_action_definition_identity_mismatch",
+                )
+            formal_invocation = _FormalAbilityInvocation(
+                "action",
+                command.actor_id,
+                command.action_id,
+                command.action_level,
+                target_resolution,
+                action_command=command,
+                action_definition=action_definition,
+            )
         if "action_root" in roles:
             invalid_roles = roles - formal_roles - {"non_gameplay_noop"}
             if invalid_roles:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    cast(_FormalAbilityInvocation, formal_invocation),
                     f"ability_action_invocation_roles_mixed:{','.join(sorted(invalid_roles))}",
                 )
             return self._execute_formal_action_callback(
@@ -112,20 +230,27 @@ class AbilityTaskSystem:
                 action_definition=action_definition,
                 target_resolution=target_resolution,
             )
+        if "standalone_root" in roles:
+            return self._formal_callback_blocked(
+                state,
+                callback_kind,
+                cast(_FormalAbilityInvocation, formal_invocation),
+                "standalone_ability_requires_admitted_queue_invocation",
+            )
         if "nested_only" in roles and not roles.intersection(
             {"standalone_root", "external_legacy"}
         ):
             return self._formal_callback_blocked(
                 state,
                 callback_kind,
-                command,
+                cast(_FormalAbilityInvocation, formal_invocation),
                 "nested_ability_phase_cannot_be_invoked_as_root",
             )
         if "unbound_definition" in roles:
             return self._formal_callback_blocked(
                 state,
                 callback_kind,
-                command,
+                cast(_FormalAbilityInvocation, formal_invocation),
                 "unbound_ability_definition_cannot_be_invoked",
             )
         return self._execute_legacy_callback(
@@ -223,12 +348,21 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         target_resolution: TargetResolution,
     ) -> AbilityTaskExecutionResult:
+        invocation = _FormalAbilityInvocation(
+            "action",
+            command.actor_id,
+            command.action_id,
+            command.action_level,
+            target_resolution,
+            action_command=command,
+            action_definition=action_definition,
+        )
         roots = tuple(phase for phase in phases if phase.invocation_role == "action_root")
         if not roots:
             return self._formal_callback_blocked(
                 state,
                 callback_kind,
-                command,
+                invocation,
                 "ability_action_root_missing",
             )
         if any(
@@ -242,7 +376,7 @@ class AbilityTaskSystem:
             return self._formal_callback_blocked(
                 state,
                 callback_kind,
-                command,
+                invocation,
                 "ability_action_phase_identity_mismatch",
             )
 
@@ -257,6 +391,22 @@ class AbilityTaskSystem:
         if not selected_roots:
             return AbilityTaskExecutionResult(after_state=state)
 
+        return self._execute_formal_entries(
+            state,
+            entries=tuple((phase, callback_kind) for phase in selected_roots),
+            invocation=invocation,
+        )
+
+    def _execute_formal_entries(
+        self,
+        state: BattleState,
+        *,
+        entries: tuple[tuple[AbilityPhaseIR, str], ...],
+        invocation: _FormalAbilityInvocation,
+    ) -> AbilityTaskExecutionResult:
+        if not entries:
+            return AbilityTaskExecutionResult(after_state=state)
+
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
@@ -267,7 +417,7 @@ class AbilityTaskSystem:
         mutation_ids: set[str] = set()
         event_ids: set[str] = set()
         rng_event_ids: set[str] = set()
-        for ordinal, phase in enumerate(selected_roots):
+        for ordinal, (phase, callback_kind) in enumerate(entries):
             entry_result = self.rules.query_task_graph_entry(
                 "ability_phase_callback",
                 phase.phase_id,
@@ -277,7 +427,7 @@ class AbilityTaskSystem:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    invocation,
                     entry_result.blocked_reason or "ability_action_task_graph_entry_missing",
                     node_results=tuple(node_results),
                 )
@@ -291,7 +441,7 @@ class AbilityTaskSystem:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    invocation,
                     "ability_action_task_graph_entry_identity_mismatch",
                     node_results=tuple(node_results),
                 )
@@ -307,34 +457,37 @@ class AbilityTaskSystem:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    invocation,
                     graph_result.blocked_reason
                     or "ability_action_task_graph_identity_mismatch",
                     node_results=tuple(node_results),
                 )
             invocation_id = (
-                f"ability_action:{state.event_index}:{command.actor_id}:"
-                f"{command.action_id}:{command.action_level}:{callback_kind}:"
+                f"ability_{invocation.invocation_kind}:{state.event_index}:"
+                f"{invocation.actor_id}:{invocation.ability_id}:"
+                f"{invocation.ability_level}:{callback_kind}:"
                 f"{ordinal}:{phase.phase_id}"
             )
+            context_values: dict[str, JSONValue] = {
+                "invocation_kind": invocation.invocation_kind,
+                "actor_id": invocation.actor_id,
+                "ability_id": invocation.ability_id,
+                "ability_level": invocation.ability_level,
+                "callback_kind": callback_kind,
+                "primary_target_id": invocation.target_resolution.primary,
+                "selected_target_ids": list(invocation.target_resolution.selected),
+            }
+            if invocation.standalone is not None:
+                context_values.update(invocation.standalone.to_json())
             execution = self.task_graph_executor.execute(
                 current,
                 graph,
                 TaskGraphExecutionContext(
                     invocation_id,
-                    {
-                        "actor_id": command.actor_id,
-                        "action_id": command.action_id,
-                        "action_level": command.action_level,
-                        "callback_kind": callback_kind,
-                        "primary_target_id": target_resolution.primary,
-                        "selected_target_ids": list(target_resolution.selected),
-                    },
+                    context_values,
                 ),
                 self._formal_task_graph_hooks(
-                    command=command,
-                    action_definition=action_definition,
-                    target_resolution=target_resolution,
+                    invocation=invocation,
                     callback_kind=callback_kind,
                 ),
             )
@@ -343,7 +496,7 @@ class AbilityTaskSystem:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    invocation,
                     execution.errors[0]
                     if execution.errors
                     else "ability_action_task_graph_execution_blocked",
@@ -372,7 +525,7 @@ class AbilityTaskSystem:
                 return self._formal_callback_blocked(
                     state,
                     callback_kind,
-                    command,
+                    invocation,
                     f"ability_action_task_graph_duplicate_{duplicate_channel}_identity",
                     node_results=tuple(node_results),
                 )
@@ -404,25 +557,19 @@ class AbilityTaskSystem:
     def _formal_task_graph_hooks(
         self,
         *,
-        command: ActionCommand,
-        action_definition: ActionDefinitionIR,
-        target_resolution: TargetResolution,
+        invocation: _FormalAbilityInvocation,
         callback_kind: str,
     ) -> TaskGraphExecutionHooks:
         return TaskGraphExecutionHooks(
             leaf=lambda request, state: self._execute_formal_leaf(
                 request,
                 state,
-                command=command,
-                action_definition=action_definition,
-                target_resolution=target_resolution,
+                invocation=invocation,
             ),
             condition=lambda request, state: self._evaluate_formal_condition(
                 request,
                 state,
-                command=command,
-                action_definition=action_definition,
-                target_resolution=target_resolution,
+                invocation=invocation,
             ),
             branch=lambda _request, _state: TaskGraphBranchResult(
                 "blocked",
@@ -432,16 +579,12 @@ class AbilityTaskSystem:
                 request,
                 definition,
                 state,
-                command=command,
-                action_definition=action_definition,
-                target_resolution=target_resolution,
+                invocation=invocation,
             ),
             targets=lambda request, state: self._resolve_formal_targets(
                 request,
                 state,
-                command=command,
-                action_definition=action_definition,
-                target_resolution=target_resolution,
+                invocation=invocation,
             ),
             graph=lambda request, state: self._resolve_formal_nested_graph(
                 request,
@@ -455,9 +598,7 @@ class AbilityTaskSystem:
         request: TaskGraphHookRequest,
         state: BattleState,
         *,
-        command: ActionCommand,
-        action_definition: ActionDefinitionIR,
-        target_resolution: TargetResolution,
+        invocation: _FormalAbilityInvocation,
     ) -> TaskGraphLeafResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
@@ -475,20 +616,19 @@ class AbilityTaskSystem:
                     blocked_reason=unresolved[0].blocked_reason
                     or "ability_task_graph_leaf_reference_not_resolved",
                 )
-        scoped_resolution = _task_graph_target_resolution(request, target_resolution)
-        scoped_command = replace(
-            command,
-            metadata={
-                **command.metadata,
-                "ability_task_execution_path": _task_graph_execution_path(request),
-                "ability_task_iteration_index": request.iteration_index,
-            },
+        scoped_resolution = _task_graph_target_resolution(
+            request, invocation.target_resolution
         )
-        _, mutations, events, rng_events, records = self._execute_ability_leaf_task(
+        scoped_invocation = replace(
+            invocation,
+            target_resolution=scoped_resolution,
+            execution_path=_task_graph_execution_path(request),
+            iteration_index=request.iteration_index,
+        )
+        _, mutations, events, rng_events, records = self._execute_formal_leaf_task(
             state,
             task,
-            command=scoped_command,
-            action_definition=action_definition,
+            invocation=scoped_invocation,
             primary_target=scoped_resolution.primary,
             target_resolution=scoped_resolution,
         )
@@ -511,14 +651,253 @@ class AbilityTaskSystem:
             settlement,
         )
 
+    def _execute_formal_leaf_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        invocation: _FormalAbilityInvocation,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        if invocation.invocation_kind == "action":
+            command = cast(ActionCommand, invocation.action_command)
+            action_definition = cast(ActionDefinitionIR, invocation.action_definition)
+            scoped_command = replace(
+                command,
+                metadata={
+                    **command.metadata,
+                    "ability_task_execution_path": invocation.execution_path,
+                    "ability_task_iteration_index": invocation.iteration_index,
+                },
+            )
+            return self._execute_ability_leaf_task(
+                state,
+                task,
+                command=scoped_command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+            )
+
+        if self.rules.damage_emissions_for_task(task.task_id):
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason="standalone_ability_damage_context_deferred_to_s8c",
+                )
+            ]
+        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        if admission_reason:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason=admission_reason)
+            ]
+        if is_process_only_ability_task(task):
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=True,
+                    blocked_reason="process_only_ability_task",
+                    effect_id=task.effect_id,
+                    effect_opcode=task.opcode,
+                    effect_coverage="process_only",
+                )
+            ]
+        if task.opcode in {
+            "PredicateTaskList",
+            "LoopExecuteTaskListWithInterval",
+            "TriggerAbility",
+        }:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason="ability_task_graph_structural_node_reached_leaf",
+                )
+            ]
+        if task.opcode == "SummonMonster":
+            return self.execute_summon_monster_task(
+                state, task, actor_id=invocation.actor_id
+            )
+        return self._execute_effect_leaf_task(
+            state,
+            task,
+            invocation=invocation,
+            primary_target=primary_target,
+            target_resolution=target_resolution,
+            reduce_candidate=False,
+        )
+
+    def _execute_effect_leaf_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        invocation: _FormalAbilityInvocation,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+        reduce_candidate: bool,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        if not task.effect_id:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason="task_has_no_effect")
+            ]
+        effect = self.rules.effect(task.effect_id)
+        if effect is None:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason="missing_effect")
+            ]
+        effect_coverage = self.effect_registry.coverage(effect)
+        if effect_coverage != "executable":
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=f"effect_not_executable:{effect_coverage}",
+                    effect_id=effect.effect_id,
+                    effect_opcode=effect.opcode,
+                    effect_coverage=effect_coverage,
+                )
+            ]
+        ability_instance_prefix = (
+            "ability_action"
+            if invocation.invocation_kind == "action"
+            else "queue_standalone"
+        )
+        result = self.effect_registry.execute(
+            effect,
+            EffectExecutionContext(
+                state=state,
+                caster_id=invocation.actor_id,
+                source_id=f"ability_task:{task.task_id}",
+                owner_id=invocation.actor_id,
+                param_entity_id=primary_target or invocation.actor_id,
+                current_action_target_id=primary_target,
+                target_resolution=target_resolution,
+                event_payload={
+                    **_formal_effect_event_payload(
+                        invocation, primary_target, target_resolution
+                    ),
+                    "task_id": task.task_id,
+                    "hit_index": task.task_index,
+                    "rng_decision_index": task.task_index,
+                    "ability_instance_id": (
+                        f"{ability_instance_prefix}:{state.event_index}:"
+                        f"{invocation.actor_id}:{invocation.ability_id}:"
+                        f"{invocation.ability_level}"
+                    ),
+                    "operation_event_id": (
+                        f"ability_task:{state.event_index}:"
+                        f"{invocation.actor_id}:{invocation.ability_id}:"
+                        f"{task.task_id}:{invocation.execution_path}"
+                    ),
+                },
+                binding_sources=_binding_sources(
+                    self.rules,
+                    state,
+                    invocation.actor_id,
+                    primary_target,
+                    action_level=invocation.ability_level,
+                    current_action_trigger_key=_formal_action_trigger_key(invocation),
+                ),
+            ),
+        )
+        after = (
+            self.reducer.apply_all(state, result.mutations)
+            if reduce_candidate
+            else state
+        )
+        records = [
+            *result.records,
+            _task_process_record(
+                task,
+                ok=not result.unsupported,
+                blocked_reason=",".join(result.unsupported),
+                effect_id=effect.effect_id,
+                effect_opcode=effect.opcode,
+                effect_coverage=effect_coverage,
+                mutation_count=len(result.mutations),
+                record_count=len(result.records),
+            ),
+        ]
+        return (
+            after,
+            list(result.mutations),
+            list(result.events),
+            list(result.rng_events),
+            records,
+        )
+
+    def _evaluate_formal_ability_condition(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        invocation: _FormalAbilityInvocation,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[bool | None, str, dict[str, JSONValue]]:
+        condition = self.rules.condition(task.condition_id) if task.condition_id else None
+        if condition is None:
+            return None, "missing_predicate_condition", {}
+        target_context = TargetEvaluationContext(
+            caster_id=invocation.actor_id,
+            effect_owner_id=invocation.actor_id,
+            parameter_entity_ids=((primary_target or invocation.actor_id),),
+            selected_target_ids=target_resolution.selected,
+            current_target_id=primary_target,
+            turn_owner_id=committed_turn_owner_id(state),
+        )
+        result = self.evaluator.evaluate_condition_result(
+            condition,
+            self.targets.condition_evaluation_context(
+                state,
+                condition,
+                context=target_context,
+                target_resolution=target_resolution,
+                condition_event_payload={
+                    **_formal_event_payload(
+                        invocation, primary_target, target_resolution
+                    ),
+                    "task_id": task.task_id,
+                    "hit_index": task.task_index,
+                    "rng_decision_index": task.task_index,
+                },
+                binding_sources=_binding_sources(
+                    self.rules,
+                    state,
+                    invocation.actor_id,
+                    primary_target,
+                    action_level=invocation.ability_level,
+                    current_action_trigger_key=_formal_action_trigger_key(
+                        invocation
+                    ),
+                ),
+                transient_condition_provider=_formal_condition_provider(
+                    self.rules,
+                    state,
+                    invocation,
+                    target_resolution,
+                    task.task_id,
+                ),
+            ),
+        )
+        evidence = cast(dict[str, JSONValue], result.to_json())
+        if not result.ok or result.result is None:
+            return (
+                None,
+                f"blocked_condition:{condition.condition_id}:{result.reason}",
+                evidence,
+            )
+        return result.result, "", evidence
+
     def _evaluate_formal_condition(
         self,
         request: TaskGraphHookRequest,
         state: BattleState,
         *,
-        command: ActionCommand,
-        action_definition: ActionDefinitionIR,
-        target_resolution: TargetResolution,
+        invocation: _FormalAbilityInvocation,
     ) -> TaskGraphConditionResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
@@ -537,12 +916,12 @@ class AbilityTaskSystem:
                 "blocked",
                 blocked_reason="ability_task_graph_condition_reference_not_resolved",
             )
-        scoped = _task_graph_target_resolution(request, target_resolution)
-        value, blocker, _evidence = self._evaluate_ability_task_condition(
+        scoped = _task_graph_target_resolution(request, invocation.target_resolution)
+        scoped_invocation = replace(invocation, target_resolution=scoped)
+        value, blocker, _evidence = self._evaluate_formal_ability_condition(
             state,
             task,
-            command=command,
-            action_definition=action_definition,
+            invocation=scoped_invocation,
             primary_target=scoped.primary,
             target_resolution=scoped,
         )
@@ -556,9 +935,7 @@ class AbilityTaskSystem:
         definition: TaskGraphNumericDefinitionIR,
         state: BattleState,
         *,
-        command: ActionCommand,
-        action_definition: ActionDefinitionIR,
-        target_resolution: TargetResolution,
+        invocation: _FormalAbilityInvocation,
     ) -> TaskGraphCountResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
@@ -577,17 +954,17 @@ class AbilityTaskSystem:
                 "blocked",
                 blocked_reason="ability_task_graph_numeric_reference_not_resolved",
             )
-        scoped = _task_graph_target_resolution(request, target_resolution)
+        scoped = _task_graph_target_resolution(request, invocation.target_resolution)
         result = self.evaluator.evaluate_numeric(
             definition.expression,
             NumericEvaluationContext(
                 binding_sources=_binding_sources(
                     self.rules,
                     state,
-                    command.actor_id,
+                    invocation.actor_id,
                     scoped.primary,
-                    action_level=command.action_level,
-                    current_action_trigger_key=_action_trigger_key(action_definition),
+                    action_level=invocation.ability_level,
+                    current_action_trigger_key=_formal_action_trigger_key(invocation),
                 ),
                 source_trace=definition.source.to_json(),
             ),
@@ -611,9 +988,7 @@ class AbilityTaskSystem:
         request: TaskGraphHookRequest,
         state: BattleState,
         *,
-        command: ActionCommand,
-        action_definition: ActionDefinitionIR,
-        target_resolution: TargetResolution,
+        invocation: _FormalAbilityInvocation,
     ) -> TaskGraphTargetResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
@@ -633,12 +1008,12 @@ class AbilityTaskSystem:
         )
         if expression is None:
             return TaskGraphTargetResult("blocked", blocked_reason=lookup_reason)
-        scoped = _task_graph_target_resolution(request, target_resolution)
+        scoped = _task_graph_target_resolution(request, invocation.target_resolution)
         primary = scoped.primary
         target_context = TargetEvaluationContext(
-            caster_id=command.actor_id,
-            effect_owner_id=command.actor_id,
-            parameter_entity_ids=((primary or command.actor_id),),
+            caster_id=invocation.actor_id,
+            effect_owner_id=invocation.actor_id,
+            parameter_entity_ids=((primary or invocation.actor_id),),
             selected_target_ids=scoped.selected,
             current_target_id=primary,
             turn_owner_id=committed_turn_owner_id(state),
@@ -649,24 +1024,19 @@ class AbilityTaskSystem:
             context=target_context,
             target_resolution=scoped,
             condition_event_payload={
-                **_event_payload(command, action_definition, primary, scoped),
+                **_formal_event_payload(invocation, primary, scoped),
                 "task_id": task.task_id,
             },
             binding_sources=_binding_sources(
                 self.rules,
                 state,
-                command.actor_id,
+                invocation.actor_id,
                 primary,
-                action_level=command.action_level,
-                current_action_trigger_key=_action_trigger_key(action_definition),
+                action_level=invocation.ability_level,
+                current_action_trigger_key=_formal_action_trigger_key(invocation),
             ),
-            transient_condition_provider=admitted_action_condition_fact_provider(
-                self.rules,
-                state,
-                command=command,
-                action_definition=action_definition,
-                target_resolution=scoped,
-                window=f"ability_task_graph:{task.task_id}",
+            transient_condition_provider=_formal_condition_provider(
+                self.rules, state, invocation, scoped, task.task_id
             ),
         )
         if result.blocked:
@@ -795,7 +1165,7 @@ class AbilityTaskSystem:
     def _formal_callback_blocked(
         state: BattleState,
         callback_kind: str,
-        command: ActionCommand,
+        invocation: _FormalAbilityInvocation,
         reason: str,
         *,
         node_results: tuple[ExecutionNodeResult, ...] = (),
@@ -804,7 +1174,7 @@ class AbilityTaskSystem:
             node_kind="ability_task_graph_callback",
             node_id=(
                 f"ability_task_graph_callback:{state.event_index}:"
-                f"{command.actor_id}:{command.action_id}:{callback_kind}"
+                f"{invocation.actor_id}:{invocation.ability_id}:{callback_kind}"
             ),
             status="blocked",
             reason_code=reason,
@@ -817,9 +1187,10 @@ class AbilityTaskSystem:
                     source="ability_task_system",
                     process_only=True,
                     payload={
-                        "actor_id": command.actor_id,
-                        "action_id": command.action_id,
-                        "action_level": command.action_level,
+                        "invocation_kind": invocation.invocation_kind,
+                        "actor_id": invocation.actor_id,
+                        "ability_id": invocation.ability_id,
+                        "ability_level": invocation.ability_level,
                         "callback_kind": callback_kind,
                         "reason": reason,
                     },
@@ -829,7 +1200,224 @@ class AbilityTaskSystem:
             node_results=(*node_results, blocked_node),
         )
 
-    def execute_standalone(
+    @staticmethod
+    def _formal_action_input_blocked(
+        state: BattleState,
+        callback_kind: str,
+        command: ActionCommand,
+        reason: str,
+    ) -> AbilityTaskExecutionResult:
+        return AbilityTaskExecutionResult(
+            after_state=state,
+            records=(
+                SettlementRecord(
+                    record_type="ability_task_graph_blocked",
+                    source="ability_task_system",
+                    process_only=True,
+                    payload={
+                        "invocation_kind": "action",
+                        "actor_id": command.actor_id,
+                        "ability_id": command.action_id,
+                        "ability_level": command.action_level,
+                        "callback_kind": callback_kind,
+                        "reason": reason,
+                    },
+                    trace={},
+                ).to_json(),
+            ),
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="ability_task_graph_callback",
+                    node_id=(
+                        f"ability_task_graph_callback:{state.event_index}:"
+                        f"{command.actor_id}:{command.action_id}:{callback_kind}"
+                    ),
+                    status="blocked",
+                    reason_code=reason,
+                ),
+            ),
+        )
+
+    def _execute_admitted_queue_standalone(
+        self,
+        state: BattleState,
+        *,
+        invocation: StandaloneAbilityInvocation,
+    ) -> AbilityTaskExecutionResult:
+        if type(invocation) is not StandaloneAbilityInvocation:
+            raise TypeError("standalone ability execution requires typed invocation")
+        resolution = self.rules.queue_resolution(invocation.queue_resolution_id)
+        graph = self.rules.standalone_ability_graph(invocation.graph_id)
+        resolved_graph_id = (
+            str(resolution.resolved_ids.get("standalone_ability_graph_id") or "")
+            if resolution is not None
+            else ""
+        )
+        if (
+            resolution is None
+            or resolution.coverage_status != "executable"
+            or resolution.resolved_kind != "standalone_ability_graph"
+            or resolution.queue_intent_id != invocation.queue_intent_id
+            or resolved_graph_id != invocation.graph_id
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_queue_resolution_identity_mismatch"
+            )
+        if graph is None:
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_graph_missing"
+            )
+        if (
+            graph.coverage_status != "executable"
+            or graph.blocked_reason
+            or resolution.action_or_ability_ref != graph.ability_name
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_graph_not_admitted"
+            )
+        resolved_phase_ids = resolution.resolved_ids.get("phase_ids")
+        if (
+            not isinstance(resolved_phase_ids, (list, tuple))
+            or tuple(resolved_phase_ids) != graph.phase_ids
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_phase_ledger_mismatch"
+            )
+        phases = tuple(
+            phase
+            for phase_id in graph.phase_ids
+            if (phase := self.rules.ability_phase(phase_id)) is not None
+        )
+        if (
+            len(phases) != len(graph.phase_ids)
+            or tuple(phase.phase_id for phase in phases) != graph.phase_ids
+            or any(
+                phase.invocation_role != "standalone_root"
+                or phase.ability_name != graph.ability_name
+                for phase in phases
+            )
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_formal_root_mismatch"
+            )
+        phase_task_ids = tuple(
+            task_id for phase in phases for task_id in phase.task_ids
+        )
+        resolved_task_ids = resolution.resolved_ids.get("task_ids")
+        resolved_executable_task_ids = resolution.resolved_ids.get(
+            "executable_task_ids"
+        )
+        if (
+            graph.task_ids != phase_task_ids
+            or not isinstance(resolved_task_ids, (list, tuple))
+            or tuple(resolved_task_ids) != graph.task_ids
+            or not isinstance(resolved_executable_task_ids, (list, tuple))
+            or tuple(resolved_executable_task_ids) != graph.executable_task_ids
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_task_ledger_mismatch"
+            )
+        if invocation.actor_id not in state.units or any(
+            target_id not in state.units for target_id in invocation.target_ids
+        ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_combatant_identity_missing"
+            )
+        entries: list[tuple[AbilityPhaseIR, str]] = []
+        for phase in phases:
+            callbacks: set[str] = set()
+            for task_id in phase.task_ids:
+                task = self.rules.ability_task(task_id)
+                if task is None or task.phase_id != phase.phase_id:
+                    return self._standalone_invocation_blocked(
+                        state, invocation, "standalone_ability_task_ledger_mismatch"
+                    )
+                callbacks.add(task.callback_kind)
+            unknown_callbacks = callbacks - set(_STANDALONE_CALLBACK_ORDER)
+            if unknown_callbacks:
+                return self._standalone_invocation_blocked(
+                    state,
+                    invocation,
+                    "standalone_ability_callback_lifecycle_not_admitted:"
+                    + ",".join(sorted(unknown_callbacks)),
+                )
+            entries.extend(
+                (phase, callback)
+                for callback in _STANDALONE_CALLBACK_ORDER
+                if callback in callbacks
+            )
+        if not entries:
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_callback_entry_missing"
+            )
+        target_resolution = TargetResolution(
+            requested=invocation.target_ids,
+            legal=invocation.target_ids,
+            selected=invocation.target_ids,
+            rejected=(),
+            reason="queue_standalone_targets_from_admitted_queue",
+            source="queue_resolution",
+            metadata={
+                "queue_entry_id": invocation.queue_entry_id,
+                "queue_resolution_id": invocation.queue_resolution_id,
+            },
+        )
+        formal_invocation = _FormalAbilityInvocation(
+            "queue_standalone",
+            invocation.actor_id,
+            invocation.graph_id,
+            0,
+            target_resolution,
+            standalone=invocation,
+        )
+        result = self._execute_formal_entries(
+            state,
+            entries=tuple(entries),
+            invocation=formal_invocation,
+        )
+        if any(item.status != "complete" for item in result.node_results):
+            return result
+        execution_record = SettlementRecord(
+            record_type="standalone_ability_execution",
+            source="ability_task_system",
+            process_only=True,
+            payload={
+                "invocation": invocation.to_json(),
+                "ability_name": graph.ability_name,
+                "phase_ids": list(graph.phase_ids),
+            },
+            trace={"standalone_graph_source": graph.source.to_json()},
+        ).to_json()
+        return replace(result, records=(execution_record, *result.records))
+
+    @staticmethod
+    def _standalone_invocation_blocked(
+        state: BattleState,
+        invocation: StandaloneAbilityInvocation,
+        reason: str,
+    ) -> AbilityTaskExecutionResult:
+        return AbilityTaskExecutionResult(
+            after_state=state,
+            records=(
+                SettlementRecord(
+                    record_type="standalone_ability_blocked",
+                    source="ability_task_system",
+                    process_only=True,
+                    payload={"reason": reason, "invocation": invocation.to_json()},
+                    trace={},
+                ).to_json(),
+            ),
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="ability_graph",
+                    node_id=invocation.graph_id,
+                    status="blocked",
+                    reason_code=reason,
+                ),
+            ),
+        )
+
+    def _execute_legacy_standalone(
         self,
         state: BattleState,
         *,
@@ -1074,7 +1662,7 @@ class AbilityTaskSystem:
             return self.execute_summon_monster_task(
                 state,
                 task,
-                command=command,
+                actor_id=command.actor_id,
             )
         if self.rules.damage_emissions_for_task(task.task_id):
             return self._execute_damage_task(
@@ -1085,78 +1673,32 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
-        if not task.effect_id:
-            record = _task_process_record(task, ok=False, blocked_reason="task_has_no_effect")
-            return state, [], [], [], [record]
-        effect = self.rules.effect(task.effect_id)
-        if effect is None:
-            record = _task_process_record(task, ok=False, blocked_reason="missing_effect")
-            return state, [], [], [], [record]
-        effect_coverage = self.effect_registry.coverage(effect)
-        if effect_coverage != "executable":
-            record = _task_process_record(
-                task,
-                ok=False,
-                blocked_reason=f"effect_not_executable:{effect_coverage}",
-                effect_id=effect.effect_id,
-                effect_opcode=effect.opcode,
-                effect_coverage=effect_coverage,
-            )
-            return state, [], [], [], [record]
-
-        result = self.effect_registry.execute(
-            effect,
-            EffectExecutionContext(
-                state=state,
-                caster_id=command.actor_id,
-                source_id=f"ability_task:{task.task_id}",
-                owner_id=command.actor_id,
-                param_entity_id=primary_target or command.actor_id,
-                current_action_target_id=primary_target,
-                target_resolution=target_resolution,
-                event_payload={
-                    **_rng_event_payload_from_command(command),
-                    "actor_id": command.actor_id,
-                    "action_id": command.action_id,
-                    "action_level": command.action_level,
-                    "task_id": task.task_id,
-                    "hit_index": task.task_index,
-                    "rng_decision_index": task.task_index,
-                    "ability_instance_id": (
-                        f"ability_action:{state.event_index}:"
-                        f"{command.actor_id}:{command.action_id}:{command.action_level}"
-                    ),
-                    "operation_event_id": (
-                        f"ability_task:{state.event_index}:{command.actor_id}:"
-                        f"{command.action_id}:{task.task_id}:"
-                        f"{command.metadata.get('ability_task_execution_path', task.task_index)}"
-                    ),
-                },
-                binding_sources=_binding_sources(
-                    self.rules,
-                    state,
-                    command.actor_id,
-                    primary_target,
-                    action_level=command.action_level,
-                    current_action_trigger_key=_action_trigger_key(action_definition),
-                ),
+        iteration = command.metadata.get("ability_task_iteration_index")
+        invocation = _FormalAbilityInvocation(
+            "action",
+            command.actor_id,
+            command.action_id,
+            command.action_level,
+            target_resolution,
+            action_command=command,
+            action_definition=action_definition,
+            execution_path=str(
+                command.metadata.get(
+                    "ability_task_execution_path", task.task_index
+                )
+            ),
+            iteration_index=(
+                iteration if type(iteration) is int and iteration >= 0 else None
             ),
         )
-        after = self.reducer.apply_all(state, result.mutations)
-        records = list(result.records)
-        records.append(
-            _task_process_record(
-                task,
-                ok=not result.unsupported,
-                blocked_reason=",".join(result.unsupported),
-                effect_id=effect.effect_id,
-                effect_opcode=effect.opcode,
-                effect_coverage=effect_coverage,
-                mutation_count=len(result.mutations),
-                record_count=len(result.records),
-            )
+        return self._execute_effect_leaf_task(
+            state,
+            task,
+            invocation=invocation,
+            primary_target=primary_target,
+            target_resolution=target_resolution,
+            reduce_candidate=True,
         )
-        return after, list(result.mutations), list(result.events), list(result.rng_events), records
 
     def _execute_fixed_task_loop(
         self,
@@ -1243,7 +1785,7 @@ class AbilityTaskSystem:
         state: BattleState,
         task: AbilityTaskIR,
         *,
-        command: ActionCommand,
+        actor_id: str,
     ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
         intents = tuple(
             intent
@@ -1267,7 +1809,7 @@ class AbilityTaskSystem:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason="summon_monster_intent_task_binding_mismatch")
             ]
-        plan = self.summons.plan_spawn_from_intent(state, intent, owner_id=command.actor_id)
+        plan = self.summons.plan_spawn_from_intent(state, intent, owner_id=actor_id)
         result = self.summons.apply_spawn(state, plan)
         if not result.plan.ok:
             return state, [], [], [], [
@@ -1361,7 +1903,7 @@ class AbilityTaskSystem:
             for phase_id in graph.phase_ids
             if (phase := self.rules.ability_phase(phase_id)) is not None
         )
-        result = self.execute_standalone(
+        result = self._execute_legacy_standalone(
             state,
             phases=phases,
             actor_id=command.actor_id,
@@ -1818,59 +2360,22 @@ class AbilityTaskSystem:
         primary_target: str | None,
         target_resolution: TargetResolution,
     ) -> tuple[bool | None, str, dict[str, JSONValue]]:
-        condition = self.rules.condition(task.condition_id) if task.condition_id else None
-        if condition is None:
-            return None, "missing_predicate_condition", {}
-        binding_sources = _binding_sources(
-            self.rules,
-            state,
+        invocation = _FormalAbilityInvocation(
+            "action",
             command.actor_id,
-            primary_target,
-            action_level=command.action_level,
-            current_action_trigger_key=_action_trigger_key(action_definition),
-        )
-        event_payload = {
-            **_event_payload(command, action_definition, primary_target, target_resolution),
-            "task_id": task.task_id,
-            "hit_index": task.task_index,
-            "rng_decision_index": task.task_index,
-        }
-        target_context = TargetEvaluationContext(
-            caster_id=command.actor_id,
-            effect_owner_id=command.actor_id,
-            parameter_entity_ids=((primary_target or command.actor_id),),
-            selected_target_ids=tuple(target_resolution.selected),
-            current_target_id=primary_target,
-            turn_owner_id=committed_turn_owner_id(state),
-        )
-        transient_provider = admitted_action_condition_fact_provider(
-            self.rules,
-            state,
-            command=command,
+            command.action_id,
+            command.action_level,
+            target_resolution,
+            action_command=command,
             action_definition=action_definition,
+        )
+        return self._evaluate_formal_ability_condition(
+            state,
+            task,
+            invocation=invocation,
+            primary_target=primary_target,
             target_resolution=target_resolution,
-            window=f"ability_task:{task.task_id}",
         )
-        result = self.evaluator.evaluate_condition_result(
-            condition,
-            self.targets.condition_evaluation_context(
-                state,
-                condition,
-                context=target_context,
-                target_resolution=target_resolution,
-                condition_event_payload=event_payload,
-                binding_sources=binding_sources,
-                transient_condition_provider=transient_provider,
-            ),
-        )
-        evidence = cast(dict[str, JSONValue], result.to_json())
-        if not result.ok or result.result is None:
-            return (
-                None,
-                f"blocked_condition:{condition.condition_id}:{result.reason}",
-                evidence,
-            )
-        return result.result, "", evidence
 
     def _execute_predicate_task(
         self,
@@ -2118,6 +2623,73 @@ def _event_payload(
         "primary_target_id": primary_target,
         "selected_target_ids": list(target_resolution.selected),
     }
+
+
+def _formal_event_payload(
+    invocation: _FormalAbilityInvocation,
+    primary_target: str | None,
+    target_resolution: TargetResolution,
+) -> dict[str, JSONValue]:
+    if invocation.invocation_kind == "action":
+        return _event_payload(
+            cast(ActionCommand, invocation.action_command),
+            cast(ActionDefinitionIR, invocation.action_definition),
+            primary_target,
+            target_resolution,
+        )
+    payload: dict[str, JSONValue] = {
+        "invocation_kind": "queue_standalone",
+        "ability_id": invocation.ability_id,
+        "ability_level": invocation.ability_level,
+        "actor_id": invocation.actor_id,
+        "primary_target_id": primary_target,
+        "selected_target_ids": list(target_resolution.selected),
+    }
+    if invocation.standalone is not None:
+        payload.update(invocation.standalone.to_json())
+    return payload
+
+
+def _formal_effect_event_payload(
+    invocation: _FormalAbilityInvocation,
+    primary_target: str | None,
+    target_resolution: TargetResolution,
+) -> dict[str, JSONValue]:
+    if invocation.invocation_kind != "action":
+        return _formal_event_payload(invocation, primary_target, target_resolution)
+    command = cast(ActionCommand, invocation.action_command)
+    return {
+        **_rng_event_payload_from_command(command),
+        "actor_id": invocation.actor_id,
+        "action_id": invocation.ability_id,
+        "action_level": invocation.ability_level,
+    }
+
+
+def _formal_action_trigger_key(
+    invocation: _FormalAbilityInvocation,
+) -> str | None:
+    definition = invocation.action_definition
+    return definition.skill_trigger_key if definition is not None else None
+
+
+def _formal_condition_provider(
+    rules: RuleBook,
+    state: BattleState,
+    invocation: _FormalAbilityInvocation,
+    target_resolution: TargetResolution,
+    task_id: str,
+):
+    if invocation.invocation_kind != "action":
+        return None
+    return admitted_action_condition_fact_provider(
+        rules,
+        state,
+        command=cast(ActionCommand, invocation.action_command),
+        action_definition=cast(ActionDefinitionIR, invocation.action_definition),
+        target_resolution=target_resolution,
+        window=f"ability_task_graph:{task_id}",
+    )
 
 
 def _binding_sources(

@@ -260,6 +260,15 @@ gap 归属或证据独立性，验收结论必须是“规划/分解失败”，
   上下文运输”两栏：前者使用真实目录或窄投影，后者可以使用明确标注的最小 validation fixture。
   两栏互补但不能互相冒充；fixture 通过不得被汇报为真实 gameplay 已 executable，真实来源存在也
   不能替代调度、提交和 replay 连续性的生产边界证明。
+- 写验证预算前先按证据面计数：真实来源语义、通用纵切、公开生产入口、受影响 direct 各自需要
+  什么对象。若预算只能通过调用私有消费方法、删除四通道运输或省略原子失败才能满足，应在主入口
+  前修订预算或拆卡；不得让行数目标迫使验证绕开正式 scheduler/executor 边界。
+- 一个 invocation 天生不具备某领域上下文时，例如 standalone 没有 action definition，生产入口必须
+  在调用该领域的 admission/evaluator 前按类型化 invocation role 给出精确 blocker。验证只保留一个
+  类别反例，不得为通过动作专属准入而伪造整套动作、伤害或事件世界。
+- 跨边界 adapter 的闭合地图必须逐字段列出 producer。相同身份若同时出现在 entry、plan、resolution、
+  choice、command 或 definition 中，公开入口必须在首条 mutation 前检查类型和值完全一致；分别验证
+  每个对象内部合法不能替代跨对象一致性门。验收至少保留一个篡改重复身份字段的最小反例。
 - 瞬时上下文必须由对应 action/event/damage/queue/resource/status/turn 生产者通过类型化 provider
   或 capability 显式运输。事件 payload、source trace 和日志只可审计，不能在消费者侧按字段重建
   正式事实；否则 validation fixture 很容易绕过真实调用身份和窗口。
@@ -301,6 +310,10 @@ gap 归属或证据独立性，验收结论必须是“规划/分解失败”，
 `historical_evidence`、`superseded` 和 `invalid` 不得为了保险而执行。若历史脚本失败只是因为预期
 已被后续阶段取代，不修生产、不复活旧兼容，也不扩写历史脚本；改用现行契约，或为本次真实
 调用链保留一个最小 direct，并在报告记录被替代的旧预期。
+
+相邻迁移批次若复用上一张卡的 fixture helper，必须在修改前确认其可导入且表达的生产契约未被后继
+阶段替代，并在当前报告声明生命周期；这只允许减少同一批次的重复 fixture。验收后默认冻结，后续
+阶段不得继续形成“验证器导入历史验证器”的依赖链，也不得修补历史脚本来维持 helper 可用性。
 
 ### Catalog
 

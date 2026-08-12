@@ -25,9 +25,9 @@ from ..core.model import (
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult, ExecutionNodeStatus
-from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
+from ..rules.ir import IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
-from .ability import AbilityTaskSystem
+from .ability import AbilityTaskSystem, StandaloneAbilityInvocation
 from .action_contract import _issue_action_submission_authorization
 from .action_selection import ActionTargetSelectionContext, ActionTargetSelectionSystem
 from .effect import EffectRegistry
@@ -1785,6 +1785,7 @@ class CombatScheduler:
                 payload={"drain_plan": plan.to_json()},
             ),
         )
+        rng_events: tuple[RNGEvent, ...] = ()
         after_state = after_dequeue
         window_family = str((plan.queue_window or {}).get("window_family") or "")
         if window_family == "extra_turn":
@@ -1812,24 +1813,70 @@ class CombatScheduler:
             )
         if resolution.resolved_kind == "standalone_ability_graph":
             graph_id = _first_str(resolution.resolved_ids.get("standalone_ability_graph_id"))
-            phases = _phases_for_graph(self.rules, graph_id)
-            ability_result = self.ability_tasks.execute_standalone(
-                after_dequeue,
-                phases=phases,
-                actor_id=str(plan.queue_entry.get("actor_id") or ""),
-                target_ids=tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str)),
-                queue_entry=plan.queue_entry,
-                queue_resolution=resolution.to_json(),
+            raw_target_ids = plan.queue_entry.get("target_ids", ())
+            entry_target_resolution = plan.queue_entry.get("target_resolution")
+            resolved_target_ids = (
+                entry_target_resolution.get("target_ids")
+                if isinstance(entry_target_resolution, dict)
+                else None
             )
-            ability_commit = finalize_selected_execution_graph(
+            if (
+                plan.queue_entry.get("queue_name") != plan.queue_name
+                or plan.queue_entry.get("queue_intent_id") != plan.queue_intent_id
+                or plan.queue_entry.get("action_or_ability_ref")
+                != resolution.action_or_ability_ref
+            ):
+                return self._terminalize_queue_entry(
+                    state,
+                    "queue_standalone_entry_identity_mismatch",
+                    plan,
+                )
+            if not isinstance(raw_target_ids, (list, tuple)) or any(
+                type(item) is not str or not item for item in raw_target_ids
+            ):
+                return self._terminalize_queue_entry(
+                    state,
+                    "queue_standalone_target_identity_invalid",
+                    plan,
+                )
+            if (
+                not isinstance(entry_target_resolution, dict)
+                or entry_target_resolution.get("ok") is not True
+                or not isinstance(resolved_target_ids, (list, tuple))
+                or tuple(resolved_target_ids) != tuple(raw_target_ids)
+            ):
+                return self._terminalize_queue_entry(
+                    state,
+                    "queue_standalone_target_resolution_mismatch",
+                    plan,
+                )
+            try:
+                standalone_invocation = StandaloneAbilityInvocation(
+                    graph_id=graph_id,
+                    actor_id=str(plan.queue_entry.get("actor_id") or ""),
+                    target_ids=tuple(raw_target_ids),
+                    queue_name=plan.queue_name,
+                    queue_entry_id=str(plan.queue_entry.get("entry_id") or ""),
+                    queue_intent_id=plan.queue_intent_id,
+                    queue_resolution_id=resolution.queue_resolution_id,
+                )
+            except (TypeError, ValueError) as exc:
+                return self._terminalize_queue_entry(
+                    state,
+                    f"queue_standalone_invocation_invalid:{exc}",
+                    plan,
+                )
+            ability_result = self.ability_tasks._execute_admitted_queue_standalone(
                 after_dequeue,
-                ability_result.after_state,
-                ability_result.mutations,
-                ability_result.node_results,
-                reducer=self.reducer,
+                invocation=standalone_invocation,
             )
-            if not ability_commit.outcome.successor_eligible:
-                reasons = ",".join(ability_commit.outcome.reason_codes) or ability_commit.outcome.category
+            incomplete_nodes = tuple(
+                item for item in ability_result.node_results if item.status != "complete"
+            )
+            if not ability_result.node_results or incomplete_nodes:
+                reasons = ",".join(
+                    item.reason_code or item.status for item in incomplete_nodes
+                ) or "ability_task_graph_result_empty"
                 return self._terminalize_queue_entry(
                     state,
                     f"queue_standalone_ability_not_successor:{reasons}",
@@ -1837,15 +1884,17 @@ class CombatScheduler:
                     child_evidence={
                         "resolved_kind": "standalone_ability_graph",
                         "graph_id": graph_id,
-                        "outcome": ability_commit.outcome.to_json(),
-                        "atomic_commit": ability_commit.evidence,
+                        "node_results": [
+                            item.to_json() for item in ability_result.node_results
+                        ],
                         "planned_mutation_count": len(ability_result.mutations),
                         "published": False,
                     },
                 )
-            after_state = ability_commit.after_state
-            mutations = (*mutations, *ability_commit.committed_mutations)
+            after_state = ability_result.after_state
+            mutations = (*mutations, *ability_result.mutations)
             events = (*events, *ability_result.events)
+            rng_events = (*rng_events, *ability_result.rng_events)
             records.extend(ability_result.records)
         elif resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             from ..core.executor import CombatExecutor
@@ -2031,6 +2080,7 @@ class CombatScheduler:
             events=events,
             mutations=mutations,
             records=tuple(records),
+            rng_events=rng_events,
             node_results=(
                 _scheduler_node("queue", "queue:drain_admitted"),
                 *(ability_result.node_results if resolution.resolved_kind == "standalone_ability_graph" else ()),
@@ -3045,18 +3095,6 @@ def _queue_submission_rejection_reason(reason: str) -> bool:
 def _queue_entry_resource_policy(plan: QueueDrainPlan) -> dict[str, JSONValue]:
     policy = plan.queue_entry.get("resource_policy")
     return policy if isinstance(policy, dict) else {}
-
-
-def _phases_for_graph(rules: RuleBook, graph_id: str) -> tuple[AbilityPhaseIR, ...]:
-    graph = rules.standalone_ability_graph(graph_id)
-    if graph is None:
-        return ()
-    phases = []
-    for phase_id in graph.phase_ids:
-        phase = rules.ability_phase(phase_id)
-        if phase is not None:
-            phases.append(phase)
-    return tuple(phases)
 
 
 def _first_str(value: JSONValue) -> str:

@@ -301,8 +301,8 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B1-R2 正式角色能力任务树完整性修复完成验收。
 - [x] P9-S8B3A 能力入口拓扑与正式多 entry 目录完成验收。
 - [x] P9-S8B3B 普通角色动作任务图迁移完成验收。
-- [ ] P9-S8B3C queue standalone ability 任务图迁移完成验收。
-- [ ] P9-S8B3 聚合完成验收（仅在 S8B3A-S8B3C 全部通过后勾选）。
+- [x] P9-S8B3C queue standalone ability 任务图迁移完成验收。
+- [x] P9-S8B3 聚合完成验收（S8B3A-S8B3C 均已通过）。
 - [ ] P9-S8B4 状态 callback 迁移完成验收。
 - [ ] P9-S8B5 跨入口上下文和执行投影运输完成验收。
 - [ ] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
