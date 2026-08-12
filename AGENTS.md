@@ -164,6 +164,9 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 - 真实内容被后续阶段阻断时，来源语义与执行上下文运输必须分开取证。允许用明确标注的最小
   validation fixture 证明通用调用链，但不得据此宣称真实角色、怪物或装备已经 executable；
   同样，真实来源目录闭合不能替代调度、提交、结算和 replay 连续性的生产证明。
+- 验证正例必须同时满足来源结构存在、图节点已物化和对应领域任务已通过生产准入；blocked/deferred
+  任务只能作为负例或 gap。为隔离领域语义时只替换最窄 leaf/provider，替身必须保持完整生产调用形状，
+  不得替换共享执行器、顶层 admission 或原子提交边界。
 - 来源结构分母与执行准入必须分离：上游 watcher、container 或 owner 被 blocked 只能阻止执行，
   不能让真实 child/callback 从正式目录消失。生产目录边界与验收独立分母都必须对此做双向闭合。
 - 共享 template/include 在多个 owner 中展开时，原始来源 occurrence 与正式图位置必须使用不同身份；

@@ -152,8 +152,13 @@ S8C；standalone damage context 也归 S8C，跨事件上下文归 S8B5，外部
 S8B4A 已完成验收：完整角色来源中的 2,470 条状态 callback 与 9,392 条任务已进入正式任务图目录；
 2,390 条有任务 callback 各有唯一 entry，80 条无任务 callback 不生成 synthetic graph。共享模板的
 来源 occurrence 与 owner 图位置使用独立身份，上游 blocked 不再删除下游来源结构；ability 与 status
-entry 由同一生产目录安装，runtime 未改变。下一张唯一执行卡是
-`P9-S8B4B_STATUS_CALLBACK_RUNTIME_MIGRATION.md`。
+entry 由同一生产目录安装。S8B4B 也已完成验收：角色正式状态 callback 只经 B2 共享任务图执行器
+调度控制流，领域 leaf 不再拥有 child runner；callback/status instance/entry/graph/task 身份在首条
+mutation 前闭合，失败会回滚状态及四条正式结果通道，可变伤害窗口账本也只在整组成功后提交。
+确定性 Retarget 支持有序多目标作用域，随机目标、Remodifier 和嵌套能力分别精确留给 S8C、S10
+和 S8B5；装备、怪物和全局 callback 保留显式有界 legacy 路径。聚焦验证 11/11，通过约 12.5 秒、
+峰值约 336 MiB，完整 Canonical IR build 为 0。下一张唯一执行卡是
+`P9-S8B5_CROSS_ENTRY_INTEGRATION_AUDIT.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

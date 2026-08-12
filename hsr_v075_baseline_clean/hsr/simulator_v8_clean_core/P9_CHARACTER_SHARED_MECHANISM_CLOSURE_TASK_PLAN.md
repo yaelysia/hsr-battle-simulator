@@ -305,8 +305,8 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B3C queue standalone ability 任务图迁移完成验收。
 - [x] P9-S8B3 聚合完成验收（S8B3A-S8B3C 均已通过）。
 - [x] P9-S8B4A 状态 callback 正式图目录与 lowering 安装完成验收。
-- [ ] P9-S8B4B 状态 callback runtime 迁移完成验收。
-- [ ] P9-S8B4 聚合完成验收（仅在 S8B4A-S8B4B 全部通过后勾选）。
+- [x] P9-S8B4B 状态 callback runtime 迁移完成验收。
+- [x] P9-S8B4 聚合完成验收（仅在 S8B4A-S8B4B 全部通过后勾选）。
 - [ ] P9-S8B5 跨入口上下文和执行投影运输完成验收。
 - [ ] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
 - [ ] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。
