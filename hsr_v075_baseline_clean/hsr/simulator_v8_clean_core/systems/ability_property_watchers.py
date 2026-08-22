@@ -11,6 +11,11 @@ from ..rules.ir import AbilityPropertyRangeIR
 from ..rules.rulebook import RuleBook
 from .dynamic_values import status_binding_sources
 from .status_callbacks import StatusCallbackExecutionResult, StatusCallbackSystem
+from .task_graph import (
+    TaskGraphContinuation,
+    TaskGraphExecutionHooks,
+    TaskGraphNodeProjection,
+)
 from .unit_stats import ability_property_value
 
 
@@ -27,6 +32,15 @@ class AbilityPropertyWatcherResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
+    task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+
+    def __post_init__(self) -> None:
+        projections = tuple(self.task_graph_projections)
+        if any(type(item) is not TaskGraphNodeProjection for item in projections):
+            raise TypeError("ability property watcher task graph projections are invalid")
+        if not self.ok and projections:
+            raise ValueError("blocked ability property watcher leaks task graph projections")
+        object.__setattr__(self, "task_graph_projections", projections)
 
 
 class AbilityPropertyWatcherSystem:
@@ -50,6 +64,8 @@ class AbilityPropertyWatcherSystem:
         *,
         unit_ids: tuple[str, ...],
         trigger_event: GameEvent,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> AbilityPropertyWatcherResult:
         original_state = state
         current_state = state
@@ -58,12 +74,15 @@ class AbilityPropertyWatcherSystem:
         rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         nodes: list[ExecutionNodeResult] = []
+        projections: list[TaskGraphNodeProjection] = []
 
         for unit_id in tuple(dict.fromkeys(unit_ids)):
             result = self._reconcile_unit(
                 current_state,
                 unit_id=unit_id,
                 trigger_event=trigger_event,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
             if not result.ok:
                 return AbilityPropertyWatcherResult(
@@ -79,6 +98,7 @@ class AbilityPropertyWatcherSystem:
             rng_events.extend(result.rng_events)
             records.extend(result.records)
             nodes.extend(result.node_results)
+            projections.extend(result.task_graph_projections)
         return AbilityPropertyWatcherResult(
             ok=True,
             after_state=current_state,
@@ -87,6 +107,7 @@ class AbilityPropertyWatcherSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             node_results=tuple(nodes),
+            task_graph_projections=tuple(projections),
         )
 
     def _reconcile_unit(
@@ -95,6 +116,8 @@ class AbilityPropertyWatcherSystem:
         *,
         unit_id: str,
         trigger_event: GameEvent,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> AbilityPropertyWatcherResult:
         unit = state.units.get(unit_id)
         if unit is None:
@@ -106,6 +129,7 @@ class AbilityPropertyWatcherSystem:
         rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         nodes: list[ExecutionNodeResult] = []
+        projections: list[TaskGraphNodeProjection] = []
         removed_watcher_instance_ids: set[str] = set()
 
         for original_detail in details:
@@ -284,6 +308,8 @@ class AbilityPropertyWatcherSystem:
                                 modifier_name=modifier_name,
                                 trigger_event=trigger_event,
                                 detail_override=current_detail,
+                                task_graph_continuation=task_graph_continuation,
+                                nested_ability_hooks=nested_ability_hooks,
                             )
                         )
                         if not callback_result.ok:
@@ -297,6 +323,9 @@ class AbilityPropertyWatcherSystem:
                         rng_events.extend(callback_result.rng_events)
                         records.extend(callback_result.records)
                         nodes.extend(callback_result.node_results)
+                        projections.extend(
+                            callback_result.task_graph_projections
+                        )
                         removed_watcher_instance_ids.update(
                             _formally_removed_status_instance_ids(
                                 callback_result.mutations,
@@ -383,6 +412,7 @@ class AbilityPropertyWatcherSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             node_results=tuple(nodes),
+            task_graph_projections=tuple(projections),
         )
 
     def _range_contains(

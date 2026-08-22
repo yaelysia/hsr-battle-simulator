@@ -72,6 +72,7 @@ from .target import TargetExpressionResult, TargetSystem
 from .task_graph import (
     TaskGraphBranchResult,
     TaskGraphConditionResult,
+    TaskGraphContinuation,
     TaskGraphCountResult,
     TaskGraphExecutionContext,
     TaskGraphExecutionHooks,
@@ -79,6 +80,7 @@ from .task_graph import (
     TaskGraphGraphResult,
     TaskGraphHookRequest,
     TaskGraphLeafResult,
+    TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
 )
@@ -97,6 +99,46 @@ class StatusCallbackExecutionResult:
     events: tuple[GameEvent, ...] = ()
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
+    task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+
+    def __post_init__(self) -> None:
+        projections = tuple(self.task_graph_projections)
+        if any(type(item) is not TaskGraphNodeProjection for item in projections):
+            raise TypeError("status callback task graph projections are invalid")
+        if not self.ok and projections:
+            raise ValueError("blocked status callback leaks task graph projections")
+        object.__setattr__(self, "task_graph_projections", projections)
+
+
+def _task_graph_transport_reason(
+    continuation: object,
+    hooks: object,
+) -> str:
+    if continuation is not None and type(continuation) is not TaskGraphContinuation:
+        return "status_task_graph_continuation_type_invalid"
+    if hooks is not None and type(hooks) is not TaskGraphExecutionHooks:
+        return "status_nested_ability_hooks_type_invalid"
+    if hooks is not None and continuation is None:
+        return "status_nested_ability_hooks_without_continuation"
+    return ""
+
+
+def _blocked_task_graph_hook_result(name: str, reason: str) -> object:
+    if name == "leaf":
+        return TaskGraphLeafResult(
+            "blocked", outcome_kind="", blocked_reason=reason
+        )
+    if name == "condition":
+        return TaskGraphConditionResult("blocked", blocked_reason=reason)
+    if name == "branch":
+        return TaskGraphBranchResult("blocked", blocked_reason=reason)
+    if name == "count":
+        return TaskGraphCountResult("blocked", blocked_reason=reason)
+    if name == "targets":
+        return TaskGraphTargetResult("blocked", blocked_reason=reason)
+    if name == "graph":
+        return TaskGraphGraphResult("blocked", blocked_reason=reason)
+    raise ValueError("unknown task graph hook channel")
 
 
 class StatusCallbackSystem:
@@ -135,6 +177,8 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None = None,
         damage_window_ledger: DamageWindowLedger | None = None,
         detail_override: dict[str, JSONValue] | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> StatusCallbackExecutionResult:
         result = self._execute(
             state,
@@ -144,6 +188,8 @@ class StatusCallbackSystem:
             trigger_event=trigger_event,
             damage_window_ledger=damage_window_ledger,
             detail_override=detail_override,
+            task_graph_continuation=task_graph_continuation,
+            nested_ability_hooks=nested_ability_hooks,
         )
         if result.node_results:
             return result
@@ -172,7 +218,15 @@ class StatusCallbackSystem:
         modifier_name: str,
         trigger_event: GameEvent | None = None,
         detail_override: dict[str, JSONValue] | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> StatusCallbackExecutionResult:
+        transport_reason = _task_graph_transport_reason(
+            task_graph_continuation,
+            nested_ability_hooks,
+        )
+        if transport_reason:
+            return _selected_callback_blocked(state, callback_id, transport_reason)
         callback = self.rules.status_callback(callback_id)
         if callback is None:
             return _selected_callback_blocked(
@@ -241,6 +295,8 @@ class StatusCallbackSystem:
             detail,
             trigger_event,
             None,
+            task_graph_continuation,
+            nested_ability_hooks,
         )
         if result.node_results:
             return result
@@ -266,7 +322,19 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None = None,
         damage_window_ledger: DamageWindowLedger | None = None,
         detail_override: dict[str, JSONValue] | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> StatusCallbackExecutionResult:
+        transport_reason = _task_graph_transport_reason(
+            task_graph_continuation,
+            nested_ability_hooks,
+        )
+        if transport_reason:
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                errors=(transport_reason,),
+            )
         detail = detail_override
         if detail is not None and (
             str(detail.get("owner_id") or "") != unit_id
@@ -328,6 +396,7 @@ class StatusCallbackSystem:
         errors: list[str] = []
         events: list[GameEvent] = []
         node_results: list[ExecutionNodeResult] = []
+        task_graph_projections: list[TaskGraphNodeProjection] = []
         staged_damage_ledger = _stage_damage_window_ledger(damage_window_ledger)
         for callback in callbacks:
             result = self._execute_callback(
@@ -336,6 +405,8 @@ class StatusCallbackSystem:
                 detail,
                 trigger_event,
                 staged_damage_ledger,
+                task_graph_continuation,
+                nested_ability_hooks,
             )
             current_state = result.after_state
             mutations.extend(result.mutations)
@@ -344,6 +415,7 @@ class StatusCallbackSystem:
             events.extend(result.events)
             errors.extend(result.errors)
             node_results.extend(result.node_results)
+            task_graph_projections.extend(result.task_graph_projections)
         if errors:
             reason = f"status_callback_group_atomic_rollback:{errors[0]}"
             return StatusCallbackExecutionResult(
@@ -380,6 +452,7 @@ class StatusCallbackSystem:
             events=tuple(events),
             errors=tuple(errors),
             node_results=tuple(node_results),
+            task_graph_projections=tuple(task_graph_projections),
         )
 
     def _execute_callback(
@@ -389,6 +462,8 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> StatusCallbackExecutionResult:
         if callback.coverage_status != "executable":
             reason = callback.blocked_reason or f"status_callback_not_executable:{callback.coverage_status}"
@@ -413,6 +488,8 @@ class StatusCallbackSystem:
                 trigger_event,
                 damage_window_ledger,
                 entry_result=entry_result,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
         if entry_result.status == "resolved" or entry_result.candidate_ids:
             return _selected_callback_blocked(
@@ -460,6 +537,8 @@ class StatusCallbackSystem:
         damage_window_ledger: DamageWindowLedger | None,
         *,
         entry_result: TaskGraphQueryResult,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> StatusCallbackExecutionResult:
         attached_ids = _trigger_ids_for_event(detail, callback.event)
         if attached_ids is None:
@@ -543,31 +622,43 @@ class StatusCallbackSystem:
             )
             return _selected_callback_blocked(state, callback.callback_id, reason)
 
+        trigger_event_id = (
+            str(trigger_event.to_json().get("event_id") or "")
+            if trigger_event is not None
+            else "direct"
+        )
         invocation_id = (
             f"status_callback:{state.event_index}:{callback.callback_id}:"
-            f"{detail.get('instance_id')}"
+            f"{detail.get('instance_id')}:{trigger_event_id}"
+        )
+        context_values: dict[str, JSONValue] = {
+            "callback_id": callback.callback_id,
+            "modifier_name": callback.modifier_name,
+            "event": callback.event,
+            "status_instance_id": str(detail.get("instance_id") or ""),
+            "owner_id": str(detail.get("owner_id") or ""),
+            "trigger_event_id": (
+                trigger_event.event_id if trigger_event is not None else ""
+            ),
+        }
+        execution_context = (
+            task_graph_continuation.child_context(
+                invocation_id,
+                context_values,
+            )
+            if task_graph_continuation is not None
+            else TaskGraphExecutionContext(invocation_id, context_values)
         )
         execution = self.task_graph_executor.execute(
             state,
             graph,
-            TaskGraphExecutionContext(
-                invocation_id,
-                {
-                    "callback_id": callback.callback_id,
-                    "modifier_name": callback.modifier_name,
-                    "event": callback.event,
-                    "status_instance_id": str(detail.get("instance_id") or ""),
-                    "owner_id": str(detail.get("owner_id") or ""),
-                    "trigger_event_id": (
-                        trigger_event.event_id if trigger_event is not None else ""
-                    ),
-                },
-            ),
+            execution_context,
             self._formal_status_hooks(
                 callback,
                 detail,
                 trigger_event,
                 damage_window_ledger,
+                nested_ability_hooks,
             ),
         )
         if not execution.ok:
@@ -600,6 +691,7 @@ class StatusCallbackSystem:
             ),
             events=(callback_event, *execution.events),
             node_results=execution.outcome.node_results,
+            task_graph_projections=execution.node_projections,
         )
 
     def _formal_status_hooks(
@@ -608,8 +700,9 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> TaskGraphExecutionHooks:
-        return TaskGraphExecutionHooks(
+        status_hooks = TaskGraphExecutionHooks(
             leaf=lambda request, state: self._execute_formal_status_leaf(
                 request,
                 state,
@@ -619,37 +712,165 @@ class StatusCallbackSystem:
                 damage_window_ledger,
             ),
             condition=lambda request, state: self._evaluate_formal_status_condition(
-                request,
-                state,
-                callback,
-                detail,
-                trigger_event,
+                request, state, callback, detail, trigger_event
             ),
             branch=lambda request, state: self._select_formal_status_branch(
-                request,
-                state,
-                callback,
-                detail,
-                trigger_event,
+                request, state, callback, detail, trigger_event
             ),
             count=lambda request, definition, state: self._resolve_formal_status_count(
-                request,
-                definition,
-                state,
-                callback,
-                detail,
+                request, definition, state, callback, detail
             ),
             targets=lambda request, state: self._resolve_formal_status_targets(
-                request,
-                state,
-                callback,
-                detail,
-                trigger_event,
+                request, state, callback, detail, trigger_event
             ),
-            graph=lambda _request, _state: TaskGraphGraphResult(
+            graph=lambda request, state: self._resolve_formal_status_nested_graph(
+                request, state, callback
+            ),
+        )
+
+        def route(name: str, request: TaskGraphHookRequest, *args: object) -> object:
+            graph_result = self.rules.query_task_graph(request.graph_id)
+            graph = graph_result.value
+            if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+                selected = None
+            elif (
+                graph.entry_kind == "status_callback"
+                and graph.owner_id == callback.callback_id
+            ):
+                selected = status_hooks
+            elif graph.entry_kind == "ability_phase_callback":
+                selected = nested_ability_hooks
+            else:
+                selected = None
+            hook = getattr(selected, name, None) if selected is not None else None
+            if hook is None:
+                return _blocked_task_graph_hook_result(
+                    name, f"status_nested_ability_{name}_context_missing"
+                )
+            return hook(request, *args)
+
+        return TaskGraphExecutionHooks(
+            leaf=lambda request, state: cast(
+                TaskGraphLeafResult, route("leaf", request, state)
+            ),
+            condition=lambda request, state: cast(
+                TaskGraphConditionResult, route("condition", request, state)
+            ),
+            branch=lambda request, state: cast(
+                TaskGraphBranchResult, route("branch", request, state)
+            ),
+            count=lambda request, definition, state: cast(
+                TaskGraphCountResult,
+                route("count", request, definition, state),
+            ),
+            targets=lambda request, state: cast(
+                TaskGraphTargetResult, route("targets", request, state)
+            ),
+            graph=lambda request, state: cast(
+                TaskGraphGraphResult, route("graph", request, state)
+            ),
+        )
+
+    def _resolve_formal_status_nested_graph(
+        self,
+        request: TaskGraphHookRequest,
+        _state: BattleState,
+        callback: StatusCallbackIR,
+    ) -> TaskGraphGraphResult:
+        task, _node, reason = self._formal_status_task_for_request(request, callback)
+        if task is None:
+            return TaskGraphGraphResult("blocked", blocked_reason=reason)
+        if task.opcode != "TriggerAbility":
+            return TaskGraphGraphResult(
+                "blocked", blocked_reason="status_nested_ability_opcode_mismatch"
+            )
+        ability_refs = tuple(
+            reference
+            for reference in request.references
+            if reference.reference_kind == "ability"
+        )
+        if len(ability_refs) != 1 or ability_refs[0].resolution_status != "resolved":
+            return TaskGraphGraphResult(
                 "blocked",
-                blocked_reason="status_callback_nested_ability_context_deferred_to_s8b5",
-            ),
+                blocked_reason="status_nested_ability_reference_not_resolved",
+            )
+        reference = ability_refs[0]
+        if task.linked_ability_phase_id:
+            if reference.definition_id != task.linked_ability_phase_id:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason="status_nested_ability_phase_identity_mismatch",
+                )
+            phase_ids = (task.linked_ability_phase_id,)
+        elif task.linked_standalone_graph_id:
+            if reference.definition_id != task.linked_standalone_graph_id:
+                return TaskGraphGraphResult(
+                    "blocked",
+                    blocked_reason="status_nested_ability_standalone_identity_mismatch",
+                )
+            standalone = self.rules.standalone_ability_graph(
+                task.linked_standalone_graph_id
+            )
+            if standalone is None:
+                return TaskGraphGraphResult(
+                    "blocked", blocked_reason="status_nested_ability_standalone_missing"
+                )
+            phase_ids = standalone.phase_ids
+        else:
+            return TaskGraphGraphResult(
+                "blocked", blocked_reason="status_nested_ability_target_missing"
+            )
+
+        candidates: list[TaskGraphIR] = []
+        for phase_id in phase_ids:
+            phase = self.rules.ability_phase(phase_id)
+            if phase is None or phase.invocation_role != "nested_only":
+                continue
+            callback_kinds = tuple(
+                sorted(
+                    {
+                        ability_task.callback_kind
+                        for ability_task in self.rules.ability_tasks_for_phase(phase_id)
+                    }
+                )
+            )
+            for callback_kind in callback_kinds:
+                entry_result = self.rules.query_task_graph_entry(
+                    "ability_phase_callback", phase_id, callback_kind
+                )
+                entry = entry_result.value
+                if entry_result.status != "resolved" or entry is None:
+                    return TaskGraphGraphResult(
+                        "blocked",
+                        blocked_reason=entry_result.blocked_reason
+                        or "status_nested_ability_entry_missing",
+                    )
+                graph_result = self.rules.query_task_graph(entry.graph_id)
+                graph = graph_result.value
+                if (
+                    graph_result.status != "resolved"
+                    or type(graph) is not TaskGraphIR
+                    or graph.entry_kind != "ability_phase_callback"
+                    or graph.owner_id != phase_id
+                    or graph.callback_kind != callback_kind
+                ):
+                    return TaskGraphGraphResult(
+                        "blocked",
+                        blocked_reason=graph_result.blocked_reason
+                        or "status_nested_ability_graph_identity_mismatch",
+                    )
+                candidates.append(graph)
+        if len(candidates) != 1:
+            return TaskGraphGraphResult(
+                "blocked",
+                blocked_reason=(
+                    "status_nested_ability_callback_missing"
+                    if not candidates
+                    else "status_nested_ability_callback_ambiguous"
+                ),
+            )
+        return TaskGraphGraphResult(
+            "resolved", reference.definition_id, candidates[0]
         )
 
     def _formal_status_task_for_request(

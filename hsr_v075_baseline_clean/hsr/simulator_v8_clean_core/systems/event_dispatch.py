@@ -22,6 +22,11 @@ from .mutation_events import (
 )
 from .phase_machine import CombatPhaseMachine
 from .status_callbacks import StatusCallbackSystem
+from .task_graph import (
+    TaskGraphContinuation,
+    TaskGraphExecutionHooks,
+    TaskGraphNodeProjection,
+)
 from .timeline import TimelineSystem
 from .trigger import TriggerSystem
 from .unit_lifecycle import UnitLifecycleSystem
@@ -46,6 +51,15 @@ class EventDispatchResult:
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
     event_normalizations: tuple[EventNormalization, ...] = ()
+    task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+
+    def __post_init__(self) -> None:
+        projections = tuple(self.task_graph_projections)
+        if any(type(item) is not TaskGraphNodeProjection for item in projections):
+            raise TypeError("event dispatch task graph projections are invalid")
+        if self.errors and projections:
+            raise ValueError("blocked event dispatch leaks task graph projections")
+        object.__setattr__(self, "task_graph_projections", projections)
 
 
 @dataclass(frozen=True)
@@ -181,7 +195,22 @@ class EventDispatchSystem:
         unit_id: str | None = None,
         modifier_name: str | None = None,
         damage_window_ledger: DamageWindowLedger | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> EventDispatchResult:
+        transport_reason = _task_graph_transport_reason(
+            task_graph_continuation,
+            nested_ability_hooks,
+        )
+        if transport_reason:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="task_graph_event_transport",
+                scope=_event_scope_kind(event),
+                reason=transport_reason,
+                metadata={"event_type": event.event_type},
+            )
         event_before_normalization = event
         event, param_entity_reason = _event_with_typed_param_entity(state, event)
         if param_entity_reason:
@@ -262,12 +291,16 @@ class EventDispatchSystem:
                 unit_id=unit_id,
                 modifier_name=modifier_name,
                 damage_window_ledger=damage_window_ledger,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
         result = self._reconcile_ability_property_watchers(
             result,
             before_state=state,
             event=event,
             damage_window_ledger=damage_window_ledger,
+            task_graph_continuation=task_graph_continuation,
+            nested_ability_hooks=nested_ability_hooks,
         )
         return _with_controlled_event_normalization(
             _with_event_dispatch_node_result(result, event),
@@ -282,6 +315,8 @@ class EventDispatchSystem:
         before_state: BattleState,
         event: GameEvent,
         damage_window_ledger: DamageWindowLedger | None,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> EventDispatchResult:
         if result.errors:
             return _atomic_dispatch_failure(before_state, result)
@@ -296,18 +331,21 @@ class EventDispatchSystem:
             result.after_state,
             unit_ids=unit_ids,
             trigger_event=event,
+            task_graph_continuation=task_graph_continuation,
+            nested_ability_hooks=nested_ability_hooks,
         )
         if not watcher_result.ok:
             return _atomic_dispatch_failure(
                 before_state,
                 replace(
-                result,
-                records=(*result.records, *watcher_result.records),
-                errors=(*result.errors, *watcher_result.errors),
-                node_results=(
-                    *result.node_results,
-                    *watcher_result.node_results,
-                ),
+                    result,
+                    records=(*result.records, *watcher_result.records),
+                    errors=(*result.errors, *watcher_result.errors),
+                    node_results=(
+                        *result.node_results,
+                        *watcher_result.node_results,
+                    ),
+                    task_graph_projections=(),
                 ),
             )
 
@@ -319,6 +357,10 @@ class EventDispatchSystem:
         errors = [*result.errors]
         nodes = [*result.node_results, *watcher_result.node_results]
         normalizations = [*result.event_normalizations]
+        projections = [
+            *result.task_graph_projections,
+            *watcher_result.task_graph_projections,
+        ]
         child_depth = _event_mutation_depth(event)
         dispatchable_events = tuple(
             emitted_event
@@ -356,6 +398,8 @@ class EventDispatchSystem:
                     current_state,
                     event=child_event,
                     damage_window_ledger=damage_window_ledger,
+                    task_graph_continuation=task_graph_continuation,
+                    nested_ability_hooks=nested_ability_hooks,
                 )
                 current_state = child_result.after_state
                 mutations.extend(child_result.mutations)
@@ -365,6 +409,7 @@ class EventDispatchSystem:
                 errors.extend(child_result.errors)
                 nodes.extend(child_result.node_results)
                 normalizations.extend(child_result.event_normalizations)
+                projections.extend(child_result.task_graph_projections)
         merged = replace(
             result,
             after_state=current_state,
@@ -375,6 +420,7 @@ class EventDispatchSystem:
             errors=tuple(errors),
             node_results=tuple(nodes),
             event_normalizations=tuple(normalizations),
+            task_graph_projections=(() if errors else tuple(projections)),
         )
         return (
             _atomic_dispatch_failure(before_state, merged)
@@ -440,6 +486,8 @@ class EventDispatchSystem:
         unit_id: str,
         modifier_name: str,
         damage_window_ledger: DamageWindowLedger | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> EventDispatchResult:
         return self.dispatch_event(
             state,
@@ -447,6 +495,8 @@ class EventDispatchSystem:
             unit_id=unit_id,
             modifier_name=modifier_name,
             damage_window_ledger=damage_window_ledger,
+            task_graph_continuation=task_graph_continuation,
+            nested_ability_hooks=nested_ability_hooks,
         )
 
     def _dispatch_listener_event(
@@ -457,6 +507,8 @@ class EventDispatchSystem:
         unit_id: str | None,
         modifier_name: str | None,
         damage_window_ledger: DamageWindowLedger | None,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> EventDispatchResult:
         aliases = _event_aliases(event, self.rules)
         dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
@@ -543,6 +595,7 @@ class EventDispatchSystem:
         errors: list[str] = []
         node_results: list[ExecutionNodeResult] = []
         event_normalizations: list[EventNormalization] = []
+        task_graph_projections: list[TaskGraphNodeProjection] = []
         for match in matches:
             listener_record = _listener_record(
                 event,
@@ -567,6 +620,8 @@ class EventDispatchSystem:
                 trigger_event=event,
                 damage_window_ledger=damage_window_ledger,
                 detail_override=match.status_detail,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
             current_state = result.after_state
             mutations.extend(result.mutations)
@@ -575,6 +630,7 @@ class EventDispatchSystem:
             events.extend(result.events)
             errors.extend(result.errors)
             node_results.extend(result.node_results)
+            task_graph_projections.extend(result.task_graph_projections)
             child_depth = _event_mutation_depth(event)
             dispatchable_events = tuple(
                 emitted_event
@@ -622,6 +678,8 @@ class EventDispatchSystem:
                         current_state,
                         event=child_event,
                         damage_window_ledger=damage_window_ledger,
+                        task_graph_continuation=task_graph_continuation,
+                        nested_ability_hooks=nested_ability_hooks,
                     )
                     current_state = child_result.after_state
                     mutations.extend(child_result.mutations)
@@ -632,6 +690,9 @@ class EventDispatchSystem:
                     node_results.extend(child_result.node_results)
                     event_normalizations.extend(
                         child_result.event_normalizations
+                    )
+                    task_graph_projections.extend(
+                        child_result.task_graph_projections
                     )
             execution_record = _listener_record(
                 event,
@@ -648,7 +709,7 @@ class EventDispatchSystem:
             )
             listener_records.append(execution_record)
             records.append(execution_record)
-        return EventDispatchResult(
+        result = EventDispatchResult(
             after_state=current_state,
             mutations=tuple(mutations),
             events=tuple(events),
@@ -659,7 +720,11 @@ class EventDispatchSystem:
             errors=tuple(errors),
             node_results=tuple(node_results),
             event_normalizations=tuple(event_normalizations),
+            task_graph_projections=(
+                () if errors else tuple(task_graph_projections)
+            ),
         )
+        return _atomic_dispatch_failure(state, result) if errors else result
 
     def _resolve_listener_matches(
         self,
@@ -934,7 +999,21 @@ def _atomic_dispatch_failure(
             if record.get("process_only") is True
         ),
         trigger_windows=(),
+        task_graph_projections=(),
     )
+
+
+def _task_graph_transport_reason(
+    continuation: object,
+    hooks: object,
+) -> str:
+    if continuation is not None and type(continuation) is not TaskGraphContinuation:
+        return "task_graph_event_continuation_type_invalid"
+    if hooks is not None and type(hooks) is not TaskGraphExecutionHooks:
+        return "task_graph_event_hooks_type_invalid"
+    if hooks is not None and continuation is None:
+        return "task_graph_event_hooks_without_continuation"
+    return ""
 
 
 def _trigger_window_node_results(

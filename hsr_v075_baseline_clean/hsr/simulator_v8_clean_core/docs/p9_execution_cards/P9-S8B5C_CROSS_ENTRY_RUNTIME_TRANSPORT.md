@@ -35,6 +35,8 @@
 - `systems/ability.py`
 - `systems/event_dispatch.py`
 - `systems/status_callbacks.py`
+- `systems/ability_property_watchers.py` 仅运输同一 continuation/projection；该正式 watcher 调用点已在
+  修改前调用链核对中确认，不能绕过后留下上下文断点
 - 必要时 `core/executor.py` 仅做既有结果运输
 - 一个聚焦验证器、报告和规划状态文档
 
@@ -52,12 +54,14 @@ s8c_s9_s10_obligations_remain_precise_and_unexecuted=true
 
 - 一个同步成功组件链、一个环、一个 projection 冲突；真实来源只做链接/阻断审计。
 - `compileall`、唯一主入口、最多一个现行 direct、`git diff --check`；不重跑 A/B/B3/B4 主入口。
-- 预算：45 秒、512 MiB、160 KiB evidence；验证器目标 300、硬上限 380 非空行。
+- 预算：45 秒、512 MiB、160 KiB evidence；验证器目标 360、硬上限 420 非空行。修改前调用链
+  核对补入了原卡遗漏的正式 watcher 入口及其原子失败反例，因此只调整代码规模预算；入口数、
+  运行资源和 evidence 预算不变，禁止拆文件绕过上限。
 
 ## 唯一执行清单
 
-- [ ] continuation 穿过 ability/event/status 全链。
-- [ ] status TriggerAbility 只消费类型化 nested graph。
-- [ ] child projection 运输、冲突与失败原子性闭合。
-- [ ] 真实来源与组件证据边界诚实。
-- [ ] 唯一主验证和资源门通过，提交 `ready_for_review`。
+- [x] continuation 穿过 ability/event/status 全链。
+- [x] status TriggerAbility 只消费类型化 nested graph。
+- [x] child projection 运输、冲突与失败原子性闭合。
+- [x] 真实来源与组件证据边界诚实。
+- [x] 唯一主验证和资源门通过，提交 `ready_for_review`。

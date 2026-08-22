@@ -36,6 +36,7 @@ from .target import TargetSystem
 from .task_graph import (
     TaskGraphBranchResult,
     TaskGraphConditionResult,
+    TaskGraphContinuation,
     TaskGraphCountResult,
     TaskGraphExecutionContext,
     TaskGraphExecutionHooks,
@@ -43,6 +44,7 @@ from .task_graph import (
     TaskGraphGraphResult,
     TaskGraphHookRequest,
     TaskGraphLeafResult,
+    TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
 )
@@ -488,7 +490,6 @@ class AbilityTaskSystem:
                 ),
                 self._formal_task_graph_hooks(
                     invocation=invocation,
-                    callback_kind=callback_kind,
                 ),
             )
             node_results.extend(execution.outcome.node_results)
@@ -558,7 +559,6 @@ class AbilityTaskSystem:
         self,
         *,
         invocation: _FormalAbilityInvocation,
-        callback_kind: str,
     ) -> TaskGraphExecutionHooks:
         return TaskGraphExecutionHooks(
             leaf=lambda request, state: self._execute_formal_leaf(
@@ -589,7 +589,6 @@ class AbilityTaskSystem:
             graph=lambda request, state: self._resolve_formal_nested_graph(
                 request,
                 state,
-                callback_kind=callback_kind,
             ),
         )
 
@@ -625,12 +624,19 @@ class AbilityTaskSystem:
             execution_path=_task_graph_execution_path(request),
             iteration_index=request.iteration_index,
         )
-        _, mutations, events, rng_events, records = self._execute_formal_leaf_task(
-            state,
-            task,
-            invocation=scoped_invocation,
-            primary_target=scoped_resolution.primary,
-            target_resolution=scoped_resolution,
+        continuation = TaskGraphContinuation.from_hook_request(request)
+        _, mutations, events, rng_events, records, child_projections = (
+            self._execute_formal_leaf_task(
+                state,
+                task,
+                invocation=scoped_invocation,
+                primary_target=scoped_resolution.primary,
+                target_resolution=scoped_resolution,
+                task_graph_continuation=continuation,
+                nested_ability_hooks=self._formal_task_graph_hooks(
+                    invocation=scoped_invocation,
+                ),
+            )
         )
         blocker = _ability_task_records_blocked_reason(records)
         if blocker:
@@ -649,6 +655,7 @@ class AbilityTaskSystem:
             tuple(events),
             tuple(rng_events),
             settlement,
+            child_projections=tuple(child_projections),
         )
 
     def _execute_formal_leaf_task(
@@ -659,7 +666,16 @@ class AbilityTaskSystem:
         invocation: _FormalAbilityInvocation,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        task_graph_continuation: TaskGraphContinuation,
+        nested_ability_hooks: TaskGraphExecutionHooks,
+    ) -> tuple[
+        BattleState,
+        list[Mutation],
+        list[GameEvent],
+        list[RNGEvent],
+        list[dict[str, JSONValue]],
+        list[TaskGraphNodeProjection],
+    ]:
         if invocation.invocation_kind == "action":
             command = cast(ActionCommand, invocation.action_command)
             action_definition = cast(ActionDefinitionIR, invocation.action_definition)
@@ -678,6 +694,8 @@ class AbilityTaskSystem:
                 action_definition=action_definition,
                 primary_target=primary_target,
                 target_resolution=target_resolution,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
 
         if self.rules.damage_emissions_for_task(task.task_id):
@@ -687,12 +705,12 @@ class AbilityTaskSystem:
                     ok=False,
                     blocked_reason="standalone_ability_damage_context_deferred_to_s8c",
                 )
-            ]
+            ], []
         admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
         if admission_reason:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason=admission_reason)
-            ]
+            ], []
         if is_process_only_ability_task(task):
             return state, [], [], [], [
                 _task_process_record(
@@ -703,7 +721,7 @@ class AbilityTaskSystem:
                     effect_opcode=task.opcode,
                     effect_coverage="process_only",
                 )
-            ]
+            ], []
         if task.opcode in {
             "PredicateTaskList",
             "LoopExecuteTaskListWithInterval",
@@ -715,12 +733,13 @@ class AbilityTaskSystem:
                     ok=False,
                     blocked_reason="ability_task_graph_structural_node_reached_leaf",
                 )
-            ]
+            ], []
         if task.opcode == "SummonMonster":
-            return self.execute_summon_monster_task(
+            result = self.execute_summon_monster_task(
                 state, task, actor_id=invocation.actor_id
             )
-        return self._execute_effect_leaf_task(
+            return (*result, [])
+        result = self._execute_effect_leaf_task(
             state,
             task,
             invocation=invocation,
@@ -728,6 +747,7 @@ class AbilityTaskSystem:
             target_resolution=target_resolution,
             reduce_candidate=False,
         )
+        return (*result, [])
 
     def _execute_effect_leaf_task(
         self,
@@ -1052,12 +1072,11 @@ class AbilityTaskSystem:
         self,
         request: TaskGraphHookRequest,
         _state: BattleState,
-        *,
-        callback_kind: str,
     ) -> TaskGraphGraphResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
             return TaskGraphGraphResult("blocked", blocked_reason=reason)
+        callback_kind = task.callback_kind
         ability_refs = tuple(
             reference
             for reference in request.references
@@ -1611,7 +1630,7 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
-        return self._execute_ability_leaf_task(
+        leaf_result = self._execute_ability_leaf_task(
             state,
             task,
             command=command,
@@ -1619,6 +1638,7 @@ class AbilityTaskSystem:
             primary_target=primary_target,
             target_resolution=target_resolution,
         )
+        return leaf_result[:5]
 
     def _execute_ability_leaf_task(
         self,
@@ -1629,12 +1649,21 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
+    ) -> tuple[
+        BattleState,
+        list[Mutation],
+        list[GameEvent],
+        list[RNGEvent],
+        list[dict[str, JSONValue]],
+        list[TaskGraphNodeProjection],
+    ]:
         admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
         if admission_reason:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason=admission_reason)
-            ]
+            ], []
         if is_process_only_ability_task(task):
             return state, [], [], [], [
                 _task_process_record(
@@ -1645,7 +1674,7 @@ class AbilityTaskSystem:
                     effect_opcode=task.opcode,
                     effect_coverage="process_only",
                 )
-            ]
+            ], []
         if task.opcode in {
             "PredicateTaskList",
             "LoopExecuteTaskListWithInterval",
@@ -1657,13 +1686,14 @@ class AbilityTaskSystem:
                     ok=False,
                     blocked_reason="ability_task_graph_structural_node_reached_leaf",
                 )
-            ]
+            ], []
         if task.opcode == "SummonMonster":
-            return self.execute_summon_monster_task(
+            result = self.execute_summon_monster_task(
                 state,
                 task,
                 actor_id=command.actor_id,
             )
+            return (*result, [])
         if self.rules.damage_emissions_for_task(task.task_id):
             return self._execute_damage_task(
                 state,
@@ -1672,6 +1702,8 @@ class AbilityTaskSystem:
                 action_definition=action_definition,
                 primary_target=primary_target,
                 target_resolution=target_resolution,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
         iteration = command.metadata.get("ability_task_iteration_index")
         invocation = _FormalAbilityInvocation(
@@ -1691,7 +1723,7 @@ class AbilityTaskSystem:
                 iteration if type(iteration) is int and iteration >= 0 else None
             ),
         )
-        return self._execute_effect_leaf_task(
+        result = self._execute_effect_leaf_task(
             state,
             task,
             invocation=invocation,
@@ -1699,6 +1731,7 @@ class AbilityTaskSystem:
             target_resolution=target_resolution,
             reduce_candidate=True,
         )
+        return (*result, [])
 
     def _execute_fixed_task_loop(
         self,
@@ -1944,19 +1977,33 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
+    ) -> tuple[
+        BattleState,
+        list[Mutation],
+        list[GameEvent],
+        list[RNGEvent],
+        list[dict[str, JSONValue]],
+        list[TaskGraphNodeProjection],
+    ]:
         emissions = tuple(
             emission
             for emission in self.rules.damage_emissions_for_task(task.task_id)
             if emission.action_id == task.action_id and emission.level == task.level
         )
         if not emissions:
-            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="damage_emission_missing")]
+            return state, [], [], [], [
+                _task_process_record(
+                    task, ok=False, blocked_reason="damage_emission_missing"
+                )
+            ], []
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
         rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
+        task_graph_projections: list[TaskGraphNodeProjection] = []
         ledger = DamageWindowLedger()
         sequence_order: list[tuple[str, str]] = []
         sequence_context: dict[
@@ -1973,12 +2020,15 @@ class AbilityTaskSystem:
                 current,
                 event=event,
                 damage_window_ledger=ledger,
+                task_graph_continuation=task_graph_continuation,
+                nested_ability_hooks=nested_ability_hooks,
             )
             current = result.after_state
             mutations.extend(result.mutations)
             events.extend(result.events)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
+            task_graph_projections.extend(result.task_graph_projections)
             return result.errors
 
         for emission in emissions:
@@ -2225,6 +2275,7 @@ class AbilityTaskSystem:
                             events,
                             rng_events,
                             records,
+                            task_graph_projections,
                         )
                     sequence_order.append(sequence_key)
                     sequence_context[sequence_key] = {
@@ -2280,6 +2331,7 @@ class AbilityTaskSystem:
                             events,
                             rng_events,
                             records,
+                            task_graph_projections,
                         )
                 records.append(
                     _task_process_record(
@@ -2347,8 +2399,16 @@ class AbilityTaskSystem:
                         events,
                         rng_events,
                         records,
+                        task_graph_projections,
                     )
-        return current, mutations, events, rng_events, records
+        return (
+            current,
+            mutations,
+            events,
+            rng_events,
+            records,
+            task_graph_projections,
+        )
 
     def _evaluate_ability_task_condition(
         self,
