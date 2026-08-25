@@ -23,11 +23,9 @@ from ..rules.engine_rule_registry import (
 from ..rules.ir import ActionDelayEmissionIR, ConditionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import (
-    TaskGraphEntryMaterializationIR,
     TaskGraphIR,
     TaskGraphNodeIR,
     TaskGraphNumericDefinitionIR,
-    TaskGraphQueryResult,
 )
 from ..rules.value_binding import (
     ValueBindingRequest,
@@ -475,11 +473,6 @@ class StatusCallbackSystem:
             )
 
         formal = callback.source_mode == "mainline_avatar_ability"
-        entry_result = self.rules.query_task_graph_entry(
-            "status_callback",
-            callback.callback_id,
-            callback.event,
-        )
         if formal:
             return self._execute_formal_callback(
                 state,
@@ -487,10 +480,14 @@ class StatusCallbackSystem:
                 detail,
                 trigger_event,
                 damage_window_ledger,
-                entry_result=entry_result,
                 task_graph_continuation=task_graph_continuation,
                 nested_ability_hooks=nested_ability_hooks,
             )
+        entry_result = self.rules.query_task_graph_entry(
+            "status_callback",
+            callback.callback_id,
+            callback.event,
+        )
         if entry_result.status == "resolved" or entry_result.candidate_ids:
             return _selected_callback_blocked(
                 state,
@@ -536,7 +533,6 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
         *,
-        entry_result: TaskGraphQueryResult,
         task_graph_continuation: TaskGraphContinuation | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> StatusCallbackExecutionResult:
@@ -561,6 +557,11 @@ class StatusCallbackSystem:
             detail,
         )
         if not tasks:
+            entry_result = self.rules.query_task_graph_entry(
+                "status_callback",
+                callback.callback_id,
+                callback.event,
+            )
             if (
                 callback.task_ids
                 or entry_result.status == "resolved"
@@ -578,43 +579,18 @@ class StatusCallbackSystem:
                 events=(callback_event,),
             )
 
-        entry = entry_result.value
-        if (
-            entry_result.status != "resolved"
-            or type(entry) is not TaskGraphEntryMaterializationIR
-            or entry.status != "materialized"
-            or entry.entry_kind != "status_callback"
-            or entry.owner_id != callback.callback_id
-            or entry.callback_kind != callback.event
-        ):
-            reason = str(
-                entry_result.blocked_reason
-                or "formal_status_callback_task_graph_entry_missing"
-            )
-            return _selected_callback_blocked(state, callback.callback_id, reason)
-        graph_result = self.rules.query_task_graph(entry.graph_id)
-        graph = graph_result.value
         formal_task_ids = tuple(task.task_id for task in tasks)
-        root_task_ids = tuple(task.task_id for task in tasks if not task.parent_task_id)
+        graph_result = self.rules.query_formal_task_graph(
+            "status_callback",
+            callback.callback_id,
+            callback.event,
+            formal_task_ids,
+        )
+        graph = graph_result.value
         if (
             graph_result.status != "resolved"
             or type(graph) is not TaskGraphIR
-            or graph.entry_id != entry.entry_id
-            or graph.entry_kind != "status_callback"
-            or graph.owner_id != callback.callback_id
-            or graph.callback_kind != callback.event
-            or entry.formal_task_ids != (
-                *callback.task_ids,
-                *tuple(
-                    task.task_id
-                    for task in sorted(
-                        (item for item in tasks if item.parent_task_id),
-                        key=lambda item: (item.task_path, item.task_id),
-                    )
-                ),
-            )
-            or callback.task_ids != root_task_ids
-            or {node.formal_task_id for node in graph.nodes} != set(formal_task_ids)
+            or callback.task_ids != graph.root_formal_task_ids
         ):
             reason = (
                 graph_result.blocked_reason
@@ -835,24 +811,20 @@ class StatusCallbackSystem:
                 )
             )
             for callback_kind in callback_kinds:
-                entry_result = self.rules.query_task_graph_entry(
-                    "ability_phase_callback", phase_id, callback_kind
+                graph_result = self.rules.query_formal_task_graph(
+                    "ability_phase_callback",
+                    phase_id,
+                    callback_kind,
+                    (
+                        task.task_id
+                        for task in self.rules.ability_tasks_for_phase(phase_id)
+                        if task.callback_kind == callback_kind
+                    ),
                 )
-                entry = entry_result.value
-                if entry_result.status != "resolved" or entry is None:
-                    return TaskGraphGraphResult(
-                        "blocked",
-                        blocked_reason=entry_result.blocked_reason
-                        or "status_nested_ability_entry_missing",
-                    )
-                graph_result = self.rules.query_task_graph(entry.graph_id)
                 graph = graph_result.value
                 if (
                     graph_result.status != "resolved"
                     or type(graph) is not TaskGraphIR
-                    or graph.entry_kind != "ability_phase_callback"
-                    or graph.owner_id != phase_id
-                    or graph.callback_kind != callback_kind
                 ):
                     return TaskGraphGraphResult(
                         "blocked",
@@ -5497,13 +5469,6 @@ def _value_field(value: object) -> object:
 
 def _is_runtime_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _parent_child_sequence(parent: StatusCallbackTaskIR, task_id: str) -> tuple[str, ...]:
-    for candidate in (parent.success_task_ids, parent.failed_task_ids, parent.child_task_ids):
-        if task_id in candidate:
-            return tuple(candidate)
-    return ()
 
 
 def _status_callback_envelope(

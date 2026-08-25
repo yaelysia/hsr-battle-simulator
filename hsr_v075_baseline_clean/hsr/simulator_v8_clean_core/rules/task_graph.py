@@ -689,6 +689,13 @@ class TaskGraphIR:
         object.__setattr__(self, "numeric_definitions", tuple(sorted(numeric, key=lambda item: item.definition_id)))
         object.__setattr__(self, "source", _source(self.source, "task graph"))
 
+    @property
+    def root_formal_task_ids(self) -> tuple[str, ...]:
+        nodes_by_id = {item.graph_node_id: item for item in self.nodes}
+        return tuple(
+            nodes_by_id[node_id].formal_task_id for node_id in self.root_node_ids
+        )
+
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "graph_id": self.graph_id,

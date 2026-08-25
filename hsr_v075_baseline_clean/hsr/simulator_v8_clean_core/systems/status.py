@@ -10,8 +10,15 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import numeric_dynamic_hashes
-from ..rules.ir import EffectIR, RuleEntity, TargetExpressionIR
+from ..rules.ir import (
+    EffectIR,
+    RuleEntity,
+    StatusCallbackIR,
+    StatusCallbackTaskIR,
+    TargetExpressionIR,
+)
 from ..rules.rulebook import RuleBook
+from ..rules.task_graph import TaskGraphIR
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..unit_presence import plan_unit_departure_end
 from .mutation_events import events_for_mutation
@@ -423,20 +430,27 @@ class StatusSystem:
                 {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
                 retained_runtime_hashes,
             )
-            on_create_dynamic_values = _on_create_define_dynamic_values(
-                self.rules,
-                self.targets,
-                modifier_name,
-                effect.status_callback_ids,
-                state,
-                target_id=target_id,
-                caster_id=caster_id,
-                owner_id=target_id,
-                param_entity_id=param_entity_id,
-                current_action_target_id=current_action_target_id,
-                binding_sources=binding_sources,
-                source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+            on_create_dynamic_values, on_create_dynamic_reason = (
+                _on_create_define_dynamic_values(
+                    self.rules,
+                    self.targets,
+                    modifier_name,
+                    effect.status_callback_ids,
+                    state,
+                    target_id=target_id,
+                    caster_id=caster_id,
+                    owner_id=target_id,
+                    param_entity_id=param_entity_id,
+                    current_action_target_id=current_action_target_id,
+                    binding_sources=binding_sources,
+                    source_trace={
+                        "effect_id": effect.effect_id,
+                        "effect_source": effect.source.to_json(),
+                    },
+                )
             )
+            if on_create_dynamic_reason:
+                return _unsupported_result(effect, on_create_dynamic_reason)
             if on_create_dynamic_values:
                 resolved_dynamic_values = _merge_dynamic_values(resolved_dynamic_values, on_create_dynamic_values)
             modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
@@ -3001,6 +3015,41 @@ def _resolve_dynamic_values(
     return values
 
 
+def _legacy_on_create_root_tasks(
+    tasks: tuple[StatusCallbackTaskIR, ...],
+) -> tuple[StatusCallbackTaskIR, ...]:
+    return tuple(task for task in tasks if not task.parent_task_id)
+
+
+def _on_create_root_tasks(
+    rules: RuleBook,
+    callback: StatusCallbackIR,
+    tasks: tuple[StatusCallbackTaskIR, ...],
+) -> tuple[tuple[StatusCallbackTaskIR, ...], str]:
+    if callback.source_mode != "mainline_avatar_ability":
+        if callback.source_mode not in {
+            "mainline_equipment_ability",
+            "mainline_monster_ability",
+            "mainline_global_modifier",
+        }:
+            return (), ""
+        return _legacy_on_create_root_tasks(tasks), ""
+    graph_result = rules.query_formal_task_graph(
+        "status_callback",
+        callback.callback_id,
+        callback.event,
+        (task.task_id for task in tasks),
+    )
+    graph = graph_result.value
+    if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+        return (), graph_result.blocked_reason or "on_create_task_graph_missing"
+    tasks_by_id = {task.task_id: task for task in tasks}
+    roots = tuple(
+        tasks_by_id[task_id] for task_id in graph.root_formal_task_ids
+    )
+    return roots, ""
+
+
 def _on_create_define_dynamic_values(
     rules: RuleBook,
     targets: TargetSystem | None,
@@ -3015,14 +3064,29 @@ def _on_create_define_dynamic_values(
     current_action_target_id: str | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     source_trace: dict[str, JSONValue],
-) -> dict[str, JSONValue]:
+) -> tuple[dict[str, JSONValue], str]:
     values: dict[str, JSONValue] = {"__by_name": {}, "__by_hash": {}, "__evaluations": []}
     admitted_callback_ids = set(callback_ids)
     for callback in rules.status_callbacks_for_modifier_event(modifier_name, "OnCreate"):
         if admitted_callback_ids and callback.callback_id not in admitted_callback_ids:
             continue
-        for task in rules.status_callback_tasks_for_callback(callback.callback_id):
-            if task.parent_task_id or task.opcode != "DefineDynamicValue" or not task.effect_id:
+        if (
+            callback.coverage_status != "executable"
+            or callback.admission_status != "executable"
+        ):
+            continue
+        callback_tasks = tuple(
+            rules.status_callback_tasks_for_callback(callback.callback_id)
+        )
+        root_tasks, topology_reason = _on_create_root_tasks(
+            rules,
+            callback,
+            callback_tasks,
+        )
+        if topology_reason:
+            return values, topology_reason
+        for task in root_tasks:
+            if task.opcode != "DefineDynamicValue" or not task.effect_id:
                 continue
             effect = rules.effect(task.effect_id)
             standard = effect.payload.get("standard") if effect is not None else None
@@ -3086,7 +3150,7 @@ def _on_create_define_dynamic_values(
                 by_hash[str(value_hash)] = float(result.value)
             values["__by_name"] = by_name
             values["__by_hash"] = by_hash
-    return values
+    return values, ""
 
 
 def _merge_dynamic_values(

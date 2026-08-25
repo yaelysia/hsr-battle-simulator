@@ -171,6 +171,10 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
   不能让真实 child/callback 从正式目录消失。生产目录边界与验收独立分母都必须对此做双向闭合。
 - 共享 template/include 在多个 owner 中展开时，原始来源 occurrence 与正式图位置必须使用不同身份；
   来源审计跟随模板，task/effect/condition 唯一身份和相对引用解析跟随 owner 图位置。
+- 退役公共字段或旧接口前，必须按类型化 producer/invocation role 区分已迁移正式域和未迁移内容域；
+  正式域移除双写与回退，外部域形成来源可逆依赖账本，不能用全局删除制造残留为零。
+- task 子集、启动项或准入白名单等业务过滤必须发生在完整 entry/graph/owner/task 身份闭合之后；
+  禁止先过滤再用残缺集合查询正式图，或用选择结果反向证明目录完整。
 - 一个公开执行 API 同时服务已迁移正式内容和待迁移外部/旧内容域时，必须在最外层按类型化
   producer 或 invocation role 分流；不得用名称、ID 形状或目录是否命中猜测，也不得全局替换后
   迫使未迁移内容提前改变行为。正式分支缺图或执行失败时严禁回退旧解释器。

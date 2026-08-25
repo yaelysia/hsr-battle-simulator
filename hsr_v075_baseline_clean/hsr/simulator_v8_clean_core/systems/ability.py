@@ -420,41 +420,20 @@ class AbilityTaskSystem:
         event_ids: set[str] = set()
         rng_event_ids: set[str] = set()
         for ordinal, (phase, callback_kind) in enumerate(entries):
-            entry_result = self.rules.query_task_graph_entry(
+            graph_result = self.rules.query_formal_task_graph(
                 "ability_phase_callback",
                 phase.phase_id,
                 callback_kind,
+                (
+                    task.task_id
+                    for task in self.rules.ability_tasks_for_phase(phase.phase_id)
+                    if task.callback_kind == callback_kind
+                ),
             )
-            if entry_result.status != "resolved":
-                return self._formal_callback_blocked(
-                    state,
-                    callback_kind,
-                    invocation,
-                    entry_result.blocked_reason or "ability_action_task_graph_entry_missing",
-                    node_results=tuple(node_results),
-                )
-            entry = entry_result.value
-            if (
-                entry is None
-                or entry.owner_id != phase.phase_id
-                or entry.callback_kind != callback_kind
-                or entry.entry_kind != "ability_phase_callback"
-            ):
-                return self._formal_callback_blocked(
-                    state,
-                    callback_kind,
-                    invocation,
-                    "ability_action_task_graph_entry_identity_mismatch",
-                    node_results=tuple(node_results),
-                )
-            graph_result = self.rules.query_task_graph(entry.graph_id)
             graph = graph_result.value
             if (
                 graph_result.status != "resolved"
                 or type(graph) is not TaskGraphIR
-                or graph.entry_id != entry.entry_id
-                or graph.owner_id != phase.phase_id
-                or graph.callback_kind != callback_kind
             ):
                 return self._formal_callback_blocked(
                     state,
@@ -696,6 +675,7 @@ class AbilityTaskSystem:
                 target_resolution=target_resolution,
                 task_graph_continuation=task_graph_continuation,
                 nested_ability_hooks=nested_ability_hooks,
+                topology_authority="task_graph",
             )
 
         if self.rules.damage_emissions_for_task(task.task_id):
@@ -706,7 +686,11 @@ class AbilityTaskSystem:
                     blocked_reason="standalone_ability_damage_context_deferred_to_s8c",
                 )
             ], []
-        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        admission_reason = ability_task_runtime_blocked_reason(
+            self.rules,
+            task,
+            topology_authority="task_graph",
+        )
         if admission_reason:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason=admission_reason)
@@ -1126,18 +1110,16 @@ class AbilityTaskSystem:
                 for task in self.rules.ability_tasks_for_phase(phase_id)
             ):
                 continue
-            entry_result = self.rules.query_task_graph_entry(
+            graph_result = self.rules.query_formal_task_graph(
                 "ability_phase_callback",
                 phase_id,
                 callback_kind,
+                (
+                    task.task_id
+                    for task in self.rules.ability_tasks_for_phase(phase_id)
+                    if task.callback_kind == callback_kind
+                ),
             )
-            if entry_result.status != "resolved" or entry_result.value is None:
-                return TaskGraphGraphResult(
-                    "blocked",
-                    blocked_reason=entry_result.blocked_reason
-                    or "ability_task_graph_nested_entry_missing",
-                )
-            graph_result = self.rules.query_task_graph(entry_result.value.graph_id)
             if graph_result.status != "resolved" or type(graph_result.value) is not TaskGraphIR:
                 return TaskGraphGraphResult(
                     "blocked",
@@ -1581,7 +1563,11 @@ class AbilityTaskSystem:
         primary_target: str | None,
         target_resolution: TargetResolution,
     ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
-        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        admission_reason = ability_task_runtime_blocked_reason(
+            self.rules,
+            task,
+            topology_authority="external_legacy",
+        )
         if admission_reason:
             return state, [], [], [], [
                 _task_process_record(
@@ -1637,6 +1623,7 @@ class AbilityTaskSystem:
             action_definition=action_definition,
             primary_target=primary_target,
             target_resolution=target_resolution,
+            topology_authority="external_legacy",
         )
         return leaf_result[:5]
 
@@ -1651,6 +1638,7 @@ class AbilityTaskSystem:
         target_resolution: TargetResolution,
         task_graph_continuation: TaskGraphContinuation | None = None,
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
+        topology_authority: Literal["task_graph", "external_legacy"],
     ) -> tuple[
         BattleState,
         list[Mutation],
@@ -1659,7 +1647,11 @@ class AbilityTaskSystem:
         list[dict[str, JSONValue]],
         list[TaskGraphNodeProjection],
     ]:
-        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        admission_reason = ability_task_runtime_blocked_reason(
+            self.rules,
+            task,
+            topology_authority=topology_authority,
+        )
         if admission_reason:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason=admission_reason)

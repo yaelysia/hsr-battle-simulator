@@ -25,8 +25,17 @@ from .reducer import MutationReducer
 from .settlement import SettlementRecord
 from .transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
-from ..rules.ir import ActionDefinitionIR
+from ..rules.ir import (
+    AbilityTaskIR,
+    ActionDefinitionIR,
+    StatusCallbackIR,
+    StatusCallbackTaskIR,
+)
 from ..rules.rulebook import RuleBook
+from ..rules.task_graph import (
+    TaskGraphIR,
+    TaskGraphNodeIR,
+)
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolution, ValueResolver
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
 from ..systems.action_contract import (
@@ -2473,37 +2482,74 @@ def _uses_action_damage_plan_fallback(binding_reason: str, event_reason: str, ac
     return "missing_ability_phase_in_ability_file" in {binding_reason, event_reason}
 
 
+def _legacy_ability_task_damage_reachable_ids(
+    phase_tasks: tuple[AbilityTaskIR, ...],
+) -> set[str]:
+    tasks_by_id = {task.task_id: task for task in phase_tasks}
+    reachable: set[str] = set()
+    pending = [task.task_id for task in phase_tasks if not task.parent_task_id]
+    while pending:
+        task_id = pending.pop()
+        if task_id in reachable:
+            continue
+        task = tasks_by_id.get(task_id)
+        if task is None:
+            continue
+        reachable.add(task_id)
+        pending.extend(
+            child_id
+            for child_id in (
+                *task.child_task_ids,
+                *task.success_task_ids,
+                *task.failed_task_ids,
+            )
+            if child_id in tasks_by_id
+        )
+    return reachable
+
+
 def _ability_task_damage_graph_authoritative(rules: RuleBook, phases, action_execution_plan) -> bool:
     if not phases or not action_execution_plan.damage_emissions:
         return False
     reachable_task_ids: set[str] = set()
     for phase in phases:
-        phase_tasks = {
-            task.task_id: task
-            for task in rules.ability_tasks_for_phase(phase.phase_id)
-        }
-        pending = [
-            task.task_id
-            for task in phase_tasks.values()
-            if not task.parent_task_id
-        ]
-        while pending:
-            task_id = pending.pop()
-            if task_id in reachable_task_ids:
-                continue
-            task = phase_tasks.get(task_id)
-            if task is None:
-                continue
-            reachable_task_ids.add(task_id)
-            pending.extend(
-                child_id
-                for child_id in (
-                    *task.child_task_ids,
-                    *task.success_task_ids,
-                    *task.failed_task_ids,
-                )
-                if child_id in phase_tasks
+        phase_tasks = tuple(rules.ability_tasks_for_phase(phase.phase_id))
+        if phase.invocation_role == "external_legacy":
+            reachable_task_ids.update(
+                _legacy_ability_task_damage_reachable_ids(phase_tasks)
             )
+            continue
+        if phase.invocation_role not in {
+            "action_root",
+            "nested_only",
+            "standalone_root",
+            "unbound_definition",
+        }:
+            return False
+        callback_kinds = tuple(
+            dict.fromkeys(task.callback_kind for task in phase_tasks)
+        )
+        if not callback_kinds:
+            return False
+        for callback_kind in callback_kinds:
+            selected_ids = {
+                task.task_id
+                for task in phase_tasks
+                if task.callback_kind == callback_kind
+            }
+            graph_result = rules.query_formal_task_graph(
+                "ability_phase_callback",
+                phase.phase_id,
+                callback_kind,
+                selected_ids,
+            )
+            graph = graph_result.value
+            if (
+                graph_result.status != "resolved"
+                or type(graph) is not TaskGraphIR
+            ):
+                return False
+            reachable_task_ids.update(selected_ids)
     return all(
         emission.source_task_id in reachable_task_ids
         and any(
@@ -2852,8 +2898,7 @@ def _collect_direct_damage_modifiers(
                         rules,
                         evaluator,
                         targets,
-                        callback_id=callback.callback_id,
-                        callback_event=callback_event,
+                        callback=callback,
                         actor_id=actor_id,
                         owner_id=owner_id,
                         target_id=target_id,
@@ -2866,14 +2911,84 @@ def _collect_direct_damage_modifiers(
     return tuple(terms), tuple(records), tuple(blockers)
 
 
+def _legacy_callback_damage_roots(
+    tasks: dict[str, StatusCallbackTaskIR],
+) -> tuple[StatusCallbackTaskIR, ...]:
+    return tuple(
+        sorted(
+            (task for task in tasks.values() if not task.parent_task_id),
+            key=lambda item: (item.task_index, item.task_id),
+        )
+    )
+
+
+def _callback_damage_topology(
+    rules: RuleBook,
+    callback: StatusCallbackIR,
+    tasks: dict[str, StatusCallbackTaskIR],
+) -> tuple[
+    tuple[StatusCallbackTaskIR, ...],
+    dict[str, TaskGraphNodeIR],
+    str,
+]:
+    if callback.source_mode != "mainline_avatar_ability":
+        if callback.source_mode not in {
+            "mainline_equipment_ability",
+            "mainline_monster_ability",
+            "mainline_global_modifier",
+        }:
+            return (), {}, "status_callback_damage_topology_source_not_admitted"
+        return _legacy_callback_damage_roots(tasks), {}, ""
+    graph_result = rules.query_formal_task_graph(
+        "status_callback",
+        callback.callback_id,
+        callback.event,
+        tasks,
+    )
+    graph = graph_result.value
+    if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+        return (), {}, (
+            graph_result.blocked_reason
+            or "formal_status_damage_task_graph_missing"
+        )
+    nodes_by_task = {node.formal_task_id: node for node in graph.nodes}
+    roots = tuple(
+        tasks[task_id] for task_id in graph.root_formal_task_ids
+    )
+    return roots, nodes_by_task, ""
+
+
+def _callback_damage_selected_branch(
+    task: StatusCallbackTaskIR,
+    condition_value: bool,
+    graph_nodes_by_task: dict[str, TaskGraphNodeIR],
+) -> tuple[str, ...]:
+    if not graph_nodes_by_task:
+        return task.success_task_ids if condition_value else task.failed_task_ids
+    node = graph_nodes_by_task.get(task.task_id)
+    if node is None:
+        return ()
+    nodes_by_id = {
+        candidate.graph_node_id: candidate
+        for candidate in graph_nodes_by_task.values()
+    }
+    branch_kind = "success" if condition_value else "failed"
+    return tuple(
+        nodes_by_id[child_id].formal_task_id
+        for branch in node.branches
+        if branch.branch_kind == branch_kind
+        for child_id in branch.child_node_ids
+        if child_id in nodes_by_id
+    )
+
+
 def _collect_callback_damage_modifiers(
     state: BattleState,
     rules: RuleBook,
     evaluator: RuleEvaluator,
     targets: TargetSystem,
     *,
-    callback_id: str,
-    callback_event: str,
+    callback: StatusCallbackIR,
     actor_id: str,
     owner_id: str,
     target_id: str,
@@ -2884,11 +2999,22 @@ def _collect_callback_damage_modifiers(
     tuple[dict[str, JSONValue], ...],
     tuple[str, ...],
 ]:
-    tasks = {task.task_id: task for task in rules.status_callback_tasks_for_callback(callback_id)}
-    roots = tuple(sorted((task for task in tasks.values() if not task.parent_task_id), key=lambda item: (item.task_index, item.task_id)))
+    callback_id = callback.callback_id
+    callback_event = callback.event
+    tasks = {
+        task.task_id: task
+        for task in rules.status_callback_tasks_for_callback(callback_id)
+    }
+    roots, graph_nodes_by_task, topology_reason = _callback_damage_topology(
+        rules,
+        callback,
+        tasks,
+    )
     terms: list[dict[str, JSONValue]] = []
     records: list[dict[str, JSONValue]] = []
     blockers: list[str] = []
+    if topology_reason:
+        return (), (), (f"damage_modifier:{callback_id}:{topology_reason}",)
     binding_sources = (
         *status_binding_sources(state, tuple(unit_id for unit_id in (actor_id, owner_id, target_id) if unit_id)),
         binding_source_from_store(store_from_state(state)),
@@ -2926,8 +3052,10 @@ def _collect_callback_damage_modifiers(
                 records.append(_damage_modifier_record(root.task_id, "blocked", result.reason, condition_result, ()))
                 blockers.append(f"damage_modifier:{root.task_id}:{result.reason}")
                 continue
-            selected_ids = (
-                root.success_task_ids if result.result else root.failed_task_ids
+            selected_ids = _callback_damage_selected_branch(
+                root,
+                bool(result.result),
+                graph_nodes_by_task,
             )
             if not selected_ids:
                 reason = "selected_condition_branch_empty"

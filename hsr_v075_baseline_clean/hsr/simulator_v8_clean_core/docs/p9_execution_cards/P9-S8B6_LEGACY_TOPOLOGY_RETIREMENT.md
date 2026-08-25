@@ -1,11 +1,16 @@
 # P9-S8B6 旧任务拓扑退役与聚合审计执行卡
 
+状态：`accepted`。验收报告见
+`live_validation_reports/P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT_ready_for_review.md`。
+
 ## 执行配置
 
 - 对应问题：P9-I08；原 P9-S8B 的兼容债务清理和最终聚合。
 - 硬前置：P9-S8B5 已验收并提交检查点。
 - 推荐：5.6 Sol / `high` / 普通聚焦。
-- 本卡不新增行为，只删除 B1 迁移期间保留的旧拓扑表示和消费者。
+- 本卡不新增行为，只删除 B1 迁移期间保留在 P9 正式角色/状态路径中的旧拓扑写入与消费者。
+  公共 task 字段仍被未纳入 S8A 分母的外部内容域使用时不得全局删除；该条件分支以本卡第 2 项
+  和 S8B3 已验收边界为准。
 - 开工只读：本卡、B1 的迁移说明，以及 CodeGraph/`rg` 返回的
   `parent_task_id`、`child_task_ids`、`success_task_ids`、`failed_task_ids` 全部生产使用点。
   不读 B1-B5 历史验证器。
@@ -32,8 +37,9 @@
    `core/`、`systems/`、RuleBook 与 scenario 不得依据旧字段决定 root、后继、分支或执行状态。
    已知起始点至少包括 `core/executor.py::_ability_task_damage_graph_authoritative` 和
    `systems/status.py::_on_create_define_dynamic_values`；完整分母仍以当前 CodeGraph 结果为准。
-4. 旧 JSON 字段必须被 exact-field codec 拒绝，不能静默忽略。历史验证器不是兼容目标；只有仍为
-   active contract 且直接触达新模型的最小 fixture 才迁移。
+4. P9 正式 task 不再写入旧拓扑字段，正式任务图 exact-field codec 必须拒绝夹带旧拓扑字段的
+   payload。公共 task JSON 中仍由外部内容保留的字段必须进入依赖账本，不得伪称已经全局退役。
+   历史验证器不是兼容目标；只有仍为 active contract 且直接触达新模型的最小 fixture 才迁移。
 5. 形成 S8B 聚合账本：B1、B2、B3A-C、B4、B5 均为已验收检查点；P9 角色/状态旧 runtime
    消费者为零；外部内容字段与消费者有精确来源范围和 owner；S8C 义务仍精确 deferred。
 
@@ -61,7 +67,8 @@ p9_status_legacy_runtime_fallback_count=0
 external_content_legacy_dependency_ledger_complete=true
 uncovered_content_domain_was_not_broken=true
 task_graph_source_audit_remains_complete=true
-legacy_json_payload_is_rejected=true
+formal_task_legacy_topology_population_count=0
+task_graph_json_rejects_legacy_topology_payload=true
 s8b_substage_ledger_is_complete=true
 s8c_obligations_remain_precise_and_unexecuted=true
 prior_substage_main_rerun_count=0
@@ -78,8 +85,8 @@ prior_substage_main_rerun_count=0
 
 ## 唯一执行清单
 
-- [ ] 旧 task 拓扑模型、codec 和 lowering 双写已删除。
-- [ ] 全部生产消费者只使用通用任务图权威。
-- [ ] 来源审计仍完整，旧 payload 被严格拒绝。
-- [ ] S8B 聚合账本闭合，S8C 义务保持诚实。
-- [ ] 唯一主验证和资源门通过，提交 `ready_for_review`。
+- [x] P9 正式 task 的旧拓扑 lowering 双写已删除；公共字段仅由账本列明的外部内容保留。
+- [x] P9 正式角色/状态生产消费者只使用通用任务图权威；外部旧域均由类型化分流和账本约束。
+- [x] 来源审计仍完整，正式任务图旧 payload 被严格拒绝。
+- [x] S8B 聚合账本闭合，S8C 义务保持诚实。
+- [x] 唯一主验证和资源门通过，提交 `ready_for_review`。

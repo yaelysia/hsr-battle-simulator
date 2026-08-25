@@ -124,6 +124,7 @@ from ..rules.ir import (
     BreakTemplateIR,
     BattleStateTransitionIR,
     BouncePolicyIR,
+    build_external_task_topology_dependency_ledger,
     CanonicalIR,
     CharacterDataCardIR,
     CharacterAbilityDefinitionIR,
@@ -2034,6 +2035,7 @@ class TBGDLowering:
             standalone_conditions,
             standalone_formulas,
             standalone_target_expressions,
+            standalone_root_task_ids_by_graph,
         ) = self._lower_standalone_ability_graphs(selected_ability_files)
         (
             equipment_ability_graphs,
@@ -2127,6 +2129,7 @@ class TBGDLowering:
             standalone_graphs=standalone_ability_graphs,
             ability_tasks=ability_tasks,
             effects=effects,
+            root_task_ids_by_graph=standalone_root_task_ids_by_graph,
         )
         passive_mechanism_slots = _admit_passive_startup_slots(
             passive_mechanism_slots,
@@ -2309,6 +2312,18 @@ class TBGDLowering:
             else None
         )
         self._character_formal_task_graph_catalog = character_task_graph_catalog
+        external_task_topology_dependencies = (
+            build_external_task_topology_dependency_ledger(
+                action_ability_bindings=task_graph_view.action_ability_bindings,
+                ability_phases=task_graph_view.ability_phases,
+                ability_tasks=task_graph_view.ability_tasks,
+                standalone_ability_graphs=task_graph_view.standalone_ability_graphs,
+                status_callbacks=task_graph_view.status_callbacks,
+                status_callback_tasks=task_graph_view.status_callback_tasks,
+            )
+            if character_task_graph_catalog is not None
+            else ()
+        )
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -2358,6 +2373,9 @@ class TBGDLowering:
             ability_phases=tuple(ability_phases),
             ability_tasks=tuple(ability_tasks),
             task_graph_catalog=character_task_graph_catalog,
+            external_task_topology_dependencies=(
+                external_task_topology_dependencies
+            ),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
             skill_formula_bindings=tuple(skill_formula_bindings),
@@ -3827,6 +3845,7 @@ class TBGDLowering:
         list[ConditionIR],
         list[FormulaIR],
         list[TargetExpressionIR],
+        dict[str, tuple[str, ...]],
     ]:
         graphs: list[StandaloneAbilityGraphIR] = []
         phases: list[AbilityPhaseIR] = []
@@ -3835,6 +3854,7 @@ class TBGDLowering:
         conditions: list[ConditionIR] = []
         formulas: list[FormulaIR] = []
         target_expressions: list[TargetExpressionIR] = []
+        root_task_ids_by_graph: dict[str, tuple[str, ...]] = {}
         for path in ability_files:
             relative = relative_source_path(self.tbgd_root, path)
             if not _standalone_ability_source_admitted(relative):
@@ -3874,6 +3894,10 @@ class TBGDLowering:
                 conditions.extend(lowered.conditions)
                 formulas.extend(lowered.formulas)
                 target_expressions.extend(lowered.target_expressions)
+                if source_mode == "mainline_avatar":
+                    root_task_ids_by_graph[graph_id] = tuple(
+                        lowered.ability_root_task_ids
+                    )
                 task_ids = tuple(task.task_id for task in lowered.ability_tasks)
                 executable_task_ids = tuple(
                     task.task_id
@@ -3929,7 +3953,16 @@ class TBGDLowering:
                         blocked_reason="" if task_ids else "standalone_ability_has_no_tasks",
                     )
                 )
-        return graphs, phases, tasks, effects, conditions, formulas, target_expressions
+        return (
+            graphs,
+            phases,
+            tasks,
+            effects,
+            conditions,
+            formulas,
+            target_expressions,
+            root_task_ids_by_graph,
+        )
 
     def _lower_equipment_ability_graphs(
         self,
@@ -5248,6 +5281,10 @@ class TBGDLowering:
                     ),
                     template_stack=(),
                 )
+                if formal_source_context is not None and task_lowered.ability_tasks:
+                    lowered.ability_root_task_ids.append(
+                        task_lowered.ability_tasks[0].task_id
+                    )
                 lowered.merge(task_lowered)
         return lowered
 
@@ -5287,7 +5324,6 @@ class TBGDLowering:
                 task_index=task_index,
                 task_path=task_path,
                 branch=branch,
-                parent_task_id=parent_task_id,
                 source_context=source_context,
                 target_alias_registry=target_alias_registry,
                 formal_source_context=formal_source_context,
@@ -5605,7 +5641,6 @@ class TBGDLowering:
         task_index: int,
         task_path: str,
         branch: str,
-        parent_task_id: str,
         source_context: dict[str, Any] | None,
         target_alias_registry: dict[str, Any] | None,
         formal_source_context: _AbilityFormalTaskSourceContext,
@@ -5649,7 +5684,7 @@ class TBGDLowering:
             task_index=task_index,
             task_path=task_path,
             branch=branch,
-            parent_task_id=parent_task_id,
+            parent_task_id="",
             source_context=source_context,
             target_alias_registry=target_alias_registry,
             formal_source_context=None,
@@ -5686,18 +5721,18 @@ class TBGDLowering:
                 task_index=child.ordinal,
                 task_path=child_task_path,
                 branch=child.branch_kind,
-                parent_task_id=parent.task_id,
+                parent_task_id="",
                 source_context=source_context,
                 target_alias_registry=target_alias_registry,
                 formal_source_context=formal_source_context,
                 source_json_path=child.json_path,
                 template_stack=child.template_stack,
             )
-            direct_ids = [
-                item.task_id
-                for item in child_lowered.ability_tasks
-                if item.parent_task_id == parent.task_id
-            ]
+            direct_ids = (
+                (child_lowered.ability_tasks[0].task_id,)
+                if child_lowered.ability_tasks
+                else ()
+            )
             if len(direct_ids) != 1:
                 raise ValueError("formal ability branch child lowering is not singular")
             child_task_ids.extend(direct_ids)
@@ -5720,23 +5755,25 @@ class TBGDLowering:
             else:
                 coverage_status = "executable"
                 blocked_reason = ""
-            parent_source = IRSource(
-                parent.source.source_path,
-                parent.source.raw_type,
-                parent.source.raw_id,
-                {
-                    **dict(parent.source.evidence),
-                    "child_task_count": len(child_task_ids),
-                },
-            )
+        parent_source = IRSource(
+            parent_source.source_path,
+            parent_source.raw_type,
+            parent_source.raw_id,
+            {
+                key: value
+                for key, value in dict(parent_source.evidence).items()
+                if key not in {"parent_task_id", "child_task_count"}
+            },
+        )
         if topology_blocked_reason:
             coverage_status = "blocked"
             blocked_reason = topology_blocked_reason
         lowered.ability_tasks[0] = replace(
             parent,
-            child_task_ids=tuple(child_task_ids),
-            success_task_ids=tuple(success_task_ids),
-            failed_task_ids=tuple(failed_task_ids),
+            parent_task_id="",
+            child_task_ids=(),
+            success_task_ids=(),
+            failed_task_ids=(),
             source=parent_source,
             coverage_status=coverage_status,
             blocked_reason=blocked_reason,
@@ -6926,10 +6963,14 @@ class TBGDLowering:
                         **_json_safe(callback_source_context),
                     },
                 )
-                callback_task_ids = tuple(
-                    task.task_id
-                    for task in callback_lowered.status_callback_tasks
-                    if not task.parent_task_id
+                callback_task_ids = (
+                    tuple(callback_lowered.status_callback_root_task_ids)
+                    if formal_status_source_context is not None
+                    else tuple(
+                        task.task_id
+                        for task in callback_lowered.status_callback_tasks
+                        if not task.parent_task_id
+                    )
                 )
                 equipment_source_admitted = equipment_source is not None
                 source_mode = _status_callback_source_mode(
@@ -7334,10 +7375,14 @@ class TBGDLowering:
                 formal_source_context=formal_source_context,
             )
             lowered.merge(branch_lowered)
-            callback_task_ids = tuple(
-                task.task_id
-                for task in branch_lowered.status_callback_tasks
-                if not task.parent_task_id
+            callback_task_ids = (
+                tuple(branch_lowered.status_callback_root_task_ids)
+                if formal_source_context is not None
+                else tuple(
+                    task.task_id
+                    for task in branch_lowered.status_callback_tasks
+                    if not task.parent_task_id
+                )
             )
             callback_status = (
                 "executable"
@@ -7461,6 +7506,13 @@ class TBGDLowering:
                 admission_source_path=relative,
                 template_stack=(),
             )
+            if (
+                formal_source_context is not None
+                and task_lowered.status_callback_tasks
+            ):
+                lowered.status_callback_root_task_ids.append(
+                    task_lowered.status_callback_tasks[0].task_id
+                )
             lowered.merge(task_lowered)
         return lowered
 
@@ -7502,7 +7554,6 @@ class TBGDLowering:
                 task_index=task_index,
                 task_path=task_path,
                 branch=branch,
-                parent_task_id=parent_task_id,
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=source_context,
                 task_templates=task_templates,
@@ -7925,7 +7976,6 @@ class TBGDLowering:
         task_index: int,
         task_path: str,
         branch: str,
-        parent_task_id: str,
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any] | None,
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]] | None,
@@ -7971,7 +8021,7 @@ class TBGDLowering:
             task_index=task_index,
             task_path=task_path,
             branch=branch,
-            parent_task_id=parent_task_id,
+            parent_task_id="",
             queue_priority_lookup=queue_priority_lookup,
             source_context=source_context,
             task_templates=task_templates,
@@ -8003,7 +8053,7 @@ class TBGDLowering:
                 task_index=child.ordinal,
                 task_path=child_task_path,
                 branch=child.branch_kind,
-                parent_task_id=parent.task_id,
+                parent_task_id="",
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=source_context,
                 task_templates=task_templates,
@@ -8012,11 +8062,11 @@ class TBGDLowering:
                 admission_source_path=admission_source_path,
                 template_stack=child.template_stack,
             )
-            direct_ids = [
-                item.task_id
-                for item in child_lowered.status_callback_tasks
-                if item.parent_task_id == parent.task_id
-            ]
+            direct_ids = (
+                (child_lowered.status_callback_tasks[0].task_id,)
+                if child_lowered.status_callback_tasks
+                else ()
+            )
             if len(direct_ids) != 1:
                 raise ValueError("formal status branch child lowering is not singular")
             child_task_ids.extend(direct_ids)
@@ -8049,15 +8099,17 @@ class TBGDLowering:
             parent.source.raw_type,
             parent.source.raw_id,
             {
-                **dict(parent.source.evidence),
-                "child_task_count": len(child_task_ids),
+                key: value
+                for key, value in dict(parent.source.evidence).items()
+                if key not in {"parent_task_id", "child_task_count"}
             },
         )
         lowered.status_callback_tasks[0] = replace(
             parent,
-            child_task_ids=tuple(child_task_ids),
-            success_task_ids=tuple(success_task_ids),
-            failed_task_ids=tuple(failed_task_ids),
+            parent_task_id="",
+            child_task_ids=(),
+            success_task_ids=(),
+            failed_task_ids=(),
             source=parent_source,
             coverage_status=coverage_status,
             blocked_reason=blocked_reason,
@@ -8587,8 +8639,10 @@ def _equipment_nested_modifier_stage(
 class _LoweredAbility:
     entities: list[RuleEntity] = field(default_factory=list)
     ability_tasks: list[AbilityTaskIR] = field(default_factory=list)
+    ability_root_task_ids: list[str] = field(default_factory=list)
     status_callbacks: list[StatusCallbackIR] = field(default_factory=list)
     status_callback_tasks: list[StatusCallbackTaskIR] = field(default_factory=list)
+    status_callback_root_task_ids: list[str] = field(default_factory=list)
     ability_property_watchers: list[AbilityPropertyWatcherIR] = field(default_factory=list)
     ability_property_ranges: list[AbilityPropertyRangeIR] = field(default_factory=list)
     status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
@@ -8605,8 +8659,12 @@ class _LoweredAbility:
     def merge(self, other: "_LoweredAbility") -> None:
         self.entities.extend(other.entities)
         self.ability_tasks.extend(other.ability_tasks)
+        self.ability_root_task_ids.extend(other.ability_root_task_ids)
         self.status_callbacks.extend(other.status_callbacks)
         self.status_callback_tasks.extend(other.status_callback_tasks)
+        self.status_callback_root_task_ids.extend(
+            other.status_callback_root_task_ids
+        )
         self.ability_property_watchers.extend(other.ability_property_watchers)
         self.ability_property_ranges.extend(other.ability_property_ranges)
         self.status_damage_emissions.extend(other.status_damage_emissions)
@@ -9343,6 +9401,7 @@ def _admit_trace_startup_ability_slots(
     standalone_graphs: list[StandaloneAbilityGraphIR],
     ability_tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
+    root_task_ids_by_graph: dict[str, tuple[str, ...]],
 ) -> list[CharacterMechanismSlotIR]:
     graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
     for graph in standalone_graphs:
@@ -9362,6 +9421,7 @@ def _admit_trace_startup_ability_slots(
                 graphs_by_name=graphs_by_name,
                 tasks_by_phase=tasks_by_phase,
                 effects_by_id=effects_by_id,
+                root_task_ids_by_graph=root_task_ids_by_graph,
             )
         )
     return admitted
@@ -9373,6 +9433,7 @@ def _admit_trace_startup_ability_slot(
     graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]],
     tasks_by_phase: dict[str, list[AbilityTaskIR]],
     effects_by_id: dict[str, EffectIR],
+    root_task_ids_by_graph: dict[str, tuple[str, ...]],
 ) -> CharacterMechanismSlotIR:
     evidence = slot.source.evidence if isinstance(slot.source.evidence, dict) else {}
     if evidence.get("enhanced_id") is None:
@@ -9402,12 +9463,27 @@ def _admit_trace_startup_ability_slot(
             },
         )
     graph = executable_graphs[0]
+    root_task_ids = root_task_ids_by_graph.get(graph.standalone_ability_graph_id)
+    if root_task_ids is None:
+        return _trace_startup_blocked_slot(
+            slot,
+            "trace_startup_formal_root_ledger_missing",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "trace_startup_formal_root_ledger_missing",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                },
+            },
+        )
+    root_task_id_set = frozenset(root_task_ids)
     candidate_tasks = tuple(
         task
         for phase_id in graph.phase_ids
         for task in tasks_by_phase.get(phase_id, ())
         if task.callback_kind == "OnStart"
-        and not task.parent_task_id
+        and task.task_id in root_task_id_set
         and task.opcode == "AddModifier"
         and task.effect_id
     )

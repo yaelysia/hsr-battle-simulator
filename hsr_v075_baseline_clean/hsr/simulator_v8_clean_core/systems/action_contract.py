@@ -5,8 +5,9 @@ import json
 from dataclasses import dataclass, field
 
 from ..core.model import ActionCommand, BattleState, JSONValue
-from ..rules.ir import ActionAdmissionIR
+from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
 from ..rules.rulebook import RuleBook
+from ..rules.task_graph import TaskGraphIR
 from .action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
@@ -210,6 +211,45 @@ class ActionContractDecision:
         }
 
 
+def _formal_action_task_graph_blocked_reasons(
+    rules: RuleBook,
+    tasks: tuple[AbilityTaskIR, ...],
+) -> tuple[str, ...]:
+    grouped: dict[tuple[str, str], list[AbilityTaskIR]] = {}
+    for task in tasks:
+        phase = rules.ability_phase(task.phase_id)
+        if phase is None:
+            return ("ability_task_phase_missing",)
+        if phase.invocation_role == "external_legacy":
+            continue
+        if phase.invocation_role not in {
+            "action_root",
+            "nested_only",
+            "standalone_root",
+            "unbound_definition",
+        }:
+            return ("ability_task_invocation_role_not_admitted",)
+        grouped.setdefault((task.phase_id, task.callback_kind), []).append(task)
+    reasons: list[str] = []
+    for (phase_id, callback_kind), selected in grouped.items():
+        graph_result = rules.query_formal_task_graph(
+            "ability_phase_callback",
+            phase_id,
+            callback_kind,
+            (task.task_id for task in selected),
+        )
+        graph = graph_result.value
+        if (
+            graph_result.status != "resolved"
+            or type(graph) is not TaskGraphIR
+        ):
+            reasons.append(
+                graph_result.blocked_reason
+                or "formal_action_task_graph_identity_mismatch"
+            )
+    return tuple(reasons)
+
+
 class ActionContractSystem:
     """Shared ownership/role/window/resource gate for query and submission."""
 
@@ -358,12 +398,31 @@ class ActionContractSystem:
         task_reasons = tuple(
             reason
             for task in selected_tasks
-            if (reason := ability_task_runtime_blocked_reason(self.rules, task))
+            if (
+                reason := ability_task_runtime_blocked_reason(
+                    self.rules,
+                    task,
+                    topology_authority=(
+                        "external_legacy"
+                        if (
+                            (phase := self.rules.ability_phase(task.phase_id))
+                            is not None
+                            and phase.invocation_role == "external_legacy"
+                        )
+                        else "task_graph"
+                    ),
+                )
+            )
+        )
+        task_graph_reasons = _formal_action_task_graph_blocked_reasons(
+            self.rules,
+            selected_tasks,
         )
         graph_reason = combined_blocked_reason(
             binding_reason,
             event_reason,
             *task_reasons,
+            *task_graph_reasons,
         )
         if graph_reason:
             return ActionContractDecision(

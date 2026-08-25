@@ -38,7 +38,12 @@ from .engine_rule_registry import (
     ULTIMATE_COST_RULE_APPLICABILITY,
     engine_rule_admission_reason,
 )
-from .task_graph import TaskGraphQuery, TaskGraphQueryResult
+from .task_graph import (
+    TaskGraphEntryMaterializationIR,
+    TaskGraphIR,
+    TaskGraphQuery,
+    TaskGraphQueryResult,
+)
 from .action_target_contract import (
     ActionTargetContractIR,
     ActionTargetContractQueryResult,
@@ -2191,6 +2196,67 @@ class RuleBook:
         if self._task_graph_query is None:
             return TaskGraphQueryResult("blocked", "entry", (), None, "task_graph_catalog_not_installed")
         return self._task_graph_query.query_entry(entry_kind, owner_id, callback_kind)
+
+    def query_formal_task_graph(
+        self,
+        entry_kind: Literal["ability_phase_callback", "status_callback"],
+        owner_id: str,
+        callback_kind: str,
+        formal_task_ids: Iterable[str],
+    ) -> TaskGraphQueryResult:
+        selected = tuple(formal_task_ids)
+        if (
+            not selected
+            or any(not isinstance(item, str) or not item for item in selected)
+            or len(selected) != len(set(selected))
+        ):
+            return TaskGraphQueryResult(
+                "blocked",
+                "graph",
+                (),
+                None,
+                "formal_task_graph_selection_invalid",
+            )
+        entry_result = self.query_task_graph_entry(
+            entry_kind,
+            owner_id,
+            callback_kind,
+        )
+        entry = entry_result.value
+        if (
+            entry_result.status != "resolved"
+            or type(entry) is not TaskGraphEntryMaterializationIR
+            or entry.status != "materialized"
+        ):
+            return TaskGraphQueryResult(
+                "blocked",
+                "graph",
+                (),
+                None,
+                entry_result.blocked_reason
+                or "formal_task_graph_entry_not_materialized",
+            )
+        graph_result = self.query_task_graph(entry.graph_id)
+        graph = graph_result.value
+        if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+            return graph_result
+        expected = set(selected)
+        if (
+            graph.entry_id != entry.entry_id
+            or graph.entry_kind != entry_kind
+            or graph.owner_id != owner_id
+            or graph.callback_kind != callback_kind
+            or set(entry.formal_task_ids) != expected
+            or {node.formal_task_id for node in graph.nodes} != expected
+        ):
+            return TaskGraphQueryResult(
+                "blocked",
+                "graph",
+                (graph.graph_id,),
+                None,
+                "formal_task_graph_identity_mismatch",
+            )
+        return graph_result
 
     def query_task_graph_node(self, graph_node_id: str) -> TaskGraphQueryResult:
         if self._task_graph_query is None:

@@ -7086,6 +7086,219 @@ class ActionAbilityBindingIR:
         }
 
 
+_LEGACY_TASK_TOPOLOGY_FIELDS = (
+    "parent_task_id",
+    "child_task_ids",
+    "success_task_ids",
+    "failed_task_ids",
+)
+
+
+def external_task_topology_dependency_id(
+    task_kind: str,
+    owner_id: str,
+    task_id: str,
+    content_domain: str,
+) -> str:
+    payload = json.dumps(
+        [task_kind, owner_id, task_id, content_domain],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"external_task_topology:{sha256(payload).hexdigest()}"
+
+
+@dataclass(frozen=True)
+class ExternalTaskTopologyDependencyIR:
+    dependency_id: str
+    task_kind: Literal["ability_task", "status_callback_task"]
+    owner_id: str
+    task_id: str
+    content_domain: str
+    retirement_owner: str
+    legacy_field_names: tuple[str, ...]
+    source: IRSource
+    status: Literal["external_content_dependency"] = "external_content_dependency"
+
+    def __post_init__(self) -> None:
+        if self.task_kind not in {"ability_task", "status_callback_task"}:
+            raise ValueError("external task topology kind is invalid")
+        if any(
+            not isinstance(value, str) or not value or value.startswith("p9_")
+            for value in (
+                self.owner_id,
+                self.task_id,
+                self.content_domain,
+                self.retirement_owner,
+            )
+        ):
+            raise ValueError("external task topology identity is invalid")
+        if self.status != "external_content_dependency":
+            raise ValueError("external task topology status is invalid")
+        if self.legacy_field_names != _LEGACY_TASK_TOPOLOGY_FIELDS:
+            raise ValueError("external task topology field ledger is incomplete")
+        expected = external_task_topology_dependency_id(
+            self.task_kind,
+            self.owner_id,
+            self.task_id,
+            self.content_domain,
+        )
+        if self.dependency_id != expected:
+            raise ValueError("external task topology identity is inconsistent")
+        if type(self.source) is not IRSource:
+            raise TypeError("external task topology source must be exact IRSource")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (
+                self.source.source_path,
+                self.source.raw_type,
+                self.source.raw_id,
+            )
+        ) or not isinstance(self.source.evidence, Mapping):
+            raise ValueError("external task topology source identity is incomplete")
+        source = IRSource(
+            self.source.source_path,
+            self.source.raw_type,
+            self.source.raw_id,
+            cast(dict[str, JSONValue], freeze_json(dict(self.source.evidence))),
+        )
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "dependency_id": self.dependency_id,
+            "task_kind": self.task_kind,
+            "owner_id": self.owner_id,
+            "task_id": self.task_id,
+            "content_domain": self.content_domain,
+            "retirement_owner": self.retirement_owner,
+            "legacy_field_names": list(self.legacy_field_names),
+            "source": self.source.to_json(),
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> "ExternalTaskTopologyDependencyIR":
+        fields = {
+            "dependency_id",
+            "task_kind",
+            "owner_id",
+            "task_id",
+            "content_domain",
+            "retirement_owner",
+            "legacy_field_names",
+            "source",
+            "status",
+        }
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise ValueError("external task topology JSON schema is invalid")
+        legacy_fields = value.get("legacy_field_names")
+        if not isinstance(legacy_fields, list) or any(
+            not isinstance(item, str) for item in legacy_fields
+        ):
+            raise TypeError("external task topology fields must be an array")
+        return cls(
+            dependency_id=_json_required_string(value, "dependency_id"),
+            task_kind=cast(
+                Literal["ability_task", "status_callback_task"],
+                _json_required_string(value, "task_kind"),
+            ),
+            owner_id=_json_required_string(value, "owner_id"),
+            task_id=_json_required_string(value, "task_id"),
+            content_domain=_json_required_string(value, "content_domain"),
+            retirement_owner=_json_required_string(value, "retirement_owner"),
+            legacy_field_names=tuple(legacy_fields),
+            source=_ir_source_from_json(value.get("source")),
+            status=cast(
+                Literal["external_content_dependency"],
+                _json_required_string(value, "status"),
+            ),
+        )
+
+
+def build_external_task_topology_dependency_ledger(
+    *,
+    action_ability_bindings: Iterable[ActionAbilityBindingIR],
+    ability_phases: Iterable[AbilityPhaseIR],
+    ability_tasks: Iterable[AbilityTaskIR],
+    standalone_ability_graphs: Iterable[StandaloneAbilityGraphIR],
+    status_callbacks: Iterable[StatusCallbackIR],
+    status_callback_tasks: Iterable[StatusCallbackTaskIR],
+) -> tuple[ExternalTaskTopologyDependencyIR, ...]:
+    bindings = tuple(action_ability_bindings)
+    graphs = tuple(standalone_ability_graphs)
+    phase_values = tuple(ability_phases)
+    callback_values = tuple(status_callbacks)
+    phases = {item.phase_id: item for item in phase_values}
+    callbacks = {item.callback_id: item for item in callback_values}
+    if len(phases) != len(phase_values) or len(callbacks) != len(callback_values):
+        raise ValueError("external task topology owner identity is ambiguous")
+    binding_domains: dict[str, list[str]] = {}
+    for item in bindings:
+        binding_domains.setdefault(item.binding_id, []).append(item.source_mode)
+    for item in graphs:
+        binding_domains.setdefault(item.standalone_ability_graph_id, []).append(
+            item.source_mode
+        )
+
+    result: list[ExternalTaskTopologyDependencyIR] = []
+    for task in ability_tasks:
+        phase = phases.get(task.phase_id)
+        if phase is None:
+            raise ValueError("external task topology ability owner is missing")
+        if phase.invocation_role != "external_legacy":
+            continue
+        domains = tuple(binding_domains.get(phase.binding_id, ()))
+        if len(domains) != 1:
+            raise ValueError("external ability topology owner domain is ambiguous")
+        domain = domains[0]
+        result.append(
+            ExternalTaskTopologyDependencyIR(
+                external_task_topology_dependency_id(
+                    "ability_task", phase.phase_id, task.task_id, domain
+                ),
+                "ability_task",
+                phase.phase_id,
+                task.task_id,
+                domain,
+                f"{domain}_control_flow",
+                _LEGACY_TASK_TOPOLOGY_FIELDS,
+                task.source,
+            )
+        )
+
+    for task in status_callback_tasks:
+        callback = callbacks.get(task.callback_id)
+        if callback is None:
+            raise ValueError("external task topology status owner is missing")
+        if callback.source_mode == "mainline_avatar_ability":
+            continue
+        domain = callback.source_mode
+        if not domain:
+            raise ValueError("external status topology owner domain is missing")
+        result.append(
+            ExternalTaskTopologyDependencyIR(
+                external_task_topology_dependency_id(
+                    "status_callback_task",
+                    callback.callback_id,
+                    task.task_id,
+                    domain,
+                ),
+                "status_callback_task",
+                callback.callback_id,
+                task.task_id,
+                domain,
+                f"{domain}_control_flow",
+                _LEGACY_TASK_TOPOLOGY_FIELDS,
+                task.source,
+            )
+        )
+    identities = tuple(item.dependency_id for item in result)
+    if len(identities) != len(set(identities)):
+        raise ValueError("external task topology dependency identities conflict")
+    return tuple(sorted(result, key=lambda item: item.dependency_id))
+
+
 @dataclass(frozen=True)
 class ActionEventIR:
     action_event_id: str
@@ -7483,6 +7696,9 @@ class CanonicalIR:
     ability_phases: tuple[AbilityPhaseIR, ...] = ()
     ability_tasks: tuple[AbilityTaskIR, ...] = ()
     task_graph_catalog: TaskGraphCatalogIR | None = None
+    external_task_topology_dependencies: tuple[
+        ExternalTaskTopologyDependencyIR, ...
+    ] = ()
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
     skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = ()
@@ -7591,11 +7807,56 @@ class CanonicalIR:
             tuple(sorted(gaps, key=lambda item: item.selector_gap_id)),
         )
         task_graph_catalog = self.task_graph_catalog
+        external_topology_dependencies = tuple(
+            self.external_task_topology_dependencies
+        )
+        if any(
+            type(item) is not ExternalTaskTopologyDependencyIR
+            for item in external_topology_dependencies
+        ):
+            raise TypeError(
+                "CanonicalIR external task topology dependencies must be exact typed values"
+            )
+        if len({item.dependency_id for item in external_topology_dependencies}) != len(
+            external_topology_dependencies
+        ):
+            raise ValueError(
+                "CanonicalIR external task topology dependency identities conflict"
+            )
+        external_topology_dependencies = tuple(
+            sorted(
+                external_topology_dependencies,
+                key=lambda item: item.dependency_id,
+            )
+        )
+        object.__setattr__(
+            self,
+            "external_task_topology_dependencies",
+            external_topology_dependencies,
+        )
+        if task_graph_catalog is None and external_topology_dependencies:
+            raise ValueError(
+                "external task topology dependency ledger requires a formal task graph catalog"
+            )
         if task_graph_catalog is not None:
             from .task_graph import TaskGraphCatalogIR
 
             if type(task_graph_catalog) is not TaskGraphCatalogIR:
                 raise TypeError("CanonicalIR task graph catalog must be the exact internal type")
+            expected_external_dependencies = (
+                build_external_task_topology_dependency_ledger(
+                    action_ability_bindings=self.action_ability_bindings,
+                    ability_phases=self.ability_phases,
+                    ability_tasks=self.ability_tasks,
+                    standalone_ability_graphs=self.standalone_ability_graphs,
+                    status_callbacks=self.status_callbacks,
+                    status_callback_tasks=self.status_callback_tasks,
+                )
+            )
+            if external_topology_dependencies != expected_external_dependencies:
+                raise ValueError(
+                    "CanonicalIR external task topology dependency ledger is incomplete"
+                )
             ability_tasks = {item.task_id: item for item in self.ability_tasks}
             status_tasks = {item.task_id: item for item in self.status_callback_tasks}
             if len(ability_tasks) != len(self.ability_tasks) or len(status_tasks) != len(self.status_callback_tasks):
@@ -7696,6 +7957,29 @@ class CanonicalIR:
                 for item in self.ability_phases
                 if item.invocation_role in formal_roles
             }
+            formal_callback_ids = {
+                item.callback_id
+                for item in self.status_callbacks
+                if item.source_mode == "mainline_avatar_ability"
+            }
+            if any(
+                any(
+                    bool(getattr(task, field_name))
+                    for field_name in _LEGACY_TASK_TOPOLOGY_FIELDS
+                )
+                for task in self.ability_tasks
+                if task.phase_id in formal_phase_ids
+            ) or any(
+                any(
+                    bool(getattr(task, field_name))
+                    for field_name in _LEGACY_TASK_TOPOLOGY_FIELDS
+                )
+                for task in self.status_callback_tasks
+                if task.callback_id in formal_callback_ids
+            ):
+                raise ValueError(
+                    "CanonicalIR formal task retains legacy topology fields"
+                )
             if (
                 expected_ability_entries != actual_ability_entries
                 or any(
@@ -7743,20 +8027,7 @@ class CanonicalIR:
                     selected_task_ids = {
                         item.task_id for item in formal_tasks
                     }
-                    non_roots = tuple(
-                        sorted(
-                            (
-                                task
-                                for task in formal_tasks
-                                if task.parent_task_id
-                            ),
-                            key=lambda item: (item.task_path, item.task_id),
-                        )
-                    )
-                    ordered_task_ids = (
-                        *owner.task_ids,
-                        *(item.task_id for item in non_roots),
-                    )
+                    ordered_task_ids = entry.formal_task_ids
                 if (
                     not formal_tasks
                     or len(ordered_task_ids) != len(formal_tasks)
@@ -7785,12 +8056,18 @@ class CanonicalIR:
                 first_node = nodes_by_task[ordered_task_ids[0]]
                 if graph.source != first_node.source or entry.source != first_node.source:
                     raise ValueError("task graph entry source is inconsistent")
-                expected_roots = tuple(
-                    nodes_by_task[task_id].graph_node_id
-                    for task_id in ordered_task_ids
-                    if not selected_tasks[task_id].parent_task_id
+                root_formal_task_ids = tuple(
+                    next(
+                        node.formal_task_id
+                        for node in graph.nodes
+                        if node.graph_node_id == node_id
+                    )
+                    for node_id in graph.root_node_ids
                 )
-                if graph.root_node_ids != expected_roots:
+                if (
+                    entry.entry_kind == "status_callback"
+                    and root_formal_task_ids != owner.task_ids
+                ):
                     raise ValueError("task graph formal roots are inconsistent")
                 for node in graph.nodes:
                     task = selected_tasks.get(node.formal_task_id)
@@ -7805,32 +8082,6 @@ class CanonicalIR:
                         != node.source.evidence.get("json_path")
                     ):
                         raise ValueError("task graph formal task source is inconsistent")
-                    child_node_ids = tuple(
-                        child_id
-                        for branch in node.branches
-                        for child_id in branch.child_node_ids
-                    )
-                    expected_child_node_ids = tuple(
-                        nodes_by_task[task_id].graph_node_id
-                        for task_id in task.child_task_ids
-                    )
-                    if child_node_ids != expected_child_node_ids:
-                        raise ValueError("task graph formal child topology is inconsistent")
-                    for branch_kind, task_ids in (
-                        ("success", task.success_task_ids),
-                        ("failed", task.failed_task_ids),
-                    ):
-                        branch_node_ids = tuple(
-                            child_id
-                            for branch in node.branches
-                            if branch.branch_kind == branch_kind
-                            for child_id in branch.child_node_ids
-                        )
-                        if branch_node_ids != tuple(
-                            nodes_by_task[task_id].graph_node_id
-                            for task_id in task_ids
-                        ):
-                            raise ValueError("task graph formal branch topology is inconsistent")
                     expected_references = {
                         "condition": task.condition_id,
                         "target": getattr(task, "target_expression_id", ""),
@@ -8138,6 +8389,10 @@ class CanonicalIR:
                 if self.task_graph_catalog is not None
                 else None
             ),
+            "external_task_topology_dependencies": [
+                item.to_json()
+                for item in self.external_task_topology_dependencies
+            ],
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "skill_formula_bindings": [binding.to_json() for binding in self.skill_formula_bindings],

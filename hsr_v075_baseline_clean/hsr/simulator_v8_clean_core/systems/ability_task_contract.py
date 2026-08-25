@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from ..rules.ir import AbilityTaskIR
 from ..rules.rulebook import RuleBook
 
@@ -55,7 +57,12 @@ def _process_only_task_blocked_reason(rules: RuleBook, task: AbilityTaskIR) -> s
     return ""
 
 
-def ability_task_runtime_blocked_reason(rules: RuleBook, task: AbilityTaskIR) -> str:
+def ability_task_runtime_blocked_reason(
+    rules: RuleBook,
+    task: AbilityTaskIR,
+    *,
+    topology_authority: Literal["task_graph", "external_legacy"],
+) -> str:
     if is_process_only_ability_task(task):
         return _process_only_task_blocked_reason(rules, task)
     if task.execution_mode != "runtime_effect":
@@ -74,6 +81,8 @@ def ability_task_runtime_blocked_reason(rules: RuleBook, task: AbilityTaskIR) ->
     if task.opcode == "LoopExecuteTaskListWithInterval":
         if task.repeat_count <= 0:
             return "fixed_positive_loop_count_required"
+        if topology_authority == "task_graph":
+            return ""
         if not task.child_task_ids:
             return "loop_task_list_missing_or_empty"
         for child_task_id in task.child_task_ids:

@@ -22,6 +22,7 @@ from ..rules.ir import (
     StatusCallbackIR,
     StatusCallbackTaskIR,
     TargetExpressionIR,
+    build_external_task_topology_dependency_ledger,
 )
 from ..rules.task_graph import (
     EntryKind,
@@ -107,12 +108,9 @@ class _Blocked(RuntimeError):
 @dataclass(frozen=True)
 class _FormalTask:
     task_id: str
+    graph_task_path: str
     opcode: str
     family: str
-    parent_task_id: str
-    child_task_ids: tuple[str, ...]
-    success_task_ids: tuple[str, ...]
-    failed_task_ids: tuple[str, ...]
     condition_id: str
     target_expression_id: str
     effect_id: str
@@ -120,6 +118,14 @@ class _FormalTask:
     ability_definition_kind: str
     execution_mode: str
     coverage_status: str
+    source: IRSource
+
+
+@dataclass(frozen=True)
+class _SourceBranch:
+    branch_kind: str
+    label: str
+    child_task_ids: tuple[str, ...]
     source: IRSource
 
 
@@ -485,16 +491,17 @@ def _ordered_status_task_ids(
     task_paths = tuple(task.task_path for task in tasks)
     if len(task_paths) != len(set(task_paths)):
         raise ValueError("status callback graph positions contain duplicates")
-    root_ids = tuple(task.task_id for task in tasks if not task.parent_task_id)
+    root_ids = tuple(callback.task_ids)
     if (
         len(callback.task_ids) != len(set(callback.task_ids))
         or len(root_ids) != len(set(root_ids))
-        or set(callback.task_ids) != set(root_ids)
+        or not root_ids
+        or set(root_ids) - set(task.task_id for task in tasks)
     ):
         raise ValueError("status callback root task ledger is incomplete")
     non_roots = tuple(
         sorted(
-            (task for task in tasks if task.parent_task_id),
+            (task for task in tasks if task.task_id not in set(root_ids)),
             key=lambda item: (item.task_path, item.task_id),
         )
     )
@@ -567,7 +574,19 @@ def materialize_status_callback_task_graph(
 def attach_task_graph_catalog(canonical: CanonicalIR, catalog: TaskGraphCatalogIR) -> CanonicalIR:
     if type(canonical) is not CanonicalIR or type(catalog) is not TaskGraphCatalogIR:
         raise TypeError("task graph attachment requires exact production types")
-    return replace(canonical, task_graph_catalog=catalog)
+    dependencies = build_external_task_topology_dependency_ledger(
+        action_ability_bindings=canonical.action_ability_bindings,
+        ability_phases=canonical.ability_phases,
+        ability_tasks=canonical.ability_tasks,
+        standalone_ability_graphs=canonical.standalone_ability_graphs,
+        status_callbacks=canonical.status_callbacks,
+        status_callback_tasks=canonical.status_callback_tasks,
+    )
+    return replace(
+        canonical,
+        task_graph_catalog=catalog,
+        external_task_topology_dependencies=dependencies,
+    )
 
 
 def merge_task_graph_slices(
@@ -669,17 +688,16 @@ def _disposition(
 def _ability_task(task: AbilityTaskIR) -> _FormalTask:
     if type(task) is not AbilityTaskIR:
         raise TypeError("ability graph requires exact AbilityTaskIR values")
+    if task.source.evidence.get("task_path") != task.task_path:
+        raise ValueError("ability graph task position source is inconsistent")
     family = task.source.evidence.get("source_opcode")
     if task.linked_ability_phase_id and task.linked_standalone_graph_id:
         raise ValueError("ability task call target is ambiguous")
     return _FormalTask(
         task.task_id,
+        task.task_path,
         task.opcode,
         family if isinstance(family, str) and family else task.opcode,
-        task.parent_task_id,
-        tuple(task.child_task_ids),
-        tuple(task.success_task_ids),
-        tuple(task.failed_task_ids),
         task.condition_id,
         "",
         task.effect_id,
@@ -700,15 +718,17 @@ def _ability_task(task: AbilityTaskIR) -> _FormalTask:
 def _status_task(task: StatusCallbackTaskIR) -> _FormalTask:
     if type(task) is not StatusCallbackTaskIR:
         raise TypeError("status graph requires exact StatusCallbackTaskIR values")
+    if (
+        task.source.evidence.get("graph_task_path") != task.task_path
+        or task.source.evidence.get("task_path") != task.task_path
+    ):
+        raise ValueError("status graph task position source is inconsistent")
     family = task.source.evidence.get("raw_opcode")
     return _FormalTask(
         task.task_id,
+        task.task_path,
         task.opcode,
         family if isinstance(family, str) and family else task.opcode,
-        task.parent_task_id,
-        tuple(task.child_task_ids),
-        tuple(task.success_task_ids),
-        tuple(task.failed_task_ids),
         task.condition_id,
         task.target_expression_id,
         task.effect_id,
@@ -941,12 +961,19 @@ def _build_graph(
     task_by_id = {item.task_id: item for item in tasks}
     if set(ordered_task_ids) != set(task_by_id):
         raise _Blocked("formal_entry_task_set_mismatch")
-    _validate_formal_topology(task_by_id, ordered_task_ids)
+    source_topology, root_task_ids = _source_topology(
+        task_by_id,
+        ordered_task_ids,
+        sources,
+        controls,
+        refs_by_node,
+        template_by_id,
+    )
     node_ids = {
         task_id: task_graph_node_id(graph_id, task_id, occurrences[task_id])
         for task_id in task_by_id
     }
-    roots = tuple(node_ids[task_id] for task_id in ordered_task_ids if not task_by_id[task_id].parent_task_id)
+    roots = tuple(node_ids[task_id] for task_id in root_task_ids)
     if not roots:
         raise _Blocked("formal_entry_root_missing")
     numeric: list[TaskGraphNumericDefinitionIR] = []
@@ -960,10 +987,7 @@ def _build_graph(
             )
         branches = _branches(
             task,
-            control,
-            refs_by_node,
-            template_by_id,
-            task_by_id,
+            source_topology[task.task_id],
             node_ids,
         )
         references = list(_references(
@@ -1044,29 +1068,132 @@ def _build_graph(
     )
 
 
-def _validate_formal_topology(
+def _source_topology(
     task_by_id: Mapping[str, _FormalTask],
     ordered_task_ids: tuple[str, ...],
-) -> None:
-    roots = tuple(task_id for task_id in ordered_task_ids if not task_by_id[task_id].parent_task_id)
-    if not roots:
-        raise _Blocked("formal_entry_root_missing")
+    sources: Mapping[str, IRSource],
+    controls: Mapping[str, CharacterControlFlowNodeIR],
+    refs_by_node: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]],
+    templates: Mapping[str, ControlFlowTemplateDefinitionIR],
+) -> tuple[dict[str, tuple[_SourceBranch, ...]], tuple[str, ...]]:
+    tasks_by_location: dict[tuple[str, str, str, str], list[str]] = defaultdict(
+        list
+    )
+    for task_id, task in task_by_id.items():
+        source = sources[task_id]
+        path = source.evidence.get("json_path")
+        if not isinstance(path, str) or not path.startswith("$"):
+            raise _Blocked(f"formal_task_source_path_invalid:{task_id}")
+        tasks_by_location[
+            (source.source_path, path, task.family, task.graph_task_path)
+        ].append(task_id)
+    if any(len(values) != 1 for values in tasks_by_location.values()):
+        raise _Blocked("formal_task_source_occurrence_ambiguous")
+
+    def resolve_child(
+        parent: _FormalTask,
+        source: IRSource,
+        family: str,
+        branch_position: int,
+        child_ordinal: int,
+    ) -> str:
+        path = str(source.evidence.get("json_path") or "").removesuffix(".$type")
+        graph_path = (
+            f"{parent.graph_task_path}.formal_branch[{branch_position}]"
+            f".child[{child_ordinal}]"
+        )
+        values = tasks_by_location.get(
+            (source.source_path, path, family, graph_path), ()
+        )
+        if len(values) != 1:
+            raise _Blocked(
+                f"formal_branch_child_{'missing' if not values else 'ambiguous'}:"
+                f"{source.source_path}:{path}:{family}"
+            )
+        child_id = values[0]
+        child_source = sources[child_id]
+        if (
+            child_source.evidence.get("content_sha256")
+            != source.evidence.get("content_sha256")
+        ):
+            raise _Blocked(f"formal_branch_child_source_mismatch:{child_id}")
+        return child_id
+
+    topology: dict[str, tuple[_SourceBranch, ...]] = {}
     parent_counts = {task_id: 0 for task_id in task_by_id}
     adjacency: dict[str, tuple[str, ...]] = {}
-    for task in task_by_id.values():
-        children = task.child_task_ids
-        if len(children) != len(set(children)) or task.task_id in children:
-            raise _Blocked(f"formal_child_identity_invalid:{task.task_id}")
-        if set(children) - set(task_by_id):
-            raise _Blocked(f"formal_child_missing:{task.task_id}")
-        adjacency[task.task_id] = children
+    for task_id, task in task_by_id.items():
+        control = controls.get(task_id)
+        rows: list[_SourceBranch] = []
+        child_position = 0
+        if control is not None:
+            for branch in control.branches:
+                child_ids: list[str] = []
+                for child in branch.children:
+                    child_ids.append(
+                        resolve_child(
+                            task,
+                            child.source,
+                            child.family,
+                            child_position,
+                            child.ordinal,
+                        )
+                    )
+                    child_position += 1
+                rows.append(
+                    _SourceBranch(
+                        branch.branch_kind,
+                        branch.label,
+                        tuple(child_ids),
+                        branch.source,
+                    )
+                )
+            if control.control_role == "template_include":
+                references = tuple(refs_by_node.get(control.node_id, ()))
+                if len(references) != 1 or references[0].coverage_status != "lowered":
+                    raise _Blocked(
+                        f"formal_template_reference_not_resolved:{control.node_id}"
+                    )
+                template = templates.get(references[0].resolved_template_id)
+                if template is None:
+                    raise _Blocked(
+                        "formal_template_definition_missing:"
+                        f"{references[0].resolved_template_id}"
+                    )
+                child_ids = []
+                for child in template.children:
+                    child_ids.append(
+                        resolve_child(
+                            task,
+                            child.source,
+                            child.family,
+                            child_position,
+                            child.ordinal,
+                        )
+                    )
+                    child_position += 1
+                rows.append(
+                    _SourceBranch(
+                        "template_body",
+                        template.template_id,
+                        tuple(child_ids),
+                        template.source,
+                    )
+                )
+        children = tuple(
+            child_id for row in rows for child_id in row.child_task_ids
+        )
+        if len(children) != len(set(children)) or task_id in children:
+            raise _Blocked(f"formal_child_identity_invalid:{task_id}")
+        topology[task_id] = tuple(rows)
+        adjacency[task_id] = children
         for child_id in children:
-            if task_by_id[child_id].parent_task_id != task.task_id:
-                raise _Blocked(f"formal_parent_child_mismatch:{task.task_id}")
             parent_counts[child_id] += 1
-    root_set = set(roots)
-    if any(count != (0 if task_id in root_set else 1) for task_id, count in parent_counts.items()):
+    if any(count > 1 for count in parent_counts.values()):
         raise _Blocked("formal_parent_ownership_ambiguous")
+    roots = tuple(task_id for task_id in ordered_task_ids if parent_counts[task_id] == 0)
+    if not roots:
+        raise _Blocked("formal_entry_root_missing")
     reached: set[str] = set()
     pending = list(roots)
     while pending:
@@ -1077,73 +1204,31 @@ def _validate_formal_topology(
         pending.extend(adjacency[task_id])
     if reached != set(task_by_id):
         raise _Blocked("formal_task_cycle_or_unreachable_node")
+    return topology, roots
 
 
 def _branches(
     task: _FormalTask,
-    control: CharacterControlFlowNodeIR | None,
-    refs_by_node: Mapping[str, list[ControlFlowTemplateReferenceIR]],
-    templates: Mapping[str, ControlFlowTemplateDefinitionIR],
-    task_by_id: Mapping[str, _FormalTask],
+    source_branches: tuple[_SourceBranch, ...],
     node_ids: Mapping[str, str],
 ) -> tuple[TaskGraphBranchIR, ...]:
-    if control is None:
-        if task.child_task_ids:
-            raise _Blocked(f"formal_topology_missing_source_contract:{task.task_id}")
-        return ()
-    remaining_children = [task_by_id[item] for item in task.child_task_ids]
-
-    def take_child(source: IRSource, family: str) -> _FormalTask:
-        path = str(source.evidence["json_path"]).removesuffix(".$type")
-        for index, candidate in enumerate(remaining_children):
-            candidate_path = candidate.source.evidence.get("json_path")
-            if (
-                candidate.source.source_path == source.source_path
-                and candidate_path == path
-                and candidate.family == family
-            ):
-                return remaining_children.pop(index)
-        raise _Blocked(
-            f"formal_branch_child_missing:{source.source_path}:{path}:{family}"
-        )
-
-    rows: list[tuple[str, str, tuple[_FormalTask, ...], IRSource]] = []
-    for branch in control.branches:
-        children = tuple(take_child(item.source, item.family) for item in branch.children)
-        rows.append((branch.branch_kind, branch.label, children, branch.source))
-    if control.control_role == "template_include":
-        references = tuple(refs_by_node.get(control.node_id, ()))
-        if len(references) != 1 or references[0].coverage_status != "lowered":
-            raise _Blocked(f"formal_template_reference_not_resolved:{control.node_id}")
-        template = templates.get(references[0].resolved_template_id)
-        if template is None:
-            raise _Blocked(f"formal_template_definition_missing:{references[0].resolved_template_id}")
-        children = tuple(take_child(item.source, item.family) for item in template.children)
-        rows.append(("template_body", template.template_id, children, template.source))
-    if remaining_children:
-        raise _Blocked(f"formal_branch_child_unclaimed:{task.task_id}")
-    flattened = tuple(item.task_id for _kind, _label, children, _source in rows for item in children)
-    if flattened != task.child_task_ids:
-        raise _Blocked(f"formal_child_topology_mismatch:{task.task_id}")
-    success = tuple(item.task_id for kind, _label, children, _source in rows if kind == "success" for item in children)
-    failed = tuple(item.task_id for kind, _label, children, _source in rows if kind == "failed" for item in children)
-    if success != task.success_task_ids or failed != task.failed_task_ids:
-        raise _Blocked(f"formal_branch_topology_mismatch:{task.task_id}")
-    for child_id in task.child_task_ids:
-        child = task_by_id.get(child_id)
-        if child is None or child.parent_task_id != task.task_id:
-            raise _Blocked(f"formal_parent_child_mismatch:{task.task_id}")
     result: list[TaskGraphBranchIR] = []
-    for ordinal, (kind, label, children, source) in enumerate(rows):
-        child_ids = tuple(node_ids[item.task_id] for item in children)
+    for ordinal, branch in enumerate(source_branches):
+        child_ids = tuple(node_ids[item] for item in branch.child_task_ids)
         result.append(TaskGraphBranchIR(
-            task_graph_branch_id(node_ids[task.task_id], kind, ordinal, label, child_ids),
+            task_graph_branch_id(
+                node_ids[task.task_id],
+                branch.branch_kind,
+                ordinal,
+                branch.label,
+                child_ids,
+            ),
             node_ids[task.task_id],
-            kind,
+            branch.branch_kind,
             ordinal,
-            label,
+            branch.label,
             child_ids,
-            source,
+            branch.source,
         ))
     return tuple(result)
 

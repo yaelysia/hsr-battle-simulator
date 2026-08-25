@@ -315,8 +315,8 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B5B 状态 TriggerAbility nested formal catalog 准入完成验收。
 - [x] P9-S8B5C ability/event/status 跨入口 runtime 运输完成验收。
 - [x] P9-S8B5 聚合完成验收（仅在 S8B5A-S8B5C 全部通过后勾选）。
-- [ ] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
-- [ ] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。
+- [x] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
+- [x] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。
 - [ ] P9-S8C 命中序列、模拟 barrier、parallel 和随机分支完成验收。
 - [ ] P9-S9 事件分区、通用事件契约和动作窗口完成验收。
 - [ ] P9-S10 状态生命周期、属性修改和 callback 完成验收。

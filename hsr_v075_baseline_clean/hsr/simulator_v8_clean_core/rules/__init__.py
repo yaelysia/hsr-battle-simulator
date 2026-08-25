@@ -26,12 +26,14 @@ from .ir import (
     CharacterNonGameplaySkillSourceIR,
     ConditionIR,
     EffectIR,
+    ExternalTaskTopologyDependencyIR,
     FormulaIR,
     IRSource,
     RuleEntity,
     TargetExpressionIR,
     TargetExpressionNodeIR,
     TriggerIR,
+    build_external_task_topology_dependency_ledger,
 )
 from .evaluator import (
     CONTEXTUAL_CONDITION_FACTS_BY_OPCODE,
@@ -163,6 +165,7 @@ __all__ = [
     "CONTEXTUAL_CONDITION_FACTS_BY_OPCODE",
     "CONTEXTUAL_CONDITION_OPCODES",
     "EffectIR",
+    "ExternalTaskTopologyDependencyIR",
     "EvaluationContext",
     "FormulaIR",
     "IRSource",
@@ -172,4 +175,5 @@ __all__ = [
     "TargetExpressionIR",
     "TargetExpressionNodeIR",
     "TriggerIR",
+    "build_external_task_topology_dependency_ledger",
 ]

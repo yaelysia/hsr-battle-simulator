@@ -169,8 +169,15 @@ build 和来源扫描均为 0。S8B5B 也已完成验收：
 派生的 continuation 可穿过事件、状态 callback 和属性 watcher，状态 TriggerAbility 的 typed nested
 graph projection 会原子返回外层共享执行器；直接/间接环、projection 冲突、callback 组失败和 watcher
 后置失败均不泄露成功子图。组件验证 8/8，通过约 0.26 秒、峰值约 33 MiB，完整 Canonical IR build
-为 0；真实父 callback 仍诚实等待 S8C/S9/S10。S8B5 聚合已完成，当前下一张唯一执行卡是
-`docs/p9_execution_cards/P9-S8B6_LEGACY_TOPOLOGY_RETIREMENT.md`。
+为 0；真实父 callback 仍诚实等待 S8C/S9/S10。S8B5 聚合已完成。S8B6 也已完成验收：正式
+角色 ability 与角色状态 callback 不再写入或读取旧 task 父子拓扑，只消费 S8A 来源物化的统一
+任务图；entry、graph、owner、callback 和完整 task 集合在公开查询边界一次闭合，缺图不回退。
+怪物、装备、召唤物、全局和特殊模式仍使用公共旧字段的部分已形成 Canonical 类型化依赖账本，
+没有为了角色域收口破坏外部内容。当前 30 个旧字段运行时读点全部位于 15 个明确外部旧域或
+authority-gated 函数，后续内容迁移可继续减少至零。S8B 聚合现已完成；S8C 的 projectile、barrier、
+parallel 和随机顺序仍未提前执行。S8B6 唯一主验证 10/10，通过约 0.92 秒、峰值约 49 MiB、完整
+Canonical IR build 和历史主入口均为 0。当前下一张唯一执行卡是
+`docs/p9_execution_cards/P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md`。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

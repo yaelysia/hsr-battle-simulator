@@ -32,7 +32,13 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.state_integrity import CommittedStateIntegrityGate
 from ..equipment.models import DynamicMechanismSelection
-from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
+from ..rules.ir import (
+    AbilityPhaseIR,
+    AbilityTaskIR,
+    CombatantProfileIR,
+    WaveDefinitionIR,
+    WaveMonsterEntryIR,
+)
 from ..rules.engine_rule_registry import (
     EngineRuleRegistry,
     engine_numeric_binding_source,
@@ -41,6 +47,7 @@ from ..rules.engine_rule_registry import (
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
+from ..rules.task_graph import TaskGraphIR
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
 from ..systems.event_dispatch import EventDispatchSystem
@@ -2844,6 +2851,44 @@ def _level_entity_sources_for_startup_specs(
     return [rows[key] for key in sorted(rows)]
 
 
+def _legacy_startup_root_tasks(
+    tasks: tuple[AbilityTaskIR, ...],
+) -> tuple[AbilityTaskIR, ...]:
+    return tuple(task for task in tasks if not task.parent_task_id)
+
+
+def _startup_root_tasks(
+    rules: RuleBook,
+    phase: AbilityPhaseIR,
+    tasks: tuple[AbilityTaskIR, ...],
+) -> tuple[tuple[AbilityTaskIR, ...], str]:
+    if phase.invocation_role == "external_legacy":
+        return _legacy_startup_root_tasks(tasks), ""
+    if phase.invocation_role not in {
+        "action_root",
+        "nested_only",
+        "standalone_root",
+        "unbound_definition",
+    }:
+        return (), "startup_ability_phase_invocation_role_not_admitted"
+    graph_result = rules.query_formal_task_graph(
+        "ability_phase_callback",
+        phase.phase_id,
+        "OnStart",
+        (task.task_id for task in tasks),
+    )
+    graph = graph_result.value
+    if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+        return (), (
+            graph_result.blocked_reason or "startup_ability_task_graph_missing"
+        )
+    tasks_by_id = {task.task_id: task for task in tasks}
+    roots = tuple(
+        tasks_by_id[task_id] for task_id in graph.root_formal_task_ids
+    )
+    return roots, ""
+
+
 def _apply_startup_ability_effects(
     state: BattleState,
     rules: RuleBook,
@@ -2909,10 +2954,46 @@ def _apply_startup_ability_effects(
         admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
         candidate_task_count = 0
         for phase_id in graph.phase_ids:
-            for task in rules.ability_tasks_for_phase(phase_id):
-                if admitted_task_ids and task.task_id not in admitted_task_ids:
-                    continue
-                if task.callback_kind != "OnStart" or task.parent_task_id or task.opcode != "AddModifier" or not task.effect_id:
+            phase = rules.ability_phase(phase_id)
+            phase_tasks = tuple(
+                task
+                for task in rules.ability_tasks_for_phase(phase_id)
+                if task.callback_kind == "OnStart"
+            )
+            if phase is None:
+                topology_reason = "startup_ability_phase_missing"
+                root_tasks: tuple[AbilityTaskIR, ...] = ()
+            elif not phase_tasks:
+                continue
+            else:
+                root_tasks, topology_reason = _startup_root_tasks(
+                    rules,
+                    phase,
+                    phase_tasks,
+                )
+                if admitted_task_ids:
+                    root_tasks = tuple(
+                        task
+                        for task in root_tasks
+                        if task.task_id in admitted_task_ids
+                    )
+            if topology_reason:
+                trace = _startup_blocked_trace(
+                    kind,
+                    unit_id,
+                    ability_name,
+                    slot_id,
+                    slot_id_field,
+                    trace_node_id,
+                    graph,
+                    phase_id,
+                    topology_reason,
+                )
+                traces.append(trace)
+                blocked.append(trace)
+                continue
+            for task in root_tasks:
+                if task.opcode != "AddModifier" or not task.effect_id:
                     continue
                 candidate_task_count += 1
                 effect = rules.effect(task.effect_id)
