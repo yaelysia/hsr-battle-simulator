@@ -176,8 +176,12 @@ graph projection 会原子返回外层共享执行器；直接/间接环、proje
 没有为了角色域收口破坏外部内容。当前 30 个旧字段运行时读点全部位于 15 个明确外部旧域或
 authority-gated 函数，后续内容迁移可继续减少至零。S8B 聚合现已完成；S8C 的 projectile、barrier、
 parallel 和随机顺序仍未提前执行。S8B6 唯一主验证 10/10，通过约 0.92 秒、峰值约 49 MiB、完整
-Canonical IR build 和历史主入口均为 0。当前下一张唯一执行卡是
-`docs/p9_execution_cards/P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md`。
+Canonical IR build 和历史主入口均为 0。S8C 开工前核对确认原卡仍同时跨越五个执行边界，现已
+降为聚合说明。当前下一张唯一执行卡是
+`docs/p9_execution_cards/P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`：只建立 `RandomConfig` 候选、
+权重表达式和精确字段来源的一对一任务图契约，不执行随机、不修改 runtime。2026-08-25 的生产
+family 窄投影观察到 43 条记录，其中 14 条直接记录、29 条祖先上下文，全部 gameplay 且 issue 为 0；
+这些数字只作调查事实，不是固定完成门。真实权重包含固定与动态表达式，且相对权重不要求总和为 1。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 

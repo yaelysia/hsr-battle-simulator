@@ -1,4 +1,15 @@
-# P9-S8C 命中、barrier、parallel 与随机顺序执行卡
+# P9-S8C 命中、barrier、parallel 与随机顺序聚合说明
+
+此文件不再作为单次执行入口。实时代码核对确认它同时改变随机图契约、共享执行器、projectile
+命中、barrier、parallel 和跨领域 transaction/replay，直接交给一个执行线程会违反单卡权威边界。
+
+当前严格顺序先执行：
+
+1. `P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`：只建立 `RandomConfig` 候选与权重的一对一任务图契约，
+   runtime 行为保持不变。
+
+后续随机执行、projectile、barrier 与 parallel 卡必须在 S8C1 验收后根据剩余真实来源重新拆分；
+不得提前把下文聚合目标当成 S8C1 的完成范围。
 
 硬前置：P9-S8B1 至 P9-S8B6 均已验收；仅有原 S8B 聚合说明或部分子卡通过时不得开工。
 
@@ -16,9 +27,9 @@
 - RandomConfig 完整列候选和权重，使用稳定 choice identity；过期 choice、候选变化和 replay 篡改拒绝。
 - 任一命中或分支 blocked 时遵守 S8B 的事务策略，不能保留半段 mutation/settlement。
 
-本卡完成后回验 S5D2 的真实动作 transaction/replay 条件；不提前实现 S9-S16 的领域效果。
+S8C 聚合完成后回验 S5D2 的真实动作 transaction/replay 条件；不提前实现 S9-S16 的领域效果。
 
-## 验证预算
+## 聚合验证预算
 
 一个聚焦主入口，最多两个实际触达 direct；8 分钟、1 GiB、4 MiB evidence、900 非空行。
 正式 action 入口至少覆盖有序多 hit 和 RandomConfig，各自只保留一个最小真实来源纵切。
