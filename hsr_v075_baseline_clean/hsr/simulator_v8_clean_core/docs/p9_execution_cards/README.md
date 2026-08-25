@@ -24,9 +24,11 @@ template 内部节点。S8A-R1 已完成修订并验收，原 S8A 分母只保�
 只覆盖 P9 角色能力，不能据此全局删除怪物等内容域的旧执行路径，因此 S8B3 再拆为严格顺序的
 S8B3A-S8B3C。该预检同时发现旧 ability task lowering 会丢通用分支和模板子树，因此在迁移前
 增加 S8B1-R2 根因修复。S8B6 验收后的实时核对又确认原 S8C 同时跨越随机图契约、共享执行器、
-projectile、barrier、parallel 和跨领域 transaction/replay，因此原 S8C 也降为聚合说明。当前先执行
-`P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`，只建立有序候选与权重来源的一对一图契约；其余 S8C
-范围在 S8C1 验收后按剩余权威边界继续拆分。
+projectile、barrier、parallel 和跨领域 transaction/replay，因此原 S8C 也降为聚合说明。后续隔离
+核对确认 S8C1 的完整来源又跨越现有 action entry、GlobalTemplates、状态回调和无 producer 共享模板，
+所以 S8C1 继续拆为 A-C。当前唯一执行卡是 `P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`，只建立
+严格加权选择 IR；`P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md` 只保留聚合目标。S8C1B、S8C1C 必须
+在前序卡验收后按真实剩余集合制定。
 旧 S8、S8B、S8B3 与 S8C 文件都只保留聚合说明，不再是执行入口。
 
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程

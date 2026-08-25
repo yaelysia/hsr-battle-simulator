@@ -189,7 +189,10 @@ P9 要得到以下结果：
 | P9-S8B5C | 在 ability、event、status 间运输既定上下文和 projection | M06 跨入口消费 |
 | P9-S8B5 | 跨入口调用栈和执行投影完成统一运输 | M06 跨入口集成 |
 | P9-S8B6 | 旧 task 拓扑字段、双写和消费者退役，完成 S8B 聚合审计 | M06 runtime 聚合 |
-| P9-S8C1 | RandomConfig 候选、权重表达式与精确来源形成一对一任务图契约，不改变 runtime | M06 随机图契约 |
+| P9-S8C1A | 建立加权 choice/selection 的严格 IR、身份、来源关系与 codec | M06 随机图模型 |
+| P9-S8C1B | 将加权选择 IR 接入现有正式 action entry materializer | M06 随机图接线 |
+| P9-S8C1C | 补齐其余公开 entry 并闭合完整 RandomConfig 来源分母 | M06 随机图来源闭合 |
+| P9-S8C1 | RandomConfig 候选、权重表达式与精确来源形成一对一任务图契约，不改变 runtime | M06 随机图聚合 |
 | P9-S8C | projectile 命中序列、模拟 barrier、parallel 与随机分支统一到确定性顺序和 RNG ledger | M06 时序、M16 控制流部分 |
 | P9-S9 | 事件族完整分区，通用事件契约及动作/技能窗口闭合 | M07 主干 |
 | P9-S10 | 状态生命周期、属性修改和状态 callback 事件闭合 | M08、M07 状态部分 |
@@ -318,7 +321,10 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B5 聚合完成验收（仅在 S8B5A-S8B5C 全部通过后勾选）。
 - [x] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
 - [x] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。
-- [ ] P9-S8C1 RandomConfig 有序候选与权重任务图契约完成验收。
+- [ ] P9-S8C1A 加权 choice/selection IR 契约完成验收。
+- [ ] P9-S8C1B 正式 action entry materializer 接线完成验收。
+- [ ] P9-S8C1C 其余公开 entry 与完整来源分母闭合完成验收。
+- [ ] P9-S8C1 RandomConfig 有序候选与权重任务图契约聚合完成验收。
 - [ ] P9-S8C 命中序列、模拟 barrier、parallel 和随机分支完成验收。
 - [ ] P9-S9 事件分区、通用事件契约和动作窗口完成验收。
 - [ ] P9-S10 状态生命周期、属性修改和 callback 完成验收。

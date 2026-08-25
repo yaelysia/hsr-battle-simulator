@@ -5,7 +5,8 @@
 
 当前严格顺序先执行：
 
-1. `P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`：只建立 `RandomConfig` 候选与权重的一对一任务图契约，
+1. `P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`：建立严格加权选择 IR。
+2. `P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`：按 A-C 严格顺序闭合 `RandomConfig` 任务图契约，
    runtime 行为保持不变。
 
 后续随机执行、projectile、barrier 与 parallel 卡必须在 S8C1 验收后根据剩余真实来源重新拆分；
