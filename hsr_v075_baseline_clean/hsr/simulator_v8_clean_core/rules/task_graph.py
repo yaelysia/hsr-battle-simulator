@@ -1269,3 +1269,330 @@ def task_graph_materialization_id(
         for task_id, occurrence_id in zip(formal_task_ids, occurrences, strict=True)
     )
     return _id("task_graph_materialization", entry_id, *positions)
+
+
+def task_graph_weighted_choice_id(
+    graph_node_id: str,
+    ordinal: int,
+    branch_id: str,
+    weight_definition_id: str,
+) -> str:
+    return _id(
+        "task_graph_weighted_choice",
+        graph_node_id,
+        ordinal,
+        branch_id,
+        weight_definition_id,
+    )
+
+
+def task_graph_weighted_selection_id(
+    graph_node_id: str,
+    parent_source_occurrence_id: str,
+) -> str:
+    return _id(
+        "task_graph_weighted_selection",
+        graph_node_id,
+        parent_source_occurrence_id,
+    )
+
+
+@dataclass(frozen=True)
+class TaskGraphWeightedChoiceIR:
+    choice_id: str
+    graph_node_id: str
+    family: str
+    ordinal: int
+    branch_id: str
+    weight_definition_id: str
+    weight_source_occurrence_id: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskGraphWeightedChoiceIR:
+            raise TypeError("task graph weighted choice must not be subclassed")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (
+                self.choice_id,
+                self.graph_node_id,
+                self.family,
+                self.branch_id,
+                self.weight_definition_id,
+                self.weight_source_occurrence_id,
+            )
+        ):
+            raise ValueError("task graph weighted choice identity is incomplete")
+        if type(self.ordinal) is not int or self.ordinal < 0:
+            raise ValueError("task graph weighted choice ordinal is invalid")
+        source = _source(self.source, "task graph weighted choice")
+        if self.weight_source_occurrence_id != task_graph_source_occurrence_id(
+            source,
+            self.family,
+        ):
+            raise ValueError(
+                "task graph weighted choice source occurrence is inconsistent"
+            )
+        expected = task_graph_weighted_choice_id(
+            self.graph_node_id,
+            self.ordinal,
+            self.branch_id,
+            self.weight_definition_id,
+        )
+        if self.choice_id != expected:
+            raise ValueError("task graph weighted choice identity is inconsistent")
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "choice_id": self.choice_id,
+            "graph_node_id": self.graph_node_id,
+            "family": self.family,
+            "ordinal": self.ordinal,
+            "branch_id": self.branch_id,
+            "weight_definition_id": self.weight_definition_id,
+            "weight_source_occurrence_id": self.weight_source_occurrence_id,
+            "source": cast(dict[str, JSONValue], thaw_json(self.source.to_json())),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> "TaskGraphWeightedChoiceIR":
+        item = _exact(
+            value,
+            {
+                "choice_id",
+                "graph_node_id",
+                "family",
+                "ordinal",
+                "branch_id",
+                "weight_definition_id",
+                "weight_source_occurrence_id",
+                "source",
+            },
+            "task graph weighted choice",
+        )
+        ordinal = item.get("ordinal")
+        if type(ordinal) is not int:
+            raise TypeError("task graph weighted choice ordinal must be an integer")
+        return cls(
+            choice_id=_string(item, "choice_id", "task graph weighted choice"),
+            graph_node_id=_string(
+                item,
+                "graph_node_id",
+                "task graph weighted choice",
+            ),
+            family=_string(item, "family", "task graph weighted choice"),
+            ordinal=ordinal,
+            branch_id=_string(item, "branch_id", "task graph weighted choice"),
+            weight_definition_id=_string(
+                item,
+                "weight_definition_id",
+                "task graph weighted choice",
+            ),
+            weight_source_occurrence_id=_string(
+                item,
+                "weight_source_occurrence_id",
+                "task graph weighted choice",
+            ),
+            source=_source_from_json(
+                item.get("source"),
+                "task graph weighted choice",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class TaskGraphWeightedSelectionIR:
+    selection_id: str
+    graph_node_id: str
+    parent_source_occurrence_id: str
+    family: str
+    selection_kind: Literal["weighted_single"]
+    choices: tuple[TaskGraphWeightedChoiceIR, ...]
+    numeric_definitions: tuple[TaskGraphNumericDefinitionIR, ...]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskGraphWeightedSelectionIR:
+            raise TypeError("task graph weighted selection must not be subclassed")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (
+                self.selection_id,
+                self.graph_node_id,
+                self.parent_source_occurrence_id,
+                self.family,
+            )
+        ):
+            raise ValueError("task graph weighted selection identity is incomplete")
+        if self.selection_kind != "weighted_single":
+            raise ValueError("task graph weighted selection kind is invalid")
+        if not isinstance(self.choices, (tuple, list)) or not isinstance(
+            self.numeric_definitions,
+            (tuple, list),
+        ):
+            raise TypeError(
+                "task graph weighted selection members must be tuples or lists"
+            )
+        choices = tuple(self.choices)
+        numeric_definitions = tuple(self.numeric_definitions)
+        if not choices or len(choices) != len(numeric_definitions):
+            raise ValueError("task graph weighted selection positions are incomplete")
+        if any(type(item) is not TaskGraphWeightedChoiceIR for item in choices):
+            raise TypeError("task graph weighted selection choices are invalid")
+        if any(
+            type(item) is not TaskGraphNumericDefinitionIR
+            for item in numeric_definitions
+        ):
+            raise TypeError(
+                "task graph weighted selection numeric definitions are invalid"
+            )
+        source = _source(self.source, "task graph weighted selection")
+        if self.parent_source_occurrence_id != task_graph_source_occurrence_id(
+            source,
+            self.family,
+        ):
+            raise ValueError(
+                "task graph weighted selection parent source occurrence is inconsistent"
+            )
+        if self.selection_id != task_graph_weighted_selection_id(
+            self.graph_node_id,
+            self.parent_source_occurrence_id,
+        ):
+            raise ValueError("task graph weighted selection identity is inconsistent")
+        if tuple(item.ordinal for item in choices) != tuple(range(len(choices))):
+            raise ValueError("task graph weighted choice order is not canonical")
+        parent_path = cast(str, source.evidence["json_path"])
+        parent_digest = source.evidence["content_sha256"]
+        for index, (choice, definition) in enumerate(
+            zip(choices, numeric_definitions, strict=True)
+        ):
+            child_source = choice.source
+            definition_source = definition.source
+            expected_path = f"{parent_path}.OddsList[{index}]"
+            if (
+                choice.graph_node_id != self.graph_node_id
+                or choice.family != self.family
+                or child_source.source_path != source.source_path
+                or child_source.raw_type != source.raw_type
+                or child_source.raw_id != source.raw_id
+                or child_source.evidence.get("content_sha256") != parent_digest
+                or child_source.evidence.get("json_path") != expected_path
+            ):
+                raise ValueError(
+                    "task graph weighted choice parent source is inconsistent"
+                )
+            occurrence_id = task_graph_source_occurrence_id(
+                child_source,
+                self.family,
+            )
+            if (
+                choice.weight_source_occurrence_id != occurrence_id
+                or definition.source_occurrence_id != occurrence_id
+                or task_graph_source_occurrence_id(
+                    definition_source,
+                    self.family,
+                )
+                != occurrence_id
+                or definition_source.to_json() != child_source.to_json()
+                or choice.weight_definition_id != definition.definition_id
+                or definition.definition_id
+                != task_graph_numeric_id(
+                    occurrence_id,
+                    definition.expression,
+                )
+            ):
+                raise ValueError(
+                    "task graph weighted choice weight definition is inconsistent"
+                )
+            if choice.choice_id != task_graph_weighted_choice_id(
+                self.graph_node_id,
+                index,
+                choice.branch_id,
+                definition.definition_id,
+            ):
+                raise ValueError("task graph weighted choice identity is inconsistent")
+        object.__setattr__(self, "choices", choices)
+        object.__setattr__(
+            self,
+            "numeric_definitions",
+            numeric_definitions,
+        )
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "selection_id": self.selection_id,
+            "graph_node_id": self.graph_node_id,
+            "parent_source_occurrence_id": self.parent_source_occurrence_id,
+            "family": self.family,
+            "selection_kind": self.selection_kind,
+            "choices": [item.to_json() for item in self.choices],
+            "numeric_definitions": [
+                cast(dict[str, JSONValue], thaw_json(item.to_json()))
+                for item in self.numeric_definitions
+            ],
+            "source": cast(dict[str, JSONValue], thaw_json(self.source.to_json())),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> "TaskGraphWeightedSelectionIR":
+        item = _exact(
+            value,
+            {
+                "selection_id",
+                "graph_node_id",
+                "parent_source_occurrence_id",
+                "family",
+                "selection_kind",
+                "choices",
+                "numeric_definitions",
+                "source",
+            },
+            "task graph weighted selection",
+        )
+        choices = item.get("choices")
+        numeric_definitions = item.get("numeric_definitions")
+        if not isinstance(choices, list) or not isinstance(
+            numeric_definitions,
+            list,
+        ):
+            raise TypeError("task graph weighted selection members must be arrays")
+        return cls(
+            selection_id=_string(
+                item,
+                "selection_id",
+                "task graph weighted selection",
+            ),
+            graph_node_id=_string(
+                item,
+                "graph_node_id",
+                "task graph weighted selection",
+            ),
+            parent_source_occurrence_id=_string(
+                item,
+                "parent_source_occurrence_id",
+                "task graph weighted selection",
+            ),
+            family=_string(item, "family", "task graph weighted selection"),
+            selection_kind=cast(
+                Any,
+                _string(
+                    item,
+                    "selection_kind",
+                    "task graph weighted selection",
+                ),
+            ),
+            choices=tuple(
+                TaskGraphWeightedChoiceIR.from_json(member)
+                for member in choices
+            ),
+            numeric_definitions=tuple(
+                TaskGraphNumericDefinitionIR.from_json(member)
+                for member in numeric_definitions
+            ),
+            source=_source_from_json(
+                item.get("source"),
+                "task graph weighted selection",
+            ),
+        )

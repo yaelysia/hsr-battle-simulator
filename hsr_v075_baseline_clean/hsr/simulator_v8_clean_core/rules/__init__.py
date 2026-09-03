@@ -81,6 +81,10 @@ from .task_graph import (
     TaskGraphQuery,
     TaskGraphQueryResult,
     TaskGraphSourceDispositionIR,
+    TaskGraphWeightedChoiceIR,
+    TaskGraphWeightedSelectionIR,
+    task_graph_weighted_choice_id,
+    task_graph_weighted_selection_id,
 )
 from .action_target_contract import (
     ActionTargetContractCatalogIR,
@@ -161,6 +165,10 @@ __all__ = [
     "TaskGraphQuery",
     "TaskGraphQueryResult",
     "TaskGraphSourceDispositionIR",
+    "TaskGraphWeightedChoiceIR",
+    "TaskGraphWeightedSelectionIR",
+    "task_graph_weighted_choice_id",
+    "task_graph_weighted_selection_id",
     "ConditionIR",
     "CONTEXTUAL_CONDITION_FACTS_BY_OPCODE",
     "CONTEXTUAL_CONDITION_OPCODES",

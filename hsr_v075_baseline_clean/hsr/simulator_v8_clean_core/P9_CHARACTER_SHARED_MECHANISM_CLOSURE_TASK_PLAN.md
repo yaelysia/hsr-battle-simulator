@@ -297,7 +297,7 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8B5 聚合完成验收（仅在 S8B5A-S8B5C 全部通过后勾选）。
 - [x] P9-S8B6 旧 task 拓扑退役和 S8B 聚合审计完成验收。
 - [x] P9-S8B 原子任务图事务聚合完成验收（仅在 S8B1-S8B6 全部通过后勾选）。
-- [ ] P9-S8C1A 加权 choice/selection IR 契约完成验收。
+- [x] P9-S8C1A 加权 choice/selection IR 契约完成验收。
 - [ ] P9-S8C1B 正式 action entry materializer 接线完成验收。
 - [ ] P9-S8C1C 其余公开 entry 与完整来源分母闭合完成验收。
 - [ ] P9-S8C1 RandomConfig 有序候选与权重任务图契约聚合完成验收。

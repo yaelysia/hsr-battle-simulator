@@ -1,5 +1,7 @@
 # P9-S8C1A 加权单选 IR 契约
 
+状态：`accepted`。独立验收已闭合；CI-2 已验证固定 base 到 PR head 的 committed diff，S8C1B/S8C1C deferred 保持不变。
+
 - 风险模式：`STANDARD`
 - 执行方式：可由主线程、人工新线程或子代理实施；不依赖子代理功能。
 - 推荐能力：平台可选模型时使用 Terra Max。本卡只有纯 IR/codec 权威，没有正式消费者。
@@ -136,7 +138,7 @@ git diff --check
 
 ## 执行清单
 
-- [ ] choice/selection、身份和严格 codec 已建立并导出。
-- [ ] 顺序、配对、父子来源和输入隔离由生产边界保证。
-- [ ] 最小 fixture 验证在预算内通过，未冒充真实来源或可执行 gameplay。
-- [ ] 写集合、报告和 deferred 自审完成并提交 `ready_for_review`。
+- [x] choice/selection、身份和严格 codec 已建立并导出。
+- [x] 顺序、配对、父子来源和输入隔离由生产边界保证。
+- [x] 最小 fixture 验证在预算内通过，未冒充真实来源或可执行 gameplay。
+- [x] 写集合、报告和 deferred 自审完成并提交 `ready_for_review`。

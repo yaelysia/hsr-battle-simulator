@@ -22,6 +22,9 @@ TurnBasedGameData -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat 
 - CHAR-M1 已建立记忆角色与忆灵 owned-combatant 构筑边界。
 - P9-S0 至 P9-S8B6 已验收。角色能力来源、构筑绑定、动态值、目标、条件、任务图 IR、共享原子执行、
   普通动作、独立能力、状态 callback 和跨入口 continuation 已进入统一生产链。
+- P9-S8C1A 已验收：任务图现已具备加权 choice/selection 的严格 IR、稳定身份、父子 `.OddsList[i]`
+  来源关系、数值定义配对、不可变容器和严格 JSON codec。该检查点只证明类型契约，不代表真实
+  `RandomConfig` 已 materialize，也不代表随机分支可执行。
 - P9-S5D2 的随机目标基础和弹射目标消费已完成，但其完整动作 transaction/replay 正例明确等待 S8
   随机控制流闭合后回验，因此该聚合项仍未勾选。
 
@@ -35,22 +38,20 @@ TurnBasedGameData -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat 
 simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
 ```
 
-P9 面向当前非记忆、非欢愉已发布角色，优先闭合共享机制，不按角色逐个编写专属处理器。
-
-下一张唯一可执行卡：
+当前检查点停在：
 
 ```text
-simulator_v8_clean_core/docs/p9_execution_cards/
-P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md
+P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT — accepted
 ```
 
-S8C1A 只建立加权选择的严格 IR、身份、父子来源关系和 codec；不读取 TBGD、不接 materializer、
-不执行 RNG、不修改 runtime。真实来源接线和完整来源分母分别由后续 S8C1B、S8C1C 承担，二者尚未
-形成可执行卡，不得提前实施。
+目前没有可直接执行的下一张 P9 卡。S8C1B 负责正式 action entry materializer 接线，S8C1C 负责
+其余公开 entry 与完整 RandomConfig 来源分母；二者都必须由规划线程基于 S8C1A 合并后的实际调用面
+形成新的 `ready_for_execution` 执行卡后才能施工。本检查点不启动下一张卡。
 
 ## 仍未完成
 
-- P9-S8C 及后续角色共享控制流、事件、状态、伤害、资源、队列、死亡、击破、形态和独立行动实体。
+- P9-S8C1B、P9-S8C1C、S8C1 聚合、P9-S8C 及后续角色共享控制流、事件、状态、伤害、资源、队列、
+  死亡、击破、形态和独立行动实体。
 - P9 完成后的全角色目录回验，以及记忆、欢愉专属内容增量。
 - 全怪物、全召唤内容、全关卡环境和特殊玩法的数据卡扩面。
 - 当前阶段已经明确归属的 P3/P4/P5 内容来源缺口。
@@ -65,7 +66,7 @@ S8C1A 只建立加权选择的严格 IR、身份、父子来源关系和 codec�
 1. 工作区永久约束：`AGENTS.md`。
 2. 当前状态：本文。
 3. 当前总计划的阶段依赖与唯一 checklist。
-4. `docs/p9_execution_cards/README.md` 和当前唯一执行卡。
+4. `docs/p9_execution_cards/README.md` 和当前唯一执行卡（若已有）。
 5. 执行卡点名的生产符号、调用者和来源。
 
 架构修改再读 `ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`；规划或验收再读
@@ -74,6 +75,8 @@ S8C1A 只建立加权选择的严格 IR、身份、父子来源关系和 codec�
 ## 证据与历史
 
 - P8 最终结论：`live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
+- P9-S8C1A ready-for-review 证据：`live_validation_reports/P9-S8C1A_WEIGHTED_SELECTION_IR_ready_for_review.md`；
+  最终通过结论只认总计划 checklist、accepted 执行卡状态和合并后的 Git 检查点。
 - P9 阶段状态只认总计划 checklist 和已验收 Git 检查点；`ready_for_review` 报告不是最终验收。
 - 文档归属与归档：`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`。
 - 瘦身前交接全文：`simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-07-24.md`。
