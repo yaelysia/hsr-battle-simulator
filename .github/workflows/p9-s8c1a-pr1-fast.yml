@@ -1,0 +1,37 @@
+name: P9-S8C1A PR1 fast validation
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  p9-s8c1a-fast:
+    if: github.event.pull_request.number == 1 && github.event.pull_request.head.ref == 'exec/p9-s8c1a-weighted-selection-ir'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Compile task graph rules and focused validator
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1a_weighted_selection_ir.py
+
+      - name: Run focused weighted-selection validator
+        run: |
+          PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1a_weighted_selection_ir
+
+      - name: Check diff whitespace
+        run: |
+          git diff --check
