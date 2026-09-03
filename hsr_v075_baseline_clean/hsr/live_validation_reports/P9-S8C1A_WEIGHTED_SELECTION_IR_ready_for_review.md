@@ -6,7 +6,7 @@ PR: #1 (`exec/p9-s8c1a-weighted-selection-ir`)
 
 ## Actual diff
 
-Task implementation is limited to:
+Task implementation remains limited to:
 
 - `simulator_v8_clean_core/rules/task_graph.py`
   - adds `TaskGraphWeightedChoiceIR` and `TaskGraphWeightedSelectionIR`;
@@ -18,24 +18,27 @@ Task implementation is limited to:
   - single `validation_fixture` validator for this card;
   - covers legal round trip, equal-weight positional identity, pairing mismatch, wrong parent path, forged identity, strict codec rejection, and mutable-container isolation.
 
-Validation-environment self-rescue authorized by CI-1 adds:
+Validation-environment CI is an execution-layer self-rescue only. It adds no Python dependency and does not alter business IR or deferred scope:
 
 - `.github/workflows/p9-s8c1a-pr1-fast.yml`
-  - only executes its validation job for PR #1 with head branch `exec/p9-s8c1a-weighted-selection-ir`;
-  - explicitly checks out `github.event.pull_request.head.sha`;
-  - adds no Python dependency and runs only the three task-card commands.
+  - only executes for PR #1 with head branch `exec/p9-s8c1a-weighted-selection-ir`;
+  - checks out `github.event.pull_request.head.sha` with `fetch-depth: 0`;
+  - retains the task-card compileall and focused validator commands;
+  - checks the committed PR diff from the fixed base to the triggering PR head, rather than an empty clean working tree.
 
 This report is the only ready-for-review evidence file for the card.
 
-## Validation evidence
+## Validation evidence — CI-2
 
-Initial validated PR head: `75899733d1d5ba4dd636c23260e275b59ed33c19`
+Fixed base: `f7ca8b02d670a574e09066c874ede61eebf8bc27`
 
-GitHub Actions run: `33725899313`
+Validated PR head: `7dce55024f6ff64229fae09b71b8561df6ae1fd1`
+
+GitHub Actions run: `33730334606`
 
 Job: `p9-s8c1a-fast` — `success`
 
-The runner explicitly checked out PR head `75899733d1d5ba4dd636c23260e275b59ed33c19` before validation.
+The runner explicitly checked out PR head `7dce55024f6ff64229fae09b71b8561df6ae1fd1` before validation.
 
 ### compileall
 
@@ -58,23 +61,27 @@ PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 -B -m s
 Raw result:
 
 ```json
-{"cases": 7, "elapsed_seconds": 0.020928, "fixture_kind": "validation_fixture", "ok": true, "peak_memory_bytes": 31249}
+{"cases": 7, "elapsed_seconds": 0.010194, "fixture_kind": "validation_fixture", "ok": true, "peak_memory_bytes": 31249}
 ```
 
 Budget check:
 
-- focused validator elapsed: `0.020928s` <= `2s` target and < `10s` hard stop;
+- focused validator elapsed: `0.010194s` <= `2s` target and < `10s` hard stop;
 - peak traced memory: `31,249 bytes` < `128 MiB`.
 
-### diff check
+### committed PR diff check
 
-Command:
+Command as expanded by the CI run:
 
 ```bash
-git diff --check
+git diff --check f7ca8b02d670a574e09066c874ede61eebf8bc27 "7dce55024f6ff64229fae09b71b8561df6ae1fd1"
 ```
 
 Result: exit 0; no output.
+
+This checks the committed diff between the fixed PR base and the triggering PR head. It does not rely on a dirty working tree and does not use a merge commit or floating base ref.
+
+CI-2 required one workflow-only remediation for the acceptance finding; no business-code repair was required.
 
 ## Deferred
 
