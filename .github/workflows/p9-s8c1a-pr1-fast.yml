@@ -32,6 +32,6 @@ jobs:
         run: |
           PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1a_weighted_selection_ir
 
-      - name: Check diff whitespace
+      - name: Check committed PR diff whitespace
         run: |
-          git diff --check
+          git diff --check f7ca8b02d670a574e09066c874ede61eebf8bc27 "${{ github.event.pull_request.head.sha }}"
