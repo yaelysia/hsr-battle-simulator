@@ -1,0 +1,3 @@
+[submodule "turnbasedgamedata-main"]
+	path = turnbasedgamedata-main
+	url = https://github.com/DimbreathBot/TurnBasedGameData.git

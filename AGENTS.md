@@ -49,6 +49,8 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR / 数据卡 IR -> Co
 ```
 
 - raw TBGD 只能由 compiler、lowering、discovery 和审计工具读取。
+- `turnbasedgamedata-main` 是固定提交的 Git submodule。普通功能任务不得更新其指针；来源升级必须
+  独立规划，并重建来源指纹、目录差异和受影响证据。
 - TextMap、名称、技能说明和游戏观测只用于展示、人工理解或验证，不能驱动 runtime 规则。
 - 旧 v7 和 `model_pack_v3_0` 只可对照，不是兼容目标，也不能成为 v8 runtime 依赖。
 - 内容无法从结构化来源确定时必须保留缺口，不能用旧实现、经验值或手工答案补齐。

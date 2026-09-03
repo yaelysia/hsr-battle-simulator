@@ -10,5 +10,13 @@
 3. 文档导航：[`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`](simulator_v8_clean_core/DOCUMENTATION_INDEX.md)
 4. 核心模块说明：[`simulator_v8_clean_core/README.md`](simulator_v8_clean_core/README.md)
 
+源数据位于工作区根目录的 `turnbasedgamedata-main` Git submodule。首次克隆后运行：
+
+```bash
+git submodule update --init --recursive
+```
+
+主仓库固定子模块提交；普通功能开发不得顺手更新数据版本。
+
 旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格只用于历史对照。它们不是 v8 的兼容目标，
 也不能成为正式 runtime 依赖。
