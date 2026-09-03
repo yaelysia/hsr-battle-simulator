@@ -86,8 +86,8 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 
 - runtime 绕过 `TargetExpressionIR`，直接按 raw TBGD 字段名、文件名、技能名或展示名解析目标。
 - 缺目标、缺事件 payload、缺当前动作 target resolution、缺参数实体列表时 fallback 到 actor、主目标、全体或空列表后继续执行。
-- `TargetSort*`、`TargetFetch*`、随机 retarget、相邻目标、召唤物目标、servant 目标、唯一实体查询、特殊玩法目标在未 admission 前产生 mutation。
-- `Retarget` 改写整次 action 的主目标；当前只允许影响本次 effect/callback 的目标解析。
+- 任意目标 family 在来源、身份、关系、筛选、排序或随机语义未 admission 前产生 mutation。
+- `Retarget`、效果目标或 callback 目标越权改写整次 action 已接受的主目标选择。
 - alias 与 `target_expression_id` 同时存在但解析结果冲突时继续执行。
 - 目标表达式 resolver 失败后仍让 `AddModifier`、callback task、effect 产生部分 mutation。
 
@@ -97,15 +97,18 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 
 禁止：
 
-- 把复杂 AIPath 简化成固定序列执行。
+- 执行游戏客户端的敌方 AI、目标偏好、评分策略或自动战斗逻辑。
+- 把 `AIPath`、`AISkillSequence` 或其他决策策略当作动作合法性和选择权威。
+- 把复杂 AIPath 简化成固定序列，或因复杂 AI 未实现阻断本来规则完整的怪物动作。
 - 按固定 MonsterID、怪物名、技能 ID、AIPath 白名单驱动 runtime。
 - 把 `MonsterSkill.ModifierList` 当成怪物被动来源。
 - 把 `MonsterConfig.AbilityNameList` 当成完整被动系统；它只是怪物机制入口之一。
-- 怪物自然回合没有明确候选或目标时自动造成伤害。
-- 敌方行动候选生成时推进 action sequence cursor；cursor 只能在匹配候选的标准 `ActionCommand` 成功执行后推进。
+- 怪物行动窗口没有外部合法选择时自动选择动作、猜测目标或造成伤害。
+- 未证明 AI 字段表达强制战斗规则，就把它投影为阶段、可用性或事件约束。
 - 普通怪物技能与 `ILBattleMonsterSkill` 共用 action namespace；必须分别使用 `monster_skill:<SkillID>` 与 `ilbattle_monster_skill:<ID>`。
 
-怪物固定序列候选只读展示，不是 AI 决策。目标选择由用户、UI 或后续推演器显式给出。
+敌我双方都由用户、UI 或外部推演器从内核公布的合法动作和目标中选择。AI 来源可以保留用于审计；
+只有被独立证明为强制战斗约束的部分才能进入通用规则 IR。
 
 ## 状态监听红线
 

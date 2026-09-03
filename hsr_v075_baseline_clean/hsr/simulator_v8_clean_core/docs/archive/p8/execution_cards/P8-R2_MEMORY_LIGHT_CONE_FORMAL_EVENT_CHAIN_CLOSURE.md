@@ -32,8 +32,8 @@
 需要追查已验收前置时，只按关键词读取：
 
 - `docs/character_execution_cards/CHAR-M1_MEMORY_OWNED_COMBATANT_BUILD_CLOSURE.md`
-- `docs/p8_execution_cards/P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`
-- `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`
+- `P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`
+- `../../validation_governance/execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`
 
 ## 前因后果
 

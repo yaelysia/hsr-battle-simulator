@@ -1,12 +1,16 @@
 # 非记忆、非欢愉角色共享机制缺口归并
 
-状态：现行规划基线，不是实现完成证明，也不是阶段 checklist
+状态：P9 机制包分类基线，不是当前实现完成度，也不是阶段 checklist
 
-代码基线：`8d8f746` 及本次只读工作区
+盘点代码基线：`8d8f746`
 
 来源范围：79 条已发布角色记录、79 份角色主能力文件、1 份共享角色运行时文件
 
 范围依赖：`CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md`
+
+本文保留共享根因与机制包边界；表内“当前事实”和数量是 P9 开工前快照。阶段完成状态、剩余 gap
+和下一入口只看 `../../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md` 与
+`../p9_execution_cards/README.md`。
 
 ## 1. 目的与结论
 

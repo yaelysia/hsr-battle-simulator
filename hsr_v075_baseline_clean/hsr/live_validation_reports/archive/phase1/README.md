@@ -33,4 +33,7 @@ v8_p1_final_acceptance_checkpoint_v0_292.md
 - `v8_p1_queue_family_gap_repair_checkpoint_v0_291.md`
 - `v8_p1_final_acceptance_checkpoint_v0_292.md`
 
-注意：中间报告记录的是当时状态，可能包含已经修复的 blocker。当前事实以 `v8_p1_final_acceptance_checkpoint_v0_292.md`、`simulator_v8_clean_core/PHASE1_SUMMARY.md` 和 `CODEX_HANDOFF.md` 为准。
+注意：中间报告记录的是当时状态，可能包含已经修复的 blocker。P1 最终事实以
+`v8_p1_final_acceptance_checkpoint_v0_292.md` 和
+`simulator_v8_clean_core/docs/archive/phase1/PHASE1_SUMMARY.md` 为准；项目当前状态以
+`CODEX_HANDOFF.md` 为准。

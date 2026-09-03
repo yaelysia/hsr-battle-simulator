@@ -1,150 +1,78 @@
-# v8 Documentation Index
+# v8 文档索引
 
-本索引只负责告诉线程“当前任务该读什么”。它不复制阶段状态、验收历史或执行清单。
+本文件说明文档归属和阅读入口，不复制阶段事实。当前进度只在 `../CODEX_HANDOFF.md` 维护。
 
 ## 默认入口
 
-- 当前状态：`../CODEX_HANDOFF.md`
-- 项目概览：`README.md`
-- 架构边界：`ARCHITECTURE_BOUNDARY_CONTRACT.md`
-- 最终目标：`PROJECT_GOALS.md`
-- 禁止事项：`FORBIDDEN.md`
-- 工作流与验证：`docs/AGENT_WORKFLOW_AND_VALIDATION.md`
+| 需求 | 文档 |
+|---|---|
+| 项目永久约束 | [`../../../AGENTS.md`](../../../AGENTS.md) |
+| 当前进度、下一卡和已验收边界 | [`../CODEX_HANDOFF.md`](../CODEX_HANDOFF.md) |
+| 核心模块概览 | [`README.md`](README.md) |
+| 最终目标和完成层级 | [`PROJECT_GOALS.md`](PROJECT_GOALS.md) |
+| 分层、依赖方向和权威边界 | [`ARCHITECTURE_BOUNDARY_CONTRACT.md`](ARCHITECTURE_BOUNDARY_CONTRACT.md) |
+| 绝对禁止事项 | [`FORBIDDEN.md`](FORBIDDEN.md) |
+| 规划、执行、验收和验证成本 | [`docs/AGENT_WORKFLOW_AND_VALIDATION.md`](docs/AGENT_WORKFLOW_AND_VALIDATION.md) |
 
-新线程先读 `CODEX_HANDOFF.md`，随后只按任务类型增加文档。禁止默认读取下面所有条目。
+新线程不需要通读这张表。先读 `AGENTS.md` 和交接文档，再按任务补一个主题入口。
 
-## 按任务选择
+## 当前主线
 
-### 实施阶段
+P9 是当前唯一活动的核心阶段：
 
-只读：
+- 总目标、阶段依赖和唯一 checklist：
+  [`P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)
+- 当前执行卡索引：[`docs/p9_execution_cards/README.md`](docs/p9_execution_cards/README.md)
+- 当前唯一可执行卡：
+  [`docs/p9_execution_cards/P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`](docs/p9_execution_cards/P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md)
 
-1. 当前阶段执行卡。
-2. 执行卡明确列出的直接依赖。
-3. 拟改代码和调用链。
+总计划负责阶段目标和完成状态；单卡负责本次允许写集合、生产完成条件和验证。二者都不应复制
+项目工作流全文。
 
-P8 执行卡入口：
+## 内容与专题
 
-```text
-docs/p8_execution_cards/README.md
-```
+| 主题 | 当前入口 |
+|---|---|
+| 角色能力范围与共享缺口 | [`CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md`](docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md)、[`CHARACTER_SHARED_MECHANISM_GAP_PLAN.md`](docs/character_execution_cards/CHARACTER_SHARED_MECHANISM_GAP_PLAN.md) |
+| 角色来源范围基线 | [`CHARACTER_ABILITY_SCOPE_LEDGER.md`](docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_LEDGER.md)；只用于追溯 P9 开工分母 |
+| 角色目录旧盘点与 CHAR-M1 | [`docs/archive/character/`](docs/archive/character/)；均为历史状态 |
+| 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
+| UI 规划 | `../simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`，仅在该草案存在且任务涉及 UI 时读取 |
 
-记忆角色执行卡：
+这些专题文档提供领域事实，不是当前阶段 checklist。其结论与当前源码冲突时，以源码、正式来源和
+当前阶段验收为准。
 
-```text
-docs/character_execution_cards/
-```
+## 验收证据
 
-全角色机制闭合：
+阶段报告位于仓库级 `../live_validation_reports/`。使用规则：
 
-```text
-P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
-docs/p9_execution_cards/README.md
-docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md
-docs/character_execution_cards/CHARACTER_CATALOG_READINESS_INVENTORY.md
-docs/character_execution_cards/CHARACTER_SHARED_MECHANISM_GAP_PLAN.md
-```
-
-P9 总计划保存总目标、严格阶段顺序和唯一 checklist；执行卡索引保存各阶段入口，其中原 S5
-按架构边界拆为严格串行的 S5A-S5D。
-后三份依次是纳入/排除范围、当前可用程度以及共享机制归并的权威基线。
-需要逐族审计时再读 `CHARACTER_ABILITY_SCOPE_LEDGER.md`，普通执行线程不默认读取该附录。
-
-验证治理与状态完整性执行卡：
-
-```text
-docs/validation_execution_cards/
-```
-
-### 架构和共享内核
-
-必读：
-
-- `ARCHITECTURE_BOUNDARY_CONTRACT.md`
-- `FORBIDDEN.md`
-- 与修改系统直接相关的现行计划或 checkpoint
-
-不要为了解一个共享符号通读 P1-P8；先用 CodeGraph 查看定义、调用链和影响范围。
-
-### 规划与验收
-
-必读：
-
-- `docs/AGENT_WORKFLOW_AND_VALIDATION.md`
-- 当前阶段计划和执行卡
-- 当前 `ready_for_review` 报告
-- 本次修改 diff 和直接调用链
-
-历史报告只用于追溯，不是自动回归要求。
-
-### 怪物卡
-
-- `MONSTER_CARD_SPEC.md`
-- `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
-- 对应怪物 checkpoint
-
-### UI
-
-- `simulator_v8_ui/`
-- `simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`（存在时）
-
-UI 只负责编排、查询和展示，不定义规则。
-
-## 当前阶段计划
-
-- `P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
-- `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
-- `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
-- `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
-- `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
-- `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
-- `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
-- `P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`
-- `VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`
-
-这些计划是按需参考资料，不是新线程必读列表。当前执行状态以 `CODEX_HANDOFF.md` 和对应 checklist 为准。
-
-## 验收报告
-
-报告目录：
-
-```text
-../live_validation_reports/
-```
-
-使用规则：
-
-- `ready_for_review` 是执行 evidence 索引，不是验收裁决。
-- `checkpoint` 表示验收线程形成的阶段结论。
-- 查询当前状态先读最新 checkpoint；查询具体机制再读对应专项报告。
-- P8 装备体系最终 checkpoint：`../live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
-- 不全量读取报告目录，不用旧报告的 `ok=true` 代替当前源码回归。
-- P1 历史位于 `live_validation_reports/archive/phase1/`。
+- 交接文档或当前执行卡点名的报告才是默认入口；
+- `ready_for_review` 只是执行交付，不等于已验收；
+- 最终状态由生产代码、总计划 checklist 和 Git 检查点共同确定；
+- 历史报告按阶段或关键词搜索，不全量读取；
+- `/tmp` 中的详细 evidence 不属于长期项目文档。
 
 ## 历史归档
 
-- P1 过程计划：`docs/archive/phase1/`
-- 旧完整入口文档：`docs/archive/*_PRE_SLIM_2026-07-24.md`
-- 其他历史材料：`docs/archive/`、`live_validation_reports/archive/`
+归档文档用于追溯当时的目标和裁决，不能当作当前事实或默认执行入口。
 
-归档内容保持可搜索，但不进入默认上下文。
+| 归档 | 内容 |
+|---|---|
+| [`docs/archive/phase1/`](docs/archive/phase1/) | P1 总结、执行计划和最终报告导航 |
+| [`docs/archive/completed_phase_plans/`](docs/archive/completed_phase_plans/) | 已完成的 P2-P7 总计划 |
+| [`docs/archive/p8/`](docs/archive/p8/) | P8 装备总计划和全部执行卡 |
+| [`docs/archive/validation_governance/`](docs/archive/validation_governance/) | 已结束的验证治理试点计划和执行卡 |
+| [`docs/archive/bootstrap_v075/`](docs/archive/bootstrap_v075/) | v0.75 导入、工作区基线和旧 v7 检查记录 |
+| [`docs/archive/character/`](docs/archive/character/) | P9 开工前角色目录盘点和已完成 CHAR-M1 执行卡 |
+| [`docs/archive/workflow_sources/`](docs/archive/workflow_sources/) | 现行 HSR 工作流吸收过的便携版流程草案 |
+| [`docs/archive/`](docs/archive/) | 瘦身前 AGENTS、交接和索引快照 |
 
-## 文档新增规则
+旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格目录仍属于历史实现，不是 v8 runtime 依赖。
 
-- 长期稳定约束放主目录。
-- 工作流和按需参考放 `docs/`。
-- 单阶段执行目标放对应 execution card 目录。
-- 执行 evidence 放 `live_validation_reports/`。
-- 历史过程材料放 `docs/archive/` 或 `live_validation_reports/archive/`。
-- 同一阶段只能有一套可勾选 checklist。
-- 当前状态只维护在 `CODEX_HANDOFF.md`，不要再复制到 `AGENTS.md` 和本索引。
+## 维护规则
 
-## 验证入口
-
-验证不再从文档索引列出 P1-P8 全量命令。根据 `docs/AGENT_WORKFLOW_AND_VALIDATION.md` 选择：
-
-```text
-fast -> direct -> catalog -> full
-```
-
-默认只运行 `fast` 和必要的 `direct`。阶段卡必须明确说明更高层验证的触发理由。
+- 当前进度只更新交接文档和当前总计划 checklist。
+- 稳定架构、目标与工作流文档不记录每张卡的计数和耗时。
+- 已完成阶段的详细计划整体归档，不在根目录继续充当活动入口。
+- 报告不复述执行卡；执行卡不复述工作流；AGENTS 不承载阶段流水账。
+- 移动或替换文档后同步更新本索引、`AGENTS.md` 和交接文档中的有效链接。

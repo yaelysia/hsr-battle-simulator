@@ -1,11 +1,12 @@
 # P1 文档归档
 
-本目录只保留第一阶段执行过程文档。当前事实不要从这里接续，应先读：
+本目录保留第一阶段总结与执行过程文档。当前事实不要从这里接续，应先读：
 
 ```text
-simulator_v8_clean_core/PHASE1_SUMMARY.md
 CODEX_HANDOFF.md
 ```
+
+P1 的最终阶段总结是本目录下的 `PHASE1_SUMMARY.md`。
 
 ## 计划归档
 

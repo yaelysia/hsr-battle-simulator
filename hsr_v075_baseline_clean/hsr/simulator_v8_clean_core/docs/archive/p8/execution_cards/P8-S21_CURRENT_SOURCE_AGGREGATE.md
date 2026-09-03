@@ -62,7 +62,7 @@
 
 - 新增 `tools/validate_p8_s21_current_source_aggregate.py`：只聚合/验证，不包含生产修复逻辑；同一入口必须提供不构建 RuleBook 的 `--preflight-only`。
 - 可新增阶段 evidence manifest builder，复用 P7 已有严格 evidence 读取模式但不复制手写结论。
-- `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`：验收线程最终勾选 S21/P8-DONE。
+- `../P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`：验收线程最终勾选 S21/P8-DONE。
 - `README.md`、`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`DOCUMENTATION_INDEX.md`、`CODEX_HANDOFF.md`、根 `AGENTS.md`：更新当前事实和明确剩余边界。
 - `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
 

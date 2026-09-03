@@ -1,22 +1,14 @@
-# HSR Combat Workspace v0.9
+# HSR 战斗模拟器工作区
 
-Unified workspace for building a general Honkai: Star Rail combat simulator.
+当前主线是 `simulator_v8_clean_core/`。项目基于 TurnBasedGameData 构建可审计的
+《崩坏：星穹铁道》战斗模拟器，覆盖战斗配置、合法动作与目标、状态转移、结算、快照和 replay。
 
-Current components:
+新线程按以下顺序定位，不要默认读取整个工作区：
 
-- `simulator_v7_7/`: route validator / combat kernel prototype plus compiler-boundary tooling.
-- `spec_v0_8/`: combat-kernel and content-IR specifications.
-- `model_pack_v3_0/`: structured hand-authored model pack baseline.
-- `generated_content_ir_v0_6/`: template-level Content IR from TurnBasedGameData.
-- `targeted_action_ir_v0_8/`: candidate ActionIR compiled from TurnBasedGameData for the current target team.
-- `bound_action_ir_v0_8/`: ActionIR with high-confidence dynamic expressions bound to skill parameters.
+1. 项目永久约束：[`../../AGENTS.md`](../../AGENTS.md)
+2. 当前进度和下一张卡：[`CODEX_HANDOFF.md`](CODEX_HANDOFF.md)
+3. 文档导航：[`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`](simulator_v8_clean_core/DOCUMENTATION_INDEX.md)
+4. 核心模块说明：[`simulator_v8_clean_core/README.md`](simulator_v8_clean_core/README.md)
 
-Validation summary is in `validation_v7_7.log`.
-
-## v0.9 additions
-
-- `targeted_action_ir_v0_9/`: regenerated target-team ActionIR from the provided full TurnBasedGameData package.
-- `bound_action_ir_v0_9/`: regenerated bound ActionIR.
-- `status_ir_v0_2/`: StatusIR candidates compiled from status_definition_hints, enriched with raw callback metadata.
-
-See `spec_v0_8/STATUS_IR_COMPILER_v0_9.md` and `spec_v0_8/SELF_ITERATION_LOG_v0_9.md`.
+旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格只用于历史对照。它们不是 v8 的兼容目标，
+也不能成为正式 runtime 依赖。

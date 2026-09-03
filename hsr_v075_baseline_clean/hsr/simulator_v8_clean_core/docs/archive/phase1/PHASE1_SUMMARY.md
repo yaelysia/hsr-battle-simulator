@@ -114,7 +114,7 @@ live_validation_reports/archive/phase1/
 当前事实入口按优先级是：
 
 1. `CODEX_HANDOFF.md`
-2. `simulator_v8_clean_core/PHASE1_SUMMARY.md`
+2. `simulator_v8_clean_core/docs/archive/phase1/PHASE1_SUMMARY.md`
 3. `live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
 
 归档文档保留历史执行和验收过程，其中部分中间报告会记录当时的阻塞项，例如 servant 缺口、counter 缺口、`phase1_minimum_battle_slice=false`。这些是历史状态，不是当前事实。

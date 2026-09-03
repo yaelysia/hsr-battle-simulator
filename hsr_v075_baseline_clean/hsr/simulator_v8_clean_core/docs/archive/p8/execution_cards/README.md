@@ -4,7 +4,8 @@
 
 本目录保存 P8 剩余阶段的预先规划执行卡。执行线程不再临时重写阶段目标，而是读取对应执行卡，核对当前代码事实后只实施该阶段。执行线程最多提交 `ready_for_review`，不得修改 P8 checklist、不得自称完成、不得提交 Git。
 
-长期目标、全局红线和唯一阶段 checklist 仍以 `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 为准。本目录不是第二套总计划；每个文件只包含一个阶段的唯一执行清单。
+长期目标、全局红线和唯一阶段 checklist 仍以
+`../P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 为准。本目录不是第二套总计划；每个文件只包含一个阶段的唯一执行清单。
 
 P8-S0 至 P8-S21、R1 和 R2 已于当前源码完成最终聚合验收。后续只在来源版本变化或装备契约被实际修改时重新进入相应责任阶段，不把本目录重新作为默认执行队列。最终结论见 `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
 

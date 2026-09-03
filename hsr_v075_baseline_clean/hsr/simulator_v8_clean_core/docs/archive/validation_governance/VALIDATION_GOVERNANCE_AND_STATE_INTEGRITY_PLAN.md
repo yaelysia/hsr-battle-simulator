@@ -216,7 +216,7 @@ production 与 validation 总净增长 320 行。当前源码窄投影峰值约 
 详细目标与唯一完成清单见：
 
 ```text
-docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
+execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
 ```
 
 本试点通过后仍不规划全项目验证注册表、持久缓存、通用调度器或批量历史迁移。
@@ -262,7 +262,7 @@ docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
 `VG-S2` 的唯一完成清单与当前代码、聚焦验证及直接回归一致：
 
 ```text
-docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md
+execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md
 ```
 
 原 `VG-S3` 已撤销，不得恢复其注册表、选择器或元验证实现。`VG-R1` 已通过验收；

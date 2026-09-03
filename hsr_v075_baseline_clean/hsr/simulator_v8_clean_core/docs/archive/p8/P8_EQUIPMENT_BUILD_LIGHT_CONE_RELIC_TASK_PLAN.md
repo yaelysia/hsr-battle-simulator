@@ -22,7 +22,7 @@ P8 完成后，“这名角色装备了什么”和“这些装备产生了什�
 `P8-S0` 至 `P8-S4` 保留本文档中的阶段目标和既有验收记录。`P8-S5` 至 `P8-S21` 以及 S8 后新增的 `P8-R1`、`P8-R2` 修复门，均已由规划线程预先拆成单阶段执行卡，统一入口为：
 
 ```text
-docs/p8_execution_cards/README.md
+execution_cards/README.md
 ```
 
 从 `P8-S5` 开始，执行线程不得只凭本文档中的阶段摘要自行展开实现，也不再临时重写一份执行卡。正确流程是：
@@ -323,33 +323,33 @@ P8 完成后，系统必须具备以下能力：
 剩余阶段的详细执行卡已集中在：
 
 ```text
-docs/p8_execution_cards/
+execution_cards/
 ```
 
 卡片文件索引如下。该表只提供导航，不构成第二套执行清单；每张卡的详细目标和验收要求以对应文件为准，统一协议与推荐执行配置以目录中的 `README.md` 为准。
 
 | 阶段 | 唯一执行卡 |
 |---|---|
-| P8-S5 | [`P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md`](docs/p8_execution_cards/P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md) |
-| P8-S6 | [`P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md`](docs/p8_execution_cards/P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md) |
-| P8-S7 | [`P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md`](docs/p8_execution_cards/P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md) |
-| P8-S8 | [`P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md`](docs/p8_execution_cards/P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md) |
-| P8-R1 | [`P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`](docs/p8_execution_cards/P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md) |
-| P8-R2 | [`P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md`](docs/p8_execution_cards/P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md) |
-| P8-R2 首次未过滤暂停后的强制差量 | [`P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md`](docs/p8_execution_cards/P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md) |
-| P8-S9 | [`P8-S9_RELIC_DEFINITION_CARDS.md`](docs/p8_execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md) |
-| P8-S10 | [`P8-S10_RELIC_INSTANCE_LEGALITY.md`](docs/p8_execution_cards/P8-S10_RELIC_INSTANCE_LEGALITY.md) |
-| P8-S11 | [`P8-S11_RELIC_MAIN_AFFIX.md`](docs/p8_execution_cards/P8-S11_RELIC_MAIN_AFFIX.md) |
-| P8-S12 | [`P8-S12_RELIC_SUB_AFFIX_ROLLS.md`](docs/p8_execution_cards/P8-S12_RELIC_SUB_AFFIX_ROLLS.md) |
-| P8-S13 | [`P8-S13_RELIC_SET_THRESHOLDS.md`](docs/p8_execution_cards/P8-S13_RELIC_SET_THRESHOLDS.md) |
-| P8-S14 | [`P8-S14_RELIC_STATIC_CONTRIBUTIONS.md`](docs/p8_execution_cards/P8-S14_RELIC_STATIC_CONTRIBUTIONS.md) |
-| P8-S15 | [`P8-S15_RELIC_SET_DYNAMIC_STARTUP.md`](docs/p8_execution_cards/P8-S15_RELIC_SET_DYNAMIC_STARTUP.md) |
-| P8-S16 | [`P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md`](docs/p8_execution_cards/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md) |
-| P8-S17 | [`P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md`](docs/p8_execution_cards/P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md) |
-| P8-S18 | [`P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md`](docs/p8_execution_cards/P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md) |
-| P8-S19 | [`P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md`](docs/p8_execution_cards/P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md) |
-| P8-S20 | [`P8-S20_SEELE_COMPLETE_BUILD_SLICE.md`](docs/p8_execution_cards/P8-S20_SEELE_COMPLETE_BUILD_SLICE.md) |
-| P8-S21 | [`P8-S21_CURRENT_SOURCE_AGGREGATE.md`](docs/p8_execution_cards/P8-S21_CURRENT_SOURCE_AGGREGATE.md) |
+| P8-S5 | [`P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md`](execution_cards/P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md) |
+| P8-S6 | [`P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md`](execution_cards/P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md) |
+| P8-S7 | [`P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md`](execution_cards/P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md) |
+| P8-S8 | [`P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md`](execution_cards/P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md) |
+| P8-R1 | [`P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`](execution_cards/P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md) |
+| P8-R2 | [`P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md`](execution_cards/P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md) |
+| P8-R2 首次未过滤暂停后的强制差量 | [`P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md`](execution_cards/P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md) |
+| P8-S9 | [`P8-S9_RELIC_DEFINITION_CARDS.md`](execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md) |
+| P8-S10 | [`P8-S10_RELIC_INSTANCE_LEGALITY.md`](execution_cards/P8-S10_RELIC_INSTANCE_LEGALITY.md) |
+| P8-S11 | [`P8-S11_RELIC_MAIN_AFFIX.md`](execution_cards/P8-S11_RELIC_MAIN_AFFIX.md) |
+| P8-S12 | [`P8-S12_RELIC_SUB_AFFIX_ROLLS.md`](execution_cards/P8-S12_RELIC_SUB_AFFIX_ROLLS.md) |
+| P8-S13 | [`P8-S13_RELIC_SET_THRESHOLDS.md`](execution_cards/P8-S13_RELIC_SET_THRESHOLDS.md) |
+| P8-S14 | [`P8-S14_RELIC_STATIC_CONTRIBUTIONS.md`](execution_cards/P8-S14_RELIC_STATIC_CONTRIBUTIONS.md) |
+| P8-S15 | [`P8-S15_RELIC_SET_DYNAMIC_STARTUP.md`](execution_cards/P8-S15_RELIC_SET_DYNAMIC_STARTUP.md) |
+| P8-S16 | [`P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md`](execution_cards/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md) |
+| P8-S17 | [`P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md`](execution_cards/P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md) |
+| P8-S18 | [`P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md`](execution_cards/P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md) |
+| P8-S19 | [`P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md`](execution_cards/P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md) |
+| P8-S20 | [`P8-S20_SEELE_COMPLETE_BUILD_SLICE.md`](execution_cards/P8-S20_SEELE_COMPLETE_BUILD_SLICE.md) |
+| P8-S21 | [`P8-S21_CURRENT_SOURCE_AGGREGATE.md`](execution_cards/P8-S21_CURRENT_SOURCE_AGGREGATE.md) |
 
 P8 的问题依赖不是一条绝对串行链。S4 验收并形成代码检查点后，允许按以下 DAG 推进：
 
@@ -1397,7 +1397,7 @@ ready_for_review evidence：
 ## 31. 分层验证与资源预算
 
 P8-S9 至 S21 的详细预算以
-`docs/p8_execution_cards/README.md` 第 6 节和当前阶段卡为准。本节只保留总计划级
+`execution_cards/README.md` 第 6 节和当前阶段卡为准。本节只保留总计划级
 验收原则，不能被执行线程扩写成第二套命令清单。
 
 ### 31.1 唯一默认流程

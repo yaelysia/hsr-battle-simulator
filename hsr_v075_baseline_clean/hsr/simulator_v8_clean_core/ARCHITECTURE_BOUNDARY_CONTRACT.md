@@ -23,6 +23,19 @@ TBGD lowering / 数据卡构建不是 runtime，而是事实来源编译层。
 
 只有第三种才扩展内核机制类型。不能为了让某张卡先跑起来，把规则执行写进内容卡，也不能让内核按角色名、怪物名、技能名或数据卡私有字段分支。
 
+### 1.1 成品范围
+
+v8 的成品范围是战斗模拟，不是完整游戏复刻。判断一项真实数据或游戏功能是否必须实现，
+以它是否改变合法战斗输入、战斗内决策空间、状态转移或结算结果为准。
+
+角色、敌人、光锥、遗器、召唤物、关卡环境最终带入战斗的属性和机制属于范围；获取、
+掉落、定向生成、合成、背包、商店、养成操作、展示和服务端管理流程默认不属于范围。
+非战斗流程产生的结果若会进入战斗，装配层只接收来源真实、结构合法的最终构筑输入，
+不复刻其生成过程。
+
+raw 目录中的特殊模式不能仅因存在就获得正式 admission。范围不明时应保留来源并
+fail-closed，形成产品范围裁决；不得为追求目录“全兼容”污染通用内核。
+
 ## 2. 分层总览
 
 ```text
@@ -264,26 +277,23 @@ source audit、settlement、replay、coverage 和 gap attribution 不是可选�
 - mutation → settlement → source audit → replay 链路。
 - gap 分类：`executable`、`source_gap_blocked`、`lowering_gap`、`admission_gap`、`validation_gap`、`implementation_missing` 或 `out_of_scope`。
 
-## 8. 当前架构债
+## 8. 架构审查
 
-以下是当前已知债，不影响 P5 底座验收，但后续应逐步收敛：
+本文件只保存稳定边界，不维护随阶段变化的“当前架构债”。实际债务和后续 owner 应写入当前总计划、
+执行卡或 gap 账本，当前进度只写入 `CODEX_HANDOFF.md`。
 
-- P5 后仍有部分 runtime 路径从 `source_trace` 寻找运行所需绑定信息。这是过渡方案，后续应迁移成显式字段，例如 `value_binding_ref`、`param_binding_id`、`source_emission_id`。
-- 内容卡和内核之间的契约还不够硬，后续需要把 action、target、value binding、status callback、summon intent、wave/stage event 等收敛成稳定机制声明。
-- 数据卡扩面前必须建立“内容卡不能执行机制”的验收红线。
-- UI 当前独立性相对较好，但 mock / view model 不能反向定义 core 字段。
-- P3/P4/P5 中保留的 admission/source gap 不能被后续聚合脚本清零；只能通过真实来源、真实 admission、真实 runtime consumer 和真实验证逐项回收。
-
-## 9. 后续阶段约束
-
-后续 P6+ 阶段计划必须显式引用本契约，并在验收时回答：
+跨层改动在规划和验收时必须回答：
 
 - 本阶段改动属于哪一层。
 - 是否引入了跨层反向依赖。
 - 内容卡是否只声明机制，没有执行机制。
 - 内核是否只消费稳定 IR / 数据卡 IR，没有读取内容私有语义。
 - UI / 推演器是否只查询和提交，没有推导规则。
-- source trace 是否只作为审计证据，或是否存在需要后续迁移的临时 runtime 输入。
+- source trace 是否只作为审计证据，没有成为 runtime 行为输入。
 - 新增 gap 是否继承到聚合矩阵。
 
-如果某项机制需要打破这些边界，执行线程必须暂停并要求规划 / 用户确认，不能自行把例外写进 runtime。
+## 9. 例外裁决
+
+如果真实来源似乎要求打破这些边界，执行线程必须先停止实现，说明该内容是否改变战斗、现有权威为何
+不能表达、最小通用扩展是什么，以及兼容代价。只有用户和规划线程确认架构方向后才能继续；不得把
+临时例外、内容特判或验证 fixture 写进 runtime。
