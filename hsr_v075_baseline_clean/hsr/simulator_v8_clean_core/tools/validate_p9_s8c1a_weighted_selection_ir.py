@@ -255,6 +255,43 @@ def _forged_identity_is_rejected() -> None:
     )
 
 
+def _strict_codec_is_exact() -> None:
+    choice, definition = _choice_and_definition(
+        0,
+        _fixed(19),
+        "validation_fixture:codec:0",
+    )
+    payload = _selection((choice,), (definition,)).to_json()
+
+    unknown_field = json.loads(json.dumps(payload))
+    unknown_field["unexpected"] = True
+    _expect_rejected(
+        lambda: TaskGraphWeightedSelectionIR.from_json(unknown_field),
+        "weighted selection codec unknown field",
+    )
+
+    missing_field = json.loads(json.dumps(payload))
+    missing_field.pop("family")
+    _expect_rejected(
+        lambda: TaskGraphWeightedSelectionIR.from_json(missing_field),
+        "weighted selection codec missing field",
+    )
+
+    wrong_type = json.loads(json.dumps(payload))
+    wrong_type["choices"][0]["ordinal"] = True
+    _expect_rejected(
+        lambda: TaskGraphWeightedSelectionIR.from_json(wrong_type),
+        "weighted selection codec wrong member type",
+    )
+
+    forged_identity = json.loads(json.dumps(payload))
+    forged_identity["choices"][0]["choice_id"] = "forged"
+    _expect_rejected(
+        lambda: TaskGraphWeightedSelectionIR.from_json(forged_identity),
+        "weighted selection codec forged identity",
+    )
+
+
 def _input_and_output_are_isolated() -> None:
     first_choice, first_definition = _choice_and_definition(
         0,
@@ -294,6 +331,7 @@ def main() -> int:
     _pairing_mismatch_is_rejected()
     _wrong_parent_path_is_rejected()
     _forged_identity_is_rejected()
+    _strict_codec_is_exact()
     _input_and_output_are_isolated()
     elapsed = time.perf_counter() - started
     _current, peak = tracemalloc.get_traced_memory()
@@ -303,7 +341,7 @@ def main() -> int:
             {
                 "ok": True,
                 "fixture_kind": "validation_fixture",
-                "cases": 6,
+                "cases": 7,
                 "elapsed_seconds": round(elapsed, 6),
                 "peak_memory_bytes": peak,
             },
