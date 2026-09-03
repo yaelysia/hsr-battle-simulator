@@ -1,0 +1,34 @@
+name: P9 S8C1B PR Validation
+
+on:
+  pull_request:
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
+      - '.github/workflows/p9-s8c1b-pr-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile scoped modules
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py
+      - name: Direct weighted-selection validation
+        run: |
+          PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 -B -m \
+            simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection
+      - name: Diff check against PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --check "$BASE_SHA" HEAD
