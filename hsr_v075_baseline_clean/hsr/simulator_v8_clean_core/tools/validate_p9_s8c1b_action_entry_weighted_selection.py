@@ -42,6 +42,7 @@ DEFAULT_TBGD = ROOT / "turnbasedgamedata-main"
 _FAST_HARD_SECONDS = 30.0
 _DIRECT_HARD_SECONDS = 120.0
 _DIRECT_DISCOVERY_GUARD_SECONDS = 80.0
+_STATUS_FILE_PROBE_LIMIT = 24
 
 
 @dataclass(frozen=True)
@@ -477,7 +478,110 @@ def _probe_status(
                 "callback_id": callback.callback_id,
                 "event": callback.event,
                 "graph_id": first.graphs[0].graph_id,
+                "source_path": callback.source.source_path,
+                "probe_kind": "action_slice",
             }
+    return None
+
+
+def _dedupe_records(values: list[Any], identity: str) -> tuple[Any, ...]:
+    result: dict[str, Any] = {}
+    for value in values:
+        key = getattr(value, identity)
+        previous = result.get(key)
+        if previous is not None and previous != value:
+            raise ValueError(f"focused status definition conflict:{identity}:{key}")
+        result[key] = value
+    return tuple(result[key] for key in sorted(result))
+
+
+def _probe_bounded_formal_status(
+    lowering: TBGDLowering,
+    source_catalog: Any,
+    snapshot: CharacterAbilityRawSnapshot,
+    *,
+    started: float,
+) -> dict[str, Any] | None:
+    context = lowering._character_formal_task_source_context()
+    priority_lookup = {
+        (item.priority_table, item.priority_key): item
+        for item in lowering._lower_queue_priorities()
+        if item.coverage_status == "executable"
+    }
+    control_counts: dict[str, int] = defaultdict(int)
+    for source_path, _json_path, _family_name in context.control_by_location:
+        control_counts[source_path] += 1
+    candidates = tuple(
+        sorted(
+            context.documents,
+            key=lambda path: (-control_counts.get(path, 0), path),
+        )[:_STATUS_FILE_PROBE_LIMIT]
+    )
+    source_order = {
+        item.source.source_path: order for order, item in enumerate(snapshot.sources)
+    }
+
+    for probe_rank, relative in enumerate(candidates):
+        if time.perf_counter() - started > _DIRECT_DISCOVERY_GUARD_SECONDS:
+            break
+        order = source_order.get(relative)
+        if order is None or relative not in snapshot.documents:
+            continue
+        lowered = lowering._lower_ability_file(
+            lowering.root / relative,
+            priority_lookup,
+            ability_file_order=order,
+            raw_document=snapshot.documents[relative],
+            formal_status_source_context=context,
+        )
+        if not lowered.status_callbacks or not lowered.status_callback_tasks:
+            continue
+        tasks_by_callback: dict[str, list[Any]] = defaultdict(list)
+        for task in lowered.status_callback_tasks:
+            tasks_by_callback[task.callback_id].append(task)
+        for callback in sorted(lowered.status_callbacks, key=lambda item: item.callback_id):
+            tasks = tasks_by_callback.get(callback.callback_id, [])
+            if not tasks or any(task.opcode == "TriggerAbility" for task in tasks):
+                continue
+            view = CanonicalIR(
+                version="p9_s8c1b_status_probe",
+                status_callbacks=(callback,),
+                status_callback_tasks=tuple(tasks),
+                effects=_dedupe_records(lowered.effects, "effect_id"),
+                conditions=_dedupe_records(lowered.conditions, "condition_id"),
+                target_expressions=_dedupe_records(
+                    lowered.target_expressions, "target_expression_id"
+                ),
+            )
+            try:
+                first = materialize_status_callback_task_graph(
+                    source_catalog,
+                    view,
+                    callback_id=callback.callback_id,
+                    source_snapshot=snapshot,
+                )
+                second = materialize_status_callback_task_graph(
+                    source_catalog,
+                    view,
+                    callback_id=callback.callback_id,
+                    source_snapshot=snapshot,
+                )
+            except (TypeError, ValueError):
+                continue
+            if first.to_json() != second.to_json():
+                raise AssertionError("bounded formal status materialization is not stable")
+            if any(graph.weighted_selections for graph in first.graphs):
+                raise AssertionError("bounded formal status callback gained weighted selections")
+            if first.entry_materializations and first.graphs:
+                return {
+                    "callback_id": callback.callback_id,
+                    "event": callback.event,
+                    "graph_id": first.graphs[0].graph_id,
+                    "source_path": relative,
+                    "probe_kind": "bounded_formal_status_source",
+                    "probe_rank": probe_rank,
+                    "candidate_limit": _STATUS_FILE_PROBE_LIMIT,
+                }
     return None
 
 
@@ -591,7 +695,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
         )
         status = _probe_status(source_catalog, snapshot, canonical)
 
-        if nonrandom is None or status is None:
+        if nonrandom is None:
             fallback_ids = tuple(
                 action_id
                 for action_id in sorted(definitions_by_action)
@@ -613,19 +717,24 @@ def _run_direct(root: Path) -> dict[str, Any]:
                     )
                 except (TypeError, ValueError):
                     continue
-                if nonrandom is None:
-                    nonrandom = _probe_nonrandom(
-                        source_catalog, snapshot, other, other_catalog
-                    )
-                if status is None:
-                    status = _probe_status(source_catalog, snapshot, other)
-                if nonrandom is not None and status is not None:
+                nonrandom = _probe_nonrandom(
+                    source_catalog, snapshot, other, other_catalog
+                )
+                if nonrandom is not None:
                     break
+
+        if status is None:
+            status = _probe_bounded_formal_status(
+                lowering,
+                source_catalog,
+                snapshot,
+                started=started,
+            )
 
         if nonrandom is None:
             raise AssertionError("no minimal non-RandomConfig action graph was found")
         if status is None:
-            raise AssertionError("no minimal status callback comparison was found")
+            raise AssertionError("no bounded formal status callback comparison was found")
     finally:
         TBGDLowering.build = original_build
 
