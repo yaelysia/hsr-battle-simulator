@@ -1,6 +1,8 @@
 # P9-S8C1C 其余公开 entry 与完整 RandomConfig 来源分母闭合执行卡
 
-> 状态：`ready_for_execution`
+> 状态：`accepted`
+>
+> 验收检查点：PR #3 已完成独立集中审查。生产 entry-neutral `RandomConfig` attachment、完整 raw/S8A/source-ledger 来源分母、level-specific formal-position multiplicity、STRICT 共源漏 level 负例、S8C1B 回归和最终执行 head 的 PR CI 均通过；S8C1 聚合、S8C、S5D2、runtime/RNG 继续 deferred。本卡不再是可执行入口。
 >
 > 风险模式：`STRICT`
 >
