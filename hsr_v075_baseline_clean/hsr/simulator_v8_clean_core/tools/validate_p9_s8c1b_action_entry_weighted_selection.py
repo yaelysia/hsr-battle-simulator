@@ -528,7 +528,7 @@ def _probe_bounded_formal_status(
         if order is None or relative not in snapshot.documents:
             continue
         lowered = lowering._lower_ability_file(
-            lowering.root / relative,
+            lowering.tbgd_root / relative,
             priority_lookup,
             ability_file_order=order,
             raw_document=snapshot.documents[relative],
