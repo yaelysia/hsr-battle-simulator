@@ -1,6 +1,8 @@
 # P9-S8C1 RandomConfig 任务图契约聚合审计执行卡
 
-状态：`ready_for_execution`。
+状态：`accepted`。
+
+验收检查点：PR #4 已完成独立集中审查；执行 head `7a75e80a02f886ab1036cbe041b3b031d7057e82` 的最终 PR CI run `33857786539` 全绿。实时 raw/S8A/source-ledger `RandomConfig` 分母为 `24`，`formal_bound/no_formal_producer=14/10`，expected/actual formal positions 为 `117/117`；完整来源闭合、producer multiplicity、weighted-selection ordinal/source 契约、Fast 负例、公开联合 catalog、`full_canonical_ir_build_count=0` 与 no runtime RNG 均通过。S8C runtime/RNG、S5D2 transaction/replay 继续 deferred。本卡不再是可执行入口。
 
 本卡是 P9 总计划 checklist 中 `P9-S8C1 RandomConfig 有序候选与权重任务图契约聚合` 的唯一直接执行入口。
 它只做 **S8C1 聚合证明**：A/B/C 已分别验收，本卡不得新增业务行为，也不得借聚合之名进入 S8C runtime/RNG、
