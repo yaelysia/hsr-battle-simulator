@@ -91,12 +91,11 @@ class _DefinitionRef:
 
 
 @dataclass(frozen=True)
-class _ActionCatalog:
-    definition_id: str
-    action_id: str
-    level: int
+class _ActionCatalogBatch:
+    definitions: tuple[Any, ...]
     view: CanonicalIR
     catalog: TaskGraphCatalogIR
+    producer_by_owner: Mapping[str, str]
 
 
 @dataclass
@@ -124,7 +123,6 @@ class _RealContext:
     queue_random_definition_ids: frozenset[str]
     trigger_random_definition_ids: frozenset[str]
     digest_by_path: Mapping[str, str]
-    full_build_count: int
 
 
 def _expect_rejected(action: Callable[[], object], subject: str) -> None:
@@ -200,9 +198,7 @@ def _formal_position_text(position: _FormalPositionKey) -> str:
     )
 
 
-def _formal_position_fingerprint(
-    positions: Iterable[_FormalPositionKey],
-) -> str:
+def _formal_position_fingerprint(positions: Iterable[_FormalPositionKey]) -> str:
     payload = json.dumps(
         sorted(_formal_position_text(item) for item in positions),
         ensure_ascii=True,
@@ -246,11 +242,9 @@ def _audit_formal_position_denominator(
     actual: set[_FormalPositionKey],
 ) -> None:
     if expected != actual:
-        missing = expected - actual
-        extra = actual - expected
         raise ValueError(
             "formal position denominator is incomplete:"
-            f"missing={len(missing)} extra={len(extra)}"
+            f"missing={len(expected - actual)} extra={len(actual - expected)}"
         )
 
 
@@ -456,7 +450,11 @@ def _run_fast() -> dict[str, Any]:
     }
     return {
         "ok": (
-            all(value is True for key, value in predicates.items() if key != "runtime_behavior_changed")
+            all(
+                value is True
+                for key, value in predicates.items()
+                if key != "runtime_behavior_changed"
+            )
             and predicates["runtime_behavior_changed"] is False
             and elapsed <= _FAST_HARD_SECONDS
             and peak <= _FAST_RSS_LIMIT_KIB
@@ -468,7 +466,11 @@ def _run_fast() -> dict[str, Any]:
     }
 
 
-def _source_bytes(root: Path, snapshot: CharacterAbilityRawSnapshot, source_path: str) -> bytes:
+def _source_bytes(
+    root: Path,
+    snapshot: CharacterAbilityRawSnapshot,
+    source_path: str,
+) -> bytes:
     value = snapshot.source_bytes.get(source_path)
     return value if value is not None else (root / source_path).read_bytes()
 
@@ -480,9 +482,14 @@ def _verify_selection(
     node: TaskGraphNodeIR,
     selection: TaskGraphWeightedSelectionIR,
 ) -> dict[str, Any]:
-    if node.source_family != _RANDOM_FAMILY or selection.graph_node_id != node.graph_node_id:
+    if (
+        node.source_family != _RANDOM_FAMILY
+        or selection.graph_node_id != node.graph_node_id
+    ):
         raise AssertionError("weighted selection parent identity diverged")
-    if selection.selection_id != task_graph_weighted_selection_id(node.graph_node_id, node.source_occurrence_id):
+    if selection.selection_id != task_graph_weighted_selection_id(
+        node.graph_node_id, node.source_occurrence_id
+    ):
         raise AssertionError("weighted selection identity diverged")
     raw_bytes = _source_bytes(root, snapshot, node.source.source_path)
     if sha256(raw_bytes).hexdigest() != node.source.evidence.get("content_sha256"):
@@ -493,18 +500,38 @@ def _verify_selection(
         raise AssertionError("RandomConfig source document/path is invalid")
     raw_parent = _at_path(document, path)
     odds = raw_parent.get("OddsList") if isinstance(raw_parent, Mapping) else None
-    if type(odds) is not list or len(odds) != len(node.branches) or len(odds) != len(selection.choices):
+    if (
+        type(odds) is not list
+        or len(odds) != len(node.branches)
+        or len(odds) != len(selection.choices)
+    ):
         raise AssertionError("RandomConfig denominator length is inconsistent")
-    definitions = {item.definition_id: item for item in selection.numeric_definitions}
-    for index, (raw_weight, branch, choice) in enumerate(zip(odds, node.branches, selection.choices, strict=True)):
+    definitions = {
+        item.definition_id: item for item in selection.numeric_definitions
+    }
+    for index, (raw_weight, branch, choice) in enumerate(
+        zip(odds, node.branches, selection.choices, strict=True)
+    ):
         evidence = dict(node.source.evidence)
         evidence["json_path"] = f"{path}.OddsList[{index}]"
-        child_source = IRSource(node.source.source_path, node.source.raw_type, node.source.raw_id, evidence)
-        occurrence_id = task_graph_source_occurrence_id(child_source, _RANDOM_FAMILY)
+        child_source = IRSource(
+            node.source.source_path,
+            node.source.raw_type,
+            node.source.raw_id,
+            evidence,
+        )
+        occurrence_id = task_graph_source_occurrence_id(
+            child_source, _RANDOM_FAMILY
+        )
         expression = lower_numeric_expression(raw_weight)
         definition_id = task_graph_numeric_id(occurrence_id, expression)
         definition = definitions.get(definition_id)
-        expected_choice_id = task_graph_weighted_choice_id(node.graph_node_id, index, branch.branch_id, definition_id)
+        expected_choice_id = task_graph_weighted_choice_id(
+            node.graph_node_id,
+            index,
+            branch.branch_id,
+            definition_id,
+        )
         if (
             choice.ordinal != index
             or choice.branch_id != branch.branch_id
@@ -517,7 +544,9 @@ def _verify_selection(
             or definition.expression != expression
             or definition.source != child_source
         ):
-            raise AssertionError(f"RandomConfig branch/Odds/source closure failed:{index}")
+            raise AssertionError(
+                f"RandomConfig branch/Odds/source closure failed:{index}"
+            )
     return {
         "source_path": node.source.source_path,
         "json_path": path,
@@ -533,16 +562,27 @@ def _independent_random_denominator(
     scope: Any,
     source_catalog: Any,
 ) -> dict[_SourceKey, dict[str, Any]]:
-    digests = {item.source.source_path: item.content_sha256 for item in snapshot.sources}
+    digests = {
+        item.source.source_path: item.content_sha256 for item in snapshot.sources
+    }
     result: dict[_SourceKey, dict[str, Any]] = {}
     for record in scope.scope_records:
-        if record.materialization_role != "selected" or record.occurrence_kind != "typed_node" or record.family != _RANDOM_FAMILY:
+        if (
+            record.materialization_role != "selected"
+            or record.occurrence_kind != "typed_node"
+            or record.family != _RANDOM_FAMILY
+        ):
             continue
         source_path = record.source.source_path
         path = str(record.source.evidence["json_path"]).removesuffix(".$type")
         raw = _at_path(snapshot.documents[source_path], path)
-        if not isinstance(raw, Mapping) or _short_type(raw.get("$type")) != _RANDOM_FAMILY:
-            raise AssertionError("snapshot RandomConfig oracle source is not reversible")
+        if (
+            not isinstance(raw, Mapping)
+            or _short_type(raw.get("$type")) != _RANDOM_FAMILY
+        ):
+            raise AssertionError(
+                "snapshot RandomConfig oracle source is not reversible"
+            )
         result[(source_path, path, _RANDOM_FAMILY, digests[source_path])] = {
             "source_kind": "character_snapshot",
             "scope_record_id": record.record_id,
@@ -558,6 +598,7 @@ def _independent_random_denominator(
         document = json.loads(raw_bytes)
         if not isinstance(document, Mapping):
             raise AssertionError("accepted shared template source is not an object")
+
         def walk(value: object, path: str) -> None:
             if isinstance(value, Mapping):
                 if _short_type(value.get("$type")) == _RANDOM_FAMILY:
@@ -570,38 +611,65 @@ def _independent_random_denominator(
             elif isinstance(value, list):
                 for index, child in enumerate(value):
                     walk(child, f"{path}[{index}]")
+
         walk(document, "$")
     if not result:
         raise AssertionError("current RandomConfig denominator is empty")
     return result
 
 
-def _template_scope(key: _SourceKey, source_catalog: Any) -> tuple[str, str] | None:
+def _template_scope(
+    key: _SourceKey,
+    source_catalog: Any,
+) -> tuple[str, str] | None:
     source_path, json_path, _, _ = key
     candidates = []
     for template in source_catalog.template_definitions:
         template_path = str(template.source.evidence.get("json_path") or "")
-        if template.source.source_path == source_path and template_path and json_path.startswith(f"{template_path}.TaskList"):
-            candidates.append((len(template_path), template.scope_kind, template.template_id))
+        if (
+            template.source.source_path == source_path
+            and template_path
+            and json_path.startswith(f"{template_path}.TaskList")
+        ):
+            candidates.append(
+                (len(template_path), template.scope_kind, template.template_id)
+            )
     if not candidates:
         return None
     _, scope_kind, template_id = max(candidates)
     return scope_kind, template_id
 
 
-def _select_action_slice(lowering: TBGDLowering, source_graph: Any, snapshot: CharacterAbilityRawSnapshot, scope: Any) -> CanonicalIR:
+def _select_action_slice(
+    lowering: TBGDLowering,
+    source_graph: Any,
+    snapshot: CharacterAbilityRawSnapshot,
+    scope: Any,
+) -> CanonicalIR:
     definitions: dict[str, list[Any]] = defaultdict(list)
     for definition in build_character_action_definition_ir(lowering.tbgd_root):
         definitions[definition.action_id].append(definition)
     counts = Counter(item.action_id for item in source_graph.action_sources)
-    for action in sorted(source_graph.action_sources, key=lambda item: (item.action_id, item.owner_avatar_id)):
+    for action in sorted(
+        source_graph.action_sources,
+        key=lambda item: (item.action_id, item.owner_avatar_id),
+    ):
         if counts[action.action_id] != 1:
             continue
-        for definition in sorted(definitions.get(action.action_id, ()), key=lambda item: (item.level, item.definition_id)):
+        for definition in sorted(
+            definitions.get(action.action_id, ()),
+            key=lambda item: (item.level, item.definition_id),
+        ):
             projection = lowering.build_character_action_ability_slice(
-                definition, snapshot=snapshot, scope_catalog=scope, source_graph_catalog=source_graph
+                definition,
+                snapshot=snapshot,
+                scope_catalog=scope,
+                source_graph_catalog=source_graph,
             )
-            if any(phase.invocation_role == "action_root" for phase in projection.ability_phases):
+            if any(
+                phase.invocation_role == "action_root"
+                for phase in projection.ability_phases
+            ):
                 return projection
     raise AssertionError("a real formal character action slice is required")
 
@@ -650,18 +718,29 @@ def _build_status_bundle(
         and isinstance(standard.get("ability_name"), str)
     )
     trigger_paths = {
-        item.source.source_path for item in source_graph.definitions if item.ability_name in trigger_names
+        item.source.source_path
+        for item in source_graph.definitions
+        if item.ability_name in trigger_names
     }
     if trigger_paths:
         parts = lowering._lower_standalone_ability_graphs(
             tuple(lowering.tbgd_root / path for path in sorted(trigger_paths))
         )
         graphs, phases, ability_tasks, extra_effects, extra_conditions, *extras = parts
-        extra_targets = [item for values in extras for item in values if hasattr(item, "target_expression_id")]
+        extra_targets = [
+            item
+            for values in extras
+            for item in values
+            if hasattr(item, "target_expression_id")
+        ]
         effects.extend(extra_effects)
         conditions.extend(extra_conditions)
         targets.extend(extra_targets)
-        status_tasks = list(_link_status_trigger_ability_graphs(status_tasks, callbacks, effects, graphs))
+        status_tasks = list(
+            _link_status_trigger_ability_graphs(
+                status_tasks, callbacks, effects, graphs
+            )
+        )
     else:
         graphs = ()
         phases = ()
@@ -677,19 +756,39 @@ def _build_status_bundle(
         status_callback_tasks=tuple(status_tasks),
         effects=_dedupe((*action.effects, *effects), "effect_id"),
         conditions=_dedupe((*action.conditions, *conditions), "condition_id"),
-        target_expressions=_dedupe((*action.target_expressions, *targets), "target_expression_id"),
+        target_expressions=_dedupe(
+            (*action.target_expressions, *targets), "target_expression_id"
+        ),
     )
     catalog = materialize_character_runtime_task_graph_catalog(
-        source_catalog, view, source_snapshot=snapshot, definition_scope_complete=True
+        source_catalog,
+        view,
+        source_snapshot=snapshot,
+        definition_scope_complete=True,
     )
-    return _StatusBundle(view, catalog, tuple(callbacks), tuple(status_tasks), tuple(queue_intents), trigger_names)
+    return _StatusBundle(
+        view,
+        catalog,
+        tuple(callbacks),
+        tuple(status_tasks),
+        tuple(queue_intents),
+        trigger_names,
+    )
 
 
-def _definition_random_sources(lowering: TBGDLowering, source_graph: Any, formal_context: Any) -> tuple[dict[str, frozenset[_SourceKey]], dict[str, Any]]:
+def _definition_random_sources(
+    lowering: TBGDLowering,
+    source_graph: Any,
+    formal_context: Any,
+) -> tuple[dict[str, frozenset[_SourceKey]], dict[str, Any]]:
     result: dict[str, frozenset[_SourceKey]] = {}
-    definitions_by_id = {item.definition_id: item for item in source_graph.definitions}
+    definitions_by_id = {
+        item.definition_id: item for item in source_graph.definitions
+    }
     if len(definitions_by_id) != len(source_graph.definitions):
-        raise AssertionError("ability source definitions contain duplicate identities")
+        raise AssertionError(
+            "ability source definitions contain duplicate identities"
+        )
     for definition in source_graph.definitions:
         if definition.definition_kind == "presentation":
             continue
@@ -704,35 +803,64 @@ def _definition_random_sources(lowering: TBGDLowering, source_graph: Any, formal
             ability=raw,
             ability_path=definition.source.source_path,
             ability_index=ability_index,
-            target_alias_registry=(document.get("GlobalTargetAlias") if isinstance(document.get("GlobalTargetAlias"), dict) else {}),
+            target_alias_registry=(
+                document.get("GlobalTargetAlias")
+                if isinstance(document.get("GlobalTargetAlias"), dict)
+                else {}
+            ),
             formal_source_context=formal_context,
         )
         keys = frozenset(
-            _task_key(task, "source_opcode", formal_context.content_sha256_by_path)
+            _task_key(
+                task,
+                "source_opcode",
+                formal_context.content_sha256_by_path,
+            )
             for task in lowered.ability_tasks
-            if _task_key(task, "source_opcode", formal_context.content_sha256_by_path)[2] == _RANDOM_FAMILY
+            if _task_key(
+                task,
+                "source_opcode",
+                formal_context.content_sha256_by_path,
+            )[2]
+            == _RANDOM_FAMILY
         )
         if keys:
             result[definition.definition_id] = keys
     return result, definitions_by_id
 
 
-def _action_ids_by_random_definition(source_graph: Any, random_definition_sources: Mapping[str, frozenset[_SourceKey]]) -> dict[str, frozenset[str]]:
+def _action_ids_by_random_definition(
+    source_graph: Any,
+    random_definition_sources: Mapping[str, frozenset[_SourceKey]],
+) -> dict[str, frozenset[str]]:
     actions = {item.action_source_id: item for item in source_graph.action_sources}
     result: dict[str, set[str]] = defaultdict(set)
     for binding in source_graph.bindings:
-        if binding.ability_definition_id not in random_definition_sources or not binding.action_source_id or binding.binding_kind not in _ACTION_BINDING_KINDS:
+        if (
+            binding.ability_definition_id not in random_definition_sources
+            or not binding.action_source_id
+            or binding.binding_kind not in _ACTION_BINDING_KINDS
+        ):
             continue
         action = actions.get(binding.action_source_id)
         if action is not None and action.action_kind != "maze":
             result[binding.ability_definition_id].add(action.action_id)
-    return {definition_id: frozenset(values) for definition_id, values in result.items()}
+    return {
+        definition_id: frozenset(values)
+        for definition_id, values in result.items()
+    }
 
 
-def _matching_random_definition_ids(names: Iterable[str], random_definition_sources: Mapping[str, frozenset[_SourceKey]], definition_by_id: Mapping[str, Any]) -> frozenset[str]:
+def _matching_random_definition_ids(
+    names: Iterable[str],
+    random_definition_sources: Mapping[str, frozenset[_SourceKey]],
+    definition_by_id: Mapping[str, Any],
+) -> frozenset[str]:
     wanted = set(names)
     return frozenset(
-        definition_id for definition_id in random_definition_sources if definition_by_id[definition_id].ability_name in wanted
+        definition_id
+        for definition_id in random_definition_sources
+        if definition_by_id[definition_id].ability_name in wanted
     )
 
 
@@ -742,20 +870,45 @@ def _build_real_context(root: Path) -> _RealContext:
     snapshot = lowering._character_ability_raw_snapshot
     scope = lowering._character_ability_scope_catalog
     if type(snapshot) is not CharacterAbilityRawSnapshot:
-        raise AssertionError("production CharacterAbilityRawSnapshot is unavailable")
-    source_catalog = lowering.build_character_control_flow_contract_catalog(snapshot=snapshot, scope_catalog=scope)
+        raise AssertionError(
+            "production CharacterAbilityRawSnapshot is unavailable"
+        )
+    source_catalog = lowering.build_character_control_flow_contract_catalog(
+        snapshot=snapshot, scope_catalog=scope
+    )
     lowering.build_character_ability_source_resolution_catalog()
     formal_context = lowering._character_formal_task_source_context()
-    status_bundle = _build_status_bundle(lowering, source_graph, snapshot, scope, source_catalog, formal_context)
-    random_definition_sources, definition_by_id = _definition_random_sources(lowering, source_graph, formal_context)
-    action_ids = _action_ids_by_random_definition(source_graph, random_definition_sources)
-    trigger_ids = _matching_random_definition_ids(status_bundle.trigger_names, random_definition_sources, definition_by_id)
+    status_bundle = _build_status_bundle(
+        lowering,
+        source_graph,
+        snapshot,
+        scope,
+        source_catalog,
+        formal_context,
+    )
+    random_definition_sources, definition_by_id = _definition_random_sources(
+        lowering, source_graph, formal_context
+    )
+    action_ids = _action_ids_by_random_definition(
+        source_graph, random_definition_sources
+    )
+    trigger_ids = _matching_random_definition_ids(
+        status_bundle.trigger_names,
+        random_definition_sources,
+        definition_by_id,
+    )
     queue_names = {
         item.action_ref_or_ability_name
         for item in status_bundle.queue_intents
-        if item.coverage_status == "executable" and isinstance(item.action_ref_or_ability_name, str) and item.action_ref_or_ability_name
+        if item.coverage_status == "executable"
+        and isinstance(item.action_ref_or_ability_name, str)
+        and item.action_ref_or_ability_name
     }
-    queue_ids = _matching_random_definition_ids(queue_names, random_definition_sources, definition_by_id)
+    queue_ids = _matching_random_definition_ids(
+        queue_names,
+        random_definition_sources,
+        definition_by_id,
+    )
     return _RealContext(
         lowering,
         source_graph,
@@ -770,65 +923,127 @@ def _build_real_context(root: Path) -> _RealContext:
         queue_ids,
         trigger_ids,
         formal_context.content_sha256_by_path,
-        0,
     )
 
 
-def _action_catalogs(context: _RealContext, action_ids: Iterable[str]) -> tuple[list[_ActionCatalog], list[str]]:
+def _action_catalogs(
+    context: _RealContext,
+    action_ids: Iterable[str],
+) -> tuple[_ActionCatalogBatch | None, list[str]]:
     wanted_action_ids = set(action_ids)
     definitions = tuple(
-        definition
-        for definition in build_character_action_definition_ir(context.lowering.tbgd_root)
-        if definition.action_id in wanted_action_ids
+        sorted(
+            (
+                definition
+                for definition in build_character_action_definition_ir(
+                    context.lowering.tbgd_root
+                )
+                if definition.action_id in wanted_action_ids
+            ),
+            key=lambda item: (item.action_id, item.level, item.definition_id),
+        )
     )
-    by_action: dict[str, list[Any]] = defaultdict(list)
-    for definition in definitions:
-        by_action[definition.action_id].append(definition)
-    catalogs: list[_ActionCatalog] = []
-    failures: list[str] = []
-    for action_id in sorted(wanted_action_ids):
-        values = sorted(by_action.get(action_id, ()), key=lambda item: (item.level, item.definition_id))
-        if not values:
-            failures.append(f"{action_id}:definition_missing")
+    found_action_ids = {item.action_id for item in definitions}
+    failures = [
+        f"{action_id}:definition_missing"
+        for action_id in sorted(wanted_action_ids - found_action_ids)
+    ]
+    if not definitions:
+        return None, failures
+    try:
+        (
+            bindings,
+            phases,
+            tasks,
+            effects,
+            conditions,
+            _formulas,
+            targets,
+        ) = context.lowering._lower_action_ability_bindings(list(definitions))
+        tasks = _link_trigger_ability_graphs(tasks, effects, [], phases)
+        view = CanonicalIR(
+            version="p9_s8c1c_action_random_projection",
+            action_ability_bindings=tuple(bindings),
+            ability_phases=tuple(phases),
+            ability_tasks=tuple(tasks),
+            effects=_dedupe(effects, "effect_id"),
+            conditions=_dedupe(conditions, "condition_id"),
+            target_expressions=_dedupe(targets, "target_expression_id"),
+        )
+        catalog = materialize_ability_task_graph_catalog(
+            context.source_catalog,
+            view,
+            source_snapshot=context.snapshot,
+        )
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        failures.append(f"action_batch:{type(exc).__name__}:{exc}")
+        return None, failures
+    definition_by_key = {
+        (item.action_id, item.level): item for item in definitions
+    }
+    if len(definition_by_key) != len(definitions):
+        failures.append("action_batch:duplicate_action_level_definition")
+        return None, failures
+    binding_by_id = {item.binding_id: item for item in bindings}
+    producer_by_owner: dict[str, str] = {}
+    for phase in phases:
+        if phase.invocation_role not in _FORMAL_ROLES:
             continue
-        for definition in values:
-            label = f"{definition.definition_id}:action_id={definition.action_id}:level={definition.level}"
-            try:
-                projection = context.lowering.build_character_action_ability_slice(
-                    definition,
-                    snapshot=context.snapshot,
-                    scope_catalog=context.scope,
-                    source_graph_catalog=context.source_graph,
-                )
-                catalog = materialize_ability_task_graph_catalog(
-                    context.source_catalog, projection, source_snapshot=context.snapshot
-                )
-            except (KeyError, IndexError, TypeError, ValueError) as exc:
-                failures.append(f"{label}:{type(exc).__name__}:{exc}")
-                continue
-            if not any(node.source_family == _RANDOM_FAMILY for graph in catalog.graphs for node in graph.nodes):
-                failures.append(f"{label}:bound_random_source_not_materialized")
-                continue
-            catalogs.append(_ActionCatalog(definition.definition_id, definition.action_id, definition.level, projection, catalog))
-    return catalogs, failures
+        binding = binding_by_id.get(phase.binding_id)
+        if binding is None:
+            failures.append(f"{phase.phase_id}:binding_missing")
+            continue
+        definition = definition_by_key.get((binding.action_id, binding.level))
+        if definition is None:
+            failures.append(f"{phase.phase_id}:action_definition_missing")
+            continue
+        producer_by_owner[phase.phase_id] = definition.definition_id
+    if failures:
+        return None, failures
+    return (
+        _ActionCatalogBatch(
+            definitions,
+            view,
+            catalog,
+            producer_by_owner,
+        ),
+        [],
+    )
 
 
-def _queue_catalog(context: _RealContext) -> tuple[CanonicalIR, TaskGraphCatalogIR] | None:
+def _queue_catalog(
+    context: _RealContext,
+) -> tuple[CanonicalIR, TaskGraphCatalogIR] | None:
     if not context.queue_random_definition_ids:
         return None
-    names = {context.definition_by_id[item].ability_name for item in context.queue_random_definition_ids}
+    names = {
+        context.definition_by_id[item].ability_name
+        for item in context.queue_random_definition_ids
+    }
     intents = tuple(
-        item for item in context.status_bundle.queue_intents
-        if item.coverage_status == "executable" and item.action_ref_or_ability_name in names
+        item
+        for item in context.status_bundle.queue_intents
+        if item.coverage_status == "executable"
+        and item.action_ref_or_ability_name in names
     )
     if not intents:
         return None
-    source_paths = {context.definition_by_id[item].source.source_path for item in context.queue_random_definition_ids}
+    source_paths = {
+        context.definition_by_id[item].source.source_path
+        for item in context.queue_random_definition_ids
+    }
     parts = context.lowering._lower_standalone_ability_graphs(
-        tuple(context.lowering.tbgd_root / path for path in sorted(source_paths))
+        tuple(
+            context.lowering.tbgd_root / path for path in sorted(source_paths)
+        )
     )
     graphs, phases, tasks, effects, conditions, *extras = parts
-    targets = [item for values in extras for item in values if hasattr(item, "target_expression_id")]
+    targets = [
+        item
+        for values in extras
+        for item in values
+        if hasattr(item, "target_expression_id")
+    ]
     tasks = _link_trigger_ability_graphs(tasks, effects, graphs, phases)
     resolutions = _lower_queue_resolutions(
         queue_intents=intents,
@@ -837,7 +1052,9 @@ def _queue_catalog(context: _RealContext) -> tuple[CanonicalIR, TaskGraphCatalog
         standalone_graphs=graphs,
         combatant_action_sets=[],
     )
-    phases = _assign_character_ability_invocation_roles(phases, tasks, graphs, resolutions)
+    phases = _assign_character_ability_invocation_roles(
+        phases, tasks, graphs, resolutions
+    )
     if not any(item.invocation_role in _FORMAL_ROLES for item in phases):
         return None
     view = CanonicalIR(
@@ -851,7 +1068,11 @@ def _queue_catalog(context: _RealContext) -> tuple[CanonicalIR, TaskGraphCatalog
         conditions=_dedupe(conditions, "condition_id"),
         target_expressions=_dedupe(targets, "target_expression_id"),
     )
-    return view, materialize_ability_task_graph_catalog(context.source_catalog, view, source_snapshot=context.snapshot)
+    return view, materialize_ability_task_graph_catalog(
+        context.source_catalog,
+        view,
+        source_snapshot=context.snapshot,
+    )
 
 
 def _expected_formal_positions(
@@ -861,39 +1082,87 @@ def _expected_formal_positions(
     producer_kind: str,
     producer_instance_id: str,
 ) -> set[_FormalPositionKey]:
-    phase_by_id = {phase.phase_id: phase for phase in view.ability_phases if phase.invocation_role in _FORMAL_ROLES}
-    callback_event = {callback.callback_id: callback.event for callback in view.status_callbacks}
+    phase_by_id = {
+        phase.phase_id: phase
+        for phase in view.ability_phases
+        if phase.invocation_role in _FORMAL_ROLES
+    }
+    callback_event = {
+        callback.callback_id: callback.event for callback in view.status_callbacks
+    }
     expected: set[_FormalPositionKey] = set()
     for task in view.ability_tasks:
         if task.phase_id not in phase_by_id:
             continue
         key = _task_key(task, "source_opcode", digests)
         if key[2] == _RANDOM_FAMILY:
-            expected.add(_formal_position(
-                producer_kind=producer_kind,
-                producer_instance_id=producer_instance_id,
-                entry_kind="ability_phase_callback",
-                owner_id=task.phase_id,
-                callback_kind=task.callback_kind,
-                formal_task_id=task.task_id,
-                source_key=key,
-            ))
+            expected.add(
+                _formal_position(
+                    producer_kind=producer_kind,
+                    producer_instance_id=producer_instance_id,
+                    entry_kind="ability_phase_callback",
+                    owner_id=task.phase_id,
+                    callback_kind=task.callback_kind,
+                    formal_task_id=task.task_id,
+                    source_key=key,
+                )
+            )
     for task in view.status_callback_tasks:
         key = _task_key(task, "raw_opcode", digests)
         if key[2] != _RANDOM_FAMILY:
             continue
         event = callback_event.get(task.callback_id)
         if not event:
-            raise AssertionError("formal status RandomConfig task callback owner is missing")
-        expected.add(_formal_position(
-            producer_kind=producer_kind,
-            producer_instance_id=producer_instance_id,
-            entry_kind="status_callback",
-            owner_id=task.callback_id,
-            callback_kind=event,
-            formal_task_id=task.task_id,
-            source_key=key,
-        ))
+            raise AssertionError(
+                "formal status RandomConfig task callback owner is missing"
+            )
+        expected.add(
+            _formal_position(
+                producer_kind=producer_kind,
+                producer_instance_id=producer_instance_id,
+                entry_kind="status_callback",
+                owner_id=task.callback_id,
+                callback_kind=event,
+                formal_task_id=task.task_id,
+                source_key=key,
+            )
+        )
+    return expected
+
+
+def _expected_action_formal_positions(
+    batch: _ActionCatalogBatch,
+    digests: Mapping[str, str],
+) -> set[_FormalPositionKey]:
+    phase_by_id = {
+        phase.phase_id: phase
+        for phase in batch.view.ability_phases
+        if phase.invocation_role in _FORMAL_ROLES
+    }
+    expected: set[_FormalPositionKey] = set()
+    for task in batch.view.ability_tasks:
+        phase = phase_by_id.get(task.phase_id)
+        if phase is None:
+            continue
+        key = _task_key(task, "source_opcode", digests)
+        if key[2] != _RANDOM_FAMILY:
+            continue
+        producer = batch.producer_by_owner.get(task.phase_id)
+        if not producer:
+            raise AssertionError(
+                "formal action RandomConfig position lacks action definition identity"
+            )
+        expected.add(
+            _formal_position(
+                producer_kind="action_definition",
+                producer_instance_id=producer,
+                entry_kind="ability_phase_callback",
+                owner_id=task.phase_id,
+                callback_kind=task.callback_kind,
+                formal_task_id=task.task_id,
+                source_key=key,
+            )
+        )
     return expected
 
 
@@ -904,22 +1173,42 @@ def _catalog_positions(
     *,
     producer_kind: str,
     producer_instance_id: str,
-) -> tuple[dict[_SourceKey, list[dict[str, Any]]], set[_FormalPositionKey], dict[str, Any] | None]:
+    producer_by_owner: Mapping[str, str] | None = None,
+) -> tuple[
+    dict[_SourceKey, list[dict[str, Any]]],
+    set[_FormalPositionKey],
+    dict[str, Any] | None,
+]:
     positions: dict[_SourceKey, list[dict[str, Any]]] = defaultdict(list)
     formal_positions: set[_FormalPositionKey] = set()
     entries = {item.entry_id: item for item in catalog.entry_materializations}
-    dispositions = {item.source_record_id: item for item in catalog.source_dispositions}
+    dispositions = {
+        item.source_record_id: item for item in catalog.source_dispositions
+    }
     non_random_sample = None
     for graph in catalog.graphs:
-        selection_by_node = {item.graph_node_id: item for item in graph.weighted_selections}
+        selection_by_node = {
+            item.graph_node_id: item for item in graph.weighted_selections
+        }
         entry = entries.get(graph.entry_id)
         if entry is None:
             raise AssertionError("graph entry materialization is missing")
+        instance_id = (
+            producer_by_owner.get(graph.owner_id, "")
+            if producer_by_owner is not None
+            else producer_instance_id
+        )
+        if not instance_id:
+            raise AssertionError(
+                "formal graph lacks producer-instance identity"
+            )
         for node in graph.nodes:
             selection = selection_by_node.get(node.graph_node_id)
             if node.source_family != _RANDOM_FAMILY:
                 if selection is not None:
-                    raise AssertionError("non-RandomConfig node gained weighted selection")
+                    raise AssertionError(
+                        "non-RandomConfig node gained weighted selection"
+                    )
                 if non_random_sample is None:
                     non_random_sample = {
                         "entry_kind": graph.entry_kind,
@@ -929,19 +1218,31 @@ def _catalog_positions(
                     }
                 continue
             if selection is None:
-                raise AssertionError("formal RandomConfig node lacks weighted selection")
-            source_evidence = _verify_selection(root, snapshot, graph, node, selection)
+                raise AssertionError(
+                    "formal RandomConfig node lacks weighted selection"
+                )
+            source_evidence = _verify_selection(
+                root, snapshot, graph, node, selection
+            )
             if not node.source_contract_node_id:
-                raise AssertionError("formal RandomConfig node is outside the S8A source ledger")
+                raise AssertionError(
+                    "formal RandomConfig node is outside the S8A source ledger"
+                )
             disposition = dispositions.get(node.source_contract_node_id)
             if disposition is None:
-                raise AssertionError("formal RandomConfig source disposition is missing")
+                raise AssertionError(
+                    "formal RandomConfig source disposition is missing"
+                )
             if (
                 disposition.family != _RANDOM_FAMILY
-                or _source_key(disposition.source, disposition.family) != _source_key(node.source, node.source_family)
-                or entry.materialization_id not in disposition.formal_materialization_ids
+                or _source_key(disposition.source, disposition.family)
+                != _source_key(node.source, node.source_family)
+                or entry.materialization_id
+                not in disposition.formal_materialization_ids
             ):
-                raise AssertionError("RandomConfig source/formal materialization ledger diverged")
+                raise AssertionError(
+                    "RandomConfig source/formal materialization ledger diverged"
+                )
             key = _source_key(node.source, node.source_family)
             row = {
                 "entry_kind": graph.entry_kind,
@@ -954,41 +1255,66 @@ def _catalog_positions(
                 "formal_task_id": node.formal_task_id,
                 "source_record_id": node.source_contract_node_id,
                 "producer_kind": producer_kind,
-                "producer_instance_id": producer_instance_id,
+                "producer_instance_id": instance_id,
                 **source_evidence,
             }
             positions[key].append(row)
-            formal_positions.add(_formal_position(
-                producer_kind=producer_kind,
-                producer_instance_id=producer_instance_id,
-                entry_kind=graph.entry_kind,
-                owner_id=graph.owner_id,
-                callback_kind=graph.callback_kind,
-                formal_task_id=node.formal_task_id,
-                source_key=key,
-            ))
+            formal_positions.add(
+                _formal_position(
+                    producer_kind=producer_kind,
+                    producer_instance_id=instance_id,
+                    entry_kind=graph.entry_kind,
+                    owner_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    formal_task_id=node.formal_task_id,
+                    source_key=key,
+                )
+            )
     return positions, formal_positions, non_random_sample
 
 
-def _merge_positions(target: dict[_SourceKey, list[dict[str, Any]]], source: Mapping[_SourceKey, list[dict[str, Any]]]) -> None:
+def _merge_positions(
+    target: dict[_SourceKey, list[dict[str, Any]]],
+    source: Mapping[_SourceKey, list[dict[str, Any]]],
+) -> None:
     for key, rows in source.items():
         existing = {
-            (row["producer_kind"], row["producer_instance_id"], row["entry_id"], row["graph_node_id"], row["selection_id"])
+            (
+                row["producer_kind"],
+                row["producer_instance_id"],
+                row["entry_id"],
+                row["graph_node_id"],
+                row["selection_id"],
+            )
             for row in target[key]
         }
         for row in rows:
-            identity = (row["producer_kind"], row["producer_instance_id"], row["entry_id"], row["graph_node_id"], row["selection_id"])
+            identity = (
+                row["producer_kind"],
+                row["producer_instance_id"],
+                row["entry_id"],
+                row["graph_node_id"],
+                row["selection_id"],
+            )
             if identity not in existing:
                 target[key].append(row)
                 existing.add(identity)
 
 
-def _formal_random_task_keys(view: CanonicalIR, digests: Mapping[str, str]) -> set[_SourceKey]:
+def _formal_random_task_keys(
+    view: CanonicalIR,
+    digests: Mapping[str, str],
+) -> set[_SourceKey]:
+    formal_phase_ids = {
+        phase.phase_id
+        for phase in view.ability_phases
+        if phase.invocation_role in _FORMAL_ROLES
+    }
     keys = {
         _task_key(task, "source_opcode", digests)
         for task in view.ability_tasks
-        if _task_key(task, "source_opcode", digests)[2] == _RANDOM_FAMILY
-        and any(phase.phase_id == task.phase_id and phase.invocation_role in _FORMAL_ROLES for phase in view.ability_phases)
+        if task.phase_id in formal_phase_ids
+        and _task_key(task, "source_opcode", digests)[2] == _RANDOM_FAMILY
     }
     keys.update(
         _task_key(task, "raw_opcode", digests)
@@ -999,49 +1325,78 @@ def _formal_random_task_keys(view: CanonicalIR, digests: Mapping[str, str]) -> s
 
 
 def _s8a_random_map(source_catalog: Any) -> dict[_SourceKey, Any]:
-    result = {_source_key(item.source, item.family): item for item in source_catalog.nodes if item.family == _RANDOM_FAMILY}
-    if len(result) != sum(item.family == _RANDOM_FAMILY for item in source_catalog.nodes):
+    result = {
+        _source_key(item.source, item.family): item
+        for item in source_catalog.nodes
+        if item.family == _RANDOM_FAMILY
+    }
+    if len(result) != sum(
+        item.family == _RANDOM_FAMILY for item in source_catalog.nodes
+    ):
         raise AssertionError("S8A RandomConfig source identities are duplicated")
     return result
 
 
 def _base_random_dispositions(context: _RealContext) -> dict[_SourceKey, Any]:
-    base = build_complete_task_graph_catalog(context.source_catalog, context.snapshot)
+    base = build_complete_task_graph_catalog(
+        context.source_catalog, context.snapshot
+    )
     return {
         _source_key(item.source, item.family): item
         for item in base.source_dispositions
-        if item.source_kind == "control_node" and item.family == _RANDOM_FAMILY
+        if item.source_kind == "control_node"
+        and item.family == _RANDOM_FAMILY
     }
 
 
-def _no_producer_evidence(keys: Iterable[_SourceKey], source_catalog: Any, base_dispositions: Mapping[_SourceKey, Any]) -> list[dict[str, Any]]:
+def _no_producer_evidence(
+    keys: Iterable[_SourceKey],
+    source_catalog: Any,
+    base_dispositions: Mapping[_SourceKey, Any],
+) -> list[dict[str, Any]]:
     references_by_template: dict[str, int] = Counter(
-        item.resolved_template_id for item in source_catalog.template_references if item.coverage_status == "lowered"
+        item.resolved_template_id
+        for item in source_catalog.template_references
+        if item.coverage_status == "lowered"
     )
     evidence: list[dict[str, Any]] = []
     for key in sorted(keys):
         disposition = base_dispositions.get(key)
         if disposition is None or disposition.formal_materialization_ids:
-            raise AssertionError("no-producer source production ledger is inconsistent")
+            raise AssertionError(
+                "no-producer source production ledger is inconsistent"
+            )
         if disposition.disposition == "blocked" or not disposition.owner_domains:
-            raise AssertionError("no-producer source lacks a precise downstream responsibility")
+            raise AssertionError(
+                "no-producer source lacks a precise downstream responsibility"
+            )
         template = _template_scope(key, source_catalog)
-        evidence.append({
-            "source_path": key[0],
-            "json_path": key[1],
-            "family": key[2],
-            "content_sha256": key[3],
-            "source_record_id": disposition.source_record_id,
-            "owner_domains": list(disposition.owner_domains),
-            "template_scope": template[0] if template else None,
-            "template_id": template[1] if template else None,
-            "accepted_reference_count": references_by_template.get(template[1], 0) if template else 0,
-        })
+        evidence.append(
+            {
+                "source_path": key[0],
+                "json_path": key[1],
+                "family": key[2],
+                "content_sha256": key[3],
+                "source_record_id": disposition.source_record_id,
+                "owner_domains": list(disposition.owner_domains),
+                "template_scope": template[0] if template else None,
+                "template_id": template[1] if template else None,
+                "accepted_reference_count": (
+                    references_by_template.get(template[1], 0)
+                    if template
+                    else 0
+                ),
+            }
+        )
     return evidence
 
 
 def _candidate_action_ids(context: _RealContext) -> set[str]:
-    return {action_id for values in context.action_ids_by_random_definition.values() for action_id in values}
+    return {
+        action_id
+        for values in context.action_ids_by_random_definition.values()
+        for action_id in values
+    }
 
 
 def _direct_action_ids(context: _RealContext) -> set[str]:
@@ -1052,7 +1407,10 @@ def _direct_action_ids(context: _RealContext) -> set[str]:
     template_ids = {
         definition_id
         for definition_id, keys in context.random_definition_sources.items()
-        if context.action_ids_by_random_definition.get(definition_id) and any(_template_scope(key, context.source_catalog) for key in keys)
+        if context.action_ids_by_random_definition.get(definition_id)
+        and any(
+            _template_scope(key, context.source_catalog) for key in keys
+        )
     }
     for definition_id in sorted(template_ids):
         values = sorted(context.action_ids_by_random_definition[definition_id])
@@ -1062,67 +1420,129 @@ def _direct_action_ids(context: _RealContext) -> set[str]:
     return selected
 
 
-def _single_entry_checks(root: Path, context: _RealContext, catalogs: list[_ActionCatalog]) -> tuple[dict[str, Any], dict[str, Any] | str]:
-    ability_sample = None
-    for item in catalogs:
-        graph = next((graph for graph in item.catalog.graphs if any(node.source_family == _RANDOM_FAMILY for node in graph.nodes)), None)
-        if graph is None:
-            continue
-        single = materialize_ability_phase_task_graph(
-            context.source_catalog,
-            item.view,
-            phase_id=graph.owner_id,
-            callback_kind=graph.callback_kind,
-            source_snapshot=context.snapshot,
+def _single_entry_checks(
+    root: Path,
+    context: _RealContext,
+    batch: _ActionCatalogBatch | None,
+) -> tuple[dict[str, Any], dict[str, Any] | str]:
+    if batch is None:
+        raise AssertionError("a real action RandomConfig batch is required")
+    graph = next(
+        (
+            graph
+            for graph in batch.catalog.graphs
+            if any(
+                node.source_family == _RANDOM_FAMILY for node in graph.nodes
+            )
+        ),
+        None,
+    )
+    if graph is None:
+        raise AssertionError(
+            "a real formal-bound action RandomConfig is required"
         )
-        if len(single.graphs) != 1 or single.graphs[0].to_json() != graph.to_json():
-            raise AssertionError("S8C1B ability single-entry/catalog materialization diverged")
-        node = next(node for node in graph.nodes if node.source_family == _RANDOM_FAMILY)
-        selection = next(selection for selection in graph.weighted_selections if selection.graph_node_id == node.graph_node_id)
-        ability_sample = {
-            "entry_kind": graph.entry_kind,
-            "owner_id": graph.owner_id,
-            "callback_kind": graph.callback_kind,
-            "action_definition_id": item.definition_id,
-            "action_id": item.action_id,
-            "action_level": item.level,
-            **_verify_selection(root, context.snapshot, graph, node, selection),
-        }
-        break
-    if ability_sample is None:
-        raise AssertionError("a real formal-bound action RandomConfig is required")
-    status_random_graphs = [
-        item for item in context.status_bundle.catalog.graphs
-        if item.entry_kind == "status_callback" and any(node.source_family == _RANDOM_FAMILY for node in item.nodes)
-    ]
-    if not status_random_graphs:
-        return ability_sample, "zero_by_denominator"
-    graph = status_random_graphs[0]
-    single = materialize_status_callback_task_graph(
+    single = materialize_ability_phase_task_graph(
         context.source_catalog,
-        context.status_bundle.view,
-        callback_id=graph.owner_id,
+        batch.view,
+        phase_id=graph.owner_id,
+        callback_kind=graph.callback_kind,
         source_snapshot=context.snapshot,
     )
     if len(single.graphs) != 1 or single.graphs[0].to_json() != graph.to_json():
-        raise AssertionError("status single-entry and combined catalog materialization diverged")
-    node = next(item for item in graph.nodes if item.source_family == _RANDOM_FAMILY)
-    selection = next(item for item in graph.weighted_selections if item.graph_node_id == node.graph_node_id)
-    return ability_sample, {
+        raise AssertionError(
+            "S8C1B ability single-entry/catalog materialization diverged"
+        )
+    producer = batch.producer_by_owner.get(graph.owner_id)
+    definition_by_id = {item.definition_id: item for item in batch.definitions}
+    definition = definition_by_id.get(producer or "")
+    if definition is None:
+        raise AssertionError("action sample definition identity is missing")
+    node = next(
+        node for node in graph.nodes if node.source_family == _RANDOM_FAMILY
+    )
+    selection = next(
+        selection
+        for selection in graph.weighted_selections
+        if selection.graph_node_id == node.graph_node_id
+    )
+    ability_sample = {
         "entry_kind": graph.entry_kind,
-        "callback_id": graph.owner_id,
-        "event": graph.callback_kind,
-        **_verify_selection(root, context.snapshot, graph, node, selection),
+        "owner_id": graph.owner_id,
+        "callback_kind": graph.callback_kind,
+        "action_definition_id": definition.definition_id,
+        "action_id": definition.action_id,
+        "action_level": definition.level,
+        **_verify_selection(
+            root, context.snapshot, graph, node, selection
+        ),
+    }
+    status_random_graphs = [
+        item
+        for item in context.status_bundle.catalog.graphs
+        if item.entry_kind == "status_callback"
+        and any(
+            node.source_family == _RANDOM_FAMILY for node in item.nodes
+        )
+    ]
+    if not status_random_graphs:
+        return ability_sample, "zero_by_denominator"
+    status_graph = status_random_graphs[0]
+    status_single = materialize_status_callback_task_graph(
+        context.source_catalog,
+        context.status_bundle.view,
+        callback_id=status_graph.owner_id,
+        source_snapshot=context.snapshot,
+    )
+    if (
+        len(status_single.graphs) != 1
+        or status_single.graphs[0].to_json() != status_graph.to_json()
+    ):
+        raise AssertionError(
+            "status single-entry and combined catalog materialization diverged"
+        )
+    status_node = next(
+        item
+        for item in status_graph.nodes
+        if item.source_family == _RANDOM_FAMILY
+    )
+    status_selection = next(
+        item
+        for item in status_graph.weighted_selections
+        if item.graph_node_id == status_node.graph_node_id
+    )
+    return ability_sample, {
+        "entry_kind": status_graph.entry_kind,
+        "callback_id": status_graph.owner_id,
+        "event": status_graph.callback_kind,
+        **_verify_selection(
+            root,
+            context.snapshot,
+            status_graph,
+            status_node,
+            status_selection,
+        ),
     }
 
 
-def _build_queue_positions(root: Path, context: _RealContext) -> tuple[dict[_SourceKey, list[dict[str, Any]]], set[_SourceKey], set[_FormalPositionKey], set[_FormalPositionKey], dict[str, Any] | None]:
+def _build_queue_positions(
+    root: Path,
+    context: _RealContext,
+) -> tuple[
+    dict[_SourceKey, list[dict[str, Any]]],
+    set[_SourceKey],
+    set[_FormalPositionKey],
+    set[_FormalPositionKey],
+    dict[str, Any] | None,
+]:
     queue = _queue_catalog(context)
     if queue is None:
         return {}, set(), set(), set(), None
     view, catalog = queue
     expected = _expected_formal_positions(
-        view, context.digest_by_path, producer_kind="queue_or_standalone", producer_instance_id="queue_or_standalone_catalog"
+        view,
+        context.digest_by_path,
+        producer_kind="queue_or_standalone",
+        producer_instance_id="queue_or_standalone_catalog",
     )
     positions, actual, nonrandom = _catalog_positions(
         root,
@@ -1131,7 +1551,13 @@ def _build_queue_positions(root: Path, context: _RealContext) -> tuple[dict[_Sou
         producer_kind="queue_or_standalone",
         producer_instance_id="queue_or_standalone_catalog",
     )
-    return positions, _formal_random_task_keys(view, context.digest_by_path), expected, actual, nonrandom
+    return (
+        positions,
+        _formal_random_task_keys(view, context.digest_by_path),
+        expected,
+        actual,
+        nonrandom,
+    )
 
 
 def _build_position_audit(
@@ -1144,12 +1570,14 @@ def _build_position_audit(
     set[_SourceKey],
     set[_FormalPositionKey],
     set[_FormalPositionKey],
-    list[_ActionCatalog],
+    _ActionCatalogBatch | None,
     list[str],
     dict[str, Any] | None,
 ]:
     positions: dict[_SourceKey, list[dict[str, Any]]] = defaultdict(list)
-    formal_task_keys = _formal_random_task_keys(context.status_bundle.view, context.digest_by_path)
+    formal_task_keys = _formal_random_task_keys(
+        context.status_bundle.view, context.digest_by_path
+    )
     expected_formal_positions = _expected_formal_positions(
         context.status_bundle.view,
         context.digest_by_path,
@@ -1165,50 +1593,84 @@ def _build_position_audit(
     )
     actual_formal_positions = set(combined_actual)
     _merge_positions(positions, combined_positions)
-    action_ids = _candidate_action_ids(context) if exhaustive_actions else _direct_action_ids(context)
-    action_catalogs, failures = _action_catalogs(context, action_ids)
-    for item in action_catalogs:
-        formal_task_keys.update(_formal_random_task_keys(item.view, context.digest_by_path))
-        expected_formal_positions.update(_expected_formal_positions(
-            item.view,
-            context.digest_by_path,
-            producer_kind="action_definition",
-            producer_instance_id=item.definition_id,
-        ))
+    action_ids = (
+        _candidate_action_ids(context)
+        if exhaustive_actions
+        else _direct_action_ids(context)
+    )
+    action_batch, failures = _action_catalogs(context, action_ids)
+    if action_batch is not None:
+        formal_task_keys.update(
+            _formal_random_task_keys(action_batch.view, context.digest_by_path)
+        )
+        expected_formal_positions.update(
+            _expected_action_formal_positions(
+                action_batch, context.digest_by_path
+            )
+        )
         current, current_actual, sample = _catalog_positions(
             root,
             context.snapshot,
-            item.catalog,
+            action_batch.catalog,
             producer_kind="action_definition",
-            producer_instance_id=item.definition_id,
+            producer_instance_id="",
+            producer_by_owner=action_batch.producer_by_owner,
         )
         actual_formal_positions.update(current_actual)
         _merge_positions(positions, current)
         nonrandom = nonrandom or sample
-    queue_positions, queue_keys, queue_expected, queue_actual, queue_nonrandom = _build_queue_positions(root, context)
+    (
+        queue_positions,
+        queue_keys,
+        queue_expected,
+        queue_actual,
+        queue_nonrandom,
+    ) = _build_queue_positions(root, context)
     _merge_positions(positions, queue_positions)
     formal_task_keys.update(queue_keys)
     expected_formal_positions.update(queue_expected)
     actual_formal_positions.update(queue_actual)
     nonrandom = nonrandom or queue_nonrandom
-    return positions, formal_task_keys, expected_formal_positions, actual_formal_positions, action_catalogs, failures, nonrandom
+    return (
+        positions,
+        formal_task_keys,
+        expected_formal_positions,
+        actual_formal_positions,
+        action_batch,
+        failures,
+        nonrandom,
+    )
 
 
 def _producer_expected_keys(context: _RealContext) -> set[_SourceKey]:
     action_definition_ids = {
-        definition_id for definition_id, values in context.action_ids_by_random_definition.items() if values
+        definition_id
+        for definition_id, values in context.action_ids_by_random_definition.items()
+        if values
     }
-    expected_ids = action_definition_ids | set(context.trigger_random_definition_ids) | set(context.queue_random_definition_ids)
-    keys = {key for definition_id in expected_ids for key in context.random_definition_sources[definition_id]}
+    expected_ids = (
+        action_definition_ids
+        | set(context.trigger_random_definition_ids)
+        | set(context.queue_random_definition_ids)
+    )
+    keys = {
+        key
+        for definition_id in expected_ids
+        for key in context.random_definition_sources[definition_id]
+    }
     keys.update(
         _task_key(task, "raw_opcode", context.digest_by_path)
         for task in context.status_bundle.status_tasks
-        if _task_key(task, "raw_opcode", context.digest_by_path)[2] == _RANDOM_FAMILY
+        if _task_key(task, "raw_opcode", context.digest_by_path)[2]
+        == _RANDOM_FAMILY
     )
     return keys
 
 
-def _template_formal_sample(positions: Mapping[_SourceKey, list[dict[str, Any]]], source_catalog: Any) -> dict[str, Any] | str:
+def _template_formal_sample(
+    positions: Mapping[_SourceKey, list[dict[str, Any]]],
+    source_catalog: Any,
+) -> dict[str, Any] | str:
     for key in sorted(positions):
         template = _template_scope(key, source_catalog)
         if template:
@@ -1227,42 +1689,57 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
     started = time.perf_counter()
     full_build_calls = 0
     original_build = TBGDLowering.build
+
     def forbidden_build(_self: TBGDLowering) -> object:
         nonlocal full_build_calls
         full_build_calls += 1
-        raise AssertionError("P9-S8C1C validation attempted full CanonicalIR build")
+        raise AssertionError(
+            "P9-S8C1C validation attempted full CanonicalIR build"
+        )
+
     TBGDLowering.build = forbidden_build
     try:
         context = _build_real_context(root)
-        denominator = _independent_random_denominator(root, context.snapshot, context.scope, context.source_catalog)
+        denominator = _independent_random_denominator(
+            root, context.snapshot, context.scope, context.source_catalog
+        )
         s8a = _s8a_random_map(context.source_catalog)
         if set(denominator) != set(s8a):
             raise AssertionError(
                 "independent RandomConfig denominator and S8A diverged:"
-                f"missing={len(set(denominator) - set(s8a))} extra={len(set(s8a) - set(denominator))}"
+                f"missing={len(set(denominator) - set(s8a))} "
+                f"extra={len(set(s8a) - set(denominator))}"
             )
         base_dispositions = _base_random_dispositions(context)
         if set(base_dispositions) != set(denominator):
-            raise AssertionError("production task graph source ledger and raw denominator diverged")
+            raise AssertionError(
+                "production task graph source ledger and raw denominator diverged"
+            )
         exhaustive = mode == "catalog"
         (
             positions,
             formal_task_keys,
             expected_formal_positions,
             actual_formal_positions,
-            action_catalogs,
+            action_batch,
             action_failures,
             nonrandom_sample,
-        ) = _build_position_audit(root, context, exhaustive_actions=exhaustive)
+        ) = _build_position_audit(
+            root, context, exhaustive_actions=exhaustive
+        )
         if action_failures:
             raise AssertionError(
                 "formal-bound action RandomConfig failed production materialization:"
                 + json.dumps(action_failures[:8], ensure_ascii=True)
             )
         if set(positions) - set(denominator):
-            raise AssertionError("formal graph contains RandomConfig outside raw denominator")
+            raise AssertionError(
+                "formal graph contains RandomConfig outside raw denominator"
+            )
         if mode == "catalog":
-            _audit_formal_position_denominator(expected_formal_positions, actual_formal_positions)
+            _audit_formal_position_denominator(
+                expected_formal_positions, actual_formal_positions
+            )
         expected_keys = _producer_expected_keys(context)
         if mode == "catalog":
             if expected_keys - set(positions):
@@ -1271,51 +1748,99 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
                     f"{len(expected_keys - set(positions))}"
                 )
             if formal_task_keys - set(positions):
-                raise AssertionError("real formal RandomConfig task lacks weighted graph position")
+                raise AssertionError(
+                    "real formal RandomConfig task lacks weighted graph position"
+                )
         else:
             direct_expected_classes = {
                 "ability_action": bool(_candidate_action_ids(context)),
                 "status_callback": any(
-                    _task_key(task, "raw_opcode", context.digest_by_path)[2] == _RANDOM_FAMILY
+                    _task_key(task, "raw_opcode", context.digest_by_path)[2]
+                    == _RANDOM_FAMILY
                     for task in context.status_bundle.status_tasks
                 ),
-                "template": any(_template_scope(key, context.source_catalog) for key in expected_keys),
+                "template": any(
+                    _template_scope(key, context.source_catalog)
+                    for key in expected_keys
+                ),
             }
             if not direct_expected_classes["ability_action"]:
-                raise AssertionError("current denominator lost the accepted S8C1B action producer")
+                raise AssertionError(
+                    "current denominator lost the accepted S8C1B action producer"
+                )
             if direct_expected_classes["status_callback"] and not any(
-                row["entry_kind"] == "status_callback" for rows in positions.values() for row in rows
+                row["entry_kind"] == "status_callback"
+                for rows in positions.values()
+                for row in rows
             ):
-                raise AssertionError("formal-bound status RandomConfig was not materialized")
-            if direct_expected_classes["template"] and _template_formal_sample(positions, context.source_catalog) == "zero_by_denominator":
-                raise AssertionError("formal-bound template RandomConfig lacks Direct evidence")
+                raise AssertionError(
+                    "formal-bound status RandomConfig was not materialized"
+                )
+            if (
+                direct_expected_classes["template"]
+                and _template_formal_sample(
+                    positions, context.source_catalog
+                )
+                == "zero_by_denominator"
+            ):
+                raise AssertionError(
+                    "formal-bound template RandomConfig lacks Direct evidence"
+                )
         if nonrandom_sample is None:
-            raise AssertionError("a real non-RandomConfig formal node is required for regression proof")
-        ability_sample, status_sample = _single_entry_checks(root, context, action_catalogs)
-        template_sample = _template_formal_sample(positions, context.source_catalog)
+            raise AssertionError(
+                "a real non-RandomConfig formal node is required for regression proof"
+            )
+        ability_sample, status_sample = _single_entry_checks(
+            root, context, action_batch
+        )
+        template_sample = _template_formal_sample(
+            positions, context.source_catalog
+        )
         no_producer_keys = set(denominator) - set(positions)
         formal_bound_keys = set(positions)
         if mode == "catalog":
-            no_producer_evidence = _no_producer_evidence(no_producer_keys, context.source_catalog, base_dispositions)
+            no_producer_evidence = _no_producer_evidence(
+                no_producer_keys,
+                context.source_catalog,
+                base_dispositions,
+            )
             if no_producer_keys & expected_keys:
-                raise AssertionError("no_formal_producer classification contains an accepted producer")
+                raise AssertionError(
+                    "no_formal_producer classification contains an accepted producer"
+                )
         else:
             no_producer_evidence = []
         elapsed = time.perf_counter() - started
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        budget_seconds = _DIRECT_HARD_SECONDS if mode == "direct" else _CATALOG_HARD_SECONDS
-        budget_rss = _DIRECT_RSS_LIMIT_KIB if mode == "direct" else _CATALOG_RSS_LIMIT_KIB
+        budget_seconds = (
+            _DIRECT_HARD_SECONDS if mode == "direct" else _CATALOG_HARD_SECONDS
+        )
+        budget_rss = (
+            _DIRECT_RSS_LIMIT_KIB if mode == "direct" else _CATALOG_RSS_LIMIT_KIB
+        )
         predicates = {
             "current_entry_kind_denominator_is_ability_and_status_only": {
                 item.entry_kind for item in actual_formal_positions
-            } <= {"ability_phase_callback", "status_callback"},
-            "all_formal_random_config_nodes_have_exactly_one_weighted_selection": expected_formal_positions == actual_formal_positions,
-            "non_random_config_nodes_have_no_weighted_selection": nonrandom_sample is not None,
+            }
+            <= {"ability_phase_callback", "status_callback"},
+            "all_formal_random_config_nodes_have_exactly_one_weighted_selection": (
+                expected_formal_positions == actual_formal_positions
+            ),
+            "non_random_config_nodes_have_no_weighted_selection": (
+                nonrandom_sample is not None
+            ),
             "ability_and_status_share_one_weighted_materialization_authority": True,
-            "status_single_entry_and_combined_catalog_are_identical": status_sample == "zero_by_denominator" or isinstance(status_sample, dict),
-            "action_s8c1b_contract_is_preserved": isinstance(ability_sample, dict),
+            "status_single_entry_and_combined_catalog_are_identical": (
+                status_sample == "zero_by_denominator"
+                or isinstance(status_sample, dict)
+            ),
+            "action_s8c1b_contract_is_preserved": isinstance(
+                ability_sample, dict
+            ),
             "random_config_raw_denominator_is_independently_reproducible": True,
-            "s8a_random_config_source_denominator_is_bidirectionally_complete": set(denominator) == set(s8a) == set(base_dispositions),
+            "s8a_random_config_source_denominator_is_bidirectionally_complete": (
+                set(denominator) == set(s8a) == set(base_dispositions)
+            ),
             "odds_branch_source_and_numeric_identity_are_one_to_one": True,
             "source_fingerprint_mismatch_fails_closed": True,
             "full_canonical_ir_build_count": full_build_calls,
@@ -1323,30 +1848,46 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
             "s8c_or_s5d2_claimed_complete": False,
         }
         if mode == "catalog":
-            predicates.update({
-                "every_denominator_occurrence_is_exactly_formal_bound_or_no_formal_producer": (
-                    formal_bound_keys | no_producer_keys == set(denominator)
-                    and not formal_bound_keys.intersection(no_producer_keys)
-                ),
-                "formal_bound_sources_close_to_every_formal_graph_position_and_selection": (
-                    expected_keys <= formal_bound_keys
-                    and formal_task_keys <= formal_bound_keys
-                    and expected_formal_positions == actual_formal_positions
-                ),
-                "formal_position_denominator_preserves_instance_multiplicity": expected_formal_positions == actual_formal_positions,
-                "no_formal_producer_sources_have_no_synthetic_entry_or_graph": not no_producer_keys.intersection(set(positions) | formal_task_keys | expected_keys),
-                "template_source_identity_and_formal_instance_identity_are_not_collapsed": (
-                    template_sample == "zero_by_denominator"
-                    or (
-                        isinstance(template_sample, dict)
-                        and template_sample["source_path"] == template_sample["formal_position"]["source_path"]
-                        and template_sample["json_path"] == template_sample["formal_position"]["json_path"]
-                    )
-                ),
-            })
+            predicates.update(
+                {
+                    "every_denominator_occurrence_is_exactly_formal_bound_or_no_formal_producer": (
+                        formal_bound_keys | no_producer_keys == set(denominator)
+                        and not formal_bound_keys.intersection(no_producer_keys)
+                    ),
+                    "formal_bound_sources_close_to_every_formal_graph_position_and_selection": (
+                        expected_keys <= formal_bound_keys
+                        and formal_task_keys <= formal_bound_keys
+                        and expected_formal_positions == actual_formal_positions
+                    ),
+                    "formal_position_denominator_preserves_instance_multiplicity": (
+                        expected_formal_positions == actual_formal_positions
+                    ),
+                    "no_formal_producer_sources_have_no_synthetic_entry_or_graph": (
+                        not no_producer_keys.intersection(
+                            set(positions) | formal_task_keys | expected_keys
+                        )
+                    ),
+                    "template_source_identity_and_formal_instance_identity_are_not_collapsed": (
+                        template_sample == "zero_by_denominator"
+                        or (
+                            isinstance(template_sample, dict)
+                            and template_sample["source_path"]
+                            == template_sample["formal_position"]["source_path"]
+                            and template_sample["json_path"]
+                            == template_sample["formal_position"]["json_path"]
+                        )
+                    ),
+                }
+            )
         boolean_predicates = {
-            key: value for key, value in predicates.items()
-            if key not in {"full_canonical_ir_build_count", "runtime_rng_behavior_changed", "s8c_or_s5d2_claimed_complete"}
+            key: value
+            for key, value in predicates.items()
+            if key
+            not in {
+                "full_canonical_ir_build_count",
+                "runtime_rng_behavior_changed",
+                "s8c_or_s5d2_claimed_complete",
+            }
         }
         ok = (
             all(value is True for value in boolean_predicates.values())
@@ -1356,7 +1897,20 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
             and elapsed <= budget_seconds
             and peak <= budget_rss
         )
-        action_definition_levels = sorted({(item.action_id, item.level, item.definition_id) for item in action_catalogs})
+        definitions = action_batch.definitions if action_batch is not None else ()
+        action_definition_levels = [
+            {
+                "action_id": item.action_id,
+                "level": item.level,
+                "definition_id": item.definition_id,
+            }
+            for item in definitions
+        ]
+        action_random_producers = {
+            item.producer_instance_id
+            for item in expected_formal_positions
+            if item.producer_kind == "action_definition"
+        }
         return {
             "ok": ok,
             "mode": mode,
@@ -1366,26 +1920,50 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
                 "fingerprint": _denominator_fingerprint(denominator),
                 "formal_bound_count": len(formal_bound_keys),
                 "no_formal_producer_count": len(no_producer_keys),
-                "template_formal_bound_count": sum(bool(_template_scope(key, context.source_catalog)) for key in formal_bound_keys),
+                "template_formal_bound_count": sum(
+                    bool(_template_scope(key, context.source_catalog))
+                    for key in formal_bound_keys
+                ),
             },
             "formal_position_denominator": {
                 "expected_count": len(expected_formal_positions),
                 "actual_count": len(actual_formal_positions),
-                "fingerprint": _formal_position_fingerprint(expected_formal_positions),
-                "action_definition_count": len(action_definition_levels),
-                "action_definition_levels": [
-                    {"action_id": action_id, "level": level, "definition_id": definition_id}
-                    for action_id, level, definition_id in action_definition_levels
-                ],
+                "fingerprint": _formal_position_fingerprint(
+                    expected_formal_positions
+                ),
+                "enumerated_action_definition_count": len(definitions),
+                "random_bearing_action_definition_count": len(
+                    action_random_producers
+                ),
+                "action_definition_levels": action_definition_levels,
             },
             "producer_classes": {
-                "action": "formal_bound" if _candidate_action_ids(context) else "zero_by_denominator",
-                "status": "formal_bound" if any(
-                    _task_key(task, "raw_opcode", context.digest_by_path)[2] == _RANDOM_FAMILY
-                    for task in context.status_bundle.status_tasks
-                ) else "zero_by_denominator",
-                "template": "formal_bound" if template_sample != "zero_by_denominator" else "zero_by_denominator",
-                "queue_or_standalone": "formal_bound" if context.queue_random_definition_ids else "zero_by_denominator",
+                "action": (
+                    "formal_bound"
+                    if _candidate_action_ids(context)
+                    else "zero_by_denominator"
+                ),
+                "status": (
+                    "formal_bound"
+                    if any(
+                        _task_key(
+                            task, "raw_opcode", context.digest_by_path
+                        )[2]
+                        == _RANDOM_FAMILY
+                        for task in context.status_bundle.status_tasks
+                    )
+                    else "zero_by_denominator"
+                ),
+                "template": (
+                    "formal_bound"
+                    if template_sample != "zero_by_denominator"
+                    else "zero_by_denominator"
+                ),
+                "queue_or_standalone": (
+                    "formal_bound"
+                    if context.queue_random_definition_ids
+                    else "zero_by_denominator"
+                ),
             },
             "samples": {
                 "action": ability_sample,
@@ -1394,7 +1972,10 @@ def _real_mode(root: Path, *, mode: str) -> dict[str, Any]:
                 "non_random": nonrandom_sample,
                 "no_formal_producer": no_producer_evidence[:3],
             },
-            "resource": {"wall_seconds": round(elapsed, 6), "peak_rss_kib": peak},
+            "resource": {
+                "wall_seconds": round(elapsed, 6),
+                "peak_rss_kib": peak,
+            },
         }
     finally:
         TBGDLowering.build = original_build
@@ -1410,14 +1991,24 @@ def _run_catalog(root: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate P9-S8C1C remaining-entry RandomConfig source closure")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Validate P9-S8C1C remaining-entry RandomConfig source closure"
+        )
+    )
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--fast", action="store_true")
     modes.add_argument("--direct", action="store_true")
     modes.add_argument("--catalog", action="store_true")
     parser.add_argument("--tbgd-root", type=Path, default=DEFAULT_TBGD)
     args = parser.parse_args()
-    summary = _run_fast() if args.fast else _run_direct(args.tbgd_root.resolve()) if args.direct else _run_catalog(args.tbgd_root.resolve())
+    summary = (
+        _run_fast()
+        if args.fast
+        else _run_direct(args.tbgd_root.resolve())
+        if args.direct
+        else _run_catalog(args.tbgd_root.resolve())
+    )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0 if summary["ok"] else 1
 
