@@ -1,5 +1,8 @@
 # P9-S8C1B Action Entry Weighted Selection Materialization — Execution Report
 
+Execution handoff result: `ready_for_review`.
+Independent review result: `accepted`.
+
 ## 1. Identity
 
 - Card: `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md`
@@ -8,16 +11,25 @@
 - Base: `master@2cd1239f52cd39136576d4920302bafa671d5471`
 - Code-validation head: `759e00e91cfece2a87b979139a9d1b4bebb29459`
 - Code-validation CI: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/33827486941`
-- Report-containing commit SHA is intentionally not embedded in this file; it is recorded by the PR/final execution evidence after this report is committed, avoiding a self-referential SHA claim.
+- Report-containing execution head before acceptance governance: `5493f3bea97b01d4b8657fb995b18f396c2e6312`
+- Final pre-governance CI: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/33827733088`
+- The acceptance-governance commit containing this amendment is intentionally not self-referenced; its exact final PR head and final CI are recorded by PR metadata and the independent acceptance result.
 
 ## 2. Authorized write set actually present at code-validation head
 
+The PR contains one planner-owned execution card plus the five execution-authorized paths. The card was created before execution and remained byte-identical through the execution handoff.
+
+Execution-authorized paths:
+
 - `.github/workflows/p9-s8c1b-pr-validation.yml`
-- `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md`
 - `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py`
 - `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py`
 - `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py`
-- This execution report is the sixth card-authorized path once committed.
+- `hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_execution_report.md`
+
+Planner-owned card path:
+
+- `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md`
 
 No production files outside the card write set were changed. The execution phase after handoff added/adjusted only the validator and scoped CI; the two production files were already present on the PR branch and required no further repair after validation.
 
@@ -31,7 +43,9 @@ No production files outside the card write set were changed. The execution phase
 
 ## 4. CI and resource evidence
 
-Code-validation run `33827486941`, job `100883134447`, completed `success` on the code-validation head. Checkout initialized the repository-pinned TBGD submodule before validation.
+Code-validation run `33827486941`, job `100883134447`, completed `success` for the code-validation PR tree. GitHub Actions checked out PR merge ref `f92ca75e4ee7073f3e4b352111b7043a0d6a3bc7`; independent review confirmed that merge ref has zero file diff from code-validation head `759e00e91cfece2a87b979139a9d1b4bebb29459`. Checkout initialized the repository-pinned TBGD submodule before validation.
+
+After this report was committed, final pre-governance run `33827733088` also completed `success`. It checked out merge ref `3aeb8b40e65f88a0babcc4000d0520eaa53c5a45`; independent review confirmed zero file diff from execution head `5493f3bea97b01d4b8657fb995b18f396c2e6312`.
 
 ### Compile
 
@@ -42,7 +56,7 @@ Command:
 - Exit: `0`
 - Wall: `0.14s`
 - Max RSS: `18,368 KiB`
-- CI additionally executes `test -f` for the S8C1B validator before compile, so a missing validator fails closed rather than being ignored by `compileall`.
+- CI additionally executes `test -f` for the S8C1B validator before compile, and the subsequent Fast module invocation imports the validator and its production dependencies fail-closed.
 
 ### Upstream S8C1A
 
@@ -91,6 +105,8 @@ Command:
 - Max RSS: `398,396 KiB`
 - Budget: `<120s`, `<1 GiB` — satisfied.
 - Full `CanonicalIR` build count: `0`; the validator replaces `TBGDLowering.build` with a fail-closed sentinel during Direct.
+
+Final execution-head rerun `33827733088` independently repeated the same gates and remained in budget: Fast exit `0`; Direct exit `0`, validator elapsed `20.200372s`, wrapper wall `21.30s`, max RSS `398,488 KiB`; upstream S8C1A and committed diff check also exited `0`.
 
 ### Base diff check
 
@@ -151,6 +167,7 @@ Status evidence is discovered independently through the authoritative formal sta
 - Run `33826531583`: weighted-selection proof succeeded, but the initial status comparison was too narrowly tied to action slices. A bounded formal status-source probe was added.
 - Run `33827184681`: bounded status probe had a validator-only `TBGDLowering.root` typo; corrected to the authoritative `tbgd_root` attribute.
 - Run `33827486941`: compile, S8C1A, Fast, Direct, and base diff check all passed.
+- Run `33827733088`: report-containing execution head reran compile, S8C1A, Fast, Direct and base diff successfully; the PR merge ref was independently shown tree-equivalent to the execution head.
 
 No remediation required a production-scope expansion or authority change.
 
@@ -164,4 +181,4 @@ This report does **not** claim any of the following:
 - S8C1C or any remaining entry-family materialization;
 - behavior changes to status callbacks or non-`RandomConfig` actions.
 
-Those remain outside P9-S8C1B. The delivered slice is limited to formal action-entry weighted-selection IR materialization plus its focused Fast/Direct evidence.
+Those remain outside P9-S8C1B. The accepted slice is limited to formal action-entry weighted-selection IR materialization plus its focused Fast/Direct evidence.
