@@ -1,6 +1,8 @@
 # P9-S8C1B — 既有正式 action entry 的 RandomConfig 加权选择 materialization 纵切
 
-状态：`ready_for_execution`。
+状态：`accepted`。
+
+验收检查点：PR #2 已完成独立集中审查。生产权威、共享 action materializer、真实 signed source Direct、Fast/负例、非 RandomConfig action 与 status 未受影响证据均通过；S8C1C、完整 RandomConfig denominator 与 runtime/RNG 继续 deferred。本卡不再是可执行入口。
 
 - 风险模式：`STRICT`。本卡同时触及 `TaskGraphIR` 公共严格 codec 与共享正式 materializer，但不改变 runtime。
 - 基线：`master@2cd1239f52cd39136576d4920302bafa671d5471`。
@@ -237,4 +239,5 @@ PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 -B -m \
 
 ## 12. 交付状态
 
-`ready_for_execution: true`
+`accepted: true`
+`ready_for_execution: false`
