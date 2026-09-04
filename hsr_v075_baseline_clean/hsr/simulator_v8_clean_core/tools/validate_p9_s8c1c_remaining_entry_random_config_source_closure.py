@@ -651,7 +651,13 @@ def _build_status_bundle(
         parts = lowering._lower_standalone_ability_graphs(
             tuple(lowering.tbgd_root / path for path in sorted(trigger_paths))
         )
-        graphs, phases, ability_tasks, extra_effects, extra_conditions, _, extra_targets = parts
+        graphs, phases, ability_tasks, extra_effects, extra_conditions, *extras = parts
+        extra_targets = [
+            item
+            for values in extras
+            for item in values
+            if hasattr(item, "target_expression_id")
+        ]
         effects.extend(extra_effects)
         conditions.extend(extra_conditions)
         targets.extend(extra_targets)
@@ -913,7 +919,13 @@ def _queue_catalog(
             context.lowering.tbgd_root / path for path in sorted(source_paths)
         )
     )
-    graphs, phases, tasks, effects, conditions, _, targets = parts
+    graphs, phases, tasks, effects, conditions, *extras = parts
+    targets = [
+        item
+        for values in extras
+        for item in values
+        if hasattr(item, "target_expression_id")
+    ]
     tasks = _link_trigger_ability_graphs(tasks, effects, graphs, phases)
     resolutions = _lower_queue_resolutions(
         queue_intents=intents,
