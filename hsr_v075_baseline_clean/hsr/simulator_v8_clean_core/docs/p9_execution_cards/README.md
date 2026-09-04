@@ -10,20 +10,21 @@
 当前没有可直接执行的 P9 卡。
 
 `P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`、
-`P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md` 与
-`P9-S8C1C_REMAINING_ENTRY_RANDOM_CONFIG_SOURCE_CLOSURE.md` 均已完成独立验收。S8C1C 已补齐现有其余公开 entry 的 `RandomConfig` weighted-selection 物化，并闭合当前完整 raw/S8A/source-ledger 来源分母与 level-specific formal-position multiplicity；该结论不代表 runtime/RNG、S8C1 聚合、S8C 或 S5D2 transaction/replay 已完成。
+`P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md`、
+`P9-S8C1C_REMAINING_ENTRY_RANDOM_CONFIG_SOURCE_CLOSURE.md` 与
+`P9-S8C1_RANDOM_CONFIG_GRAPH_AGGREGATE_AUDIT.md` 均已完成独立验收。S8C1 聚合已从当前实时来源重新闭合完整 raw/S8A/source-ledger `RandomConfig` 分母、formal/no-producer 分类和全部正式 producer/formal-position multiplicity，并证明公开联合 task-graph catalog 中每个正式 `RandomConfig` node 恰有一个严格 weighted selection。该结论仍不代表 runtime/RNG、S8C projectile/barrier/parallel 或 S5D2 transaction/replay 已完成。
 
-本检查点不创建 S8C1 聚合或 S8C 的下一张执行卡、不创建新 PR，也不自动启动后续施工。
+本检查点不创建 S8C 或 S5D2 回验的下一张执行卡、不创建新 PR，也不自动启动后续施工。
 
 ## 阶段状态
 
 | 状态 | 阶段 |
 |---|---|
 | 已验收 | S0-S4；S5A、S5B、S5C1、S5C2、S5D1；S6A、S6B；S7 |
-| 已验收 | S8A、S8A-R1；S8B1、S8B2、S8B1-R2；S8B3A-S8B3C；S8B4A-S8B4B；S8B5A-S8B5C；S8B6 及对应聚合项；S8C1A；S8C1B；S8C1C |
+| 已验收 | S8A、S8A-R1；S8B1、S8B2、S8B1-R2；S8B3A-S8B3C；S8B4A-S8B4B；S8B5A-S8B5C；S8B6 及对应聚合项；S8C1A；S8C1B；S8C1C；S8C1 聚合 |
 | 部分完成 | S5D2 的随机目标和弹射消费已验收，完整动作 transaction/replay 等待 S8 后回验 |
-| 待规划 | S8C1 聚合、S8C 与 S5D2 回验均未启动；不得自动推进 |
-| 后续 | S8C1 聚合、S8C、S9-S20 |
+| 待规划 | S8C 与 S5D2 回验均未启动；不得自动推进 |
+| 后续 | S8C、S9-S20 |
 
 最终状态只认总计划 checklist 和已验收 Git 检查点。执行卡或报告中的 `ready_for_review` 不是通过结论。
 
