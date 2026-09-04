@@ -15,7 +15,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,15 +42,17 @@ jobs:
       - name: Fast weighted-selection validation
         run: |
           /usr/bin/time -v -o /tmp/p9-s8c1b-fast.time \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --fast
+            timeout --signal=TERM --kill-after=5s 30s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --fast
           cat /tmp/p9-s8c1b-fast.time
 
       - name: Direct weighted-selection validation
         run: |
           /usr/bin/time -v -o /tmp/p9-s8c1b-direct.time \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
+            timeout --signal=TERM --kill-after=5s 120s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
           cat /tmp/p9-s8c1b-direct.time
 
       - name: Diff check against PR base

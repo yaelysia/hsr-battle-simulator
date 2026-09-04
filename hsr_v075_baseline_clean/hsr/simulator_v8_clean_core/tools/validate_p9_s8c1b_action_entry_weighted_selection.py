@@ -324,9 +324,20 @@ def _verify_selection(snapshot: CharacterAbilityRawSnapshot, graph: TaskGraphIR)
     path = node.source.evidence.get("json_path")
     if not isinstance(path, str):
         raise AssertionError("RandomConfig source path is missing")
-    document = snapshot.documents.get(node.source.source_path)
+    raw_bytes = snapshot.source_bytes.get(node.source.source_path)
+    expected_digest = node.source.evidence.get("content_sha256")
+    if (
+        raw_bytes is None
+        or not isinstance(expected_digest, str)
+        or sha256(raw_bytes).hexdigest() != expected_digest
+    ):
+        raise AssertionError("RandomConfig signed snapshot source bytes are missing or forged")
+    try:
+        document = json.loads(raw_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AssertionError("RandomConfig signed snapshot source bytes are unreadable") from exc
     if not isinstance(document, Mapping):
-        raise AssertionError("RandomConfig signed snapshot document is missing")
+        raise AssertionError("RandomConfig signed snapshot document is not an object")
     raw_parent = _document_value(document, path)
     if not isinstance(raw_parent, Mapping) or type(raw_parent.get("OddsList")) is not list:
         raise AssertionError("RandomConfig raw OddsList is invalid")
