@@ -1133,7 +1133,7 @@ def _combined_view(
     )
     graphs = _dedupe(
         (item for view in views for item in view.standalone_ability_graphs),
-        "graph_id",
+        "standalone_ability_graph_id",
     )
     callbacks = _dedupe(
         (item for view in views for item in view.status_callbacks),
