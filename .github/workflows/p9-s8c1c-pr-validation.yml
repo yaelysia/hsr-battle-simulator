@@ -1,0 +1,79 @@
+name: P9 S8C1C PR Validation
+
+on:
+  pull_request:
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1c_remaining_entry_random_config_source_closure.py'
+      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C1C_REMAINING_ENTRY_RANDOM_CONFIG_SOURCE_CLOSURE_execution_report.md'
+      - '.github/workflows/p9-s8c1c-pr-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Compile scoped modules
+        run: |
+          test -f hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1c_remaining_entry_random_config_source_closure.py
+          /usr/bin/time -v -o /tmp/p9-s8c1c-compile.time \
+            env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1c_remaining_entry_random_config_source_closure.py
+          cat /tmp/p9-s8c1c-compile.time
+
+      - name: Validate S8C1A upstream IR
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1a.time \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1a_weighted_selection_ir
+          cat /tmp/p9-s8c1a.time
+
+      - name: Validate S8C1B action Fast regression
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1b-fast.time \
+            timeout --signal=TERM --kill-after=5s 30s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --fast
+          cat /tmp/p9-s8c1b-fast.time
+
+      - name: Fast remaining-entry validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1c-fast.time \
+            timeout --signal=TERM --kill-after=5s 30s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --fast
+          cat /tmp/p9-s8c1c-fast.time
+
+      - name: Direct real-source validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1c-direct.time \
+            timeout --signal=TERM --kill-after=5s 120s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --direct
+          cat /tmp/p9-s8c1c-direct.time
+
+      - name: Catalog full RandomConfig denominator validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1c-catalog.time \
+            timeout --signal=TERM --kill-after=5s 180s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --catalog
+          cat /tmp/p9-s8c1c-catalog.time
+
+      - name: Diff check against PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1c-diff.time git diff --check "$BASE_SHA" HEAD
+          cat /tmp/p9-s8c1c-diff.time

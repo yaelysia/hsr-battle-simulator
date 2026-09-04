@@ -1002,11 +1002,7 @@ def _build_graph(
             source_topology[task.task_id],
             node_ids,
         )
-        if (
-            entry_kind == "ability_phase_callback"
-            and control is not None
-            and control.family == "RandomConfig"
-        ):
+        if control is not None and control.family == "RandomConfig":
             weighted.append(
                 _materialize_weighted_selection(
                     source_snapshot,
