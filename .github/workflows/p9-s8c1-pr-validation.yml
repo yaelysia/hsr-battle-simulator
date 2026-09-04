@@ -1,41 +1,59 @@
-name: P9 S8C1 Validator Remediation
+name: P9 S8C1 PR Validation
 
 on:
   pull_request:
     paths:
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1_random_config_graph_aggregate.py'
+      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C1_RANDOM_CONFIG_GRAPH_AGGREGATE_execution_report.md'
       - '.github/workflows/p9-s8c1-pr-validation.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  remediate:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
+          submodules: true
 
-      - name: Apply mechanical validator identity fix
+      - name: Compile aggregate validator
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          test -f hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1_random_config_graph_aggregate.py
+          /usr/bin/time -v -o /tmp/p9-s8c1-compile.time \
+            env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1_random_config_graph_aggregate.py
+          cat /tmp/p9-s8c1-compile.time
 
-          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1_random_config_graph_aggregate.py')
-          text = path.read_text()
-          old = '''    graphs = _dedupe(\n        (item for view in views for item in view.standalone_ability_graphs),\n        "graph_id",\n    )'''
-          new = '''    graphs = _dedupe(\n        (item for view in views for item in view.standalone_ability_graphs),\n        "standalone_ability_graph_id",\n    )'''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one validator replacement target, found {text.count(old)}')
-          path.write_text(text.replace(old, new))
-          PY
-          git diff --check
-          git diff --exit-code --quiet && exit 0
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1_random_config_graph_aggregate.py
-          git commit -m 'fix(p9): use standalone graph identity in S8C1 validator'
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+      - name: Fast aggregate negatives
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1-fast.time \
+            timeout --signal=TERM --kill-after=5s 30s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1_random_config_graph_aggregate --fast
+          cat /tmp/p9-s8c1-fast.time
+
+      - name: Direct real-source aggregate validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1-direct.time \
+            timeout --signal=TERM --kill-after=5s 120s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1_random_config_graph_aggregate --direct
+          cat /tmp/p9-s8c1-direct.time
+
+      - name: Catalog complete aggregate validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1-catalog.time \
+            timeout --signal=TERM --kill-after=5s 180s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1_random_config_graph_aggregate --catalog
+          cat /tmp/p9-s8c1-catalog.time
+
+      - name: Fixed-base diff check
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1-diff.time \
+            git diff --check 539b2e1b9a7dfb99a319bcda0249ec276b6847df HEAD
+          cat /tmp/p9-s8c1-diff.time
