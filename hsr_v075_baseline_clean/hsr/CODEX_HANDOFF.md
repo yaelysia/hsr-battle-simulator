@@ -22,9 +22,9 @@ TurnBasedGameData -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat 
 - CHAR-M1 已建立记忆角色与忆灵 owned-combatant 构筑边界。
 - P9-S0 至 P9-S8B6 已验收。角色能力来源、构筑绑定、动态值、目标、条件、任务图 IR、共享原子执行、
   普通动作、独立能力、状态 callback 和跨入口 continuation 已进入统一生产链。
-- P9-S8C1A 已验收：任务图现已具备加权 choice/selection 的严格 IR、稳定身份、父子 `.OddsList[i]`
-  来源关系、数值定义配对、不可变容器和严格 JSON codec。该检查点只证明类型契约，不代表真实
-  `RandomConfig` 已 materialize，也不代表随机分支可执行。
+- P9-S8C1A 已验收：任务图具备加权 choice/selection 的严格 IR、稳定身份、父子 `.OddsList[i]`
+  来源关系、数值定义配对、不可变容器和严格 JSON codec。
+- P9-S8C1B 已验收：现有正式 `ability_phase_callback` action entry 的 `RandomConfig` 现在由共享 task-graph materializer 从同一 signed `CharacterAbilityRawSnapshot` 读取 `OddsList[i]`，复用既有 numeric lowering，并把 definition/choice 与既有 S8A branch 一一绑定到 `TaskGraphIR.weighted_selections`。真实 Direct 已动态证明单 entry 与 ability catalog 共享同一物化结果。该检查点仍不执行随机，不代表 status/其余 entry 或完整 RandomConfig denominator 已闭合。
 - P9-S5D2 的随机目标基础和弹射目标消费已完成，但其完整动作 transaction/replay 正例明确等待 S8
   随机控制流闭合后回验，因此该聚合项仍未勾选。
 
@@ -41,16 +41,14 @@ simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
 当前检查点停在：
 
 ```text
-P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT — accepted
+P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION — accepted
 ```
 
-目前没有可直接执行的下一张 P9 卡。S8C1B 负责正式 action entry materializer 接线，S8C1C 负责
-其余公开 entry 与完整 RandomConfig 来源分母；二者都必须由规划线程基于 S8C1A 合并后的实际调用面
-形成新的 `ready_for_execution` 执行卡后才能施工。本检查点不启动下一张卡。
+按用户要求，PR #2 合并后整个调度暂停。目前没有可直接执行的下一张 P9 卡。S8C1C 仍负责其余公开 entry、status/GlobalTemplates/shared templates 与完整 RandomConfig 来源分母，但本检查点不创建 S8C1C 执行卡、不创建下一 PR、不启动任何后续施工。
 
 ## 仍未完成
 
-- P9-S8C1B、P9-S8C1C、S8C1 聚合、P9-S8C 及后续角色共享控制流、事件、状态、伤害、资源、队列、
+- P9-S8C1C、S8C1 聚合、P9-S8C 及后续角色共享控制流、事件、状态、伤害、资源、队列、
   死亡、击破、形态和独立行动实体。
 - P9 完成后的全角色目录回验，以及记忆、欢愉专属内容增量。
 - 全怪物、全召唤内容、全关卡环境和特殊玩法的数据卡扩面。
@@ -75,8 +73,8 @@ P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT — accepted
 ## 证据与历史
 
 - P8 最终结论：`live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
-- P9-S8C1A ready-for-review 证据：`live_validation_reports/P9-S8C1A_WEIGHTED_SELECTION_IR_ready_for_review.md`；
-  最终通过结论只认总计划 checklist、accepted 执行卡状态和合并后的 Git 检查点。
+- P9-S8C1A ready-for-review 证据：`live_validation_reports/P9-S8C1A_WEIGHTED_SELECTION_IR_ready_for_review.md`；最终通过结论只认总计划 checklist、accepted 执行卡状态和合并后的 Git 检查点。
+- P9-S8C1B 执行证据：`live_validation_reports/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_execution_report.md`；其真实 Direct 只证明 action-entry 纵切，不替代 S8C1C 的完整来源分母。
 - P9 阶段状态只认总计划 checklist 和已验收 Git 检查点；`ready_for_review` 报告不是最终验收。
 - 文档归属与归档：`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`。
 - 瘦身前交接全文：`simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-07-24.md`。

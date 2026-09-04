@@ -1,0 +1,63 @@
+name: P9 S8C1B PR Validation
+
+on:
+  pull_request:
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
+      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_execution_report.md'
+      - '.github/workflows/p9-s8c1b-pr-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Compile scoped modules
+        run: |
+          test -f hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py
+          /usr/bin/time -v -o /tmp/p9-s8c1b-compile.time \
+            env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py
+          cat /tmp/p9-s8c1b-compile.time
+
+      - name: Validate S8C1A upstream IR
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1a.time \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1a_weighted_selection_ir
+          cat /tmp/p9-s8c1a.time
+
+      - name: Fast weighted-selection validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1b-fast.time \
+            timeout --signal=TERM --kill-after=5s 30s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --fast
+          cat /tmp/p9-s8c1b-fast.time
+
+      - name: Direct weighted-selection validation
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1b-direct.time \
+            timeout --signal=TERM --kill-after=5s 120s \
+              env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+                python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
+          cat /tmp/p9-s8c1b-direct.time
+
+      - name: Diff check against PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c1b-diff.time git diff --check "$BASE_SHA" HEAD
+          cat /tmp/p9-s8c1b-diff.time

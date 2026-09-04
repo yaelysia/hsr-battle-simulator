@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
+from ..immutable_json import thaw_json
 from ..ir_types import IRSource
 from ..rules.control_flow_contract import (
     CharacterControlFlowContractCatalog,
@@ -34,6 +36,8 @@ from ..rules.task_graph import (
     TaskGraphNodeIR,
     TaskGraphNumericDefinitionIR,
     TaskGraphSourceDispositionIR,
+    TaskGraphWeightedChoiceIR,
+    TaskGraphWeightedSelectionIR,
     task_graph_branch_id,
     task_graph_entry_id,
     task_graph_id,
@@ -43,8 +47,11 @@ from ..rules.task_graph import (
     task_graph_reference_id,
     task_graph_source_occurrence_id,
     task_graph_source_record_fingerprint,
+    task_graph_weighted_choice_id,
+    task_graph_weighted_selection_id,
 )
 from .character_ability_scope import CharacterAbilityRawSnapshot
+from .expression_lowering import lower_numeric_expression
 
 
 _OWNER_DOMAIN_BY_STAGE = {
@@ -143,6 +150,7 @@ class _DefinitionIndexes:
 class _MaterializationContext:
     source_catalog: CharacterControlFlowContractCatalog
     base: TaskGraphCatalogIR
+    source_snapshot: CharacterAbilityRawSnapshot
     digest_by_path: Mapping[str, str]
     control_by_location: Mapping[
         tuple[str, object, str], CharacterControlFlowNodeIR
@@ -813,6 +821,7 @@ def _prepare_materialization(
     return _MaterializationContext(
         source_catalog,
         base,
+        source_snapshot,
         digest_by_path,
         {key: values[0] for key, values in controls_by_location.items()},
         {key: values[0] for key, values in templates.items()},
@@ -898,6 +907,7 @@ def _materialize_entry(
     try:
         graph = _build_graph(
             context.source_catalog,
+            context.source_snapshot,
             graph_id,
             entry_id,
             entry_kind,
@@ -944,6 +954,7 @@ def _materialize_entry(
 
 def _build_graph(
     source_catalog: CharacterControlFlowContractCatalog,
+    source_snapshot: CharacterAbilityRawSnapshot,
     graph_id: str,
     entry_id: str,
     entry_kind: EntryKind,
@@ -977,6 +988,7 @@ def _build_graph(
     if not roots:
         raise _Blocked("formal_entry_root_missing")
     numeric: list[TaskGraphNumericDefinitionIR] = []
+    weighted: list[TaskGraphWeightedSelectionIR] = []
     nodes: list[TaskGraphNodeIR] = []
     for task in tasks:
         control = controls.get(task.task_id)
@@ -990,6 +1002,20 @@ def _build_graph(
             source_topology[task.task_id],
             node_ids,
         )
+        if (
+            entry_kind == "ability_phase_callback"
+            and control is not None
+            and control.family == "RandomConfig"
+        ):
+            weighted.append(
+                _materialize_weighted_selection(
+                    source_snapshot,
+                    node_ids[task.task_id],
+                    sources[task.task_id],
+                    occurrences[task.task_id],
+                    branches,
+                )
+            )
         references = list(_references(
             task,
             control,
@@ -1065,6 +1091,7 @@ def _build_graph(
         source_catalog.source_fingerprint,
         sources[ordered_task_ids[0]],
         "lowered_with_obligation" if has_obligation else "lowered",
+        tuple(weighted),
     )
 
 
@@ -1231,6 +1258,124 @@ def _branches(
             branch.source,
         ))
     return tuple(result)
+
+
+def _materialize_weighted_selection(
+    source_snapshot: CharacterAbilityRawSnapshot,
+    graph_node_id: str,
+    parent_source: IRSource,
+    parent_source_occurrence_id: str,
+    branches: tuple[TaskGraphBranchIR, ...],
+) -> TaskGraphWeightedSelectionIR:
+    parent_path = parent_source.evidence.get("json_path")
+    if not isinstance(parent_path, str) or not parent_path.startswith("$"):
+        raise _Blocked("random_config_parent_source_path_invalid")
+    raw_parent = _raw_source_value(source_snapshot, parent_source.source_path, parent_path)
+    if not isinstance(raw_parent, Mapping):
+        raise _Blocked("random_config_parent_source_not_object")
+    odds_list = raw_parent.get("OddsList")
+    if type(odds_list) is not list:
+        raise _Blocked("random_config_odds_list_invalid")
+    if not odds_list or len(odds_list) != len(branches):
+        raise _Blocked("random_config_odds_list_branch_length_mismatch")
+    choices: list[TaskGraphWeightedChoiceIR] = []
+    definitions: list[TaskGraphNumericDefinitionIR] = []
+    for index, (raw_weight, branch) in enumerate(zip(odds_list, branches, strict=True)):
+        child_path = f"{parent_path}.OddsList[{index}]"
+        evidence = thaw_json(parent_source.evidence)
+        if not isinstance(evidence, dict):
+            raise _Blocked("random_config_parent_source_evidence_invalid")
+        evidence["json_path"] = child_path
+        child_source = IRSource(
+            parent_source.source_path,
+            parent_source.raw_type,
+            parent_source.raw_id,
+            evidence,
+        )
+        occurrence_id = task_graph_source_occurrence_id(child_source, "RandomConfig")
+        expression = lower_numeric_expression(raw_weight)
+        definition_id = task_graph_numeric_id(occurrence_id, expression)
+        definition = TaskGraphNumericDefinitionIR(
+            definition_id,
+            occurrence_id,
+            expression,
+            child_source,
+        )
+        choice = TaskGraphWeightedChoiceIR(
+            task_graph_weighted_choice_id(
+                graph_node_id,
+                index,
+                branch.branch_id,
+                definition_id,
+            ),
+            graph_node_id,
+            "RandomConfig",
+            index,
+            branch.branch_id,
+            definition_id,
+            occurrence_id,
+            child_source,
+        )
+        definitions.append(definition)
+        choices.append(choice)
+    return TaskGraphWeightedSelectionIR(
+        task_graph_weighted_selection_id(
+            graph_node_id,
+            parent_source_occurrence_id,
+        ),
+        graph_node_id,
+        parent_source_occurrence_id,
+        "RandomConfig",
+        "weighted_single",
+        tuple(choices),
+        tuple(definitions),
+        parent_source,
+    )
+
+
+def _raw_source_value(
+    source_snapshot: CharacterAbilityRawSnapshot,
+    source_path: str,
+    json_path: str,
+) -> object:
+    raw_bytes = source_snapshot.source_bytes.get(source_path)
+    if raw_bytes is None:
+        raise _Blocked(f"random_config_source_bytes_missing:{source_path}")
+    try:
+        current: object = json.loads(raw_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _Blocked(f"random_config_source_bytes_unreadable:{source_path}") from exc
+    if not json_path.startswith("$"):
+        raise _Blocked("random_config_source_path_invalid")
+    cursor = 1
+    while cursor < len(json_path):
+        marker = json_path[cursor]
+        if marker == ".":
+            cursor += 1
+            end = cursor
+            while end < len(json_path) and json_path[end] not in ".[":
+                end += 1
+            key = json_path[cursor:end]
+            if not key or not isinstance(current, Mapping) or key not in current:
+                raise _Blocked(f"random_config_source_path_missing:{json_path}")
+            current = current[key]
+            cursor = end
+            continue
+        if marker == "[":
+            end = json_path.find("]", cursor + 1)
+            if end < 0:
+                raise _Blocked(f"random_config_source_path_invalid:{json_path}")
+            raw_index = json_path[cursor + 1 : end]
+            if not raw_index.isdigit() or type(current) is not list:
+                raise _Blocked(f"random_config_source_path_invalid:{json_path}")
+            index = int(raw_index)
+            if index >= len(current):
+                raise _Blocked(f"random_config_source_path_missing:{json_path}")
+            current = current[index]
+            cursor = end + 1
+            continue
+        raise _Blocked(f"random_config_source_path_invalid:{json_path}")
+    return current
 
 
 def _references(

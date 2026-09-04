@@ -597,6 +597,7 @@ class TaskGraphIR:
     source_fingerprint: str
     source: IRSource
     coverage_status: Literal["lowered", "lowered_with_obligation"]
+    weighted_selections: tuple["TaskGraphWeightedSelectionIR", ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphIR:
@@ -615,6 +616,7 @@ class TaskGraphIR:
         roots = _strings(self.root_node_ids, "task graph roots", ordered=True)
         nodes = tuple(self.nodes)
         numeric = tuple(self.numeric_definitions)
+        weighted = tuple(self.weighted_selections)
         if any(type(item) is not TaskGraphNodeIR or item.graph_id != self.graph_id for item in nodes):
             raise TypeError("task graph nodes are invalid")
         node_ids = tuple(item.graph_node_id for item in nodes)
@@ -624,10 +626,36 @@ class TaskGraphIR:
             raise ValueError("task graph formal task positions are not unique")
         if any(type(item) is not TaskGraphNumericDefinitionIR for item in numeric):
             raise TypeError("task graph numeric definitions are invalid")
+        if any(type(item) is not TaskGraphWeightedSelectionIR for item in weighted):
+            raise TypeError("task graph weighted selections are invalid")
         numeric_ids = tuple(item.definition_id for item in numeric)
         if len(numeric_ids) != len(set(numeric_ids)):
             raise ValueError("task graph numeric definitions contain duplicates")
+        weighted_ids = tuple(item.selection_id for item in weighted)
+        if len(weighted_ids) != len(set(weighted_ids)) or len(
+            {item.graph_node_id for item in weighted}
+        ) != len(weighted):
+            raise ValueError("task graph weighted selections contain duplicates")
+        if weighted and self.entry_kind != "ability_phase_callback":
+            raise ValueError("task graph weighted selections require an ability entry")
         numeric_by_id = {item.definition_id: item for item in numeric}
+        node_by_id = {item.graph_node_id: item for item in nodes}
+        for selection in weighted:
+            node = node_by_id.get(selection.graph_node_id)
+            if node is None:
+                raise ValueError("task graph weighted selection node is dangling")
+            if node.source_family != "RandomConfig" or selection.family != "RandomConfig":
+                raise ValueError("task graph weighted selection family is invalid")
+            if (
+                selection.parent_source_occurrence_id != node.source_occurrence_id
+                or selection.source != node.source
+            ):
+                raise ValueError("task graph weighted selection parent source is inconsistent")
+            if len(selection.choices) != len(node.branches):
+                raise ValueError("task graph weighted selection branch denominator is incomplete")
+            for choice, branch in zip(selection.choices, node.branches, strict=True):
+                if choice.ordinal != branch.ordinal or choice.branch_id != branch.branch_id:
+                    raise ValueError("task graph weighted selection branch identity is inconsistent")
         parent_counts = {node_id: 0 for node_id in node_ids}
         adjacency: dict[str, tuple[str, ...]] = {}
         for node in nodes:
@@ -687,6 +715,7 @@ class TaskGraphIR:
         object.__setattr__(self, "root_node_ids", roots)
         object.__setattr__(self, "nodes", tuple(sorted(nodes, key=lambda item: item.graph_node_id)))
         object.__setattr__(self, "numeric_definitions", tuple(sorted(numeric, key=lambda item: item.definition_id)))
+        object.__setattr__(self, "weighted_selections", tuple(sorted(weighted, key=lambda item: item.selection_id)))
         object.__setattr__(self, "source", _source(self.source, "task graph"))
 
     @property
@@ -710,6 +739,7 @@ class TaskGraphIR:
             "source_fingerprint": self.source_fingerprint,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
+            "weighted_selections": [item.to_json() for item in self.weighted_selections],
         }
 
     @classmethod
@@ -717,11 +747,12 @@ class TaskGraphIR:
         item = _exact(value, {
             "graph_id", "entry_id", "entry_kind", "owner_id", "callback_kind",
             "root_node_ids", "nodes", "numeric_definitions", "source_catalog_id",
-            "source_fingerprint", "source", "coverage_status",
+            "source_fingerprint", "source", "coverage_status", "weighted_selections",
         }, "task graph")
         nodes = item.get("nodes")
         numeric = item.get("numeric_definitions")
-        if not isinstance(nodes, list) or not isinstance(numeric, list):
+        weighted = item.get("weighted_selections")
+        if not isinstance(nodes, list) or not isinstance(numeric, list) or not isinstance(weighted, list):
             raise TypeError("task graph members must be arrays")
         return cls(
             graph_id=_string(item, "graph_id", "task graph"),
@@ -736,6 +767,7 @@ class TaskGraphIR:
             source_fingerprint=_string(item, "source_fingerprint", "task graph"),
             source=_source_from_json(item.get("source"), "task graph"),
             coverage_status=cast(Any, _string(item, "coverage_status", "task graph")),
+            weighted_selections=tuple(TaskGraphWeightedSelectionIR.from_json(value) for value in weighted),
         )
 
 
