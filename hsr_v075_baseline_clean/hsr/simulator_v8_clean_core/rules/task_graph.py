@@ -636,8 +636,6 @@ class TaskGraphIR:
             {item.graph_node_id for item in weighted}
         ) != len(weighted):
             raise ValueError("task graph weighted selections contain duplicates")
-        if weighted and self.entry_kind != "ability_phase_callback":
-            raise ValueError("task graph weighted selections require an ability entry")
         numeric_by_id = {item.definition_id: item for item in numeric}
         node_by_id = {item.graph_node_id: item for item in nodes}
         for selection in weighted:
@@ -656,6 +654,11 @@ class TaskGraphIR:
             for choice, branch in zip(selection.choices, node.branches, strict=True):
                 if choice.ordinal != branch.ordinal or choice.branch_id != branch.branch_id:
                     raise ValueError("task graph weighted selection branch identity is inconsistent")
+        random_config_node_ids = {
+            node.graph_node_id for node in nodes if node.source_family == "RandomConfig"
+        }
+        if {item.graph_node_id for item in weighted} != random_config_node_ids:
+            raise ValueError("task graph RandomConfig weighted selection ledger is incomplete")
         parent_counts = {node_id: 0 for node_id in node_ids}
         adjacency: dict[str, tuple[str, ...]] = {}
         for node in nodes:
