@@ -301,6 +301,7 @@ P9 使用两个明确结论，禁止混淆：
 - [x] P9-S8C1B 正式 action entry materializer 接线完成验收。
 - [x] P9-S8C1C 其余公开 entry 与完整来源分母闭合完成验收。
 - [x] P9-S8C1 RandomConfig 有序候选与权重任务图契约聚合完成验收。
+- [x] P9-S8C2 RandomConfig weighted-selection runtime executor contract 完成验收（仅共享 executor contract；真实 ability/status caller/RNG-ledger integration 仍待后续卡）。
 - [ ] P9-S8C 命中序列、模拟 barrier、parallel 和随机分支完成验收。
 - [ ] P9-S9 事件分区、通用事件契约和动作窗口完成验收。
 - [ ] P9-S10 状态生命周期、属性修改和 callback 完成验收。

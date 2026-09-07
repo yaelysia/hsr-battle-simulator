@@ -1,6 +1,6 @@
 # P9-S8C2 RandomConfig weighted-selection runtime executor contract
 
-> 状态：`ready_for_execution`
+> 状态：`accepted`
 >
 > 父阶段：`P9-S8C`
 >
