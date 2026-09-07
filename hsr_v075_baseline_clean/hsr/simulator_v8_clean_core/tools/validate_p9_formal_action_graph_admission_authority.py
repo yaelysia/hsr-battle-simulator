@@ -3,15 +3,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import resource
 import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from ..core.model import ActionCommand, BattleState, UnitState
 from ..ir_types import IRSource
+from ..rules.evaluator import RuleEvaluator
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import (
     TaskGraphDefinitionReferenceIR,
@@ -26,6 +29,7 @@ from ..rules.task_graph import (
 from ..systems.action_contract import ActionContractSystem, _formal_action_task_graph_projection
 from ..systems.action_selection import ActionTargetSelectionSystem
 from ..systems.ability_task_contract import ability_task_runtime_blocked_reason
+from ..systems.task_graph import TaskGraphExecutor
 from ..tbgd.lowering import TBGDLowering, build_character_action_definition_ir
 from ..tbgd.task_graph_materializer import materialize_ability_task_graph_catalog
 
@@ -195,7 +199,12 @@ class _FixtureRules:
         )
 
     def ability_tasks_for_phase(self, phase_id: str) -> tuple[Any, ...]:
-        return tuple(sorted((t for t in self.tasks.values() if t.phase_id == phase_id), key=lambda t: t.task_id))
+        return tuple(
+            sorted(
+                (t for t in self.tasks.values() if t.phase_id == phase_id),
+                key=lambda t: t.task_id,
+            )
+        )
 
     def query_formal_task_graph(
         self, entry_kind: str, owner_id: str, callback_kind: str, formal_task_ids: Any
@@ -254,10 +263,9 @@ def _project(
     )
 
 
-def _run_fast() -> dict[str, Any]:
-    started = time.perf_counter()
-
-    p_root, p_unrelated = _phase("fixture:p:root"), _phase("fixture:p:unrelated", "nested_only")
+def _run_fast_cases() -> dict[str, Any]:
+    p_root = _phase("fixture:p:root")
+    p_unrelated = _phase("fixture:p:unrelated", "nested_only")
     t_root = _task("fixture:t:root", p_root.phase_id)
     t_unrelated = _task(
         "fixture:t:unrelated",
@@ -266,13 +274,16 @@ def _run_fast() -> dict[str, Any]:
         blocked_reason="fixture_unrelated_flat_blocker",
     )
     excluded, rules = _project(
-        (p_root, p_unrelated), (t_root, t_unrelated), (_graph(p_root.phase_id, t_root),)
+        (p_root, p_unrelated),
+        (t_root, t_unrelated),
+        (_graph(p_root.phase_id, t_root),),
     )
     assert excluded.reachable_task_ids == (t_root.task_id,)
     assert excluded.excluded_bound_task_ids == (t_unrelated.task_id,)
     assert "fixture_unrelated_flat_blocker" not in excluded.blocked_reasons
 
-    p_trigger, p_nested = _phase("fixture:p:trigger"), _phase("fixture:p:nested", "nested_only")
+    p_trigger = _phase("fixture:p:trigger")
+    p_nested = _phase("fixture:p:nested", "nested_only")
     t_trigger = _task(
         "fixture:t:trigger",
         p_trigger.phase_id,
@@ -317,7 +328,8 @@ def _run_fast() -> dict[str, Any]:
     )
     assert "fixture_deferred_node" in deferred.blocked_reasons
     assert any(
-        row.get("reason") == "fixture_deferred_node" and row.get("source") == "node_materialization"
+        row.get("reason") == "fixture_deferred_node"
+        and row.get("source") == "node_materialization"
         for row in deferred.blocker_provenance
     )
 
@@ -330,7 +342,14 @@ def _run_fast() -> dict[str, Any]:
             _graph(
                 p_ref.phase_id,
                 t_ref,
-                references=(("effect", "fixture:missing_effect", "deferred", "fixture_unresolved_gameplay_ref"),),
+                references=(
+                    (
+                        "effect",
+                        "fixture:missing_effect",
+                        "deferred",
+                        "fixture_unresolved_gameplay_ref",
+                    ),
+                ),
             ),
         ),
     )
@@ -367,7 +386,14 @@ def _run_fast() -> dict[str, Any]:
             _graph(
                 p_process.phase_id,
                 t_process,
-                references=(("effect", t_process.effect_id, "deferred", "fixture_audit_only_reference"),),
+                references=(
+                    (
+                        "effect",
+                        t_process.effect_id,
+                        "deferred",
+                        "fixture_audit_only_reference",
+                    ),
+                ),
             ),
         ),
         {t_process.effect_id: effect},
@@ -382,7 +408,11 @@ def _run_fast() -> dict[str, Any]:
         execution_mode="process_only",
         coverage_status="audit_only",
     )
-    invalid, _ = _project((p_invalid,), (t_invalid,), (_graph(p_invalid.phase_id, t_invalid),))
+    invalid, _ = _project(
+        (p_invalid,),
+        (t_invalid,),
+        (_graph(p_invalid.phase_id, t_invalid),),
+    )
     assert "process_only_task_effect_missing" in invalid.blocked_reasons
 
     p_legacy = _phase("fixture:p:legacy", "external_legacy")
@@ -405,18 +435,37 @@ def _run_fast() -> dict[str, Any]:
         1,
         (t_legacy,),  # type: ignore[arg-type]
     )
-    assert not legacy_projection.reachable_task_ids and not legacy_projection.blocked_reasons
+    assert not legacy_projection.reachable_task_ids
+    assert not legacy_projection.blocked_reasons
 
     p_missing = _phase("fixture:p:missing")
     t_missing = _task("fixture:t:missing", p_missing.phase_id)
     malformed, _ = _project((p_missing,), (t_missing,), ())
-    assert malformed.blocked_reasons and malformed.blocked_reasons[0].startswith("task_graph_missing:")
+    assert malformed.blocked_reasons
+    assert malformed.blocked_reasons[0].startswith("task_graph_missing:")
 
     repeated, _ = _project(
-        (p_root, p_unrelated), (t_root, t_unrelated), (_graph(p_root.phase_id, t_root),)
+        (p_root, p_unrelated),
+        (t_root, t_unrelated),
+        (_graph(p_root.phase_id, t_root),),
     )
     assert repeated == excluded
 
+    return {
+        "excluded": excluded.metadata(),
+        "nested": nested.metadata(),
+        "deferred": deferred.metadata(),
+        "unresolved": unresolved.metadata(),
+        "process_only": process.metadata(),
+        "invalid_process_only": invalid.metadata(),
+        "legacy_reason": legacy_reason,
+        "malformed": malformed.metadata(),
+        "graph_query_count": rules.graph_query_count,
+    }
+
+
+def _run_fast() -> dict[str, Any]:
+    started = time.perf_counter()
     sentinel = BattleState(
         units={
             "fixture:actor": UnitState(
@@ -428,7 +477,15 @@ def _run_fast() -> dict[str, Any]:
             )
         }
     )
-    before, after = sentinel.snapshot().to_json(), sentinel.snapshot().to_json()
+    before = sentinel.snapshot().to_json()
+    forbidden = AssertionError("formal admission attempted runtime execution")
+    with (
+        patch.object(TaskGraphExecutor, "execute", side_effect=forbidden),
+        patch.object(RuleEvaluator, "evaluate_condition_result", side_effect=forbidden),
+        patch.object(random, "random", side_effect=forbidden),
+    ):
+        sample = _run_fast_cases()
+    after = sentinel.snapshot().to_json()
     assert before == after
 
     predicates = {
@@ -449,17 +506,7 @@ def _run_fast() -> dict[str, Any]:
         "mode": "fast",
         "cases": len(predicates),
         "predicates": predicates,
-        "sample": {
-            "excluded": excluded.metadata(),
-            "nested": nested.metadata(),
-            "deferred": deferred.metadata(),
-            "unresolved": unresolved.metadata(),
-            "process_only": process.metadata(),
-            "invalid_process_only": invalid.metadata(),
-            "legacy_reason": legacy_reason,
-            "malformed": malformed.metadata(),
-            "graph_query_count": rules.graph_query_count,
-        },
+        "sample": sample,
         "resource": {"wall_seconds": round(elapsed, 6)},
     }
 
@@ -524,29 +571,37 @@ def _accepted_context(
     admissions = tuple(
         sorted(
             (
-                a
-                for a in rules.ir.action_admissions
-                if a.action_id == definition.action_id
-                and a.action_level == definition.level
-                and a.coverage_status == "executable"
-                and not a.blocked_reason
+                admission
+                for admission in rules.ir.action_admissions
+                if admission.action_id == definition.action_id
+                and admission.action_level == definition.level
+                and admission.coverage_status == "executable"
+                and not admission.blocked_reason
             ),
-            key=lambda a: a.admission_id,
+            key=lambda admission: admission.admission_id,
         )
     )
     for admission in admissions:
-        modes = tuple(admission.submission_modes)
         ordered_modes = tuple(
             mode
-            for mode in ("external_turn", "insert_window", "queue", "trigger", "out_of_combat")
-            if mode in modes
+            for mode in (
+                "external_turn",
+                "insert_window",
+                "queue",
+                "trigger",
+                "out_of_combat",
+            )
+            if mode in admission.submission_modes
         )
         for mode in ordered_modes:
             window = admission.allowed_windows[0] if admission.allowed_windows else "idle"
             state = _state_for_admission(admission, window)
             selector = ActionTargetSelectionSystem(rules)
             query = selector.query(
-                state, "validation:actor", definition.action_id, definition.level
+                state,
+                "validation:actor",
+                definition.action_id,
+                definition.level,
             )
             if query.status != "resolved":
                 continue
@@ -562,21 +617,29 @@ def _accepted_context(
                 actor_id="validation:actor",
                 action_id=definition.action_id,
                 action_level=definition.level,
-                target_ids=accepted.context.accepted.selected_target_ids,
+                target_ids=(
+                    ()
+                    if query.selection_mode == "automatic"
+                    else accepted.context.accepted.selected_target_ids
+                ),
             )
+            if selector.context_blocked_reason(state, command, accepted.context):
+                continue
             decision = ActionContractSystem(rules).evaluate(
                 state,
                 command,
                 submission_mode=mode,
                 target_selection_fingerprint=accepted.context.context_fingerprint,
             )
+            if decision.admission is None:
+                continue
+            if "formal_action_reachable_task_ids" not in decision.metadata:
+                continue
             if expected_blockers:
-                if decision.ok or not any(
+                if decision.ok or not all(
                     reason in decision.blocked_reason for reason in expected_blockers
                 ):
                     continue
-            elif not decision.ok:
-                continue
             return state, command, accepted.context, admission, mode, decision
     return None
 
@@ -620,19 +683,49 @@ def _direct_row(
     context: tuple[BattleState, ActionCommand, Any, Any, str, Any],
 ) -> dict[str, Any]:
     _, _, target_context, admission, mode, decision = context
-    excluded_reasons = tuple(reason for _, reason in excluded_blockers)
-    provenance = decision.metadata.get("formal_action_blocker_provenance", [])
-    provenance_reasons = tuple(
-        str(row.get("reason") or "") for row in provenance if isinstance(row, dict)
+    metadata = decision.metadata
+    actual_root_ids = tuple(str(value) for value in metadata.get("formal_action_root_graph_ids", []))
+    actual_reachable = tuple(
+        str(value) for value in metadata.get("formal_action_reachable_task_ids", [])
     )
-    assert not any(
-        reason and (reason in decision.blocked_reason or reason in provenance_reasons)
-        for reason in excluded_reasons
+    actual_excluded = tuple(
+        str(value) for value in metadata.get("formal_action_excluded_bound_task_ids", [])
     )
+    provenance = metadata.get("formal_action_blocker_provenance", [])
+    if actual_root_ids != tuple(projection.root_graph_ids):
+        raise AssertionError("ActionContract root graph metadata diverged from production projection")
+    if actual_reachable != tuple(projection.reachable_task_ids):
+        raise AssertionError("ActionContract reachable-task metadata diverged from production projection")
+    if actual_excluded != tuple(projection.excluded_bound_task_ids):
+        raise AssertionError("ActionContract excluded-task metadata diverged from production projection")
+    if provenance != list(projection.blocker_provenance):
+        raise AssertionError("ActionContract blocker provenance diverged from production projection")
+
+    provenance_task_ids = {
+        str(row.get("task_id") or "")
+        for row in provenance
+        if isinstance(row, dict)
+    }
+    reachable_reasons = set(projection.blocked_reasons)
+    for task, reason in excluded_blockers:
+        if task.task_id in provenance_task_ids or task.task_id in actual_reachable:
+            raise AssertionError(
+                f"excluded task leaked into ActionContract projection:{task.task_id}"
+            )
+        if (
+            reason
+            and reason not in reachable_reasons
+            and reason in decision.blocked_reason
+        ):
+            raise AssertionError(
+                "unique out-of-closure blocker leaked into ActionContract decision:"
+                f"{task.task_id}:{reason}"
+            )
+
     phases = tuple(
         sorted(
             rules.ability_phases_for_action(definition.action_id, definition.level),
-            key=lambda p: p.phase_id,
+            key=lambda phase: phase.phase_id,
         )
     )
     return {
@@ -641,7 +734,8 @@ def _direct_row(
         "action_level": definition.level,
         "source": definition.source.to_json(),
         "phase_invocation_roles": [
-            {"phase_id": p.phase_id, "invocation_role": p.invocation_role} for p in phases
+            {"phase_id": phase.phase_id, "invocation_role": phase.invocation_role}
+            for phase in phases
         ],
         "root_graphs": _root_graphs(rules, projection),
         "flat_bound_task_ids": [task.task_id for task in flat],
@@ -654,6 +748,7 @@ def _direct_row(
                 "opcode": task.opcode,
                 "coverage_status": task.coverage_status,
                 "blocked_reason": reason,
+                "reason_is_unique_to_excluded_set": reason not in reachable_reasons,
             }
             for task, reason in excluded_blockers
         ],
@@ -667,6 +762,7 @@ def _direct_row(
             "candidate_ids": list(target_context.accepted.candidate_ids),
             "submitted_target_ids": list(target_context.accepted.submitted_target_ids),
             "selected_target_ids": list(target_context.accepted.selected_target_ids),
+            "context_status": "accepted",
         },
         "admission": {
             "admission_id": admission.admission_id,
@@ -677,9 +773,9 @@ def _direct_row(
         "action_contract": {
             "ok": decision.ok,
             "blocked_reason": decision.blocked_reason,
-            "formal_action_root_graph_ids": decision.metadata.get("formal_action_root_graph_ids", []),
-            "formal_action_reachable_task_ids": decision.metadata.get("formal_action_reachable_task_ids", []),
-            "formal_action_excluded_bound_task_ids": decision.metadata.get("formal_action_excluded_bound_task_ids", []),
+            "formal_action_root_graph_ids": list(actual_root_ids),
+            "formal_action_reachable_task_ids": list(actual_reachable),
+            "formal_action_excluded_bound_task_ids": list(actual_excluded),
             "formal_action_blocker_provenance": provenance,
         },
     }
@@ -704,18 +800,24 @@ def _run_direct(root: Path) -> dict[str, Any]:
         snapshot = lowering._character_ability_raw_snapshot
         scope = lowering._character_ability_scope_catalog
         source_catalog = lowering.build_character_control_flow_contract_catalog(
-            snapshot=snapshot, scope_catalog=scope
+            snapshot=snapshot,
+            scope_catalog=scope,
         )
         definitions = tuple(
             sorted(
                 build_character_action_definition_ir(root),
-                key=lambda x: (x.action_id, x.level, x.definition_id),
+                key=lambda definition: (
+                    definition.action_id,
+                    definition.level,
+                    definition.definition_id,
+                ),
             )
         )
         for definition in definitions:
             if time.perf_counter() - started > _DIRECT_DISCOVERY_GUARD_SECONDS:
                 break
             scanned += 1
+            stage = "slice"
             try:
                 canonical = lowering.build_character_action_ability_slice(
                     definition,
@@ -723,23 +825,36 @@ def _run_direct(root: Path) -> dict[str, Any]:
                     scope_catalog=scope,
                     source_graph_catalog=source_graph,
                 )
+                stage = "materialize"
                 graph_catalog = materialize_ability_task_graph_catalog(
-                    source_catalog, canonical, source_snapshot=snapshot
+                    source_catalog,
+                    canonical,
+                    source_snapshot=snapshot,
                 )
+                stage = "rulebook"
                 rules = RuleBook(replace(canonical, task_graph_catalog=graph_catalog))
-                tasks = rules.ability_tasks_for_action(definition.action_id, definition.level)
+                tasks = rules.ability_tasks_for_action(
+                    definition.action_id,
+                    definition.level,
+                )
                 phases = tuple(
-                    rules.ability_phases_for_action(definition.action_id, definition.level)
+                    rules.ability_phases_for_action(
+                        definition.action_id,
+                        definition.level,
+                    )
                 )
                 roles = {phase.invocation_role for phase in phases}
 
+                stage = "external_legacy"
                 if legacy_row is None and roles == {"external_legacy"}:
                     legacy_reasons = tuple(
                         reason
                         for task in tasks
                         if (
                             reason := ability_task_runtime_blocked_reason(
-                                rules, task, topology_authority="external_legacy"
+                                rules,
+                                task,
+                                topology_authority="external_legacy",
                             )
                         )
                     )
@@ -754,35 +869,59 @@ def _run_direct(root: Path) -> dict[str, Any]:
                             "flat_blockers": list(legacy_reasons),
                             "action_contract_ok": decision.ok,
                             "action_contract_blocked_reason": decision.blocked_reason,
+                            "admission_id": context[3].admission_id,
+                            "submission_mode": context[4],
                         }
 
-                flat = _flat_formal_tasks(rules, definition.action_id, definition.level)
+                stage = "projection"
+                flat = _flat_formal_tasks(
+                    rules,
+                    definition.action_id,
+                    definition.level,
+                )
                 if not flat:
                     continue
                 projection = _formal_action_task_graph_projection(
-                    rules, definition.action_id, definition.level, tasks
+                    rules,
+                    definition.action_id,
+                    definition.level,
+                    tasks,
                 )
                 expected = tuple(projection.blocked_reasons)
                 context = None
+
+                stage = "reachable_context"
                 if reachable_row is None and expected:
                     context = _accepted_context(rules, definition, expected)
                     if context is not None:
                         reachable_row = _direct_row(
-                            rules, definition, projection, flat, (), context
+                            rules,
+                            definition,
+                            projection,
+                            flat,
+                            (),
+                            context,
                         )
 
+                stage = "delta_context"
                 if delta_row is None and len(flat) > len(projection.reachable_task_ids):
+                    reachable_ids = set(projection.reachable_task_ids)
                     excluded = tuple(
-                        task
-                        for task in flat
-                        if task.task_id in set(projection.excluded_bound_task_ids)
+                        task for task in flat if task.task_id not in reachable_ids
                     )
                     excluded_blockers = tuple(
-                        (task, _old_flat_blocker(rules, task)) for task in excluded
+                        (task, _old_flat_blocker(rules, task))
+                        for task in excluded
                     )
-                    excluded_blockers = tuple(item for item in excluded_blockers if item[1])
+                    excluded_blockers = tuple(
+                        item for item in excluded_blockers if item[1]
+                    )
                     if excluded_blockers:
-                        context = context or _accepted_context(rules, definition, expected)
+                        context = context or _accepted_context(
+                            rules,
+                            definition,
+                            expected,
+                        )
                         if context is not None:
                             delta_row = _direct_row(
                                 rules,
@@ -794,29 +933,38 @@ def _run_direct(root: Path) -> dict[str, Any]:
                             )
                             if expected:
                                 reachable_row = delta_row
-                if delta_row is not None and reachable_row is not None and legacy_row is not None:
+
+                if (
+                    delta_row is not None
+                    and reachable_row is not None
+                    and legacy_row is not None
+                ):
                     break
             except (AssertionError, TypeError, ValueError, RuntimeError) as exc:
                 diagnostics.append(
-                    f"{definition.action_id}@{definition.level}:{type(exc).__name__}:{exc}"
+                    f"{definition.action_id}@{definition.level}:{stage}:"
+                    f"{type(exc).__name__}:{exc}"
                 )
     finally:
         TBGDLowering.build = original_build
 
     if delta_row is None:
         raise AssertionError(
-            "no real TBGD strict flat>graph delta survived public target query/accept + ActionContractSystem.evaluate:"
-            + json.dumps(diagnostics[-12:], ensure_ascii=False)
+            "no real TBGD strict flat>graph delta survived public target "
+            "query/accept + ActionContractSystem.evaluate:"
+            + json.dumps(diagnostics[-16:], ensure_ascii=False)
         )
     if reachable_row is None:
         raise AssertionError(
-            "no reachable formal blocker was reproduced through ActionContractSystem.evaluate:"
-            + json.dumps(diagnostics[-12:], ensure_ascii=False)
+            "no reachable formal blocker was reproduced through "
+            "ActionContractSystem.evaluate:"
+            + json.dumps(diagnostics[-16:], ensure_ascii=False)
         )
     if legacy_row is None:
         raise AssertionError(
-            "no external_legacy regression representative was reproduced in the bounded real denominator:"
-            + json.dumps(diagnostics[-12:], ensure_ascii=False)
+            "no external_legacy regression representative was reproduced in "
+            "the bounded real denominator:"
+            + json.dumps(diagnostics[-16:], ensure_ascii=False)
         )
 
     elapsed = time.perf_counter() - started
@@ -826,6 +974,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "flat_bound_set_strictly_larger_than_graph_closure": True,
         "excluded_blocker_bearing_task_present": True,
         "public_target_selection_query_and_accept": True,
+        "target_selection_context_revalidated": True,
         "action_contract_evaluated_after_target_accept": True,
         "excluded_flat_only_blockers_absent_after_projection": True,
         "reachable_graph_blockers_preserved_fail_closed": True,
@@ -835,7 +984,11 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "full_canonical_ir_build_count": 0,
     }
     return {
-        "ok": elapsed <= _DIRECT_HARD_SECONDS and peak <= 1024 * 1024 and all(predicates.values()),
+        "ok": (
+            elapsed <= _DIRECT_HARD_SECONDS
+            and peak <= 1024 * 1024
+            and all(predicates.values())
+        ),
         "mode": "direct",
         "predicates": predicates,
         "source": {
@@ -845,13 +998,18 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "flat_vs_graph_delta": delta_row,
         "reachable_blocker_representative": reachable_row,
         "external_legacy_representative": legacy_row,
-        "diagnostics_tail": diagnostics[-6:],
-        "resource": {"wall_seconds": round(elapsed, 6), "peak_rss_kib": peak},
+        "diagnostics_tail": diagnostics[-8:],
+        "resource": {
+            "wall_seconds": round(elapsed, 6),
+            "peak_rss_kib": peak,
+        },
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate P9 formal action graph admission authority")
+    parser = argparse.ArgumentParser(
+        description="Validate P9 formal action graph admission authority"
+    )
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--fast", action="store_true")
     modes.add_argument("--direct", action="store_true")
