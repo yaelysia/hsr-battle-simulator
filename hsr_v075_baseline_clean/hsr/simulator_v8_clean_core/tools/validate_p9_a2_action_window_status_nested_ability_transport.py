@@ -236,10 +236,19 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     bad_task_invocation, bad_task_reason = ability._status_nested_invocation_for_request(
         context, bad_task, state
     )
-    root_request = _request(root_graph, root_graph.graph_id)
-    bad_entry_invocation, bad_entry_reason = ability._status_nested_invocation_for_request(
-        context, root_request, state
+    bad_status_graph, bad_status_entry = _b5_graph(
+        "status_callback",
+        "callback:bad-child",
+        callback.event,
+        "status_task:bad-child",
+        "TriggerAbility",
     )
+    rules.add_graph(bad_status_graph, bad_status_entry)
+    bad_entry_request = _request(bad_status_graph, root_graph.graph_id)
+    bad_entry_invocation, bad_entry_reason = ability._status_nested_invocation_for_request(
+        context, bad_entry_request, state
+    )
+    status_request = _request(root_graph, "graph:fixture:status-parent")
     missing_status_invocation, missing_status_reason = ability._status_nested_invocation_for_request(
         context,
         child_request,
@@ -318,7 +327,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
 
     before_status_route = len(seen_channels)
     status_weighted = cast(Any, routed.weighted_selection)(
-        root_request, weighted_selection, state
+        status_request, weighted_selection, state
     )
     status_graph_did_not_escape = len(seen_channels) == before_status_route
 
