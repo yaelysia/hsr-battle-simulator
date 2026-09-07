@@ -1,78 +1,132 @@
-# P9-S8C RandomConfig Formal Action Caller / RNG Ledger — EXEC report
+# P9-S8C RandomConfig Formal Action Caller / RNG Ledger — EXEC R1 report
 
 - role: `EXEC`
 - stage: `P9-S8C_RANDOM_CONFIG_ACTION_CALLER_RNG_LEDGER`
+- revision: `R1`
 - status: `needs_replan`
 - planning base: `b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce`
-- planning handoff head: `b7694b80d2df7d50d18e4687adb9300d92b48ad9`
-- implementation head before this report: `53859e6ea6d3f78ced8b2b1e2a7ead57e71f4463`
-- final PR head: recorded in the structured `[NEEDS_REPLAN]` PR comment because committing this report necessarily advances the branch head.
+- PLAN R1 handoff head: `295eef6708abdc72ba9330b2acb701d1a177432f`
+- report-predecessor head: `3637d246724be60af142cec8fc70c5ff8504a3ae`
+- authoritative exact final head: recorded in the structured `[NEEDS_REPLAN]` PR comment posted after this report commit.
 
-## Work performed
+## R1 work completed
 
-The scoped caller implementation was added only in the card-authorized production file `simulator_v8_clean_core/systems/ability.py`:
+Existing EXEC caller/RNG work was preserved and extended only inside the R1 authorized production set.
 
-- wired the existing S8C2 `weighted_selection` hook into `AbilityTaskSystem._formal_task_graph_hooks(...)`;
-- evaluates accepted `TaskGraphWeightedSelectionIR.numeric_definitions` through the existing formal ability numeric evaluator;
-- preserves materialized choice / branch / source identity;
-- constructs the existing `RNGRequest` and derives `choice_key` / `event_id` with the existing RNG helpers;
-- consumes existing action `rng_choices` / `rng_mode` metadata through `resolve_rng_request(...)`;
-- returns one existing `TaskGraphWeightedSelectionResult` with one RNG event and does not add another walker, RNG source or ledger validator.
+### `systems/ability.py`
 
-Validation-only changes were added to `tools/validate_p9_s8c_random_config_action_caller.py`, and the existing `.github/workflows/p9-s8c2-pr-validation.yml` was minimally adapted to run the card commands on a normal `ubuntu-latest` runner with the TBGD submodule.
+- keeps the formal `AbilityTaskSystem` `weighted_selection` hook wired to the accepted S8C2 shared `TaskGraphExecutor`;
+- resolves each accepted `TaskGraphWeightedSelectionIR` weight through the existing formal numeric evaluator;
+- builds the existing `RNGRequest`, using existing choice/event identity helpers and existing action `rng_choices` / `rng_mode` metadata;
+- returns the accepted S8C2 weighted-selection result with exact selection/choice/ordinal/branch identity and exactly one RNG event;
+- adds no second walker, RNG source, replay policy or ledger validator.
 
-`StatusCallbackSystem`, `systems/rng.py`, `systems/task_graph.py`, `rules/task_graph.py`, `core/executor.py`, compiler/materializer code and all other production authorities were not modified.
+### `tbgd/task_graph_materializer.py` R1 prerequisite
 
-## Validation reached before the scope boundary
+- action-only admission is limited to `ability_phase_callback` `RandomConfig` weighted-selection positions;
+- the accepted action RandomConfig position becomes executable `branch / task_graph_execution` only when branch children are already materialized and no unrelated deferred prerequisite is discarded;
+- matching source disposition retirement is derived from actual formal action materialization links rather than a global `p9_s8c` completion flag;
+- `status_callback`, `no_formal_producer`, and other S8C sibling ownership remain deferred;
+- the structural RandomConfig task's exact legacy unsupported effect reference is allowed to remain as a formal identity reference while it no longer prevents the RandomConfig branch node itself from materializing. The reference is retained so `CanonicalIR` definition-reference closure remains exact.
 
-GitHub Actions run `34088147702` on head `53859e6ea6d3f78ced8b2b1e2a7ead57e71f4463` completed successfully:
+### Validation/evidence
 
-- `compileall` for `systems/ability.py` + the focused validator: PASS;
-- focused `--fast`: PASS;
-- `test_p9_s8c2_random_config_runtime_executor.py`: PASS;
-- current focused `--direct`: PASS as a combination of real signed-source/materializer discovery plus synthetic production-hook runtime;
-- existing S8C1B `--direct`: PASS;
-- `git diff --check b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce...HEAD`: PASS.
+- focused validator now dynamically discovers real action RandomConfig candidates and attempts the required production `CombatExecutor.execute(ActionCommand)` route;
+- S8C1B validator expectation was minimally advanced from action-side deferred to action-side materialized while retaining signed-source/weight/choice/status-side checks;
+- S8C1C validator remained unchanged;
+- the reused workflow was restored to standard `contents: read` hosted-runner validation after temporary scoped bootstrap/diagnostic use.
 
-Run: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34088147702`
+## Evidence that the R1 materializer prerequisite succeeded
 
-Earlier ordinary validator/tooling failures were repaired in-PR:
+S8C1B run `34096066179` is fully green on the current production implementation:
 
-- run `34087576499`: validator imported a nonexistent private bootstrap helper; production compilation passed;
-- run `34087810409`: validator called a keyword-only formal-hook argument positionally; production compilation passed.
+- compile: PASS;
+- S8C1A upstream IR: PASS;
+- S8C1B Fast: PASS;
+- S8C1B real-source Direct: PASS;
+- diff check: PASS.
 
-Neither earlier failure was a production or scope blocker.
+The dynamically discovered representative is source-backed and action-only materialized. The earlier successful S8C1B Direct output identified:
 
-## Replan boundary discovered by strengthening Direct to the card's required production route
+- action: `avatar_skill:1100601`, level `1`;
+- phase: `ability_phase:avatar_skill:1100601:1:2:Avatar_Advanced_Silwolf_00_PassiveSkill_RandomBug`;
+- callback: `OnStart`;
+- source: `Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Silwolf_00_Ability.json`;
+- RandomConfig source path: `$.AbilityList[8].OnStart[0].SuccessTaskList[0].SuccessTaskList[0].SuccessTaskList[0]`;
+- denominator: `3` exact weighted choices;
+- selection: `task_graph_weighted_selection:431ead4594e3e198cee890932d5c2853290ffb2dc90fdb0cfd186f67ba601428`.
 
-The card requires `--direct` to dynamically discover a real formal action RandomConfig and execute it through:
+S8C1C run `34096066165` is also fully green, including its unchanged real-source Direct and full catalog denominator validation. This confirms R1 did not corrupt remaining-entry/source-closure accounting or globally close sibling S8C domains.
 
-`CombatExecutor.execute(ActionCommand) -> formal ability phase -> AbilityTaskSystem -> shared TaskGraphExecutor -> weighted_selection hook -> existing RNG authority -> whole-action RNG ledger`.
+## Required real `CombatExecutor.execute` Direct remains unreachable
 
-That route is not reachable with the card's allowed production write set.
+Standard R1 run `34095437727` passed:
 
-Repository facts establishing the boundary:
+- scoped compile;
+- focused `--fast`;
+- all 9 accepted S8C2 executor tests.
 
-1. `tbgd/character_control_flow_contracts.py` assigns both RandomConfig gameplay fields to stage `p9_s8c`:
-   - `OddsList` -> `numeric_contract / p9_s8c`;
-   - `TaskList` -> `child_graph / p9_s8c`.
-2. The same source-contract authority does not list `p9_s8c` in `_COMPLETED_OWNERS`.
-3. `tbgd/task_graph_materializer.py` maps `p9_s8c` to owner domain `hit_random_sequence` and leaves source dispositions with remaining downstream domains deferred.
-4. The accepted S8C1B real-source Direct validator explicitly requires its dynamically discovered formal action RandomConfig node to remain `materialization_status == "deferred"` with `owner_domains == ("hit_random_sequence",)`; that assertion is green on current head.
-5. `systems/task_graph.py::_TaskGraphRun.execute_node(...)` rejects any node whose `materialization_status != "materialized"` or `node_kind == "deferred"` before dispatching by node kind. Therefore the real RandomConfig node is rejected before `_execute_branch(...)` can call the newly wired weighted-selection hook.
+Its required real `CombatExecutor.execute(ActionCommand)` Direct then failed after dynamically exhausting the current real action RandomConfig candidates. This is not the old materializer deferral: the action RandomConfig graph is now materialized and installable in `CanonicalIR`.
 
-Consequently, the currently green focused `--direct` is not valid card acceptance evidence: it proves real signed-source/materializer closure and production hook behavior separately, but it cannot prove the required real `CombatExecutor` action transaction because the real node is still intentionally deferred upstream.
+A separate read-only dynamic diagnostic run `34096066174` confirmed the current candidate denominator is:
 
-## Why this is `NEEDS_REPLAN`
+- `avatar_skill:1100601`
+- `avatar_skill:120402`
+- `avatar_skill:130402`
+- `avatar_skill:130403`
 
-Closing the real production vertical slice requires first changing the RandomConfig materialization/source-ownership authority so an accepted real action RandomConfig node becomes `materialized` and executable. That necessarily requires a production change outside `systems/ability.py` (for example the control-flow/materializer authority), which the card explicitly defines as a planning boundary and stop condition.
+For the first dynamically ranked representative, `avatar_skill:1100601`, levels 1–4:
 
-EXEC therefore did not weaken Direct, did not mark the synthetic+source split proof as accepted, and did not modify the forbidden upstream authorities.
+- real target query: `resolved`;
+- real target acceptance: `accepted`;
+- external-turn admission exists for `idle`, `turn_active`, and `turn_action`;
+- `CombatExecutor` action contract blocks before formal ability execution with the same production reasons at every tested level/window:
+  - `process_only_task_effect_source_mismatch`;
+  - `effect_coverage_status:unsupported:SetEntityVisible`;
+  - `effect_coverage_status:unsupported:RandomConfig`.
+
+The focused Direct then continued to the other current candidates. The remaining candidates were blocked by already-deferred production semantics such as action-target relation/resource/effect coverage, or had no external-turn admission. No current real formal action RandomConfig reaches the weighted-selection hook through the complete production action transaction.
+
+Critically, the `unsupported:RandomConfig` blocker is now a **task/action admission-layer legacy coverage gate**, not a task-graph materialization blocker. `ActionContractSystem` evaluates the original `AbilityTaskIR` coverage before `AbilityTaskSystem` executes. R1's materializer can make the formal RandomConfig graph node executable, but it cannot change that action/task admission authority.
+
+## Why this is a new `NEEDS_REPLAN` boundary
+
+R1 authorizes production changes only in:
+
+- `systems/ability.py`;
+- `tbgd/task_graph_materializer.py`.
+
+Making the real action transaction trust the newly materialized formal RandomConfig structural position requires changing an upstream action/task admission authority (for example `systems/action_contract.py` / `systems/ability_task_contract.py` or another PLAN-selected equivalent) so the formal task-graph authority can supersede the legacy unsupported structural-task coverage at the correct boundary. Resolving the other candidate-specific sibling blockers would likewise expand beyond this card.
+
+The R1 card explicitly requires `[NEEDS_REPLAN]` if no current real action reaches RandomConfig without another deferred domain. EXEC therefore does not:
+
+- weaken Direct to source+synthetic stitching;
+- forge/patch `AbilityTaskIR` coverage in the validator;
+- bypass `CombatExecutor.execute` or its action contract;
+- modify an unapproved action/task admission production authority;
+- pull `StatusCallbackSystem` or other S8C siblings into this PR.
+
+## Validation summary
+
+- R1 action materializer prerequisite: PASS.
+- focused Fast: PASS.
+- accepted S8C2 shared-executor tests: `9 passed`.
+- S8C1B real-source Direct: PASS (`34096066179`).
+- S8C1C unchanged Direct + catalog: PASS (`34096066165`).
+- required focused real `CombatExecutor.execute` Direct: **FAIL at a newly exposed production admission boundary** (`34095437727`).
+- dynamic blocker diagnostic: PASS / evidence captured (`34096066174`).
+- standard workflow restored with `permissions: contents: read`.
 
 ## Remaining / deferred
 
-- PLAN must decide the prerequisite/materialization closure and authorize the exact production owner(s) needed to retire the `hit_random_sequence` deferral for the intended RandomConfig slice, or split that prerequisite into a preceding STRICT card.
-- After replanning, rerun a real dynamically discovered action through `CombatExecutor.execute(ActionCommand)` and prove one valid whole-action ledger decision plus stale/tampered fail-closed behavior.
-- `StatusCallbackSystem` remains separately deferred as required.
-- Parent `P9-S8C` remains unchecked.
-- EXEC has not self-accepted, updated governance/checklists, marked the PR ready, or merged.
+PLAN must decide the minimal action/task admission prerequisite that lets a task-graph-materialized action RandomConfig structural task pass the existing action contract without globally admitting unsupported effects or sibling domains. After that prerequisite, rerun the same mandatory Direct through `CombatExecutor.execute(ActionCommand)` and prove real RNG selection, whole-action explicit/replay ledger consumption, stale/tampered atomic failure and unselected-child exclusion.
+
+Still deferred and unchanged:
+
+- `StatusCallbackSystem` RandomConfig caller;
+- RandomConfig `no_formal_producer` positions;
+- projectile / wait / barrier / parallel / target-cursor and other S8C sibling families;
+- S8C aggregate acceptance;
+- parent `P9-S8C` checklist remains unchecked.
+
+EXEC has not self-accepted, checked governance items, marked the PR ready, or merged.
