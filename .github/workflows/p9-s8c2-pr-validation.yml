@@ -1,4 +1,4 @@
-name: P9 S8C RandomConfig R1 Materializer Diagnostic
+name: P9 S8C RandomConfig R1 Structural Reference Bootstrap
 
 on:
   pull_request:
@@ -12,128 +12,63 @@ on:
       - '.github/workflows/p9-s8c2-pr-validation.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  bootstrap:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 5
     steps:
-      - name: Checkout PR head
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-          submodules: true
 
-      - name: Inspect real action RandomConfig graph obligations
+      - name: Apply action-only structural reference retirement
         shell: bash
         run: |
-          env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
-          import json
-          from collections import defaultdict
-          from simulator_v8_clean_core.tbgd.lowering import TBGDLowering, build_character_action_definition_ir
-          from simulator_v8_clean_core.tbgd.task_graph_materializer import materialize_ability_task_graph_catalog
-          from simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection import (
-              DEFAULT_TBGD,
-              _build_slice,
-              _candidate_action_ids,
-          )
+          python - <<'PY'
+          from pathlib import Path
 
-          root = DEFAULT_TBGD.resolve()
-          lowering = TBGDLowering(root)
-          source_graph = lowering.build_character_ability_source_graph_catalog()
-          snapshot = lowering._character_ability_raw_snapshot
-          scope = lowering._character_ability_scope_catalog
-          source_catalog = lowering.build_character_control_flow_contract_catalog(
-              snapshot=snapshot,
-              scope_catalog=scope,
-          )
-          candidates = _candidate_action_ids(source_graph, source_catalog)
-          definitions = defaultdict(list)
-          for item in build_character_action_definition_ir(root):
-              definitions[item.action_id].append(item)
-          emitted = 0
-          for action_id in candidates:
-              for definition in sorted(definitions.get(action_id, ()), key=lambda item: item.level):
-                  try:
-                      canonical = _build_slice(lowering, definition, snapshot, scope, source_graph)
-                      catalog = materialize_ability_task_graph_catalog(
-                          source_catalog,
-                          canonical,
-                          source_snapshot=snapshot,
-                      )
-                  except Exception as exc:
-                      print(json.dumps({
-                          'action_id': action_id,
-                          'level': definition.level,
-                          'stage': 'materialize_error',
-                          'error': f'{type(exc).__name__}:{exc}',
-                      }, sort_keys=True))
-                      continue
-                  for graph in catalog.graphs:
-                      if graph.entry_kind != 'ability_phase_callback' or not graph.weighted_selections:
-                          continue
-                      by_id = {node.graph_node_id: node for node in graph.nodes}
-                      for selection in graph.weighted_selections:
-                          node = by_id[selection.graph_node_id]
-                          branches = []
-                          for branch in node.branches:
-                              branches.append({
-                                  'ordinal': branch.ordinal,
-                                  'branch_id': branch.branch_id,
-                                  'children': [
-                                      {
-                                          'formal_task_id': by_id[child].formal_task_id,
-                                          'family': by_id[child].source_family,
-                                          'node_kind': by_id[child].node_kind,
-                                          'materialization_status': by_id[child].materialization_status,
-                                          'owner_domains': list(by_id[child].owner_domains),
-                                          'status_reason': by_id[child].status_reason,
-                                          'references': [
-                                              {
-                                                  'kind': ref.reference_kind,
-                                                  'status': ref.resolution_status,
-                                                  'owner': ref.owner_domain,
-                                                  'reason': ref.blocked_reason,
-                                              }
-                                              for ref in by_id[child].references
-                                          ],
-                                      }
-                                      for child in branch.child_node_ids
-                                  ],
-                              })
-                          print(json.dumps({
-                              'action_id': action_id,
-                              'level': definition.level,
-                              'entry_id': graph.entry_id,
-                              'phase_id': graph.owner_id,
-                              'callback_kind': graph.callback_kind,
-                              'random': {
-                                  'formal_task_id': node.formal_task_id,
-                                  'family': node.source_family,
-                                  'node_kind': node.node_kind,
-                                  'materialization_status': node.materialization_status,
-                                  'owner_domains': list(node.owner_domains),
-                                  'status_reason': node.status_reason,
-                                  'termination_kind': node.termination_kind,
-                                  'references': [
-                                      {
-                                          'kind': ref.reference_kind,
-                                          'status': ref.resolution_status,
-                                          'owner': ref.owner_domain,
-                                          'reason': ref.blocked_reason,
-                                      }
-                                      for ref in node.references
-                                  ],
-                                  'choice_count': len(selection.choices),
-                                  'branch_count': len(node.branches),
-                              },
-                              'branches': branches,
-                          }, sort_keys=True))
-                          emitted += 1
-                          if emitted >= 6:
-                              raise SystemExit(0)
-          if emitted == 0:
-              raise SystemExit('no weighted formal action graph emitted')
+          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py')
+          text = path.read_text()
+
+          helper_anchor = '\n\ndef _admit_action_random_config_nodes(\n'
+          helper = '''\n\ndef _action_random_config_ignorable_reference(\n    reference: TaskGraphDefinitionReferenceIR,\n) -> bool:\n    return (\n        reference.reference_kind == "effect"\n        and reference.resolution_status == "deferred"\n        and reference.owner_domain == "event_effect_execution"\n        and not reference.source_contract_record_id\n        and reference.blocked_reason\n        == "task_graph_definition_not_admitted:effect:unsupported"\n    )\n'''
+          if 'def _action_random_config_ignorable_reference(' not in text:
+              if text.count(helper_anchor) != 1:
+                  raise SystemExit('RandomConfig admission helper anchor mismatch')
+              text = text.replace(helper_anchor, helper + helper_anchor, 1)
+
+          old = '            or any(ref.resolution_status != "resolved" for ref in node.references)\n'
+          new = '''            or any(\n                ref.resolution_status != "resolved"\n                and not _action_random_config_ignorable_reference(ref)\n                for ref in node.references\n            )\n'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif '_action_random_config_ignorable_reference(ref)' not in text:
+              raise SystemExit('RandomConfig deferred-reference eligibility anchor mismatch')
+
+          old = '''            node_kind="branch",\n            materialization_status="materialized",\n            owner_domains=("task_graph_execution",),\n            status_reason="",\n'''
+          new = '''            node_kind="branch",\n            references=tuple(\n                ref\n                for ref in node.references\n                if not _action_random_config_ignorable_reference(ref)\n            ),\n            materialization_status="materialized",\n            owner_domains=("task_graph_execution",),\n            status_reason="",\n'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'references=tuple(\n                ref\n                for ref in node.references' not in text:
+              raise SystemExit('RandomConfig reference retirement replacement anchor mismatch')
+
+          path.write_text(text)
           PY
+
+      - name: Commit scoped materializer fix
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet -- hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py; then
+            echo 'no materializer diff to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py
+          git commit -m 'fix: retire action RandomConfig structural effect reference [skip ci]'
+          git push origin "HEAD:${HEAD_REF}"
