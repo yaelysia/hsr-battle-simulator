@@ -13,7 +13,14 @@ from unittest.mock import patch
 from ..core.model import BattleState, UnitState
 from ..ir_types import IRSource
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphNodeIR
+from ..rules.task_graph import (
+    TaskGraphIR,
+    TaskGraphNodeIR,
+    task_graph_entry_id,
+    task_graph_id,
+    task_graph_node_id,
+    task_graph_source_occurrence_id,
+)
 from ..systems.action_contract import _formal_action_task_graph_projection
 from ..systems.action_selection import ActionTargetSelectionSystem
 from ..systems.ability_task_contract import ability_task_runtime_blocked_reason
@@ -46,8 +53,8 @@ def _fixture_node(graph_id: str, node_id: str, task_id: str, source: IRSource) -
     return TaskGraphNodeIR(
         graph_node_id=node_id,
         graph_id=graph_id,
-        source_occurrence_id=f"occurrence:{task_id}",
-        source_contract_node_id=f"contract:{task_id}",
+        source_occurrence_id=task_graph_source_occurrence_id(source, "AddAbilityTask"),
+        source_contract_node_id="fixture:control",
         formal_task_id=task_id,
         opcode="AddAbilityTask",
         source_family="AddAbilityTask",
@@ -67,24 +74,31 @@ def _fixture_node(graph_id: str, node_id: str, task_id: str, source: IRSource) -
 def _run_fast() -> dict[str, Any]:
     started = time.perf_counter()
     source = _fixture_source()
+    entry_id = task_graph_entry_id(
+        "ability_phase_callback", "fixture:root_phase", "OnStart"
+    )
+    graph_id = task_graph_id("fixture:catalog", entry_id, source.evidence["content_sha256"])
+    task_id = "fixture:task:reachable"
+    occurrence_id = task_graph_source_occurrence_id(source, "AddAbilityTask")
+    node_id = task_graph_node_id(graph_id, task_id, occurrence_id)
     graph = TaskGraphIR(
-        graph_id="fixture:graph",
-        entry_id="fixture:entry",
+        graph_id=graph_id,
+        entry_id=entry_id,
         entry_kind="ability_phase_callback",
         owner_id="fixture:root_phase",
         callback_kind="OnStart",
-        root_node_ids=("fixture:node:reachable",),
+        root_node_ids=(node_id,),
         nodes=(
             _fixture_node(
-                "fixture:graph",
-                "fixture:node:reachable",
-                "fixture:task:reachable",
+                graph_id,
+                node_id,
+                task_id,
                 source,
             ),
         ),
         numeric_definitions=(),
         source_catalog_id="fixture:catalog",
-        source_fingerprint="0" * 64,
+        source_fingerprint=source.evidence["content_sha256"],
         source=source,
         coverage_status="executable",
         weighted_selections=(),
@@ -102,7 +116,7 @@ def _run_fast() -> dict[str, Any]:
         invocation_role="nested_only",
     )
     reachable = SimpleNamespace(
-        task_id="fixture:task:reachable",
+        task_id=task_id,
         phase_id=root_phase.phase_id,
         callback_kind="OnStart",
         opcode="AddAbilityTask",
@@ -158,7 +172,7 @@ def _run_fast() -> dict[str, Any]:
 
     rules = FixtureRules()
     with patch(
-        "hsr.simulator_v8_clean_core.systems.action_contract.ability_task_runtime_blocked_reason",
+        "simulator_v8_clean_core.systems.action_contract.ability_task_runtime_blocked_reason",
         side_effect=lambda _rules, task, topology_authority: task.blocked_reason,
     ):
         first = _formal_action_task_graph_projection(
