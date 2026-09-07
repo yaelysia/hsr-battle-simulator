@@ -27,230 +27,49 @@ jobs:
 
       - name: Apply R1 scoped prerequisite
         shell: bash
+        env:
+          HELPER_B64: ZGVmIF9hZG1pdF9hY3Rpb25fcmFuZG9tX2NvbmZpZ19ub2RlcygKICAgIGVudHJ5X2tpbmQ6IEVudHJ5S2luZCwKICAgIG5vZGVzOiB0dXBsZVtUYXNrR3JhcGhOb2RlSVIsIC4uLl0sCiAgICB3ZWlnaHRlZDogdHVwbGVbVGFza0dyYXBoV2VpZ2h0ZWRTZWxlY3Rpb25JUiwgLi4uXSwKKSAtPiB0dXBsZVtUYXNrR3JhcGhOb2RlSVIsIC4uLl06CiAgICAiIiJSZXRpcmUgb25seSB0aGUgYWN0aW9uLXNpZGUgUmFuZG9tQ29uZmlnIFM4QyBvYmxpZ2F0aW9uIHByb3ZlbiBleGVjdXRhYmxlLiIiIgoKICAgIGlmIGVudHJ5X2tpbmQgIT0gImFiaWxpdHlfcGhhc2VfY2FsbGJhY2siIG9yIG5vdCB3ZWlnaHRlZDoKICAgICAgICByZXR1cm4gbm9kZXMKICAgIHNlbGVjdGlvbnNfYnlfbm9kZTogZGljdFtzdHIsIFRhc2tHcmFwaFdlaWdodGVkU2VsZWN0aW9uSVJdID0ge30KICAgIGZvciBzZWxlY3Rpb24gaW4gd2VpZ2h0ZWQ6CiAgICAgICAgcHJldmlvdXMgPSBzZWxlY3Rpb25zX2J5X25vZGUuZ2V0KHNlbGVjdGlvbi5ncmFwaF9ub2RlX2lkKQogICAgICAgIGlmIHByZXZpb3VzIGlzIG5vdCBOb25lIGFuZCBwcmV2aW91cyAhPSBzZWxlY3Rpb246CiAgICAgICAgICAgIHJhaXNlIF9CbG9ja2VkKAogICAgICAgICAgICAgICAgZiJ0YXNrX2dyYXBoX2FjdGlvbl9yYW5kb21fY29uZmlnX3NlbGVjdGlvbl9hbWJpZ3VvdXM6e3NlbGVjdGlvbi5ncmFwaF9ub2RlX2lkfSIKICAgICAgICAgICAgKQogICAgICAgIHNlbGVjdGlvbnNfYnlfbm9kZVtzZWxlY3Rpb24uZ3JhcGhfbm9kZV9pZF0gPSBzZWxlY3Rpb24KICAgIG5vZGVfYnlfaWQgPSB7aXRlbS5ncmFwaF9ub2RlX2lkOiBpdGVtIGZvciBpdGVtIGluIG5vZGVzfQogICAgaWYgbGVuKG5vZGVfYnlfaWQpICE9IGxlbihub2Rlcyk6CiAgICAgICAgcmFpc2UgX0Jsb2NrZWQoInRhc2tfZ3JhcGhfYWN0aW9uX3JhbmRvbV9jb25maWdfbm9kZV9pZGVudGl0eV9hbWJpZ3VvdXMiKQoKICAgIGVsaWdpYmxlOiBzZXRbc3RyXSA9IHNldCgpCiAgICBmb3Igbm9kZSBpbiBub2RlczoKICAgICAgICBzZWxlY3Rpb24gPSBzZWxlY3Rpb25zX2J5X25vZGUuZ2V0KG5vZGUuZ3JhcGhfbm9kZV9pZCkKICAgICAgICBpZiBzZWxlY3Rpb24gaXMgTm9uZToKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiAoCiAgICAgICAgICAgIG5vZGUuc291cmNlX2ZhbWlseSAhPSAiUmFuZG9tQ29uZmlnIgogICAgICAgICAgICBvciBzZWxlY3Rpb24uZmFtaWx5ICE9ICJSYW5kb21Db25maWciCiAgICAgICAgICAgIG9yIHNlbGVjdGlvbi5zZWxlY3Rpb25fa2luZCAhPSAid2VpZ2h0ZWRfc2luZ2xlIgogICAgICAgICAgICBvciBzZWxlY3Rpb24uZ3JhcGhfbm9kZV9pZCAhPSBub2RlLmdyYXBoX25vZGVfaWQKICAgICAgICAgICAgb3Igbm9kZS5tYXRlcmlhbGl6YXRpb25fc3RhdHVzICE9ICJkZWZlcnJlZCIKICAgICAgICAgICAgb3Igbm9kZS5vd25lcl9kb21haW5zICE9ICgiaGl0X3JhbmRvbV9zZXF1ZW5jZSIsKQogICAgICAgICAgICBvciBub2RlLnRlcm1pbmF0aW9uX2tpbmQgIT0gIm5vdF9hcHBsaWNhYmxlIgogICAgICAgICAgICBvciBhbnkocmVmLnJlc29sdXRpb25fc3RhdHVzICE9ICJyZXNvbHZlZCIgZm9yIHJlZiBpbiBub2RlLnJlZmVyZW5jZXMpCiAgICAgICAgICAgIG9yIG5vdCBzZWxlY3Rpb24uY2hvaWNlcwogICAgICAgICAgICBvciBsZW4oc2VsZWN0aW9uLmNob2ljZXMpICE9IGxlbihub2RlLmJyYW5jaGVzKQogICAgICAgICk6CiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYgYW55KAogICAgICAgICAgICBjaG9pY2UuZ3JhcGhfbm9kZV9pZCAhPSBub2RlLmdyYXBoX25vZGVfaWQKICAgICAgICAgICAgb3IgY2hvaWNlLmZhbWlseSAhPSAiUmFuZG9tQ29uZmlnIgogICAgICAgICAgICBvciBjaG9pY2Uub3JkaW5hbCAhPSBicmFuY2gub3JkaW5hbAogICAgICAgICAgICBvciBjaG9pY2UuYnJhbmNoX2lkICE9IGJyYW5jaC5icmFuY2hfaWQKICAgICAgICAgICAgZm9yIGNob2ljZSwgYnJhbmNoIGluIHppcChzZWxlY3Rpb24uY2hvaWNlcywgbm9kZS5icmFuY2hlcywgc3RyaWN0PVRydWUpCiAgICAgICAgKToKICAgICAgICAgICAgcmFpc2UgX0Jsb2NrZWQoCiAgICAgICAgICAgICAgICBmInRhc2tfZ3JhcGhfYWN0aW9uX3JhbmRvbV9jb25maWdfY2hvaWNlX2JyYW5jaF9taXNtYXRjaDp7bm9kZS5ncmFwaF9ub2RlX2lkfSIKICAgICAgICAgICAgKQogICAgICAgIGVsaWdpYmxlLmFkZChub2RlLmdyYXBoX25vZGVfaWQpCgogICAgYWRtaXR0ZWQ6IHNldFtzdHJdID0gewogICAgICAgIG5vZGUuZ3JhcGhfbm9kZV9pZAogICAgICAgIGZvciBub2RlIGluIG5vZGVzCiAgICAgICAgaWYgbm9kZS5tYXRlcmlhbGl6YXRpb25fc3RhdHVzID09ICJtYXRlcmlhbGl6ZWQiCiAgICAgICAgYW5kIG5vZGUubm9kZV9raW5kICE9ICJkZWZlcnJlZCIKICAgIH0KICAgIHBlbmRpbmcgPSBzZXQoZWxpZ2libGUpCiAgICB3aGlsZSBwZW5kaW5nOgogICAgICAgIHByb2dyZXNzZWQgPSBGYWxzZQogICAgICAgIGZvciBub2RlX2lkIGluIHR1cGxlKHNvcnRlZChwZW5kaW5nKSk6CiAgICAgICAgICAgIG5vZGUgPSBub2RlX2J5X2lkW25vZGVfaWRdCiAgICAgICAgICAgIGNoaWxkcmVuID0gdHVwbGUoCiAgICAgICAgICAgICAgICBjaGlsZF9pZAogICAgICAgICAgICAgICAgZm9yIGJyYW5jaCBpbiBub2RlLmJyYW5jaGVzCiAgICAgICAgICAgICAgICBmb3IgY2hpbGRfaWQgaW4gYnJhbmNoLmNoaWxkX25vZGVfaWRzCiAgICAgICAgICAgICkKICAgICAgICAgICAgaWYgYWxsKGNoaWxkX2lkIGluIGFkbWl0dGVkIGZvciBjaGlsZF9pZCBpbiBjaGlsZHJlbik6CiAgICAgICAgICAgICAgICBhZG1pdHRlZC5hZGQobm9kZV9pZCkKICAgICAgICAgICAgICAgIHBlbmRpbmcucmVtb3ZlKG5vZGVfaWQpCiAgICAgICAgICAgICAgICBwcm9ncmVzc2VkID0gVHJ1ZQogICAgICAgIGlmIG5vdCBwcm9ncmVzc2VkOgogICAgICAgICAgICBicmVhawoKICAgIHJldHVybiB0dXBsZSgKICAgICAgICByZXBsYWNlKAogICAgICAgICAgICBub2RlLAogICAgICAgICAgICBub2RlX2tpbmQ9ImJyYW5jaCIsCiAgICAgICAgICAgIG1hdGVyaWFsaXphdGlvbl9zdGF0dXM9Im1hdGVyaWFsaXplZCIsCiAgICAgICAgICAgIG93bmVyX2RvbWFpbnM9KCJ0YXNrX2dyYXBoX2V4ZWN1dGlvbiIsKSwKICAgICAgICAgICAgc3RhdHVzX3JlYXNvbj0iIiwKICAgICAgICApCiAgICAgICAgaWYgbm9kZS5ncmFwaF9ub2RlX2lkIGluIGFkbWl0dGVkIGFuZCBub2RlLmdyYXBoX25vZGVfaWQgaW4gZWxpZ2libGUKICAgICAgICBlbHNlIG5vZGUKICAgICAgICBmb3Igbm9kZSBpbiBub2RlcwogICAgKQo=
+          DISP_B64: ZGVmIF9tYXRlcmlhbGl6YXRpb25fZGlzcG9zaXRpb25zKAogICAgYmFzZTogdHVwbGVbVGFza0dyYXBoU291cmNlRGlzcG9zaXRpb25JUiwgLi4uXSwKICAgIGVudHJpZXM6IHR1cGxlW1Rhc2tHcmFwaEVudHJ5TWF0ZXJpYWxpemF0aW9uSVIsIC4uLl0sCiAgICBncmFwaHM6IHR1cGxlW1Rhc2tHcmFwaElSLCAuLi5dLAopIC0+IHR1cGxlW1Rhc2tHcmFwaFNvdXJjZURpc3Bvc2l0aW9uSVIsIC4uLl06CiAgICBpZiBhbnkoaXRlbS5mb3JtYWxfbWF0ZXJpYWxpemF0aW9uX2lkcyBmb3IgaXRlbSBpbiBiYXNlKToKICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJ0YXNrIGdyYXBoIG1hdGVyaWFsaXphdGlvbiBiYXNlIGFscmVhZHkgY29udGFpbnMgZm9ybWFsIGxpbmtzIikKICAgIGdyYXBoX2J5X2lkID0ge2l0ZW0uZ3JhcGhfaWQ6IGl0ZW0gZm9yIGl0ZW0gaW4gZ3JhcGhzfQogICAgZW50cnlfYnlfbWF0ZXJpYWxpemF0aW9uID0ge2l0ZW0ubWF0ZXJpYWxpemF0aW9uX2lkOiBpdGVtIGZvciBpdGVtIGluIGVudHJpZXN9CiAgICBsaW5rZWRfYnlfbWF0ZXJpYWxpemF0aW9uOiBkaWN0W3N0ciwgc2V0W3N0cl1dID0ge30KICAgIGFjdGlvbl9yYW5kb21fbGlua3NfYnlfcmVjb3JkOiBkaWN0W3N0ciwgc2V0W3N0cl1dID0gZGVmYXVsdGRpY3Qoc2V0KQogICAgZm9yIGVudHJ5IGluIGVudHJpZXM6CiAgICAgICAgaWYgZW50cnkuc3RhdHVzID09ICJibG9ja2VkIjoKICAgICAgICAgICAgbGlua2VkX2J5X21hdGVyaWFsaXphdGlvbltlbnRyeS5tYXRlcmlhbGl6YXRpb25faWRdID0gc2V0KCkKICAgICAgICAgICAgY29udGludWUKICAgICAgICBncmFwaCA9IGdyYXBoX2J5X2lkLmdldChlbnRyeS5ncmFwaF9pZCkKICAgICAgICBpZiBncmFwaCBpcyBOb25lOgogICAgICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJ0YXNrIGdyYXBoIG1hdGVyaWFsaXphdGlvbiBncmFwaCBpcyBtaXNzaW5nIikKICAgICAgICBsaW5rZWQgPSB7CiAgICAgICAgICAgIG5vZGUuc291cmNlX2NvbnRyYWN0X25vZGVfaWQKICAgICAgICAgICAgZm9yIG5vZGUgaW4gZ3JhcGgubm9kZXMKICAgICAgICAgICAgaWYgbm9kZS5zb3VyY2VfY29udHJhY3Rfbm9kZV9pZAogICAgICAgIH0KICAgICAgICBsaW5rZWQudXBkYXRlKAogICAgICAgICAgICByZWZlcmVuY2UuZGVmaW5pdGlvbl9pZAogICAgICAgICAgICBmb3Igbm9kZSBpbiBncmFwaC5ub2RlcwogICAgICAgICAgICBmb3IgcmVmZXJlbmNlIGluIG5vZGUucmVmZXJlbmNlcwogICAgICAgICAgICBpZiByZWZlcmVuY2UucmVmZXJlbmNlX2tpbmQgPT0gInRlbXBsYXRlIgogICAgICAgICkKICAgICAgICBsaW5rZWQudXBkYXRlKAogICAgICAgICAgICByZWZlcmVuY2Uuc291cmNlX2NvbnRyYWN0X3JlY29yZF9pZAogICAgICAgICAgICBmb3Igbm9kZSBpbiBncmFwaC5ub2RlcwogICAgICAgICAgICBmb3IgcmVmZXJlbmNlIGluIG5vZGUucmVmZXJlbmNlcwogICAgICAgICAgICBpZiByZWZlcmVuY2Uuc291cmNlX2NvbnRyYWN0X3JlY29yZF9pZAogICAgICAgICkKICAgICAgICBsaW5rZWRfYnlfbWF0ZXJpYWxpemF0aW9uW2VudHJ5Lm1hdGVyaWFsaXphdGlvbl9pZF0gPSBsaW5rZWQKICAgICAgICBpZiBlbnRyeS5lbnRyeV9raW5kID09ICJhYmlsaXR5X3BoYXNlX2NhbGxiYWNrIjoKICAgICAgICAgICAgZm9yIG5vZGUgaW4gZ3JhcGgubm9kZXM6CiAgICAgICAgICAgICAgICBpZiAoCiAgICAgICAgICAgICAgICAgICAgbm9kZS5zb3VyY2VfZmFtaWx5ID09ICJSYW5kb21Db25maWciCiAgICAgICAgICAgICAgICAgICAgYW5kIG5vZGUubWF0ZXJpYWxpemF0aW9uX3N0YXR1cyA9PSAibWF0ZXJpYWxpemVkIgogICAgICAgICAgICAgICAgICAgIGFuZCBub2RlLm93bmVyX2RvbWFpbnMgPT0gKCJ0YXNrX2dyYXBoX2V4ZWN1dGlvbiIsKQogICAgICAgICAgICAgICAgICAgIGFuZCBub2RlLnNvdXJjZV9jb250cmFjdF9ub2RlX2lkCiAgICAgICAgICAgICAgICApOgogICAgICAgICAgICAgICAgICAgIGFjdGlvbl9yYW5kb21fbGlua3NfYnlfcmVjb3JkW25vZGUuc291cmNlX2NvbnRyYWN0X25vZGVfaWRdLmFkZCgKICAgICAgICAgICAgICAgICAgICAgICAgZW50cnkubWF0ZXJpYWxpemF0aW9uX2lkCiAgICAgICAgICAgICAgICAgICAgKQogICAgbWF0ZXJpYWxpemF0aW9uc19ieV9yZWNvcmQ6IGRpY3Rbc3RyLCBsaXN0W3N0cl1dID0gZGVmYXVsdGRpY3QobGlzdCkKICAgIGZvciBtYXRlcmlhbGl6YXRpb25faWQsIGxpbmtlZCBpbiBsaW5rZWRfYnlfbWF0ZXJpYWxpemF0aW9uLml0ZW1zKCk6CiAgICAgICAgZm9yIHJlY29yZF9pZCBpbiBsaW5rZWQ6CiAgICAgICAgICAgIG1hdGVyaWFsaXphdGlvbnNfYnlfcmVjb3JkW3JlY29yZF9pZF0uYXBwZW5kKG1hdGVyaWFsaXphdGlvbl9pZCkKICAgIHJlc3VsdDogbGlzdFtUYXNrR3JhcGhTb3VyY2VEaXNwb3NpdGlvbklSXSA9IFtdCiAgICBmb3IgaXRlbSBpbiBiYXNlOgogICAgICAgIG1hdGVyaWFsaXphdGlvbl9pZHMgPSB0dXBsZSgKICAgICAgICAgICAgc29ydGVkKG1hdGVyaWFsaXphdGlvbnNfYnlfcmVjb3JkLmdldChpdGVtLnNvdXJjZV9yZWNvcmRfaWQsICgpKSkKICAgICAgICApCiAgICAgICAgaWYgbm90IG1hdGVyaWFsaXphdGlvbl9pZHM6CiAgICAgICAgICAgIHJlc3VsdC5hcHBlbmQoaXRlbSkKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiBpdGVtLmRpc3Bvc2l0aW9uID09ICJibG9ja2VkIjoKICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcigiYmxvY2tlZCB0YXNrIGdyYXBoIHNvdXJjZSBjYW5ub3QgZW50ZXIgYSBmb3JtYWwgZ3JhcGgiKQogICAgICAgIGFjdGlvbl9yYW5kb21faWRzID0gdHVwbGUoCiAgICAgICAgICAgIHNvcnRlZChhY3Rpb25fcmFuZG9tX2xpbmtzX2J5X3JlY29yZC5nZXQoaXRlbS5zb3VyY2VfcmVjb3JkX2lkLCAoKSkpCiAgICAgICAgKQogICAgICAgIHJldGlyZV9oaXRfcmFuZG9tID0gYm9vbChhY3Rpb25fcmFuZG9tX2lkcykKICAgICAgICBpZiByZXRpcmVfaGl0X3JhbmRvbToKICAgICAgICAgICAgaWYgKAogICAgICAgICAgICAgICAgaXRlbS5mYW1pbHkgIT0gIlJhbmRvbUNvbmZpZyIKICAgICAgICAgICAgICAgIG9yIGl0ZW0uZGlzcG9zaXRpb24gIT0gImRlZmVycmVkIgogICAgICAgICAgICAgICAgb3IgImhpdF9yYW5kb21fc2VxdWVuY2UiIG5vdCBpbiBpdGVtLm93bmVyX2RvbWFpbnMKICAgICAgICAgICAgKToKICAgICAgICAgICAgICAgIHJhaXNlIFZhbHVlRXJyb3IoCiAgICAgICAgICAgICAgICAgICAgImFjdGlvbiBSYW5kb21Db25maWcgbWF0ZXJpYWxpemF0aW9uIGNhbm5vdCByZXRpcmUgaXRzIHNvdXJjZSBvd25lciIKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgbm9uX2FjdGlvbl9saW5rcyA9IHR1cGxlKAogICAgICAgICAgICAgICAgbWF0ZXJpYWxpemF0aW9uX2lkCiAgICAgICAgICAgICAgICBmb3IgbWF0ZXJpYWxpemF0aW9uX2lkIGluIG1hdGVyaWFsaXphdGlvbl9pZHMKICAgICAgICAgICAgICAgIGlmIGVudHJ5X2J5X21hdGVyaWFsaXphdGlvblttYXRlcmlhbGl6YXRpb25faWRdLmVudHJ5X2tpbmQKICAgICAgICAgICAgICAgICE9ICJhYmlsaXR5X3BoYXNlX2NhbGxiYWNrIgogICAgICAgICAgICApCiAgICAgICAgICAgIGlmIG5vbl9hY3Rpb25fbGlua3M6CiAgICAgICAgICAgICAgICByYWlzZSBWYWx1ZUVycm9yKAogICAgICAgICAgICAgICAgICAgICJhY3Rpb24gUmFuZG9tQ29uZmlnIHNvdXJjZSBvd25lciBpcyBzaGFyZWQgd2l0aCBhIG5vbi1hY3Rpb24gZm9ybWFsIHByb2R1Y2VyIgogICAgICAgICAgICAgICAgKQogICAgICAgIHJlbWFpbmluZ19kb21haW5zID0gdHVwbGUoCiAgICAgICAgICAgIGRvbWFpbgogICAgICAgICAgICBmb3IgZG9tYWluIGluIGl0ZW0ub3duZXJfZG9tYWlucwogICAgICAgICAgICBpZiBkb21haW4gIT0gInRhc2tfZ3JhcGhfZXhlY3V0aW9uIgogICAgICAgICAgICBhbmQgbm90IChyZXRpcmVfaGl0X3JhbmRvbSBhbmQgZG9tYWluID09ICJoaXRfcmFuZG9tX3NlcXVlbmNlIikKICAgICAgICApCiAgICAgICAgcmVzdWx0LmFwcGVuZChyZXBsYWNlKAogICAgICAgICAgICBpdGVtLAogICAgICAgICAgICBkaXNwb3NpdGlvbj0iZGVmZXJyZWQiIGlmIHJlbWFpbmluZ19kb21haW5zIGVsc2UgIm1hdGVyaWFsaXplZCIsCiAgICAgICAgICAgIG93bmVyX2RvbWFpbnM9cmVtYWluaW5nX2RvbWFpbnMsCiAgICAgICAgICAgIGZvcm1hbF9tYXRlcmlhbGl6YXRpb25faWRzPW1hdGVyaWFsaXphdGlvbl9pZHMsCiAgICAgICAgKSkKICAgIHJldHVybiB0dXBsZShyZXN1bHQpCg==
         run: |
           python - <<'PY'
+          import base64
+          import os
           from pathlib import Path
 
           materializer = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py')
           text = materializer.read_text()
-          helper_marker = 'def _admit_action_random_config_nodes('
-          if helper_marker not in text:
+          helper = base64.b64decode(os.environ['HELPER_B64']).decode()
+          if 'def _admit_action_random_config_nodes(' not in text:
               anchor = '\n\ndef _source_topology(\n'
               if text.count(anchor) != 1:
                   raise SystemExit('materializer helper anchor mismatch')
-              helper = r'''
-
-def _admit_action_random_config_nodes(
-    entry_kind: EntryKind,
-    nodes: tuple[TaskGraphNodeIR, ...],
-    weighted: tuple[TaskGraphWeightedSelectionIR, ...],
-) -> tuple[TaskGraphNodeIR, ...]:
-    """Retire only the action-side RandomConfig S8C obligation proven executable."""
-
-    if entry_kind != "ability_phase_callback" or not weighted:
-        return nodes
-    selections_by_node: dict[str, TaskGraphWeightedSelectionIR] = {}
-    for selection in weighted:
-        previous = selections_by_node.get(selection.graph_node_id)
-        if previous is not None and previous != selection:
-            raise _Blocked(
-                f"task_graph_action_random_config_selection_ambiguous:{selection.graph_node_id}"
-            )
-        selections_by_node[selection.graph_node_id] = selection
-    node_by_id = {item.graph_node_id: item for item in nodes}
-    if len(node_by_id) != len(nodes):
-        raise _Blocked("task_graph_action_random_config_node_identity_ambiguous")
-
-    eligible: set[str] = set()
-    for node in nodes:
-        selection = selections_by_node.get(node.graph_node_id)
-        if selection is None:
-            continue
-        if (
-            node.source_family != "RandomConfig"
-            or selection.family != "RandomConfig"
-            or selection.selection_kind != "weighted_single"
-            or selection.graph_node_id != node.graph_node_id
-            or node.materialization_status != "deferred"
-            or node.owner_domains != ("hit_random_sequence",)
-            or node.termination_kind != "not_applicable"
-            or any(ref.resolution_status != "resolved" for ref in node.references)
-            or not selection.choices
-            or len(selection.choices) != len(node.branches)
-        ):
-            continue
-        if any(
-            choice.graph_node_id != node.graph_node_id
-            or choice.family != "RandomConfig"
-            or choice.ordinal != branch.ordinal
-            or choice.branch_id != branch.branch_id
-            for choice, branch in zip(selection.choices, node.branches, strict=True)
-        ):
-            raise _Blocked(
-                f"task_graph_action_random_config_choice_branch_mismatch:{node.graph_node_id}"
-            )
-        eligible.add(node.graph_node_id)
-
-    admitted: set[str] = {
-        node.graph_node_id
-        for node in nodes
-        if node.materialization_status == "materialized"
-        and node.node_kind != "deferred"
-    }
-    pending = set(eligible)
-    while pending:
-        progressed = False
-        for node_id in tuple(sorted(pending)):
-            node = node_by_id[node_id]
-            children = tuple(
-                child_id
-                for branch in node.branches
-                for child_id in branch.child_node_ids
-            )
-            if all(child_id in admitted for child_id in children):
-                admitted.add(node_id)
-                pending.remove(node_id)
-                progressed = True
-        if not progressed:
-            break
-
-    return tuple(
-        replace(
-            node,
-            node_kind="branch",
-            materialization_status="materialized",
-            owner_domains=("task_graph_execution",),
-            status_reason="",
-        )
-        if node.graph_node_id in admitted and node.graph_node_id in eligible
-        else node
-        for node in nodes
-    )
-'''
-              text = text.replace(anchor, helper + anchor, 1)
-
-          admission_anchor = '''    has_obligation = any(item.materialization_status == "deferred" for item in nodes) or any(\n        ref.resolution_status != "resolved" for node in nodes for ref in node.references\n    )\n'''
+              text = text.replace(anchor, '\n\n' + helper + anchor, 1)
+          admission_anchor = '    has_obligation = any(item.materialization_status == "deferred" for item in nodes) or any(\n        ref.resolution_status != "resolved" for node in nodes for ref in node.references\n    )\n'
           if 'nodes = list(_admit_action_random_config_nodes(' not in text:
               if text.count(admission_anchor) != 1:
                   raise SystemExit('materializer admission anchor mismatch')
-              replacement = '''    nodes = list(\n        _admit_action_random_config_nodes(\n            entry_kind,\n            tuple(nodes),\n            tuple(weighted),\n        )\n    )\n''' + admission_anchor
-              text = text.replace(admission_anchor, replacement, 1)
-
+              text = text.replace(
+                  admission_anchor,
+                  '    nodes = list(\n        _admit_action_random_config_nodes(\n            entry_kind,\n            tuple(nodes),\n            tuple(weighted),\n        )\n    )\n' + admission_anchor,
+                  1,
+              )
           start = text.index('def _materialization_dispositions(\n')
           end = text.index('\n\ndef _catalog(\n', start)
-          current = text[start:end]
-          if 'action_random_links_by_record' not in current:
-              replacement = r'''def _materialization_dispositions(
-    base: tuple[TaskGraphSourceDispositionIR, ...],
-    entries: tuple[TaskGraphEntryMaterializationIR, ...],
-    graphs: tuple[TaskGraphIR, ...],
-) -> tuple[TaskGraphSourceDispositionIR, ...]:
-    if any(item.formal_materialization_ids for item in base):
-        raise ValueError("task graph materialization base already contains formal links")
-    graph_by_id = {item.graph_id: item for item in graphs}
-    entry_by_materialization = {item.materialization_id: item for item in entries}
-    linked_by_materialization: dict[str, set[str]] = {}
-    action_random_links_by_record: dict[str, set[str]] = defaultdict(set)
-    for entry in entries:
-        if entry.status == "blocked":
-            linked_by_materialization[entry.materialization_id] = set()
-            continue
-        graph = graph_by_id.get(entry.graph_id)
-        if graph is None:
-            raise ValueError("task graph materialization graph is missing")
-        linked = {
-            node.source_contract_node_id
-            for node in graph.nodes
-            if node.source_contract_node_id
-        }
-        linked.update(
-            reference.definition_id
-            for node in graph.nodes
-            for reference in node.references
-            if reference.reference_kind == "template"
-        )
-        linked.update(
-            reference.source_contract_record_id
-            for node in graph.nodes
-            for reference in node.references
-            if reference.source_contract_record_id
-        )
-        linked_by_materialization[entry.materialization_id] = linked
-        if entry.entry_kind == "ability_phase_callback":
-            for node in graph.nodes:
-                if (
-                    node.source_family == "RandomConfig"
-                    and node.materialization_status == "materialized"
-                    and node.owner_domains == ("task_graph_execution",)
-                    and node.source_contract_node_id
-                ):
-                    action_random_links_by_record[node.source_contract_node_id].add(
-                        entry.materialization_id
-                    )
-    materializations_by_record: dict[str, list[str]] = defaultdict(list)
-    for materialization_id, linked in linked_by_materialization.items():
-        for record_id in linked:
-            materializations_by_record[record_id].append(materialization_id)
-    result: list[TaskGraphSourceDispositionIR] = []
-    for item in base:
-        materialization_ids = tuple(
-            sorted(materializations_by_record.get(item.source_record_id, ()))
-        )
-        if not materialization_ids:
-            result.append(item)
-            continue
-        if item.disposition == "blocked":
-            raise ValueError("blocked task graph source cannot enter a formal graph")
-        action_random_ids = tuple(
-            sorted(action_random_links_by_record.get(item.source_record_id, ()))
-        )
-        retire_hit_random = bool(action_random_ids)
-        if retire_hit_random:
-            if (
-                item.family != "RandomConfig"
-                or item.disposition != "deferred"
-                or "hit_random_sequence" not in item.owner_domains
-            ):
-                raise ValueError(
-                    "action RandomConfig materialization cannot retire its source owner"
-                )
-            non_action_links = tuple(
-                materialization_id
-                for materialization_id in materialization_ids
-                if entry_by_materialization[materialization_id].entry_kind
-                != "ability_phase_callback"
-            )
-            if non_action_links:
-                raise ValueError(
-                    "action RandomConfig source owner is shared with a non-action formal producer"
-                )
-        remaining_domains = tuple(
-            domain
-            for domain in item.owner_domains
-            if domain != "task_graph_execution"
-            and not (retire_hit_random and domain == "hit_random_sequence")
-        )
-        result.append(replace(
-            item,
-            disposition="deferred" if remaining_domains else "materialized",
-            owner_domains=remaining_domains,
-            formal_materialization_ids=materialization_ids,
-        ))
-    return tuple(result)
-'''
+          if 'action_random_links_by_record' not in text[start:end]:
+              replacement = base64.b64decode(os.environ['DISP_B64']).decode()
               text = text[:start] + replacement + text[end:]
           materializer.write_text(text)
 
           s8c1b = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py')
           text = s8c1b.read_text()
-          old = '''    if (\n        node.materialization_status != "deferred"\n        or node.owner_domains != ("hit_random_sequence",)\n    ):\n        raise AssertionError("RandomConfig node no longer defers to hit_random_sequence")\n'''
-          new = '''    if (\n        node.materialization_status != "materialized"\n        or node.owner_domains != ("task_graph_execution",)\n    ):\n        raise AssertionError("formal action RandomConfig did not retire hit_random_sequence")\n'''
+          old = '    if (\n        node.materialization_status != "deferred"\n        or node.owner_domains != ("hit_random_sequence",)\n    ):\n        raise AssertionError("RandomConfig node no longer defers to hit_random_sequence")\n'
+          new = '    if (\n        node.materialization_status != "materialized"\n        or node.owner_domains != ("task_graph_execution",)\n    ):\n        raise AssertionError("formal action RandomConfig did not retire hit_random_sequence")\n'
           if old in text:
               text = text.replace(old, new, 1)
           elif 'formal action RandomConfig did not retire hit_random_sequence' not in text:
               raise SystemExit('S8C1B action expectation anchor mismatch')
-          old = '''            "random_config_still_deferred": True,\n            "runtime_behavior_changed": False,\n            "full_canonical_ir_build_count": 0,\n'''
-          new = '''            "action_random_config_materialized": True,\n            "action_materializer_runtime_admission_changed": True,\n            "full_canonical_ir_build_count": 0,\n'''
+          old = '            "random_config_still_deferred": True,\n            "runtime_behavior_changed": False,\n            "full_canonical_ir_build_count": 0,\n'
+          new = '            "action_random_config_materialized": True,\n            "action_materializer_runtime_admission_changed": True,\n            "full_canonical_ir_build_count": 0,\n'
           if old in text:
               text = text.replace(old, new, 1)
           elif '"action_random_config_materialized": True' not in text:
