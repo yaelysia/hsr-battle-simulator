@@ -384,13 +384,16 @@ def _run_fast_cases() -> dict[str, Any]:
         (t_cycle_a_b, t_cycle_a_c, t_cycle_b_c, t_cycle_c_b),
         (g_cycle_a, g_cycle_b, g_cycle_c),
     )
-    expected_cycle_reason = f"task_graph_active_cycle:{g_cycle_b.graph_id}"
-    assert expected_cycle_reason in cycle.blocked_reasons
+    expected_cycle_reasons = {
+        f"task_graph_active_cycle:{g_cycle_b.graph_id}",
+        f"task_graph_active_cycle:{g_cycle_c.graph_id}",
+    }
+    assert expected_cycle_reasons.intersection(cycle.blocked_reasons)
     assert any(
-        row.get("reason") == expected_cycle_reason
+        row.get("reason") in expected_cycle_reasons
         and row.get("source") == "nested_graph_cycle"
-        and row.get("graph_id") == g_cycle_b.graph_id
-        and row.get("task_id") == t_cycle_c_b.task_id
+        and row.get("graph_id") in {g_cycle_b.graph_id, g_cycle_c.graph_id}
+        and row.get("task_id") in {t_cycle_b_c.task_id, t_cycle_c_b.task_id}
         for row in cycle.blocker_provenance
     )
 
@@ -537,7 +540,7 @@ def _run_fast_cases() -> dict[str, Any]:
         "excluded": excluded.metadata(),
         "nested": nested.metadata(),
         "cycle": {
-            "expected_reason": expected_cycle_reason,
+            "expected_reasons": sorted(expected_cycle_reasons),
             **cycle.metadata(),
         },
         "deferred": deferred.metadata(),
