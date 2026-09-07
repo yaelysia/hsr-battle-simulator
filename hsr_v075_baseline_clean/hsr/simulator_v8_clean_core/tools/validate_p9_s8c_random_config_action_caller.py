@@ -38,66 +38,57 @@ from ..systems.task_graph import (
     TaskGraphLeafResult,
 )
 from .validate_p9_s8c1b_action_entry_weighted_selection import (
-    _bootstrap_repo_root,
+    DEFAULT_TBGD,
     _run_direct as _run_s8c1b_direct,
 )
 
+_FAST_LIMIT = 120.0
+_DIRECT_LIMIT = 240.0
 _DIGEST = "7" * 64
-_FAST_HARD_SECONDS = 120.0
-_DIRECT_HARD_SECONDS = 240.0
 
 
 def _source(path: str, family: str) -> IRSource:
     return IRSource(
-        source_path="tools/p9_s8c_random_config_action_caller.json",
-        raw_type="P9S8CRandomConfigActionCaller",
-        raw_id="fixture",
-        evidence={
-            "json_path": path,
-            "content_sha256": _DIGEST,
-            "source_opcode": family,
-        },
+        "tools/p9_s8c_random_config_action_caller.json",
+        "P9S8CRandomConfigActionCaller",
+        "fixture",
+        {"json_path": path, "content_sha256": _DIGEST, "source_opcode": family},
     )
 
 
 def _graph(weights: tuple[float, ...] = (1.0, 3.0, 2.0)) -> TaskGraphIR:
-    entry_kind = "ability_phase_callback"
-    owner_id = "p9-s8c-action-phase"
-    callback_kind = "OnExecute"
-    entry_id = task_graph_entry_id(entry_kind, owner_id, callback_kind)
+    entry_id = task_graph_entry_id("ability_phase_callback", "p9-phase", "OnExecute")
     fingerprint = "8" * 64
-    graph_id = task_graph_id("p9-s8c-action-catalog", entry_id, fingerprint)
+    gid = task_graph_id("p9-action-catalog", entry_id, fingerprint)
     root_source = _source("$.RandomConfig", "RandomConfig")
-    root_occurrence = task_graph_source_occurrence_id(root_source, "RandomConfig")
-    root_formal_task_id = "p9-s8c-random-root"
-    root_id = task_graph_node_id(graph_id, root_formal_task_id, root_occurrence)
-
+    root_occ = task_graph_source_occurrence_id(root_source, "RandomConfig")
+    root_id = task_graph_node_id(gid, "p9-random-root", root_occ)
     leaves: list[TaskGraphNodeIR] = []
     branches: list[TaskGraphBranchIR] = []
     choices: list[TaskGraphWeightedChoiceIR] = []
     definitions: list[TaskGraphNumericDefinitionIR] = []
     for index, weight in enumerate(weights):
         leaf_source = _source(f"$.RandomConfig.Tasks[{index}]", f"Leaf{index}")
-        leaf_occurrence = task_graph_source_occurrence_id(leaf_source, f"Leaf{index}")
-        leaf_id = task_graph_node_id(graph_id, f"leaf:{index}", leaf_occurrence)
+        leaf_occ = task_graph_source_occurrence_id(leaf_source, f"Leaf{index}")
+        leaf_id = task_graph_node_id(gid, f"leaf:{index}", leaf_occ)
         leaves.append(
             TaskGraphNodeIR(
-                graph_node_id=leaf_id,
-                graph_id=graph_id,
-                source_occurrence_id=leaf_occurrence,
-                source_contract_node_id="",
-                formal_task_id=f"leaf:{index}",
-                opcode=f"Leaf{index}",
-                source_family=f"Leaf{index}",
-                node_kind="leaf",
-                branches=(),
-                references=(),
-                termination_kind="not_applicable",
-                termination_status="not_applicable",
-                termination_numeric_definition_id="",
-                materialization_status="materialized",
-                owner_domains=("task_graph_execution",),
-                source=leaf_source,
+                leaf_id,
+                gid,
+                leaf_occ,
+                "",
+                f"leaf:{index}",
+                f"Leaf{index}",
+                f"Leaf{index}",
+                "leaf",
+                (),
+                (),
+                "not_applicable",
+                "not_applicable",
+                "",
+                "materialized",
+                ("task_graph_execution",),
+                leaf_source,
             )
         )
         branch_id = task_graph_branch_id(
@@ -105,109 +96,102 @@ def _graph(weights: tuple[float, ...] = (1.0, 3.0, 2.0)) -> TaskGraphIR:
         )
         branches.append(
             TaskGraphBranchIR(
-                branch_id=branch_id,
-                graph_node_id=root_id,
-                branch_kind="weighted_choice",
-                ordinal=index,
-                label=f"choice-{index}",
-                child_node_ids=(leaf_id,),
-                source=root_source,
+                branch_id,
+                root_id,
+                "weighted_choice",
+                index,
+                f"choice-{index}",
+                (leaf_id,),
+                root_source,
             )
         )
         weight_source = _source(f"$.RandomConfig.OddsList[{index}]", "RandomConfig")
-        weight_occurrence = task_graph_source_occurrence_id(weight_source, "RandomConfig")
+        weight_occ = task_graph_source_occurrence_id(weight_source, "RandomConfig")
         expression = numeric_fixed(weight)
-        definition_id = task_graph_numeric_id(weight_occurrence, expression)
+        definition_id = task_graph_numeric_id(weight_occ, expression)
         definitions.append(
-            TaskGraphNumericDefinitionIR(
-                definition_id=definition_id,
-                source_occurrence_id=weight_occurrence,
-                expression=expression,
-                source=weight_source,
-            )
+            TaskGraphNumericDefinitionIR(definition_id, weight_occ, expression, weight_source)
         )
         choices.append(
             TaskGraphWeightedChoiceIR(
-                choice_id=task_graph_weighted_choice_id(
-                    root_id, index, branch_id, definition_id
-                ),
-                graph_node_id=root_id,
-                family="RandomConfig",
-                ordinal=index,
-                branch_id=branch_id,
-                weight_definition_id=definition_id,
-                weight_source_occurrence_id=weight_occurrence,
-                source=weight_source,
+                task_graph_weighted_choice_id(root_id, index, branch_id, definition_id),
+                root_id,
+                "RandomConfig",
+                index,
+                branch_id,
+                definition_id,
+                weight_occ,
+                weight_source,
             )
         )
-
     root = TaskGraphNodeIR(
-        graph_node_id=root_id,
-        graph_id=graph_id,
-        source_occurrence_id=root_occurrence,
-        source_contract_node_id="",
-        formal_task_id=root_formal_task_id,
-        opcode="RandomConfig",
-        source_family="RandomConfig",
-        node_kind="branch",
-        branches=tuple(branches),
-        references=(),
-        termination_kind="not_applicable",
-        termination_status="not_applicable",
-        termination_numeric_definition_id="",
-        materialization_status="materialized",
-        owner_domains=("task_graph_execution",),
-        source=root_source,
+        root_id,
+        gid,
+        root_occ,
+        "",
+        "p9-random-root",
+        "RandomConfig",
+        "RandomConfig",
+        "branch",
+        tuple(branches),
+        (),
+        "not_applicable",
+        "not_applicable",
+        "",
+        "materialized",
+        ("task_graph_execution",),
+        root_source,
     )
     selection = TaskGraphWeightedSelectionIR(
-        selection_id=task_graph_weighted_selection_id(root_id, root_occurrence),
-        graph_node_id=root_id,
-        parent_source_occurrence_id=root_occurrence,
-        family="RandomConfig",
-        selection_kind="weighted_single",
-        choices=tuple(choices),
-        numeric_definitions=tuple(definitions),
-        source=root_source,
+        task_graph_weighted_selection_id(root_id, root_occ),
+        root_id,
+        root_occ,
+        "RandomConfig",
+        "weighted_single",
+        tuple(choices),
+        tuple(definitions),
+        root_source,
     )
     return TaskGraphIR(
-        graph_id=graph_id,
-        entry_id=entry_id,
-        entry_kind=entry_kind,
-        owner_id=owner_id,
-        callback_kind=callback_kind,
-        root_node_ids=(root_id,),
-        nodes=(root, *leaves),
-        numeric_definitions=(),
-        source_catalog_id="p9-s8c-action-catalog",
-        source_fingerprint=fingerprint,
-        source=_source("$.Graph", "Graph"),
-        coverage_status="lowered",
-        weighted_selections=(selection,),
+        gid,
+        entry_id,
+        "ability_phase_callback",
+        "p9-phase",
+        "OnExecute",
+        (root_id,),
+        (root, *leaves),
+        (),
+        "p9-action-catalog",
+        fingerprint,
+        _source("$.Graph", "Graph"),
+        "lowered",
+        (selection,),
     )
 
 
-def _run_graph(
+def _execute(
     graph: TaskGraphIR,
     *,
     metadata: dict[str, Any] | None = None,
-    invocation_id: str = "p9-s8c-action-invocation",
+    invocation_id: str = "p9-action-invocation",
 ) -> tuple[Any, list[str], ActionCommand]:
-    rules = RuleBook(CanonicalIR(version="p9-s8c-action-caller-fast"))
-    system = AbilityTaskSystem(rules, EffectRegistry())
-    root_task = SimpleNamespace(task_id="p9-s8c-random-root", task_index=4)
+    system = AbilityTaskSystem(
+        RuleBook(CanonicalIR(version="p9-s8c-action-caller-fast")), EffectRegistry()
+    )
+    root_task = SimpleNamespace(task_id="p9-random-root", task_index=4)
     system._formal_task_for_request = lambda request: (  # type: ignore[method-assign]
         (root_task, "")
         if request.formal_task_id == root_task.task_id
         else (None, "unexpected_fast_leaf_lookup")
     )
     command = ActionCommand(
-        actor_id="actor",
-        action_id="p9-s8c-action",
-        action_level=1,
-        target_ids=("target",),
+        "actor",
+        "p9-action",
+        1,
+        ("target",),
         metadata=cast(dict[str, Any], metadata or {}),
     )
-    target_resolution = TargetResolution(
+    targets = TargetResolution(
         requested=("target",),
         selectable=("target",),
         legal=("target",),
@@ -221,27 +205,24 @@ def _run_graph(
         actor_id="actor",
         ability_id=command.action_id,
         ability_level=command.action_level,
-        target_resolution=target_resolution,
+        target_resolution=targets,
         action_command=command,
         action_definition=None,
     )
-    formal_hooks = system._formal_task_graph_hooks(cast(Any, invocation))
-    if formal_hooks.weighted_selection is None:
-        raise AssertionError("AbilityTaskSystem did not expose weighted_selection hook")
+    weighted = system._formal_task_graph_hooks(cast(Any, invocation)).weighted_selection
+    if weighted is None:
+        raise AssertionError("AbilityTaskSystem omitted RandomConfig weighted hook")
     seen: list[str] = []
 
     def leaf(request: Any, _state: BattleState) -> TaskGraphLeafResult:
         seen.append(request.formal_task_id)
-        return TaskGraphLeafResult(status="resolved")
+        return TaskGraphLeafResult("resolved")
 
     result = system.task_graph_executor.execute(
         BattleState(),
         graph,
         TaskGraphExecutionContext(invocation_id),
-        TaskGraphExecutionHooks(
-            leaf=leaf,
-            weighted_selection=formal_hooks.weighted_selection,
-        ),
+        TaskGraphExecutionHooks(leaf=leaf, weighted_selection=weighted),
     )
     return result, seen, command
 
@@ -249,86 +230,83 @@ def _run_graph(
 def _run_fast() -> dict[str, Any]:
     started = time.perf_counter()
     graph = _graph()
-    first, first_seen, first_command = _run_graph(graph)
-    if not first.ok or len(first.rng_events) != 1 or len(first_seen) != 1:
-        raise AssertionError("formal RandomConfig caller did not resolve exactly one branch/event")
+    first, seen, command = _execute(graph)
+    if not first.ok or len(first.rng_events) != 1 or len(seen) != 1:
+        raise AssertionError("RandomConfig did not resolve one child and one RNG event")
     event = first.rng_events[0]
-    result_payload = cast(dict[str, Any], event.result)
-    choice_key = result_payload.get("choice_key")
-    selected_id = result_payload.get("selected_outcome_id")
-    if not isinstance(choice_key, str) or not isinstance(selected_id, str):
-        raise AssertionError("RNG event omitted stable choice identity")
-    if validate_rng_choice_ledger(dict(first_command.metadata), first.rng_events).ok is not True:
-        raise AssertionError("deterministic whole-action RNG ledger validation failed")
+    payload = cast(dict[str, Any], event.result)
+    key = payload.get("choice_key")
+    choice = payload.get("selected_outcome_id")
+    if not isinstance(key, str) or not isinstance(choice, str):
+        raise AssertionError("RNG event identity is incomplete")
+    if not validate_rng_choice_ledger(dict(command.metadata), first.rng_events).ok:
+        raise AssertionError("deterministic action RNG ledger did not reconcile")
 
     explicit_meta = {
         "rng_mode": "explicit_ledger",
-        "rng_choice_ledger": [{"choice_key": choice_key, "choice": selected_id}],
+        "rng_choice_ledger": [{"choice_key": key, "choice": choice}],
     }
-    explicit, explicit_seen, explicit_command = _run_graph(graph, metadata=explicit_meta)
-    ledger = validate_rng_choice_ledger(dict(explicit_command.metadata), explicit.rng_events)
-    if not explicit.ok or len(explicit.rng_events) != 1 or not ledger.ok:
-        raise AssertionError("explicit whole-action RNG ledger did not reconcile")
-    if explicit_seen != first_seen:
-        raise AssertionError("explicit ledger changed selected formal branch")
-
-    missing, missing_seen, _ = _run_graph(graph, metadata={"rng_mode": "explicit_ledger"})
-    if missing.ok or missing_seen or missing.rng_events:
-        raise AssertionError("missing explicit RNG ledger leaked a child/event")
-    stale, stale_seen, _ = _run_graph(
-        graph,
-        metadata={
-            "rng_mode": "explicit_ledger",
-            "rng_choice_ledger": [{"choice_key": choice_key + ":stale", "choice": selected_id}],
-        },
+    explicit, explicit_seen, explicit_command = _execute(graph, metadata=explicit_meta)
+    ledger = validate_rng_choice_ledger(
+        dict(explicit_command.metadata), explicit.rng_events
     )
-    if stale.ok or stale_seen or stale.rng_events:
-        raise AssertionError("stale explicit RNG ledger leaked a child/event")
-    tampered, tampered_seen, _ = _run_graph(
-        graph,
-        metadata={
-            "rng_mode": "explicit_ledger",
-            "rng_choice_ledger": [{"choice_key": choice_key, "choice": "foreign-choice"}],
-        },
-    )
-    if tampered.ok or tampered_seen or tampered.rng_events:
-        raise AssertionError("tampered explicit RNG ledger leaked a child/event")
+    if not explicit.ok or explicit_seen != seen or len(explicit.rng_events) != 1 or not ledger.ok:
+        raise AssertionError("explicit action RNG ledger did not reconcile")
 
-    negative, negative_seen, _ = _run_graph(_graph((1.0, -1.0)))
-    zero, zero_seen, _ = _run_graph(_graph((0.0, 0.0)))
-    if negative.ok or negative_seen or negative.rng_events:
-        raise AssertionError("negative RandomConfig weight was admitted")
-    if zero.ok or zero_seen or zero.rng_events:
-        raise AssertionError("all-zero RandomConfig weight set was admitted")
+    for label, metadata in (
+        ("missing", {"rng_mode": "explicit_ledger"}),
+        (
+            "stale",
+            {
+                "rng_mode": "explicit_ledger",
+                "rng_choice_ledger": [{"choice_key": key + ":stale", "choice": choice}],
+            },
+        ),
+        (
+            "tampered",
+            {
+                "rng_mode": "explicit_ledger",
+                "rng_choice_ledger": [{"choice_key": key, "choice": "foreign-choice"}],
+            },
+        ),
+    ):
+        blocked, blocked_seen, _ = _execute(graph, metadata=metadata)
+        if blocked.ok or blocked_seen or blocked.rng_events:
+            raise AssertionError(f"{label} RNG ledger leaked a child/event")
 
-    repeated, _, _ = _run_graph(graph)
-    distinct, _, _ = _run_graph(graph, invocation_id="p9-s8c-action-invocation-2")
+    for label, weights in (("negative", (1.0, -1.0)), ("all_zero", (0.0, 0.0))):
+        blocked, blocked_seen, _ = _execute(_graph(weights))
+        if blocked.ok or blocked_seen or blocked.rng_events:
+            raise AssertionError(f"{label} RandomConfig weights were admitted")
+
+    repeated, _, _ = _execute(graph)
+    distinct, _, _ = _execute(graph, invocation_id="p9-action-invocation-2")
     repeated_key = cast(dict[str, Any], repeated.rng_events[0].result).get("choice_key")
     distinct_key = cast(dict[str, Any], distinct.rng_events[0].result).get("choice_key")
-    if repeated_key != choice_key or distinct_key == choice_key:
+    if repeated_key != key or distinct_key == key:
         raise AssertionError("RNG identity stability/context separation failed")
 
     elapsed = time.perf_counter() - started
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return {
-        "ok": elapsed <= _FAST_HARD_SECONDS and peak <= 1024 * 1024,
+        "ok": elapsed <= _FAST_LIMIT and peak <= 1024 * 1024,
         "mode": "fast",
         "predicates": {
-            "real_ability_task_system_hook": True,
+            "real_ability_task_system_weighted_hook": True,
             "shared_task_graph_executor": True,
             "selected_child_only": True,
             "single_rng_event": True,
             "existing_rng_authority": True,
-            "whole_action_ledger_validation": True,
-            "missing_stale_tampered_ledger_atomic_block": True,
-            "negative_and_all_zero_weights_block": True,
-            "same_identity_stable_distinct_context_separate": True,
+            "whole_action_rng_ledger": True,
+            "missing_stale_tampered_atomic_block": True,
+            "invalid_weight_atomic_block": True,
+            "stable_identity_and_distinct_context": True,
         },
         "rng": {
-            "choice_key": choice_key,
+            "choice_key": key,
             "event_id": event.event_id,
-            "selected_outcome_id": selected_id,
-            "selected_leaf": first_seen[0],
+            "selected_outcome_id": choice,
+            "selected_leaf": seen[0],
             "ledger": ledger.to_json(),
         },
         "resource": {"wall_seconds": round(elapsed, 6), "peak_rss_kib": peak},
@@ -344,7 +322,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
     return {
         "ok": bool(source.get("ok"))
         and bool(runtime.get("ok"))
-        and elapsed <= _DIRECT_HARD_SECONDS
+        and elapsed <= _DIRECT_LIMIT
         and peak <= 1024 * 1024,
         "mode": "direct",
         "predicates": {
@@ -364,16 +342,13 @@ def _run_direct(root: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Validate P9 S8C formal action RandomConfig caller and RNG ledger"
-    )
+    parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fast", action="store_true")
     mode.add_argument("--direct", action="store_true")
-    parser.add_argument("--tbgd-root", type=Path, default=None)
+    parser.add_argument("--tbgd-root", type=Path, default=DEFAULT_TBGD)
     args = parser.parse_args()
-    root = args.tbgd_root.resolve() if args.tbgd_root is not None else _bootstrap_repo_root()
-    summary = _run_fast() if args.fast else _run_direct(root)
+    summary = _run_fast() if args.fast else _run_direct(args.tbgd_root.resolve())
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0 if summary["ok"] else 1
 
