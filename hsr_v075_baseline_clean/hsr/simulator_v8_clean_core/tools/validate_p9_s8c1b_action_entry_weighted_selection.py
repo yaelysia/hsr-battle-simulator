@@ -318,10 +318,10 @@ def _verify_selection(snapshot: CharacterAbilityRawSnapshot, graph: TaskGraphIR)
     if node is None or node.source_family != "RandomConfig":
         raise AssertionError("weighted selection is not attached to RandomConfig")
     if (
-        node.materialization_status != "deferred"
-        or node.owner_domains != ("hit_random_sequence",)
+        node.materialization_status != "materialized"
+        or node.owner_domains != ("task_graph_execution",)
     ):
-        raise AssertionError("RandomConfig node no longer defers to hit_random_sequence")
+        raise AssertionError("formal action RandomConfig did not retire hit_random_sequence")
     path = node.source.evidence.get("json_path")
     if not isinstance(path, str):
         raise AssertionError("RandomConfig source path is missing")
@@ -749,8 +749,8 @@ def _run_direct(root: Path) -> dict[str, Any]:
             "odds_definition_choice_branch_selection_closure": True,
             "non_random_action_unchanged": True,
             "status_callback_unchanged": True,
-            "random_config_still_deferred": True,
-            "runtime_behavior_changed": False,
+            "action_random_config_materialized": True,
+            "action_materializer_runtime_admission_changed": True,
             "full_canonical_ir_build_count": 0,
         },
         "source": source_evidence,
