@@ -1,5 +1,6 @@
 name: P9 S8C2 PR Validation
 
+# REVIEW checkpoint trigger: keep validation commands unchanged and force final-head CI after governance-only updates.
 on:
   pull_request:
     branches:
