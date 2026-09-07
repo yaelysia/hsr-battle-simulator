@@ -27,6 +27,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
+      - name: Install focused test dependency
+        run: |
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+
       - name: Focused pytest
         run: |
           /usr/bin/time -v -o /tmp/p9-s8c2-pytest.time \
