@@ -65,7 +65,7 @@ def _fixture_node(graph_id: str, node_id: str, task_id: str, source: IRSource) -
         termination_status="not_applicable",
         termination_numeric_definition_id="",
         materialization_status="materialized",
-        owner_domains=(),
+        owner_domains=("task_graph_execution",),
         source=source,
         status_reason="",
     )
@@ -88,14 +88,7 @@ def _run_fast() -> dict[str, Any]:
         owner_id="fixture:root_phase",
         callback_kind="OnStart",
         root_node_ids=(node_id,),
-        nodes=(
-            _fixture_node(
-                graph_id,
-                node_id,
-                task_id,
-                source,
-            ),
-        ),
+        nodes=(_fixture_node(graph_id, node_id, task_id, source),),
         numeric_definitions=(),
         source_catalog_id="fixture:catalog",
         source_fingerprint=source.evidence["content_sha256"],
@@ -228,7 +221,7 @@ def _excluded_blocker_reason(rules: RuleBook, task: Any) -> str:
     reason = ability_task_runtime_blocked_reason(
         rules,
         task,
-        topology_authority="external_legacy",
+        topology_authority="task_graph",
     )
     return reason or str(task.blocked_reason or "")
 
@@ -238,83 +231,51 @@ def _selection_evidence(
     action_id: str,
     level: int,
 ) -> dict[str, Any] | None:
-    admissions = tuple(
-        admission
-        for admission in rules.ir.action_admissions
-        if admission.action_id == action_id
-        and admission.action_level == level
-        and admission.coverage_status == "executable"
-        and not admission.blocked_reason
+    actor_id = "validation:actor"
+    enemy_id = "validation:enemy"
+    state = BattleState(
+        units={
+            actor_id: UnitState(
+                unit_id=actor_id,
+                side="ally",
+                template_id="validation:actor_template",
+                max_hp=1000.0,
+                hp=1000.0,
+                energy=1000.0,
+                max_energy=1000.0,
+            ),
+            enemy_id: UnitState(
+                unit_id=enemy_id,
+                side="enemy",
+                template_id="validation:enemy_template",
+                max_hp=1000.0,
+                hp=1000.0,
+            ),
+        },
+        skill_points=99,
+        max_skill_points=99,
+        global_flags={"turn_owner_id": actor_id, "current_window": "idle", "phase": "combat"},
     )
-    for admission in sorted(admissions, key=lambda item: item.admission_id):
-        for mode in admission.submission_modes:
-            windows = admission.allowed_windows or ("idle",)
-            for window in windows:
-                actor_id = "validation:actor"
-                enemy_id = "validation:enemy"
-                state = BattleState(
-                    units={
-                        actor_id: UnitState(
-                            unit_id=actor_id,
-                            side="ally",
-                            template_id=admission.owner_entity_ref,
-                            max_hp=1000.0,
-                            hp=1000.0,
-                            energy=1000.0,
-                            max_energy=1000.0,
-                            resources={
-                                "energy": 1000.0,
-                                "special_energy": 1000.0,
-                            },
-                        ),
-                        enemy_id: UnitState(
-                            unit_id=enemy_id,
-                            side="enemy",
-                            template_id="validation:enemy_template",
-                            max_hp=1000.0,
-                            hp=1000.0,
-                        ),
-                    },
-                    skill_points=99,
-                    max_skill_points=99,
-                    global_flags={
-                        "turn_owner_id": actor_id,
-                        "current_window": window,
-                        "phase": "combat",
-                    },
-                )
-                selection = ActionTargetSelectionSystem(rules)
-                query = selection.query(
-                    state,
-                    actor_id,
-                    action_id,
-                    level,
-                    submission_mode=mode,
-                    source_id="p9_formal_action_graph_admission_direct",
-                )
-                if query.status != "resolved":
-                    continue
-                submitted = (
-                    ()
-                    if query.selection_mode == "automatic"
-                    else tuple(query.candidate_ids[: (query.selection_min or 1)])
-                )
-                decision = selection.accept(state, query, submitted)
-                if decision.status != "accepted" or decision.context is None:
-                    continue
-                return {
-                    "admission_id": admission.admission_id,
-                    "owner_entity_ref": admission.owner_entity_ref,
-                    "submission_mode": mode,
-                    "window": window,
-                    "query_fingerprint": query.query_fingerprint,
-                    "selection_mode": query.selection_mode,
-                    "candidate_ids": list(query.candidate_ids),
-                    "submitted_target_ids": list(submitted),
-                    "selected_target_ids": list(decision.context.accepted.selected_target_ids),
-                    "selection_fingerprint": decision.context.accepted.selection_fingerprint,
-                }
-    return None
+    selection = ActionTargetSelectionSystem(rules)
+    query = selection.query(state, actor_id, action_id, level)
+    if query.status != "resolved":
+        return None
+    submitted = (
+        ()
+        if query.selection_mode == "automatic"
+        else tuple(query.candidate_ids[: (query.selection_min or 1)])
+    )
+    decision = selection.accept(state, query, submitted)
+    if decision.status != "accepted" or decision.context is None:
+        return None
+    return {
+        "query_fingerprint": query.query_fingerprint,
+        "selection_mode": query.selection_mode,
+        "candidate_ids": list(query.candidate_ids),
+        "submitted_target_ids": list(submitted),
+        "selected_target_ids": list(decision.context.accepted.selected_target_ids),
+        "selection_fingerprint": decision.context.accepted.selection_fingerprint,
+    }
 
 
 def _run_direct(root: Path) -> dict[str, Any]:
