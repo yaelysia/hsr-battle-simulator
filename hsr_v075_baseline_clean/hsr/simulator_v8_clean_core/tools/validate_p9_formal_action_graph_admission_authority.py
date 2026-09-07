@@ -173,6 +173,20 @@ def _graph(
     )
 
 
+def _merge_fixture_graph_nodes(*graphs: TaskGraphIR) -> TaskGraphIR:
+    if not graphs:
+        raise ValueError("fixture graph merge requires at least one graph")
+    graph_id = graphs[0].graph_id
+    if any(graph.graph_id != graph_id for graph in graphs[1:]):
+        raise ValueError("fixture graph merge requires one shared graph identity")
+    nodes = tuple(node for graph in graphs for node in graph.nodes)
+    return replace(
+        graphs[0],
+        root_node_ids=tuple(node.graph_node_id for node in nodes),
+        nodes=nodes,
+    )
+
+
 class _FixtureRules:
     def __init__(
         self,
@@ -311,6 +325,74 @@ def _run_fast_cases() -> dict[str, Any]:
     )
     assert nested.reachable_task_ids == (t_trigger.task_id, t_nested.task_id)
     assert "fixture_nested_blocker" in nested.blocked_reasons
+
+    p_cycle_a = _phase("fixture:p:cycle_a")
+    p_cycle_b = _phase("fixture:p:cycle_b", "nested_only")
+    p_cycle_c = _phase("fixture:p:cycle_c", "nested_only")
+    t_cycle_a_b = _task(
+        "fixture:t:cycle_a_b",
+        p_cycle_a.phase_id,
+        opcode="TriggerAbility",
+        linked_ability_phase_id=p_cycle_b.phase_id,
+    )
+    t_cycle_a_c = _task(
+        "fixture:t:cycle_a_c",
+        p_cycle_a.phase_id,
+        opcode="TriggerAbility",
+        linked_ability_phase_id=p_cycle_c.phase_id,
+    )
+    t_cycle_b_c = _task(
+        "fixture:t:cycle_b_c",
+        p_cycle_b.phase_id,
+        opcode="TriggerAbility",
+        linked_ability_phase_id=p_cycle_c.phase_id,
+    )
+    t_cycle_c_b = _task(
+        "fixture:t:cycle_c_b",
+        p_cycle_c.phase_id,
+        opcode="TriggerAbility",
+        linked_ability_phase_id=p_cycle_b.phase_id,
+    )
+    g_cycle_a = _merge_fixture_graph_nodes(
+        _graph(
+            p_cycle_a.phase_id,
+            t_cycle_a_b,
+            node_kind="ability_call",
+            references=(("ability", p_cycle_b.phase_id, "resolved", ""),),
+        ),
+        _graph(
+            p_cycle_a.phase_id,
+            t_cycle_a_c,
+            node_kind="ability_call",
+            references=(("ability", p_cycle_c.phase_id, "resolved", ""),),
+        ),
+    )
+    g_cycle_b = _graph(
+        p_cycle_b.phase_id,
+        t_cycle_b_c,
+        node_kind="ability_call",
+        references=(("ability", p_cycle_c.phase_id, "resolved", ""),),
+    )
+    g_cycle_c = _graph(
+        p_cycle_c.phase_id,
+        t_cycle_c_b,
+        node_kind="ability_call",
+        references=(("ability", p_cycle_b.phase_id, "resolved", ""),),
+    )
+    cycle, _ = _project(
+        (p_cycle_a, p_cycle_b, p_cycle_c),
+        (t_cycle_a_b, t_cycle_a_c, t_cycle_b_c, t_cycle_c_b),
+        (g_cycle_a, g_cycle_b, g_cycle_c),
+    )
+    expected_cycle_reason = f"task_graph_active_cycle:{g_cycle_b.graph_id}"
+    assert expected_cycle_reason in cycle.blocked_reasons
+    assert any(
+        row.get("reason") == expected_cycle_reason
+        and row.get("source") == "nested_graph_cycle"
+        and row.get("graph_id") == g_cycle_b.graph_id
+        and row.get("task_id") == t_cycle_c_b.task_id
+        for row in cycle.blocker_provenance
+    )
 
     p_deferred = _phase("fixture:p:deferred")
     t_deferred = _task("fixture:t:deferred", p_deferred.phase_id)
@@ -454,6 +536,10 @@ def _run_fast_cases() -> dict[str, Any]:
     return {
         "excluded": excluded.metadata(),
         "nested": nested.metadata(),
+        "cycle": {
+            "expected_reason": expected_cycle_reason,
+            **cycle.metadata(),
+        },
         "deferred": deferred.metadata(),
         "unresolved": unresolved.metadata(),
         "process_only": process.metadata(),
@@ -491,6 +577,7 @@ def _run_fast() -> dict[str, Any]:
     predicates = {
         "unrelated_bound_nested_excluded": True,
         "reachable_trigger_nested_blocker_preserved": True,
+        "cross_graph_active_cycle_fail_closed": True,
         "reachable_deferred_node_fail_closed": True,
         "unresolved_gameplay_reference_fail_closed": True,
         "audit_only_unresolved_reference_not_sole_blocker": True,
