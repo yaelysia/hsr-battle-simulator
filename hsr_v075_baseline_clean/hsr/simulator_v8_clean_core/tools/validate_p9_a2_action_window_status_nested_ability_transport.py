@@ -57,7 +57,6 @@ from .validate_p9_s8b5c_cross_entry_runtime_transport import (
     _graph as _b5_graph,
     _install_ability as _b5_install_ability,
     _install_callback as _b5_install_callback,
-    _run as _run_b5,
 )
 from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (
     _fixture as _random_fixture,
@@ -177,6 +176,29 @@ def _request(
         context_values={"outer_action_actor_id": "outer"},
         active_graph_stack=(root_graph_id, graph.graph_id),
         frame_ids=("frame:root", "frame:child"),
+        target_ids=target_ids,
+        iteration_index=None,
+    )
+
+
+def _single_graph_request(
+    graph: TaskGraphIR,
+    identity: str,
+    *,
+    target_ids: tuple[str, ...] = ("target",),
+) -> TaskGraphHookRequest:
+    node = graph.nodes[0]
+    return TaskGraphHookRequest(
+        invocation_id=identity,
+        graph_id=graph.graph_id,
+        graph_node_id=node.graph_node_id,
+        formal_task_id=node.formal_task_id,
+        opcode=node.opcode,
+        source_family=node.source_family,
+        references=node.references,
+        context_values={"outer_action_actor_id": "outer"},
+        active_graph_stack=(graph.graph_id,),
+        frame_ids=(f"frame:{identity}",),
         target_ids=target_ids,
         iteration_index=None,
     )
@@ -331,10 +353,132 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     )
     status_graph_did_not_escape = len(seen_channels) == before_status_route
 
+    callback_e, detail_e, _ = _b5_install_callback(
+        rules,
+        "E",
+        child_graph.owner_id,
+        executable=False,
+    )
+    generic_details = {
+        callback.callback_id: dict(detail),
+        callback_e.callback_id: dict(detail_e),
+    }
+    outer_graph = _b5_install_ability(rules, "OUTER")
+    outer_request = _single_graph_request(outer_graph, "a2:s8b5:outer")
+    outer_continuation = TaskGraphContinuation.from_hook_request(outer_request)
+    generic_seen: list[tuple[str, tuple[str, ...]]] = []
+    generic_hooks = TaskGraphExecutionHooks(
+        leaf=lambda request, _state: (
+            generic_seen.append((request.graph_id, request.active_graph_stack))
+            or TaskGraphLeafResult(
+                "resolved",
+                events=(
+                    GameEvent(
+                        "fixture.s8b5.child",
+                        source_id="owner",
+                        target_id="target",
+                        event_id="event:a2:s8b5-child",
+                    ),
+                ),
+            )
+        )
+    )
+    generic_dispatcher = _B5Dispatcher(
+        rules,
+        _B5StatusCallbacks(rules),
+        generic_details,
+    )
+    generic_success = generic_dispatcher.dispatch_event(
+        state,
+        event=GameEvent(
+            "battle.start",
+            source_id="outer",
+            target_id="target",
+            event_id="event:a2:s8b5-success",
+            payload={"fixture_callback_ids": [callback.callback_id]},
+        ),
+        task_graph_continuation=outer_continuation,
+        nested_ability_hooks=generic_hooks,
+    )
+    expected_generic_stack = (
+        outer_graph.graph_id,
+        root_graph.graph_id,
+        child_graph.graph_id,
+    )
+    generic_pair_transport = any(
+        type(item[0]) is TaskGraphContinuation
+        and type(item[1]) is TaskGraphExecutionHooks
+        and item[0] == outer_continuation
+        and item[1] is generic_hooks
+        for item in generic_dispatcher.ability_property_watchers.transports
+    )
+    generic_child_stack_ok = any(
+        graph_id == child_graph.graph_id and stack == expected_generic_stack
+        for graph_id, stack in generic_seen
+    )
+
+    cycle_request = _single_graph_request(child_graph, "a2:s8b5:cycle")
+    cycle_dispatcher = _B5Dispatcher(
+        rules,
+        _B5StatusCallbacks(rules),
+        generic_details,
+    )
+    cycle_result = cycle_dispatcher.dispatch_event(
+        state,
+        event=GameEvent(
+            "battle.start",
+            source_id="outer",
+            target_id="target",
+            event_id="event:a2:s8b5-cycle",
+            payload={"fixture_callback_ids": [callback.callback_id]},
+        ),
+        task_graph_continuation=TaskGraphContinuation.from_hook_request(cycle_request),
+        nested_ability_hooks=generic_hooks,
+    )
+    cycle_has_no_success_projection = not any(
+        projection.status == "complete"
+        for projection in cycle_result.task_graph_projections
+    )
+
+    grouped_dispatcher = _B5Dispatcher(
+        rules,
+        _B5StatusCallbacks(rules),
+        generic_details,
+    )
+    grouped_failure = grouped_dispatcher.dispatch_event(
+        state,
+        event=GameEvent(
+            "battle.start",
+            source_id="outer",
+            target_id="target",
+            event_id="event:a2:s8b5-group-failure",
+            payload={
+                "fixture_callback_ids": [callback.callback_id, callback_e.callback_id]
+            },
+        ),
+        task_graph_continuation=outer_continuation,
+        nested_ability_hooks=generic_hooks,
+    )
+    grouped_has_no_success_projection = not any(
+        projection.status == "complete"
+        for projection in grouped_failure.task_graph_projections
+    )
+    result_guard = False
+    if generic_success.task_graph_projections:
+        try:
+            StatusCallbackExecutionResult(
+                False,
+                state,
+                errors=("blocked",),
+                task_graph_projections=(generic_success.task_graph_projections[0],),
+            )
+        except ValueError:
+            result_guard = True
+
     wrong_provider_dispatcher = _B5Dispatcher(
         rules,
         _B5StatusCallbacks(rules),
-        {callback.callback_id: dict(detail)},
+        generic_details,
     )
     wrong_provider = wrong_provider_dispatcher.dispatch_action_window_listeners(
         state,
@@ -357,7 +501,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     ordinary_dispatcher = _B5Dispatcher(
         rules,
         _B5StatusCallbacks(rules),
-        {callback.callback_id: dict(detail)},
+        generic_details,
     )
     ordinary = ordinary_dispatcher.dispatch_event(
         state,
@@ -394,7 +538,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     root_dispatcher = _B5Dispatcher(
         rules,
         root_probe,
-        {callback.callback_id: dict(detail)},
+        generic_details,
     )
     root_dispatch = root_dispatcher.dispatch_action_window_listeners(
         state,
@@ -507,6 +651,32 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         "weighted_selection_has_zero_rng_and_zero_state_change": (
             weighted_result.rng_event is None and before_snapshot == after_snapshot
         ),
+        "s8b5_continuation_pair_regression_pass": (
+            not generic_success.errors
+            and generic_pair_transport
+        ),
+        "s8b5_active_stack_regression_pass": (
+            not generic_success.errors
+            and generic_child_stack_ok
+        ),
+        "s8b5_cycle_guard_regression_pass": (
+            bool(cycle_result.errors)
+            and any("task_graph_active_cycle" in item for item in cycle_result.errors)
+            and cycle_result.after_state is state
+            and not cycle_result.mutations
+            and not cycle_result.events
+            and not cycle_result.rng_events
+            and cycle_has_no_success_projection
+        ),
+        "s8b5_atomic_rollback_regression_pass": (
+            bool(grouped_failure.errors)
+            and grouped_failure.after_state is state
+            and not grouped_failure.mutations
+            and not grouped_failure.events
+            and not grouped_failure.rng_events
+            and grouped_has_no_success_projection
+            and result_guard
+        ),
     }
     details = {
         "root_graph_id": root_graph.graph_id,
@@ -526,6 +696,30 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             "duplicate_link": ambiguous_reason,
             "missing_link": missing_link_reason,
         },
+        "s8b5_targeted": {
+            "generic_errors": list(generic_success.errors),
+            "generic_projection_graph_ids": [
+                item.graph_id for item in generic_success.task_graph_projections
+            ],
+            "generic_seen": [
+                {"graph_id": graph_id, "active_graph_stack": list(stack)}
+                for graph_id, stack in generic_seen
+            ],
+            "watcher_transport_count": len(
+                generic_dispatcher.ability_property_watchers.transports
+            ),
+            "cycle_errors": list(cycle_result.errors),
+            "cycle_projection_statuses": [
+                [item.graph_id, item.status]
+                for item in cycle_result.task_graph_projections
+            ],
+            "grouped_failure_errors": list(grouped_failure.errors),
+            "grouped_projection_statuses": [
+                [item.graph_id, item.status]
+                for item in grouped_failure.task_graph_projections
+            ],
+            "result_guard": result_guard,
+        },
     }
     return predicates, details
 
@@ -533,18 +727,9 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
 def _run_fast() -> dict[str, Any]:
     started = time.perf_counter()
     component_predicates, component_details = _fast_component_matrix()
-    b5_predicates, b5_details = _run_b5()
     a1 = _run_a1_fast()
     predicates = {
         **component_predicates,
-        "s8b5_continuation_pair_regression_pass": all(b5_predicates.values()),
-        "s8b5_active_stack_cycle_guard_regression_pass": (
-            b5_predicates.get("active_graph_stack_survives_synchronous_cross_entry_calls", False)
-            and b5_predicates.get("direct_and_indirect_graph_cycles_fail_before_mutation", False)
-        ),
-        "s8b5_atomic_rollback_regression_pass": (
-            b5_predicates.get("failed_transactions_publish_no_successful_child_projection", False)
-        ),
         "a1_admission_regression_pass": bool(a1.get("ok")),
     }
     elapsed = time.perf_counter() - started
@@ -559,10 +744,6 @@ def _run_fast() -> dict[str, Any]:
         "mode": "fast",
         "predicates": predicates,
         "component": component_details,
-        "s8b5": {
-            "predicates": b5_predicates,
-            "details": b5_details,
-        },
         "a1": a1,
         "resource": {
             "wall_seconds": round(elapsed, 6),
