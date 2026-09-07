@@ -33,6 +33,29 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Apply exact validator diagnostic patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py')
+          text = path.read_text(encoding='utf-8')
+          old_import = '''from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (\n    _fixture as _random_fixture,\n)'''
+          new_import = '''from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (\n    _build_real_context as _s8c1c_build_real_context,\n    _fixture as _random_fixture,\n)'''
+          old_fast = '''            and not wrong_provider.mutations\n            and not wrong_provider.events\n            and not wrong_provider.rng_events\n        ),'''
+          new_fast = '''            and not wrong_provider.mutations\n            and tuple(event.event_id for event in wrong_provider.events)\n            == ("event:a2:wrong-provider",)\n            and all(event.process_only for event in wrong_provider.events)\n            and not wrong_provider.rng_events\n            and not wrong_provider.task_graph_projections\n            and not wrong_provider_dispatcher.ability_property_watchers.transports\n        ),'''
+          old_direct = '''    canonical = TBGDLowering(TBGD_ROOT).build()\n    rules = RuleBook(canonical)\n    if not getattr(rules.ir, "task_graph_catalog", None):\n        raise AssertionError("production CanonicalIR has no task graph catalog")'''
+          new_direct = '''    real_context = _s8c1c_build_real_context(TBGD_ROOT)\n    canonical = replace(\n        real_context.status_bundle.view,\n        task_graph_catalog=real_context.status_bundle.catalog,\n    )\n    rules = RuleBook(canonical)\n    if not getattr(rules.ir, "task_graph_catalog", None):\n        raise AssertionError("focused production CanonicalIR has no task graph catalog")'''
+          replacements = ((old_import, new_import), (old_fast, new_fast), (old_direct, new_direct))
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one validator replacement, found {count}: {old[:80]!r}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          git diff --stat
+
       - name: Compile scoped A2 files
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
@@ -86,3 +109,11 @@ jobs:
         run: |
           echo "fast_outcome=${{ steps.a2_fast.outcome }}"
           test "${{ steps.a2_fast.outcome }}" = "success"
+
+      - name: Upload patched validator for connector commit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-a2-patched-validator
+          path: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py
+          if-no-files-found: error
