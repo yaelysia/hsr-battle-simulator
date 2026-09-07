@@ -152,7 +152,7 @@ No paid/self-hosted runner or new dependency was introduced.
 
 Historical failed heads are evidence only and are not used as current results:
 
-- `040ddeeac4836f1ff5f2d6b7a2446a36a337dda9`: semantic evidence was inside the unchanged resource gates, but a deliberately negative evidence field was incorrectly included directly in `all(predicates.values())`; fixed by using positive `no_forged_selection_fingerprint_or_authorization` semantics.
+- `040ddeeac4836f1ff5f2d6b7a2446a36a337dda9`: semantic evidence was inside the unchanged resource gates, but a deliberately negative evidence field (`forged_selection_fingerprint_or_authorization=false`) was incorrectly included directly in `all(predicates.values())`; fixed by using positive `no_forged_selection_fingerprint_or_authorization` semantics.
 - `7e696196a5be1fb36cc804761e366a4b42d3b8bd`: numeric evidence `full_canonical_ir_build_count=0` was incorrectly placed inside `all(...)`, where integer zero is false; fixed by retaining the numeric count separately and gating on `full_canonical_ir_build_count_is_zero`.
 - `bb057de0fa1abc9ecab668836d2482d1fcee7ee3`: prior code-validation head passed before REVIEW discovered the independent cross-graph cycle defect.
 - `3d2a4806d6cbe40abd1f3f6f130cad0bf6aff185`, run `34120718536`: production DFS remediation compiled and all upstream S8C1A/S8C1B checks passed, but the new fixture over-specified that B rather than C must be the DFS back-edge target. The test assertion was corrected without changing production semantics or weakening the required cycle/provenance property.
@@ -177,3 +177,14 @@ PR #9 remains outside this PR's implementation scope. The present remediation is
 - Remaining implementation work in A1 known to EXEC: none.
 - Next role: `REVIEW`.
 - REVIEW should independently reproduce the explicit A->{B,C}, B->C, C->B Fast cycle case, the real-source flat-vs-action-root-closure Direct evidence, the public target query/accept -> ActionContract path, zero full-build gate, final-head hosted CI, and authorized diff boundary before acceptance.
+
+## 11. REVIEW acceptance checkpoint
+
+- REVIEW dispatch: `PR10-REVIEW-5570727999`.
+- Independently reviewed implementation head: `84ee94b4d1bf25221d783f8a84d7b79f8e46f896`.
+- Hosted implementation-head CI: run `34122026242`, job `101742022231`, **success** on the exact PR head merged against planning base.
+- The REVIEW rechecked the prior finding rather than trusting the remediation report: one-time support scanning may de-duplicate graph bodies globally, but all resolved nested-call edges are recorded and a separate three-state DFS from formal roots detects path-sensitive active cycles. The required `A -> {B,C}, B -> C, C -> B` regression fails closed with `task_graph_active_cycle:*` / `nested_graph_cycle` provenance.
+- Final implementation-head Fast: `cases=11`, `ok=true`; S8C1A, S8C1B Fast/Direct, A1 real-TBGD Direct and PR-base `git diff --check` all passed. A1 Direct remained under the unchanged `180s / 1 GiB` limits, used the pinned TBGD submodule, and measured `full_canonical_ir_build_count=0`.
+- The full PR production write remains confined to `systems/action_contract.py`; A2, PR #9 caller/RNG-ledger, task-graph executor/IR/materializer and sibling domains remain deferred.
+- No unique P9 total-plan checklist leaf corresponds to this dependency prerequisite. Therefore no checklist box is added or checked here, and the parent `P9-S8C` item remains deliberately unchecked.
+- REVIEW verdict: `accepted`, subject only to the governance-head hosted CI merge gate. The governance-head CI run and real squash merge SHA are recorded in the final PR `[REVIEW:ACCEPTED]` comment because this file cannot self-reference those values.
