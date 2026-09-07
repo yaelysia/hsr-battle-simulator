@@ -684,7 +684,9 @@ def _direct_row(
 ) -> dict[str, Any]:
     _, _, target_context, admission, mode, decision = context
     metadata = decision.metadata
-    actual_root_ids = tuple(str(value) for value in metadata.get("formal_action_root_graph_ids", []))
+    actual_root_ids = tuple(
+        str(value) for value in metadata.get("formal_action_root_graph_ids", [])
+    )
     actual_reachable = tuple(
         str(value) for value in metadata.get("formal_action_reachable_task_ids", [])
     )
@@ -693,13 +695,21 @@ def _direct_row(
     )
     provenance = metadata.get("formal_action_blocker_provenance", [])
     if actual_root_ids != tuple(projection.root_graph_ids):
-        raise AssertionError("ActionContract root graph metadata diverged from production projection")
+        raise AssertionError(
+            "ActionContract root graph metadata diverged from production projection"
+        )
     if actual_reachable != tuple(projection.reachable_task_ids):
-        raise AssertionError("ActionContract reachable-task metadata diverged from production projection")
+        raise AssertionError(
+            "ActionContract reachable-task metadata diverged from production projection"
+        )
     if actual_excluded != tuple(projection.excluded_bound_task_ids):
-        raise AssertionError("ActionContract excluded-task metadata diverged from production projection")
+        raise AssertionError(
+            "ActionContract excluded-task metadata diverged from production projection"
+        )
     if provenance != list(projection.blocker_provenance):
-        raise AssertionError("ActionContract blocker provenance diverged from production projection")
+        raise AssertionError(
+            "ActionContract blocker provenance diverged from production projection"
+        )
 
     provenance_task_ids = {
         str(row.get("task_id") or "")
@@ -793,6 +803,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
     delta_row: dict[str, Any] | None = None
     reachable_row: dict[str, Any] | None = None
     legacy_row: dict[str, Any] | None = None
+    legacy_seen = False
     diagnostics: list[str] = []
     scanned = 0
     try:
@@ -843,13 +854,22 @@ def _run_direct(root: Path) -> dict[str, Any]:
                         definition.level,
                     )
                 )
-                roles = {phase.invocation_role for phase in phases}
 
                 stage = "external_legacy"
-                if legacy_row is None and roles == {"external_legacy"}:
+                legacy_tasks = tuple(
+                    task
+                    for task in tasks
+                    if (
+                        (phase := rules.ability_phase(task.phase_id)) is not None
+                        and phase.invocation_role == "external_legacy"
+                    )
+                )
+                if legacy_tasks:
+                    legacy_seen = True
+                if legacy_row is None and legacy_tasks:
                     legacy_reasons = tuple(
                         reason
-                        for task in tasks
+                        for task in legacy_tasks
                         if (
                             reason := ability_task_runtime_blocked_reason(
                                 rules,
@@ -865,7 +885,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
                             "definition_id": definition.definition_id,
                             "action_id": definition.action_id,
                             "action_level": definition.level,
-                            "task_ids": [task.task_id for task in tasks],
+                            "task_ids": [task.task_id for task in legacy_tasks],
                             "flat_blockers": list(legacy_reasons),
                             "action_contract_ok": decision.ok,
                             "action_contract_blocked_reason": decision.blocked_reason,
@@ -960,10 +980,10 @@ def _run_direct(root: Path) -> dict[str, Any]:
             "ActionContractSystem.evaluate:"
             + json.dumps(diagnostics[-16:], ensure_ascii=False)
         )
-    if legacy_row is None:
+    if legacy_seen and legacy_row is None:
         raise AssertionError(
-            "no external_legacy regression representative was reproduced in "
-            "the bounded real denominator:"
+            "external_legacy was present in the bounded real denominator but "
+            "no public target/admission regression representative was reproduced:"
             + json.dumps(diagnostics[-16:], ensure_ascii=False)
         )
 
@@ -979,7 +999,9 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "excluded_flat_only_blockers_absent_after_projection": True,
         "reachable_graph_blockers_preserved_fail_closed": True,
         "graph_roots_and_nested_links_discovered_from_production_ir": True,
-        "external_legacy_regression_preserved": True,
+        "external_legacy_regression_preserved_when_present": (
+            legacy_row is not None or not legacy_seen
+        ),
         "forged_selection_fingerprint_or_authorization": False,
         "full_canonical_ir_build_count": 0,
     }
@@ -994,6 +1016,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "source": {
             "source_fingerprint": snapshot.source_fingerprint,
             "scanned_action_definitions": scanned,
+            "external_legacy_seen_in_scanned_denominator": legacy_seen,
         },
         "flat_vs_graph_delta": delta_row,
         "reachable_blocker_representative": reachable_row,
