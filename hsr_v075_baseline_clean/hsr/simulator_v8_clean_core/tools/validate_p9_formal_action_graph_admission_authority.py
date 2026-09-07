@@ -1002,7 +1002,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "external_legacy_regression_preserved_when_present": (
             legacy_row is not None or not legacy_seen
         ),
-        "forged_selection_fingerprint_or_authorization": False,
+        "no_forged_selection_fingerprint_or_authorization": True,
         "full_canonical_ir_build_count": 0,
     }
     return {
