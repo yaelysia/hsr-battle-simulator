@@ -1098,6 +1098,19 @@ def _build_graph(
     )
 
 
+def _action_random_config_ignorable_reference(
+    reference: TaskGraphDefinitionReferenceIR,
+) -> bool:
+    return (
+        reference.reference_kind == "effect"
+        and reference.resolution_status == "deferred"
+        and reference.owner_domain == "event_effect_execution"
+        and not reference.source_contract_record_id
+        and reference.blocked_reason
+        == "task_graph_definition_not_admitted:effect:unsupported"
+    )
+
+
 def _admit_action_random_config_nodes(
     entry_kind: EntryKind,
     nodes: tuple[TaskGraphNodeIR, ...],
@@ -1132,7 +1145,11 @@ def _admit_action_random_config_nodes(
             or node.materialization_status != "deferred"
             or node.owner_domains != ("hit_random_sequence",)
             or node.termination_kind != "not_applicable"
-            or any(ref.resolution_status != "resolved" for ref in node.references)
+            or any(
+                ref.resolution_status != "resolved"
+                and not _action_random_config_ignorable_reference(ref)
+                for ref in node.references
+            )
             or not selection.choices
             or len(selection.choices) != len(node.branches)
         ):
@@ -1176,6 +1193,11 @@ def _admit_action_random_config_nodes(
         replace(
             node,
             node_kind="branch",
+            references=tuple(
+                ref
+                for ref in node.references
+                if not _action_random_config_ignorable_reference(ref)
+            ),
             materialization_status="materialized",
             owner_domains=("task_graph_execution",),
             status_reason="",
