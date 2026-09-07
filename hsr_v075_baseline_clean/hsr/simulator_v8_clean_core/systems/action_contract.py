@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from ..core.model import ActionCommand, BattleState, JSONValue
 from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphNodeIR
+from ..rules.task_graph import TaskGraphIR
 from .action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
@@ -269,22 +269,20 @@ def _formal_action_task_graph_projection(
         source: str,
     ) -> None:
         stable_reason = reason or "formal_action_task_graph_identity_mismatch"
-        if stable_reason in blocked_reasons:
-            return
-        blocked_reasons.append(stable_reason)
-        blocker_provenance.append(
-            {
-                "reason": stable_reason,
-                "source": source,
-                "phase_id": phase_id,
-                "callback_kind": callback_kind,
-                "graph_id": graph_id,
-                "graph_node_id": graph_node_id,
-                "task_id": task_id,
-            }
-        )
+        if stable_reason not in blocked_reasons:
+            blocked_reasons.append(stable_reason)
+        row: dict[str, JSONValue] = {
+            "reason": stable_reason,
+            "source": source,
+            "phase_id": phase_id,
+            "callback_kind": callback_kind,
+            "graph_id": graph_id,
+            "graph_node_id": graph_node_id,
+            "task_id": task_id,
+        }
+        if row not in blocker_provenance:
+            blocker_provenance.append(row)
 
-    phase_by_task_id = {}
     formal_bound_task_ids: list[str] = []
     for task in sorted(tasks, key=lambda item: item.task_id):
         phase = rules.ability_phase(task.phase_id)
@@ -296,7 +294,6 @@ def _formal_action_task_graph_projection(
                 source="bound_task_phase",
             )
             continue
-        phase_by_task_id[task.task_id] = phase
         if phase.invocation_role != "external_legacy":
             formal_bound_task_ids.append(task.task_id)
 
@@ -306,6 +303,40 @@ def _formal_action_task_graph_projection(
             key=lambda item: item.phase_id,
         )
     )
+    roles = {phase.invocation_role for phase in action_phases}
+    if "action_root" in roles:
+        invalid_roles = sorted(
+            roles.difference({"action_root", "nested_only", "non_gameplay_noop"})
+        )
+        if invalid_roles:
+            block(
+                f"ability_action_invocation_roles_mixed:{','.join(invalid_roles)}",
+                source="action_invocation_role",
+            )
+            return _FormalActionGraphAdmissionProjection(
+                root_graph_ids=(),
+                root_entries=(),
+                reachable_task_ids=(),
+                excluded_bound_task_ids=tuple(sorted(set(formal_bound_task_ids))),
+                blocked_reasons=_stable_unique(blocked_reasons),
+                blocker_provenance=tuple(blocker_provenance),
+            )
+    elif "standalone_root" in roles:
+        block(
+            "standalone_ability_requires_admitted_queue_invocation",
+            source="action_invocation_role",
+        )
+    elif "nested_only" in roles and "external_legacy" not in roles:
+        block(
+            "ability_nested_only_cannot_be_action_root",
+            source="action_invocation_role",
+        )
+    elif "unbound_definition" in roles:
+        block(
+            "unbound_ability_not_action_admitted",
+            source="action_invocation_role",
+        )
+
     root_phases = tuple(
         phase for phase in action_phases if phase.invocation_role == "action_root"
     )
@@ -319,7 +350,7 @@ def _formal_action_task_graph_projection(
             blocker_provenance=tuple(blocker_provenance),
         )
 
-    pending_graphs: list[tuple[TaskGraphIR, str, str, bool]] = []
+    pending_graphs: list[tuple[TaskGraphIR, str, str, bool, tuple[str, ...]]] = []
     for phase in root_phases:
         if phase.action_id != action_id or phase.level != action_level:
             block(
@@ -353,15 +384,16 @@ def _formal_action_task_graph_projection(
                 )
                 continue
             root_graph_ids.append(graph.graph_id)
-            root_entries.append(
-                (phase.phase_id, callback_kind, graph.graph_id)
+            root_entries.append((phase.phase_id, callback_kind, graph.graph_id))
+            pending_graphs.append(
+                (graph, phase.phase_id, callback_kind, True, (graph.graph_id,))
             )
-            pending_graphs.append((graph, phase.phase_id, callback_kind, True))
 
     visited_graph_ids: set[str] = set()
-    visited_nodes: set[tuple[str, str]] = set()
     while pending_graphs:
-        graph, expected_phase_id, expected_callback_kind, is_root = pending_graphs.pop(0)
+        graph, expected_phase_id, expected_callback_kind, is_root, active_path = (
+            pending_graphs.pop(0)
+        )
         if graph.graph_id in visited_graph_ids:
             continue
         visited_graph_ids.add(graph.graph_id)
@@ -383,29 +415,14 @@ def _formal_action_task_graph_projection(
             )
             continue
 
-        node_by_id = {node.graph_node_id: node for node in graph.nodes}
-        pending_node_ids = list(graph.root_node_ids)
-        while pending_node_ids:
-            graph_node_id = pending_node_ids.pop(0)
-            visit_key = (graph.graph_id, graph_node_id)
-            if visit_key in visited_nodes:
-                continue
-            visited_nodes.add(visit_key)
-            node = node_by_id.get(graph_node_id)
-            if type(node) is not TaskGraphNodeIR:
-                block(
-                    "task_graph_missing:node",
-                    phase_id=graph.owner_id,
-                    callback_kind=graph.callback_kind,
-                    graph_id=graph.graph_id,
-                    graph_node_id=graph_node_id,
-                    source="graph_child_identity",
-                )
-                continue
+        # TaskGraphIR itself is the structural-topology authority: its constructor
+        # rejects cycles, unreachable nodes, dangling children and ambiguous parents.
+        # Admission therefore scans the canonical node set instead of re-walking
+        # branch edges or evaluating runtime branch/condition/count/target hooks.
+        for node in graph.nodes:
             task = rules.ability_task(node.formal_task_id)
             if (
                 task is None
-                or node.graph_id != graph.graph_id
                 or task.phase_id != graph.owner_id
                 or task.callback_kind != graph.callback_kind
             ):
@@ -418,202 +435,223 @@ def _formal_action_task_graph_projection(
                     task_id=node.formal_task_id,
                     source="graph_task_identity",
                 )
-            else:
-                reachable_task_ids.append(task.task_id)
-                if node.materialization_status != "materialized":
-                    block(
-                        node.status_reason
-                        or "ability_task_graph_node_not_materialized",
-                        phase_id=graph.owner_id,
-                        callback_kind=graph.callback_kind,
-                        graph_id=graph.graph_id,
-                        graph_node_id=node.graph_node_id,
-                        task_id=task.task_id,
-                        source="node_materialization",
-                    )
-                runtime_reason = ability_task_runtime_blocked_reason(
-                    rules,
-                    task,
-                    topology_authority="task_graph",
+                continue
+
+            reachable_task_ids.append(task.task_id)
+            if node.materialization_status != "materialized":
+                block(
+                    node.status_reason or "ability_task_graph_node_not_materialized",
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="node_materialization",
                 )
-                if runtime_reason:
+            runtime_reason = ability_task_runtime_blocked_reason(
+                rules,
+                task,
+                topology_authority="task_graph",
+            )
+            if runtime_reason:
+                block(
+                    runtime_reason,
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="ability_task_runtime_support",
+                )
+            if not is_process_only_ability_task(task):
+                unresolved = tuple(
+                    reference
+                    for reference in node.references
+                    if reference.resolution_status != "resolved"
+                )
+                if unresolved:
                     block(
-                        runtime_reason,
+                        unresolved[0].blocked_reason
+                        or "ability_task_graph_leaf_reference_not_resolved",
                         phase_id=graph.owner_id,
                         callback_kind=graph.callback_kind,
                         graph_id=graph.graph_id,
                         graph_node_id=node.graph_node_id,
                         task_id=task.task_id,
-                        source="ability_task_runtime_support",
+                        source="graph_reference",
                     )
-                if not is_process_only_ability_task(task):
-                    unresolved = tuple(
-                        reference
-                        for reference in node.references
-                        if reference.resolution_status != "resolved"
+
+            nested_node = node.node_kind == "ability_call" or task.opcode == "TriggerAbility"
+            if not nested_node:
+                continue
+            if node.node_kind != "ability_call" or task.opcode != "TriggerAbility":
+                block(
+                    "ability_task_graph_nested_identity_mismatch",
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="nested_node_identity",
+                )
+                continue
+
+            ability_refs = tuple(
+                reference
+                for reference in node.references
+                if reference.reference_kind == "ability"
+            )
+            if len(ability_refs) != 1 or ability_refs[0].resolution_status != "resolved":
+                block(
+                    "ability_task_graph_nested_reference_not_resolved",
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="nested_reference",
+                )
+                continue
+
+            reference = ability_refs[0]
+            phase_ids: tuple[str, ...] = ()
+            if task.linked_ability_phase_id:
+                if reference.definition_id != task.linked_ability_phase_id:
+                    block(
+                        "ability_task_graph_nested_phase_identity_mismatch",
+                        phase_id=graph.owner_id,
+                        callback_kind=graph.callback_kind,
+                        graph_id=graph.graph_id,
+                        graph_node_id=node.graph_node_id,
+                        task_id=task.task_id,
+                        source="nested_reference_identity",
                     )
-                    if unresolved:
-                        block(
-                            unresolved[0].blocked_reason
-                            or "ability_task_graph_leaf_reference_not_resolved",
-                            phase_id=graph.owner_id,
-                            callback_kind=graph.callback_kind,
-                            graph_id=graph.graph_id,
-                            graph_node_id=node.graph_node_id,
-                            task_id=task.task_id,
-                            source="graph_reference",
-                        )
+                    continue
+                phase_ids = (task.linked_ability_phase_id,)
+            elif task.linked_standalone_graph_id:
+                if reference.definition_id != task.linked_standalone_graph_id:
+                    block(
+                        "ability_task_graph_nested_standalone_identity_mismatch",
+                        phase_id=graph.owner_id,
+                        callback_kind=graph.callback_kind,
+                        graph_id=graph.graph_id,
+                        graph_node_id=node.graph_node_id,
+                        task_id=task.task_id,
+                        source="nested_reference_identity",
+                    )
+                    continue
+                standalone = rules.standalone_ability_graph(
+                    task.linked_standalone_graph_id
+                )
+                if standalone is None:
+                    block(
+                        "ability_task_graph_nested_standalone_missing",
+                        phase_id=graph.owner_id,
+                        callback_kind=graph.callback_kind,
+                        graph_id=graph.graph_id,
+                        graph_node_id=node.graph_node_id,
+                        task_id=task.task_id,
+                        source="nested_standalone",
+                    )
+                    continue
+                phase_ids = standalone.phase_ids
+            else:
+                block(
+                    "ability_task_graph_nested_target_missing",
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="nested_target",
+                )
+                continue
 
-                nested_node = node.node_kind == "ability_call" or task.opcode == "TriggerAbility"
-                if nested_node:
-                    if node.node_kind != "ability_call" or task.opcode != "TriggerAbility":
-                        block(
-                            "ability_task_graph_nested_identity_mismatch",
-                            phase_id=graph.owner_id,
-                            callback_kind=graph.callback_kind,
-                            graph_id=graph.graph_id,
-                            graph_node_id=node.graph_node_id,
-                            task_id=task.task_id,
-                            source="nested_node_identity",
-                        )
-                    else:
-                        ability_refs = tuple(
-                            reference
-                            for reference in node.references
-                            if reference.reference_kind == "ability"
-                        )
-                        if (
-                            len(ability_refs) != 1
-                            or ability_refs[0].resolution_status != "resolved"
-                        ):
-                            block(
-                                "ability_task_graph_nested_reference_not_resolved",
-                                phase_id=graph.owner_id,
-                                callback_kind=graph.callback_kind,
-                                graph_id=graph.graph_id,
-                                graph_node_id=node.graph_node_id,
-                                task_id=task.task_id,
-                                source="nested_reference",
-                            )
-                        else:
-                            reference = ability_refs[0]
-                            phase_ids: tuple[str, ...] = ()
-                            if task.linked_ability_phase_id:
-                                if reference.definition_id != task.linked_ability_phase_id:
-                                    block(
-                                        "ability_task_graph_nested_phase_identity_mismatch",
-                                        phase_id=graph.owner_id,
-                                        callback_kind=graph.callback_kind,
-                                        graph_id=graph.graph_id,
-                                        graph_node_id=node.graph_node_id,
-                                        task_id=task.task_id,
-                                        source="nested_reference_identity",
-                                    )
-                                else:
-                                    phase_ids = (task.linked_ability_phase_id,)
-                            elif task.linked_standalone_graph_id:
-                                if reference.definition_id != task.linked_standalone_graph_id:
-                                    block(
-                                        "ability_task_graph_nested_standalone_identity_mismatch",
-                                        phase_id=graph.owner_id,
-                                        callback_kind=graph.callback_kind,
-                                        graph_id=graph.graph_id,
-                                        graph_node_id=node.graph_node_id,
-                                        task_id=task.task_id,
-                                        source="nested_reference_identity",
-                                    )
-                                else:
-                                    standalone = rules.standalone_ability_graph(
-                                        task.linked_standalone_graph_id
-                                    )
-                                    if standalone is None:
-                                        block(
-                                            "ability_task_graph_nested_standalone_missing",
-                                            phase_id=graph.owner_id,
-                                            callback_kind=graph.callback_kind,
-                                            graph_id=graph.graph_id,
-                                            graph_node_id=node.graph_node_id,
-                                            task_id=task.task_id,
-                                            source="nested_standalone",
-                                        )
-                                    else:
-                                        phase_ids = standalone.phase_ids
-                            else:
-                                block(
-                                    "ability_task_graph_nested_target_missing",
-                                    phase_id=graph.owner_id,
-                                    callback_kind=graph.callback_kind,
-                                    graph_id=graph.graph_id,
-                                    graph_node_id=node.graph_node_id,
-                                    task_id=task.task_id,
-                                    source="nested_target",
-                                )
+            candidates: list[tuple[TaskGraphIR, str]] = []
+            for phase_id in phase_ids:
+                phase = rules.ability_phase(phase_id)
+                if phase is None or phase.invocation_role != "nested_only":
+                    continue
+                nested_tasks = tuple(
+                    candidate
+                    for candidate in rules.ability_tasks_for_phase(phase_id)
+                    if candidate.callback_kind == task.callback_kind
+                )
+                if not nested_tasks:
+                    continue
+                nested_result = rules.query_formal_task_graph(
+                    "ability_phase_callback",
+                    phase_id,
+                    task.callback_kind,
+                    (candidate.task_id for candidate in nested_tasks),
+                )
+                nested_graph = nested_result.value
+                if nested_result.status != "resolved" or type(nested_graph) is not TaskGraphIR:
+                    block(
+                        nested_result.blocked_reason
+                        or "ability_task_graph_nested_graph_missing",
+                        phase_id=phase_id,
+                        callback_kind=task.callback_kind,
+                        graph_id=graph.graph_id,
+                        graph_node_id=node.graph_node_id,
+                        task_id=task.task_id,
+                        source="nested_graph",
+                    )
+                    continue
+                if (
+                    nested_graph.source_catalog_id != graph.source_catalog_id
+                    or nested_graph.source_fingerprint != graph.source_fingerprint
+                ):
+                    block(
+                        "task_graph_nested_graph_authority_mismatch",
+                        phase_id=phase_id,
+                        callback_kind=task.callback_kind,
+                        graph_id=nested_graph.graph_id,
+                        graph_node_id=node.graph_node_id,
+                        task_id=task.task_id,
+                        source="nested_graph_authority",
+                    )
+                    continue
+                candidates.append((nested_graph, phase_id))
 
-                            candidates: list[tuple[TaskGraphIR, str]] = []
-                            for phase_id in phase_ids:
-                                phase = rules.ability_phase(phase_id)
-                                if phase is None or phase.invocation_role != "nested_only":
-                                    continue
-                                nested_tasks = tuple(
-                                    candidate
-                                    for candidate in rules.ability_tasks_for_phase(phase_id)
-                                    if candidate.callback_kind == task.callback_kind
-                                )
-                                if not nested_tasks:
-                                    continue
-                                nested_result = rules.query_formal_task_graph(
-                                    "ability_phase_callback",
-                                    phase_id,
-                                    task.callback_kind,
-                                    (candidate.task_id for candidate in nested_tasks),
-                                )
-                                nested_graph = nested_result.value
-                                if (
-                                    nested_result.status != "resolved"
-                                    or type(nested_graph) is not TaskGraphIR
-                                ):
-                                    block(
-                                        nested_result.blocked_reason
-                                        or "ability_task_graph_nested_graph_missing",
-                                        phase_id=phase_id,
-                                        callback_kind=task.callback_kind,
-                                        graph_id=graph.graph_id,
-                                        graph_node_id=node.graph_node_id,
-                                        task_id=task.task_id,
-                                        source="nested_graph",
-                                    )
-                                    continue
-                                candidates.append((nested_graph, phase_id))
-                            if len(candidates) != 1 and phase_ids:
-                                block(
-                                    "ability_task_graph_nested_callback_missing"
-                                    if not candidates
-                                    else "ability_task_graph_nested_callback_ambiguous",
-                                    phase_id=graph.owner_id,
-                                    callback_kind=graph.callback_kind,
-                                    graph_id=graph.graph_id,
-                                    graph_node_id=node.graph_node_id,
-                                    task_id=task.task_id,
-                                    source="nested_callback",
-                                )
-                            elif len(candidates) == 1:
-                                nested_graph, nested_phase_id = candidates[0]
-                                pending_graphs.append(
-                                    (
-                                        nested_graph,
-                                        nested_phase_id,
-                                        task.callback_kind,
-                                        False,
-                                    )
-                                )
+            if len(candidates) != 1:
+                block(
+                    "ability_task_graph_nested_callback_missing"
+                    if not candidates
+                    else "ability_task_graph_nested_callback_ambiguous",
+                    phase_id=graph.owner_id,
+                    callback_kind=graph.callback_kind,
+                    graph_id=graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="nested_callback",
+                )
+                continue
 
-            for branch in node.branches:
-                pending_node_ids.extend(branch.child_node_ids)
+            nested_graph, nested_phase_id = candidates[0]
+            if nested_graph.graph_id in active_path:
+                block(
+                    f"task_graph_active_cycle:{nested_graph.graph_id}",
+                    phase_id=nested_phase_id,
+                    callback_kind=task.callback_kind,
+                    graph_id=nested_graph.graph_id,
+                    graph_node_id=node.graph_node_id,
+                    task_id=task.task_id,
+                    source="nested_graph_cycle",
+                )
+                continue
+            pending_graphs.append(
+                (
+                    nested_graph,
+                    nested_phase_id,
+                    task.callback_kind,
+                    False,
+                    (*active_path, nested_graph.graph_id),
+                )
+            )
 
     reachable = _stable_unique(reachable_task_ids)
-    excluded = tuple(
-        sorted(set(formal_bound_task_ids) - set(reachable))
-    )
+    excluded = tuple(sorted(set(formal_bound_task_ids) - set(reachable)))
     return _FormalActionGraphAdmissionProjection(
         root_graph_ids=_stable_unique(root_graph_ids),
         root_entries=tuple(dict.fromkeys(root_entries)),
