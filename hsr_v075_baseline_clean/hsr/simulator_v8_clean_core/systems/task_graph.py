@@ -16,6 +16,7 @@ from ..rules.task_graph import (
     TaskGraphIR,
     TaskGraphNodeIR,
     TaskGraphNumericDefinitionIR,
+    TaskGraphWeightedSelectionIR,
 )
 
 
@@ -449,6 +450,61 @@ class TaskGraphGraphResult:
 
 
 @dataclass(frozen=True)
+class TaskGraphWeightedSelectionResult:
+    status: HookStatus
+    selection_id: str = ""
+    graph_node_id: str = ""
+    choice_id: str = ""
+    ordinal: int | None = None
+    branch_id: str = ""
+    rng_event: RNGEvent | None = None
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskGraphWeightedSelectionResult:
+            raise TypeError("task graph weighted selection result must not be subclassed")
+        for value in (
+            self.selection_id,
+            self.graph_node_id,
+            self.choice_id,
+            self.branch_id,
+            self.blocked_reason,
+        ):
+            if not isinstance(value, str):
+                raise TypeError("task graph weighted selection fields must be strings")
+        if self.status == "resolved":
+            if (
+                not self.selection_id
+                or not self.graph_node_id
+                or not self.choice_id
+                or type(self.ordinal) is not int
+                or self.ordinal < 0
+                or not self.branch_id
+                or type(self.rng_event) is not RNGEvent
+                or self.blocked_reason
+            ):
+                raise ValueError("resolved task graph weighted selection is inconsistent")
+            object.__setattr__(
+                self,
+                "rng_event",
+                _freeze_rng_event(cast(RNGEvent, self.rng_event)),
+            )
+        elif self.status == "blocked":
+            if (
+                self.selection_id
+                or self.graph_node_id
+                or self.choice_id
+                or self.ordinal is not None
+                or self.branch_id
+                or self.rng_event is not None
+                or not self.blocked_reason
+            ):
+                raise ValueError("blocked task graph weighted selection leaks resolved payload")
+        else:
+            raise ValueError("task graph weighted selection status is invalid")
+
+
+@dataclass(frozen=True)
 class TaskGraphExecutionHooks:
     leaf: Callable[[TaskGraphHookRequest, BattleState], TaskGraphLeafResult] | None = None
     condition: Callable[[TaskGraphHookRequest, BattleState], TaskGraphConditionResult] | None = None
@@ -459,11 +515,23 @@ class TaskGraphExecutionHooks:
     ] | None = None
     targets: Callable[[TaskGraphHookRequest, BattleState], TaskGraphTargetResult] | None = None
     graph: Callable[[TaskGraphHookRequest, BattleState], TaskGraphGraphResult] | None = None
+    weighted_selection: Callable[
+        [TaskGraphHookRequest, TaskGraphWeightedSelectionIR, BattleState],
+        TaskGraphWeightedSelectionResult,
+    ] | None = None
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphExecutionHooks:
             raise TypeError("task graph hooks must not be subclassed")
-        for name in ("leaf", "condition", "branch", "count", "targets", "graph"):
+        for name in (
+            "leaf",
+            "condition",
+            "branch",
+            "count",
+            "targets",
+            "graph",
+            "weighted_selection",
+        ):
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f"task graph {name} hook must be callable")
@@ -882,6 +950,92 @@ class _TaskGraphRun:
         self.event_ids.update(cast(str, item.to_json()["event_id"]) for item in result.events)
         self.rng_event_ids.update(cast(str, item.to_json()["event_id"]) for item in result.rng_events)
 
+    def _admit_weighted_selection_rng_event(self, event: RNGEvent) -> None:
+        if _RESERVED_IDENTITY_FIELDS.intersection(event.metadata):
+            raise _ExecutionBlocked("task_graph_weighted_selection_forged_execution_identity")
+        if isinstance(event.result, Mapping) and _RESERVED_IDENTITY_FIELDS.intersection(
+            event.result
+        ):
+            raise _ExecutionBlocked("task_graph_weighted_selection_forged_execution_identity")
+        event_id = cast(str, event.to_json()["event_id"])
+        if event_id in self.rng_event_ids:
+            raise _ExecutionBlocked(f"task_graph_duplicate_rng_identity:{event_id}")
+        self.rng_events.append(event)
+        self.rng_event_ids.add(event_id)
+
+    def _execute_weighted_selection(
+        self,
+        graph: TaskGraphIR,
+        node: TaskGraphNodeIR,
+        node_by_id: Mapping[str, TaskGraphNodeIR],
+        path: tuple[str, ...],
+    ) -> None:
+        selections = tuple(
+            item
+            for item in graph.weighted_selections
+            if item.graph_node_id == node.graph_node_id
+        )
+        if len(selections) != 1:
+            raise _ExecutionBlocked(
+                f"task_graph_weighted_selection_not_unique:{node.graph_node_id}"
+            )
+        selection = selections[0]
+        if (
+            selection.graph_node_id != node.graph_node_id
+            or selection.family != "RandomConfig"
+            or selection.selection_kind != "weighted_single"
+        ):
+            raise _ExecutionBlocked("task_graph_weighted_selection_contract_mismatch")
+        result = self.call_hook(
+            "weighted_selection",
+            self.request(graph, node),
+            selection,
+            self.state,
+        )
+        if type(result) is not TaskGraphWeightedSelectionResult:
+            raise _ExecutionBlocked("task_graph_weighted_selection_hook_result_type_invalid")
+        if result.status == "blocked":
+            raise _ExecutionBlocked(result.blocked_reason)
+        if (
+            result.selection_id != selection.selection_id
+            or result.graph_node_id != node.graph_node_id
+        ):
+            raise _ExecutionBlocked("task_graph_weighted_selection_identity_mismatch")
+        choices = tuple(
+            item for item in selection.choices if item.choice_id == result.choice_id
+        )
+        if len(choices) != 1:
+            raise _ExecutionBlocked("task_graph_weighted_selection_choice_not_unique")
+        choice = choices[0]
+        if (
+            choice.graph_node_id != node.graph_node_id
+            or choice.family != "RandomConfig"
+            or result.ordinal != choice.ordinal
+            or result.branch_id != choice.branch_id
+        ):
+            raise _ExecutionBlocked("task_graph_weighted_selection_choice_identity_mismatch")
+        branches = tuple(
+            item
+            for item in node.branches
+            if item.ordinal == choice.ordinal and item.branch_id == choice.branch_id
+        )
+        if len(branches) != 1:
+            raise _ExecutionBlocked("task_graph_weighted_selection_branch_not_unique")
+        rng_event = cast(RNGEvent, result.rng_event)
+        self._admit_weighted_selection_rng_event(rng_event)
+        branch = branches[0]
+        self._children(
+            graph,
+            node_by_id,
+            branch.child_node_ids,
+            (
+                *path,
+                f"selection:{selection.selection_id}",
+                f"choice:{choice.choice_id}",
+                f"branch:{branch.branch_id}:{branch.ordinal}",
+            ),
+        )
+
     def _execute_branch(
         self,
         graph: TaskGraphIR,
@@ -889,6 +1043,9 @@ class _TaskGraphRun:
         node_by_id: Mapping[str, TaskGraphNodeIR],
         path: tuple[str, ...],
     ) -> None:
+        if node.source_family == "RandomConfig":
+            self._execute_weighted_selection(graph, node, node_by_id, path)
+            return
         kinds = {item.branch_kind for item in node.branches}
         if kinds <= {"success", "failed"}:
             result = self.call_hook("condition", self.request(graph, node), self.state)
