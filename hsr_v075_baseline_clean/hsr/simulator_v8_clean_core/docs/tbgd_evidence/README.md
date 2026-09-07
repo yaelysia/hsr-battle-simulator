@@ -12,6 +12,8 @@ Promotion requires human semantic review of representative raw data and the rele
 
 The governing scope/completeness contract is [`BATTLE_SCOPE.md`](BATTLE_SCOPE.md).
 
+The living corpus triage is [`SOURCE_FAMILY_INVENTORY.md`](SOURCE_FAMILY_INVENTORY.md). It records which source families are currently included, mixed, excluded, deferred or unresolved and, critically, which families still require manual closure before the normal-combat corpus can be considered complete.
+
 The target is not a representative sample. Archaeology must account for the battle-reachable TBGD corpus at the pinned revision and separate it from progression, UI, camera/animation/presentation and other non-battle data.
 
 The operational inclusion test is runtime consequence: a fact is battle-relevant when changing it can alter battle initialization, legal actions/targets, timeline, resources, numerical/state outcomes, statuses/triggers, AI, encounter transitions, mode rules or termination. Mixed files must be filtered below filename level, and reviewed exclusions must be retained as negative knowledge.
@@ -65,4 +67,6 @@ The repository submodule revision is the primary raw-data version boundary. Game
 ## Initial records
 
 - `BATTLE_SCOPE.md` — battle-semantic boundary and corpus-completeness contract.
+- `SOURCE_FAMILY_INVENTORY.md` — living normal-combat source-family coverage and unresolved-gap ledger.
 - `characters/march_7th_preservation_source_chain.md` — first manually audited character wiring sample. It intentionally stops before claiming unreviewed numeric combat semantics.
+- repository-level `docs/tbgd_evidence/characters/aglaea_servant_11402_reference_chain.md` — manually audited servant/memosprite chain plus the concrete `ConfigSummonUnit` false friend.
