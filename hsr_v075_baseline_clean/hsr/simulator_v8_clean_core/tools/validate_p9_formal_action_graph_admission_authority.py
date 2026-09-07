@@ -795,8 +795,11 @@ def _run_direct(root: Path) -> dict[str, Any]:
     started = time.perf_counter()
     lowering = TBGDLowering(root)
     original_build = TBGDLowering.build
+    full_build_count = 0
 
     def forbidden_full_build(_self: TBGDLowering) -> Any:
+        nonlocal full_build_count
+        full_build_count += 1
         raise AssertionError("Direct attempted full CanonicalIR build")
 
     TBGDLowering.build = forbidden_full_build
@@ -1003,7 +1006,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
             legacy_row is not None or not legacy_seen
         ),
         "no_forged_selection_fingerprint_or_authorization": True,
-        "full_canonical_ir_build_count": 0,
+        "full_canonical_ir_build_count_is_zero": full_build_count == 0,
     }
     return {
         "ok": (
@@ -1013,6 +1016,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
         ),
         "mode": "direct",
         "predicates": predicates,
+        "full_canonical_ir_build_count": full_build_count,
         "source": {
             "source_fingerprint": snapshot.source_fingerprint,
             "scanned_action_definitions": scanned,
