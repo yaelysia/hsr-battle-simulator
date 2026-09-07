@@ -1193,11 +1193,6 @@ def _admit_action_random_config_nodes(
         replace(
             node,
             node_kind="branch",
-            references=tuple(
-                ref
-                for ref in node.references
-                if not _action_random_config_ignorable_reference(ref)
-            ),
             materialization_status="materialized",
             owner_domains=("task_graph_execution",),
             status_reason="",
