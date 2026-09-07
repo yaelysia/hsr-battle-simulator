@@ -48,6 +48,23 @@ jobs:
           echo "exit_code=$code"
           exit "$code"
 
+      - name: Diagnostic S8B5 baseline parity
+        run: |
+          git worktree add --detach /tmp/p9-a2-base bd1a4ac94ca394d2ea563d086eaf56e9ed45b285
+          set +e
+          env PYTHONPATH=/tmp/p9-a2-base/hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+            python -B -m simulator_v8_clean_core.tools.validate_p9_s8b5c_cross_entry_runtime_transport \
+              --output-dir /tmp/p9-a2-s8b5-base
+          base_code=$?
+          env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+            python -B -m simulator_v8_clean_core.tools.validate_p9_s8b5c_cross_entry_runtime_transport \
+              --output-dir /tmp/p9-a2-s8b5-head
+          head_code=$?
+          set -e
+          echo "base_exit_code=$base_code"
+          echo "head_exit_code=$head_code"
+          test "$base_code" -eq "$head_code"
+
       - name: A2 Fast
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
