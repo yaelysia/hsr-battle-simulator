@@ -1,38 +1,78 @@
 name: P9 A2 PR Validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - plan/p9-a2-action-window-status-transport-20260907
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/event_dispatch.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/status_callbacks.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/live_validation_reports/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT_execution_report.md'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT.md'
+      - '.github/workflows/p9-a2-pr-validation.yml'
+
+permissions:
+  contents: read
 
 jobs:
-  materialize-executor-patch:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout PR head and source submodule
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: Materialize exact executor transport patch
-        run: |
-          python - <<'PY'
-          from pathlib import Path
+          submodules: recursive
 
-          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py')
-          text = path.read_text(encoding='utf-8')
-          old = '''                    listener_result = self.event_dispatcher.dispatch_event(\n                        current_state,\n                        event=dispatch_event,\n                        damage_window_ledger=damage_window_ledger,\n                    )'''
-          new = '''                    listener_result = self.event_dispatcher.dispatch_action_window_listeners(\n                        current_state,\n                        event=dispatch_event,\n                        damage_window_ledger=damage_window_ledger,\n                        nested_ability_provider=(\n                            self.ability_tasks.formal_status_nested_ability_provider()\n                        ),\n                    )'''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f'expected exactly one executor transport site, found {count}')
-          path.write_text(text.replace(old, new), encoding='utf-8')
-          PY
-          git diff --check
-          git diff --stat
-      - name: Create exact local commit and probe remote object admission
+      - name: Compile scoped A2 files
+        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
-          git commit -m "feat(p9-a2): wire action-window nested ability transport"
-          echo "FULL_COMMIT=$(git rev-parse HEAD)"
-          git push origin HEAD:${GITHUB_REF_NAME} || true
+          /usr/bin/time -v -o /tmp/p9-a2-compile.time \
+            python -m compileall -q \
+              core/executor.py \
+              systems/event_dispatch.py \
+              systems/status_callbacks.py \
+              systems/ability.py \
+              tools/validate_p9_a2_action_window_status_nested_ability_transport.py
+          code=$?
+          cat /tmp/p9-a2-compile.time
+          echo "exit_code=$code"
+          exit "$code"
+
+      - name: A2 Fast
+        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+        run: |
+          /usr/bin/time -v -o /tmp/p9-a2-fast.time \
+            python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --fast
+          code=$?
+          cat /tmp/p9-a2-fast.time
+          echo "exit_code=$code"
+          exit "$code"
+
+      - name: A2 real Direct
+        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+        run: |
+          /usr/bin/time -v -o /tmp/p9-a2-direct.time \
+            python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --direct
+          code=$?
+          cat /tmp/p9-a2-direct.time
+          echo "exit_code=$code"
+          exit "$code"
+
+      - name: Fixed-base diff check
+        run: |
+          /usr/bin/time -v -o /tmp/p9-a2-diff.time \
+            git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
+          code=$?
+          cat /tmp/p9-a2-diff.time
+          echo "exit_code=$code"
+          exit "$code"
