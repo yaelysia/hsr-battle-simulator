@@ -15,7 +15,6 @@ jobs:
       - name: Materialize exact executor transport patch
         run: |
           python - <<'PY'
-          import base64
           from pathlib import Path
 
           path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py')
@@ -25,13 +24,14 @@ jobs:
           count = text.count(old)
           if count != 1:
               raise SystemExit(f'expected exactly one executor transport site, found {count}')
-          patched = text.replace(old, new)
-          path.write_text(patched, encoding='utf-8')
-          encoded = base64.b64encode(patched.encode('utf-8')).decode('ascii')
-          print(f'EXECUTOR_B64_LENGTH:{len(encoded)}')
-          chunk = 40000
-          for index in range(0, len(encoded), chunk):
-              print(f'EXECUTOR_B64_{index // chunk:03d}:{encoded[index:index + chunk]}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
           PY
           git diff --check
           git diff --stat
+      - name: Upload exact patched executor
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-a2-patched-executor
+          path: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
+          if-no-files-found: error
+          retention-days: 1
