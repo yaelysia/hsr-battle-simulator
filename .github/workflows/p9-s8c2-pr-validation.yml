@@ -1,0 +1,57 @@
+name: P9 S8C2 PR Validation
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py'
+      - '.github/workflows/p9-s8c2-pr-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Focused pytest
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c2-pytest.time \
+            python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py -q
+          code=$?
+          cat /tmp/p9-s8c2-pytest.time
+          echo "exit_code=$code"
+          exit "$code"
+
+      - name: Compile scoped files
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c2-compile.time \
+            python -m compileall -q \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py \
+              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
+          code=$?
+          cat /tmp/p9-s8c2-compile.time
+          echo "exit_code=$code"
+          exit "$code"
+
+      - name: Fixed-base diff check
+        run: |
+          /usr/bin/time -v -o /tmp/p9-s8c2-diff.time \
+            git diff --check 2e8589622c27ebf05c0b021214fddc138e883dbb...HEAD
+          code=$?
+          cat /tmp/p9-s8c2-diff.time
+          echo "exit_code=$code"
+          exit "$code"
