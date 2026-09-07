@@ -1,4 +1,4 @@
-name: P9 S8C RandomConfig Action Caller R1 Validation
+name: P9 S8C RandomConfig R1 Real Action Diagnostic
 
 on:
   pull_request:
@@ -8,76 +8,96 @@ on:
       - opened
       - synchronize
       - reopened
-      - ready_for_review
     paths:
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
-      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C_RANDOM_CONFIG_ACTION_CALLER_RNG_LEDGER_execution_report.md'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/**'
-      - 'hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md'
       - '.github/workflows/p9-s8c2-pr-validation.yml'
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
-      - name: Checkout PR head
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           submodules: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install test runner
-        run: python -m pip install --disable-pip-version-check pytest==8.3.5
-
-      - name: Compile R1 scoped implementation and validators
+      - name: Inspect dynamically ranked real action blockers
+        shell: bash
         run: |
-          env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py
+          env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+          import json
+          from collections import defaultdict
+          from dataclasses import replace
+          from simulator_v8_clean_core.rules.rulebook import RuleBook
+          from simulator_v8_clean_core.core.executor import CombatExecutor
+          from simulator_v8_clean_core.core.model import ActionCommand
+          from simulator_v8_clean_core.tbgd.lowering import TBGDLowering, build_character_action_definition_ir
+          from simulator_v8_clean_core.tbgd.task_graph_materializer import materialize_ability_task_graph_catalog
+          from simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection import (
+              DEFAULT_TBGD, _build_slice, _candidate_action_ids,
+          )
+          from simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller import _real_action_state
 
-      - name: Fast RandomConfig action caller validation
-        run: |
-          timeout --signal=TERM --kill-after=5s 120s \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --fast
-
-      - name: S8C2 shared executor regression
-        run: |
-          python3 -m pytest -q \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
-
-      - name: Direct real CombatExecutor RandomConfig action validation
-        run: |
-          timeout --signal=TERM --kill-after=5s 240s \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --direct
-
-      - name: S8C1B direct materializer regression
-        run: |
-          timeout --signal=TERM --kill-after=5s 120s \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
-
-      - name: S8C1C direct source-closure regression
-        run: |
-          timeout --signal=TERM --kill-after=5s 120s \
-            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
-              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --direct
-
-      - name: Diff hygiene against planning base
-        run: git diff --check b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce...HEAD
+          root = DEFAULT_TBGD.resolve()
+          lowering = TBGDLowering(root)
+          source_graph = lowering.build_character_ability_source_graph_catalog()
+          snapshot = lowering._character_ability_raw_snapshot
+          scope = lowering._character_ability_scope_catalog
+          source_catalog = lowering.build_character_control_flow_contract_catalog(snapshot=snapshot, scope_catalog=scope)
+          candidate_ids = _candidate_action_ids(source_graph, source_catalog)
+          definitions = defaultdict(list)
+          for item in build_character_action_definition_ir(root):
+              definitions[item.action_id].append(item)
+          print(json.dumps({'candidate_head': list(candidate_ids[:12])}, sort_keys=True))
+          attempts = 0
+          for rank, action_id in enumerate(candidate_ids[:12]):
+              for definition in sorted(definitions.get(action_id, ()), key=lambda item: item.level):
+                  try:
+                      canonical = _build_slice(lowering, definition, snapshot, scope, source_graph)
+                      catalog = materialize_ability_task_graph_catalog(source_catalog, canonical, source_snapshot=snapshot)
+                  except Exception as exc:
+                      print(json.dumps({'rank':rank,'action_id':action_id,'level':definition.level,'materialize':f'{type(exc).__name__}:{exc}'}, sort_keys=True))
+                      continue
+                  weighted = [g for g in catalog.graphs if g.entry_kind == 'ability_phase_callback' and g.weighted_selections]
+                  if not weighted:
+                      continue
+                  runtime = replace(canonical, task_graph_catalog=catalog)
+                  admissions = [a for a in runtime.action_admissions if a.action_id == action_id and a.action_level == definition.level and a.coverage_status == 'executable']
+                  print(json.dumps({
+                      'rank':rank,'action_id':action_id,'level':definition.level,
+                      'weighted_entries':[g.entry_id for g in weighted],
+                      'admissions':[{'owner':a.owner_entity_ref,'modes':list(a.submission_modes),'windows':list(a.allowed_windows),'role':a.action_role} for a in admissions],
+                  }, sort_keys=True))
+                  for admission in admissions:
+                      if 'external_turn' not in admission.submission_modes:
+                          continue
+                      for window in admission.allowed_windows:
+                          state = _real_action_state(admission.owner_entity_ref, window)
+                          rules = RuleBook(runtime)
+                          executor = CombatExecutor(rules)
+                          query = executor.action_targets.query(state, 'actor', action_id, definition.level)
+                          row = {'rank':rank,'action_id':action_id,'level':definition.level,'window':window,'query_status':query.status,'query_reason':query.blocked_reason}
+                          if not query.resolved:
+                              print(json.dumps(row, sort_keys=True)); continue
+                          submitted = () if query.selection_mode == 'automatic' else tuple(query.candidate_ids[:(query.selection_min or 1)])
+                          accepted = executor.action_targets.accept(state, query, submitted)
+                          row['accept_status'] = accepted.status
+                          row['accept_reason'] = accepted.blocked_reason
+                          if not accepted.accepted or accepted.context is None:
+                              print(json.dumps(row, sort_keys=True)); continue
+                          command = ActionCommand('actor', action_id, definition.level, submitted, metadata={'rng_mode':'deterministic_seed'})
+                          decision = executor.action_contract.evaluate(state, command, target_selection_fingerprint=accepted.context.context_fingerprint)
+                          row['contract_ok'] = decision.ok
+                          row['contract_reason'] = decision.blocked_reason
+                          after, transition = executor.execute(command, state, target_selection_context=accepted.context)
+                          row['successor_eligible'] = transition.outcome.successor_eligible
+                          row['outcome_reasons'] = list(transition.outcome.reason_codes[:16])
+                          row['rng_count'] = len(transition.rng_events)
+                          print(json.dumps(row, sort_keys=True))
+                          attempts += 1
+                          if attempts >= 12:
+                              raise SystemExit(0)
+          PY
