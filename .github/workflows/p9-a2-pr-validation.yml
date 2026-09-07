@@ -110,6 +110,83 @@ jobs:
           echo "exit_code=$code"
           exit "$code"
 
+      - name: A2 denominator layer diagnostics
+        if: always()
+        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+        run: |
+          python - <<'PY'
+          import json
+          from tools import validate_p9_a2_action_window_status_nested_ability_transport as v
+          from rules.task_graph import TaskGraphIR
+
+          rules, build = v._build_focused_direct_rulebook()
+          callback_to_events, event_types = v._action_window_callback_map(rules)
+          all_callbacks = tuple(rules.ir.status_callbacks)
+          avatar_callbacks = tuple(c for c in all_callbacks if c.source_mode == 'mainline_avatar_ability')
+          executable_callbacks = tuple(c for c in avatar_callbacks if c.coverage_status == 'executable' and c.admission_status == 'executable')
+          window_callbacks = tuple(c for c in executable_callbacks if c.event in callback_to_events)
+          rows = []
+          trigger_count = 0
+          root_resolved_count = 0
+          linked_nested_count = 0
+          for callback in window_callbacks:
+              tasks = tuple(rules.status_callback_tasks_for_callback(callback.callback_id))
+              root = rules.query_formal_task_graph('status_callback', callback.callback_id, callback.event, (t.task_id for t in tasks))
+              if root.status == 'resolved' and type(root.value) is TaskGraphIR:
+                  root_resolved_count += 1
+              triggers = tuple(t for t in tasks if t.coverage_status == 'executable' and t.opcode == 'TriggerAbility')
+              trigger_count += len(triggers)
+              for task in triggers:
+                  phase_ids = []
+                  if task.linked_ability_phase_id:
+                      phase_ids.append(task.linked_ability_phase_id)
+                  elif task.linked_standalone_graph_id:
+                      standalone = rules.standalone_ability_graph(task.linked_standalone_graph_id)
+                      if standalone is not None:
+                          phase_ids.extend(standalone.phase_ids)
+                  phase_rows = []
+                  for phase_id in phase_ids:
+                      phase = rules.ability_phase(phase_id)
+                      ability_tasks = tuple(rules.ability_tasks_for_phase(phase_id))
+                      callback_kinds = sorted({t.callback_kind for t in ability_tasks})
+                      if phase is not None and phase.invocation_role == 'nested_only':
+                          linked_nested_count += 1
+                      phase_rows.append({
+                          'phase_id': phase_id,
+                          'phase_role': getattr(phase, 'invocation_role', None),
+                          'status_task_callback_kind': getattr(task, 'callback_kind', None),
+                          'ability_callback_kinds': callback_kinds,
+                          'ability_task_count': len(ability_tasks),
+                      })
+                  rows.append({
+                      'callback_id': callback.callback_id,
+                      'modifier_name': callback.modifier_name,
+                      'event': callback.event,
+                      'source_path': callback.source.source_path,
+                      'root_status': root.status,
+                      'root_reason': root.blocked_reason,
+                      'task_id': task.task_id,
+                      'linked_phase_id': task.linked_ability_phase_id,
+                      'linked_standalone_graph_id': task.linked_standalone_graph_id,
+                      'phases': phase_rows,
+                  })
+          print(json.dumps({
+              'build': build,
+              'action_window_event_types': list(event_types),
+              'callback_to_events': {k: list(vv) for k, vv in sorted(callback_to_events.items())},
+              'counts': {
+                  'status_callbacks_total': len(all_callbacks),
+                  'mainline_avatar_callbacks': len(avatar_callbacks),
+                  'executable_admitted_avatar_callbacks': len(executable_callbacks),
+                  'action_window_reachable_callbacks': len(window_callbacks),
+                  'trigger_ability_tasks_on_window_callbacks': trigger_count,
+                  'root_graph_resolved_window_callbacks': root_resolved_count,
+                  'linked_nested_phase_occurrences': linked_nested_count,
+              },
+              'trigger_rows': rows[:40],
+          }, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
       - name: A2 real Direct diagnostic
         if: always()
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
