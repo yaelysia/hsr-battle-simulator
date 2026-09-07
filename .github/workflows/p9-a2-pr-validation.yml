@@ -114,10 +114,10 @@ jobs:
         if: always()
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
-          python - <<'PY'
+          PYTHONPATH=.. python - <<'PY'
           import json
-          from tools import validate_p9_a2_action_window_status_nested_ability_transport as v
-          from rules.task_graph import TaskGraphIR
+          from simulator_v8_clean_core.tools import validate_p9_a2_action_window_status_nested_ability_transport as v
+          from simulator_v8_clean_core.rules.task_graph import TaskGraphIR
 
           rules, build = v._build_focused_direct_rulebook()
           callback_to_events, event_types = v._action_window_callback_map(rules)
