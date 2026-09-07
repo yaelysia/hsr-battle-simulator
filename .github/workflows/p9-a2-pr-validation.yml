@@ -1,0 +1,38 @@
+name: P9 A2 PR Validation
+
+on:
+  push:
+    branches:
+      - plan/p9-a2-action-window-status-transport-20260907
+
+jobs:
+  wire-executor-once:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact executor transport patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''                    listener_result = self.event_dispatcher.dispatch_event(\n                        current_state,\n                        event=dispatch_event,\n                        damage_window_ledger=damage_window_ledger,\n                    )'''
+          new = '''                    listener_result = self.event_dispatcher.dispatch_action_window_listeners(\n                        current_state,\n                        event=dispatch_event,\n                        damage_window_ledger=damage_window_ledger,\n                        nested_ability_provider=(\n                            self.ability_tasks.formal_status_nested_ability_provider()\n                        ),\n                    )'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one executor transport site, found {count}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit exact executor transport patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
+          git diff --cached --quiet && exit 0
+          git commit -m "feat(p9-a2): wire action-window nested ability transport"
+          git push origin HEAD:${GITHUB_REF_NAME}
