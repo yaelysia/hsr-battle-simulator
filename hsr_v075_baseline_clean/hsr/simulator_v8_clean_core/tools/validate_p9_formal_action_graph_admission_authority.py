@@ -93,7 +93,7 @@ def _run_fast() -> dict[str, Any]:
         source_catalog_id="fixture:catalog",
         source_fingerprint=source.evidence["content_sha256"],
         source=source,
-        coverage_status="executable",
+        coverage_status="lowered",
         weighted_selections=(),
     )
     root_phase = SimpleNamespace(
