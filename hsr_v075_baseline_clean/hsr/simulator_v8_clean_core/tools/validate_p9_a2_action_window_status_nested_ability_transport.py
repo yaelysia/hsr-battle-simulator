@@ -21,6 +21,8 @@ from ..core.action_plan import build_action_execution_plan
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, GameEvent, TargetResolution, UnitState
 from ..core.reducer import MutationReducer
+from ..rules.engine_rule_registry import build_engine_rule_registry
+from ..rules.ir import CanonicalIR, build_external_task_topology_dependency_ledger
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import TaskGraphIR, TaskGraphQueryResult
 from ..systems.action_contract import ActionContractSystem
@@ -45,7 +47,8 @@ from ..systems.task_graph import (
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
-from ..tbgd.lowering import TBGDLowering
+from ..tbgd.lowering import TBGDLowering, _lower_status_event_families
+from ..tbgd.task_graph_materializer import materialize_character_runtime_task_graph_catalog
 from .validate_p9_formal_action_graph_admission_authority import (
     _accepted_context as _a1_accepted_context,
     _run_fast as _run_a1_fast,
@@ -59,6 +62,8 @@ from .validate_p9_s8b5c_cross_entry_runtime_transport import (
     _install_callback as _b5_install_callback,
 )
 from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (
+    _build_real_context as _s8c1c_build_real_context,
+    _dedupe as _s8c1c_dedupe,
     _fixture as _random_fixture,
 )
 
@@ -587,8 +592,12 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             bool(wrong_provider.errors)
             and "action_window_nested_ability_provider_type_invalid" in wrong_provider.errors
             and not wrong_provider.mutations
-            and not wrong_provider.events
+            tuple(event.event_id for event in wrong_provider.events)
+            == ("event:a2:wrong-provider",)
+            and all(event.process_only for event in wrong_provider.events)
             and not wrong_provider.rng_events
+            and not wrong_provider.task_graph_projections
+            and not wrong_provider_dispatcher.ability_property_watchers.transports
         ),
         "ordinary_listener_has_no_ambient_nested_only_capability": (
             bool(ordinary.errors)
@@ -640,7 +649,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             "graph",
             "weighted_selection",
         ),
-        "status_graph_requests_remain_status_owned": (
+        "status_graph_ids_remain_status_owned": (
             status_graph_did_not_escape
             and status_weighted.blocked_reason == "status_callback_weighted_selection_not_admitted"
         ),
@@ -921,512 +930,247 @@ def _action_candidates_by_window(rules: RuleBook) -> dict[str, list[tuple[Any, A
         if event is None or event.target_mode == "bounce":
             continue
         for event_type in _action_windows(rules, definition):
-            bucket = result.setdefault(event_type, [])
-            if len(bucket) < 6:
-                bucket.append((definition, context))
-    return result
+            bucket = result.setdefault(event_type, []ràYà[äùX⁄Ÿ]
+HéÇàùX⁄Ÿ]ò\[ô
 
+Yö[ö][€ã€€ù^
+JBàô]\õàô\›[ÇÇôYà‹ôX[ÿY€[ŸYöY\óŸYôôX› ù[\Œàù[Põ€⁄À[ŸYöY\ó€ò[YNà›äHOà\V–[ûKããóNÇàô\›[H◊Bàõ‹àYôôX›[àù[\Àö\ãôYôôX›ŒÇàYàYôôX›õ‹€ŸHOHêY[ŸYöY\àéÇà€€ù[ùYBà›[ô\ôHYôôX›ú^[ÿYôŸ]
+ú›[ô\ôäBàYàõ›\⁄[ú›[òŸJ›[ô\ôX\[ô NÇà€€ù[ùYBàYà›[ô\ôôŸ]
+õ[ŸYöY\ó€ò[YHäHOH[ŸYöY\ó€ò[YNÇà€€ù[ùYBàYàŸ]]äYôôX›ò€›ô\òYŸW‹›]\»ãô^X›]XõHäHõ›[à»àãô^X›]XõHüNÇà€€ù[ùYBàô\›[ò\[ô
+YôôX›
+Bàô]\õà\J€‹ùY
+ô\›[Ÿ^O[[XôH][Nà][KôYôôX›⁄Y
+JBÇÇôYàÿ]X⁄Yÿÿ[òX⁄◊Ÿ]Z[
+à›]Nàò]T›]Kàõ›ŒàX\[ô÷‹›ã[ûWKäHOàX›‹›ã[ûWHõ€ôNÇàX›‹àH›]Kù[ö]ÀôŸ]
+ùò[Y][€éòX›‹àäBàYàX›‹à\»õ€ôNÇàô]\õàõ€ôBà]Z[»HX›‹ãôõY‹ÀôŸ]
+ú›]\◊Ÿ]Z[»ã
 
-def _real_add_modifier_effects(rules: RuleBook, modifier_name: str) -> tuple[Any, ...]:
-    result = []
-    for effect in rules.ir.effects:
-        if effect.opcode != "AddModifier":
-            continue
-        standard = effect.payload.get("standard")
-        if not isinstance(standard, Mapping):
-            continue
-        if standard.get("modifier_name") != modifier_name:
-            continue
-        if getattr(effect, "coverage_status", "executable") not in {"", "executable"}:
-            continue
-        result.append(effect)
-    return tuple(sorted(result, key=lambda item: item.effect_id))
+JBàYàõ›\⁄[ú›[òŸJ]Z[À
+\›\JJNÇàô]\õàõ€ôBàX]⁄\»H◊Bàõ‹à][H[à]Z[ŒÇàYàõ›\⁄[ú›[òŸJ][KX›
+NÇà€€ù[ùYBàYà›ä][KôŸ]
+õ[ŸYöY\ó€ò[YHäH‹ààäHOHõ›÷»õ[ŸYöY\ó€ò[YHóNÇà€€ù[ùYBàöYŸŸ\ó⁄Y»H][KôŸ]
+ùöYŸŸ\ó⁄Y◊ÿûWŸ]ô[ùäBàY»HöYŸŸ\ó⁄YÀôŸ]
+õ›÷»òÿ[òX⁄◊Ÿ]ô[ùóJHYà\⁄[ú›[òŸJöYŸŸ\ó⁄YÀX›
+H[ŸHõ€ôBàYà\⁄[ú›[òŸJYÀ\›
+H[ôõ›÷»òÿ[òX⁄◊⁄YóH[àYŒÇàX]⁄\Àò\[ô
+X›
+][JJBàô]\õàX]⁄\÷ÃHYà[äX]⁄\ HOHH[ŸHõ€ôBÇÇôYàÿ]X⁄‹ôX[‹›]\ àù[\Œàù[Põ€⁄Ààò\ŸW‹›]Nàò]T›]Kàõ›ŒàX\[ô÷‹›ã[ûWKäHOà\V–ò]T›]KX›‹›ã[ûWKX›‹›ã[ûWWHõ€ôNÇàﬁ\›[HH›]\‘ﬁ\›[Jù[\ BàôYXŸ\àH]]][€îôYXŸ\ä
+BàŸ]\‹ô\€€][€àH\ôŸ]ô\€€][€äàô\]Y\›YJùò[Y][€éòX›‹àã
+KàŸ[X›XõOJùò[Y][€éòX›‹àã
+KàYÿ[Jùò[Y][€éòX›‹àã
+Kàö[X\ûOHùò[Y][€éòX›‹àãà[\X›Ÿ‹õ›\Jùò[Y][€éòX›‹àã
+KàŸ[X›YJùò[Y][€éòX›‹àã
+KàôX\€€èHúõŸX›[€ó‹›]\◊‹Ÿ]\ãà€›\òŸOHú›]\◊‹ﬁ\›[W‹Ÿ]\›\ôŸ]ãà
+BàòZ[\ô\Œà\›ŸX›‹›ã[ûWWHH◊Bàõ‹àYôôX›[à‹ôX[ÿY€[ŸYöY\óŸYôôX› ù[\À›äõ›÷»õ[ŸYöY\ó€ò[YHóJJNÇàõ‹àÿ\›\ó⁄Y[à
+ùò[Y][€éòX›‹àãùò[Y][€éô[ô[^HäNÇàô\›[Hﬁ\›[Kò\WÿY€[ŸYöY\äàò\ŸW‹›]KàYôôX›àÿ\›\ó⁄YXÿ\›\ó⁄Yà€›\òŸW⁄YXÿ\›\ó⁄Yà›€ô\ó⁄YHùò[Y][€éòX›‹àãà\ò[WŸ[ù]W⁄YHùò[Y][€éòX›‹àãà›\úô[ùÿX›[€ó›\ôŸ]⁄YHùò[Y][€éòX›‹àãà\ôŸ]‹ô\€€][€è\Ÿ]\‹ô\€€][€ãà]ô[ù‹^[ÿY^¬àùò[Y][€ó‹›YŸHéàîKPLàãàòX›‹ó⁄Yéàùò[Y][€éòX›‹àãàù\ôŸ]⁄Yéàùò[Y][€éòX›‹àãàúŸ[X›Y›\ôŸ]⁄Y»éà»ùò[Y][€éòX›‹àóKàúö[X\ûWÿX›[€ó›\ôŸ]⁄Yéàùò[Y][€éòX›‹àãàKàö[ô[ô◊‹€›\òŸ\œJà¬àú€›\òŸW⁄⁄[ôéàúWÿLóŸ\ôX›‹›]\◊‹Ÿ]\ãàôYôôX›⁄YéàYôôX›ôYôôX›⁄Yàòÿ[òX⁄◊⁄Yéà›äõ›÷»òÿ[òX⁄◊⁄YóJKàKà
+Kà
+BàYàõ›ô\›[õ⁄ŒÇàòZ[\ô\Àò\[ô
+à¬àôYôôX›⁄YéàYôôX›ôYôôX›⁄Yàòÿ\›\ó⁄Yéàÿ\›\ó⁄Yàù[ú›\‹ùYéà\›
+ô\›[ù[ú›\‹ùY
+KàBà
+Bà€€ù[ùYBàôYXŸYHôYXŸ\ãò\Wÿ[‹ô\›[
+ò\ŸW‹›]Kô\›[õ]]][€ú BàYàõ›ôYXŸYõ⁄ŒÇàòZ[\ô\Àò\[ô
+à¬àôYôôX›⁄YéàYôôX›ôYôôX›⁄Yàòÿ\›\ó⁄Yéàÿ\›\ó⁄YàúôYXŸ\óÿ€€ôõX›»éà⁄][Kò€ŸHõ‹à][H[àôYXŸYò€€ôõX›◊KàBà
+Bà€€ù[ùYBà]Z[Hÿ]X⁄Yÿÿ[òX⁄◊Ÿ]Z[
+ôYXŸYòYù\ó‹›]Kõ› BàYà]Z[\»õ€ôNÇàòZ[\ô\Àò\[ô
+à¬àôYôôX›⁄YéàYôôX›ôYôôX›⁄Yàòÿ\›\ó⁄Yéàÿ\›\ó⁄YàúôX\€€àéàòÿ[òX⁄◊€õ›ÿ]X⁄Y›◊ÿX›‹óÿYù\ó‹ôX[‹›]\◊ÿYZ\‹⁄[€àãàBà
+Bà€€ù[ùYBàYà›]\◊ÿ€€ùõ€Ÿÿ]WŸõ‹óÿX›‹äôYXŸYòYù\ó‹›]Kù[ö]÷»ùò[Y][€éòX›‹àóJH\»õ›õ€ôNÇàòZ[\ô\Àò\[ô
+à¬àôYôôX›⁄YéàYôôX›ôYôôX›⁄Yàòÿ\›\ó⁄Yéàÿ\›\ó⁄YàúôX\€€àéàò]X⁄Y‹›]\◊ÿ€€ùõ€◊ÿX›[€óÿX›‹àãàBà
+Bà€€ù[ùYBàô]\õà
+àôYXŸYòYù\ó‹›]Kà]Z[à¬àôYôôX›⁄YéàYôôX›ôYôôX›⁄YàôYôôX›‹€›\òŸW‹]éàYôôX›ú€›\òŸKú€›\òŸW‹]àòÿ\›\ó⁄Yéàÿ\›\ó⁄YàúŸ]\€]]][€óÿ€›[ùéà[äô\›[õ]]][€ú KàúŸ]\Ÿ]ô[ùÿ€›[ùéà[äô\›[ô]ô[ù KàúŸ]\‹õô◊Ÿ]ô[ùÿ€›[ùéà[äô\›[úõô◊Ÿ]ô[ù KàúŸ]\‹ôX€‹ôÿ€›[ùéà[äô\›[úôX€‹ô KàKà
+Bàô]\õàõ€ôBÇÇôYàÿXÿŸ\YÿX›[€ó€€ó‹›]Jàù[\Œàù[Põ€⁄Àà›]Nàò]T›]KàYö[ö][€éà[ûKäHOà\V–X›[€ê€€[X[ô[ûK[ûWHõ€ôNÇàŸ[X›‹àHX›[€ï\ôŸ]Ÿ[X›[€îﬁ\›[Jù[\ Bà]Y\ûHHŸ[X›‹ãú]Y\ûJà›]Kàùò[Y][€éòX›‹àãàYö[ö][€ãòX›[€ó⁄YàYö[ö][€ãõ]ô[à
+BàYà]Y\ûKú›]\»OHúô\€€ôYéÇàô]\õàõ€ôBà›XõZ]YH
+à
 
+BàYà]Y\ûKúŸ[X›[€ó€[ŸHOHò]]€X]X»Çà[ŸH\J]Y\ûKòÿ[ôY]W⁄Y÷Œà
+]Y\ûKúŸ[X›[€ó€Z[à‹àJWJBà
+BàXÿŸ\YHŸ[X›‹ãòXÿŸ\
+›]K]Y\ûK›XõZ]Y
+BàYàXÿŸ\Yú›]\»OHòXÿŸ\Yà‹àXÿŸ\Yò€€ù^\»õ€ôNÇàô]\õàõ€ôBà€€[X[ôHX›[€ê€€[X[ô
+àX›‹ó⁄YHùò[Y][€éòX›‹àãàX›[€ó⁄YYYö[ö][€ãòX›[€ó⁄YàX›[€ó€]ô[YYö[ö][€ãõ]ô[à\ôŸ]⁄YœJà
 
-def _attached_callback_detail(
-    state: BattleState,
-    row: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    actor = state.units.get("validation:actor")
-    if actor is None:
-        return None
-    details = actor.flags.get("status_details", ())
-    if not isinstance(details, (list, tuple)):
-        return None
-    matches = []
-    for item in details:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("modifier_name") or "") != row["modifier_name"]:
-            continue
-        trigger_ids = item.get("trigger_ids_by_event")
-        ids = trigger_ids.get(row["callback_event"]) if isinstance(trigger_ids, dict) else None
-        if isinstance(ids, list) and row["callback_id"] in ids:
-            matches.append(dict(item))
-    return matches[0] if len(matches) == 1 else None
+BàYà]Y\ûKúŸ[X›[€ó€[ŸHOHò]]€X]X»Çà[ŸHXÿŸ\Yò€€ù^òXÿŸ\YúŸ[X›Y›\ôŸ]⁄Y¬à
+Kà
+BàYàŸ[X›‹ãò€€ù^ÿõÿ⁄ŸY‹ôX\€€ä›]K€€[X[ôXÿŸ\Yò€€ù^
+NÇàô]\õàõ€ôBàX⁄\⁄[€àHX›[€ê€€ùòX›ﬁ\›[Jù[\ Kô]ò[X]Jà›]Kà€€[X[ôà›XõZ\‹⁄[€ó€[ŸOHô^\õò[›\õàãà\ôŸ]‹Ÿ[X›[€óŸö[ôŸ\úö[ùXXÿŸ\Yò€€ù^ò€€ù^Ÿö[ôŸ\úö[ùà
+BàYàõ›X⁄\⁄[€ãõ⁄ŒÇàô]\õàõ€ôBàô]\õà€€[X[ôXÿŸ\Yò€€ù^X⁄\⁄[€ÇÇÇôYàÿ][\Ÿ\ôX›
+àù[\Œàù[Põ€⁄Ààõ›ŒàX\[ô÷‹›ã[ûWKàYö[ö][€éà[ûKàò\ŸWÿ€€ù^à[ûKà
+ãà^X››ŸZY⁄Yàõ€€äHOàX›‹›ã[ûWNÇàò\ŸW‹›]HHò\ŸWÿ€€ù^ÃBà]X⁄YHÿ]X⁄‹ôX[‹›]\ ù[\Àò\ŸW‹›]Kõ› BàYà]X⁄Y\»õ€ôNÇàô]\õà»õ⁄»éàò[ŸKú›YŸHéàú›]\◊ÿ]X⁄ãúôX\€€àéàúôX[‹›]\◊‹õŸXŸ\óŸÿ\üBà›]\◊‹›]K]Z[Ÿ]\Ÿ]öY[òŸHH]X⁄YàXÿŸ\YHÿXÿŸ\YÿX›[€ó€€ó‹›]Jù[\À›]\◊‹›]KYö[ö][€äBàYàXÿŸ\Y\»õ€ôNÇàô]\õà»õ⁄»éàò[ŸKú›YŸHéàòX›[€ó‹ôXYZ\‹⁄[€àãúôX\€€àéàòX›[€ó€õ›ÿYZ]YÿYù\ó‹›]\◊‹Ÿ]\üBà€€[X[ô\ôŸ]ÿ€€ù^X⁄\⁄[€àHXÿŸ\YÇà^X›]‹àH€€Xò]^X›]‹äù[\ Bà‹ô\ôYà\›ŸX›‹›ã[ûWWHH¬à¬àú›\éàòX›[€óÿYZ\‹⁄[€óÿXÿŸ\YãàòYZ\‹⁄[€ó⁄YéàX⁄\⁄[€ãòYZ\‹⁄[€ãòYZ\‹⁄[€ó⁄YYàX⁄\⁄[€ãòYZ\‹⁄[€à[ŸHàãàòX›[€ó⁄Yéà€€[X[ôòX›[€ó⁄YàòX›[€ó€]ô[éà€€[X[ôòX›[€ó€]ô[àù\ôŸ]‹Ÿ[X›[€óŸö[ôŸ\úö[ùéà\ôŸ]ÿ€€ù^ò€€ù^Ÿö[ôŸ\úö[ùàBàBÇà‹öY⁄[ò[›⁄[ô›»H^X›]‹ãô]ô[ùŸ\‹]⁄\ãô\‹]⁄ÿX›[€ó›⁄[ô›◊€\›[ô\ú¬àYà⁄[ô›◊‹õÿôJ›\úô[ù‹›]Nàò]T›]K
+äö›ÿ\ô‹Œà[ûJHOà[ûNÇà]ô[ùH›ÿ\ô‹÷»ô]ô[ùóBà‹ô\ôYò\[ô
+à¬àú›\éàòX›[€ó›⁄[ô›◊Ÿ]ô[ùŸ\‹]⁄Yãàô]ô[ù›\Héà]ô[ùô]ô[ù›\Kàô]ô[ù⁄Yéà]ô[ùô]ô[ù⁄YàBà
+Bàô]\õà‹öY⁄[ò[›⁄[ô› ›\úô[ù‹›]K
+äö›ÿ\ô‹ Bà^X›]‹ãô]ô[ùŸ\‹]⁄\ãô\‹]⁄ÿX›[€ó›⁄[ô›◊€\›[ô\ú»H⁄[ô›◊‹õÿôH»\NàY€õ‹ôV€Y]ŸX\‹⁄Y€óBÇà‹öY⁄[ò[‹õ€›H^X›]‹ãô]ô[ùŸ\‹]⁄\ãú›]\◊ÿÿ[òX⁄‹Àô^X›]WÿX›[€ó›⁄[ô›◊Ÿõ‹õX[‹õ€›àYàõ€›‹õÿôJ›\úô[ù‹›]Nàò]T›]K
+äö›ÿ\ô‹Œà[ûJHOà[ûNÇàÿ[òX⁄◊⁄YH›ä›ÿ\ô‹ÀôŸ]
+òÿ[òX⁄◊⁄YäH‹ààäBàYàÿ[òX⁄◊⁄YOHõ›÷»òÿ[òX⁄◊⁄YóNÇà›€ô\àH›\úô[ù‹›]Kù[ö]ÀôŸ]
+›ä›ÿ\ô‹ÀôŸ]
+ù[ö]⁄YäH‹ààäJBàôX[Ÿ]Z[Hõ€ôBàYà›€ô\à\»õ›õ€ôNÇà]Z[»H›€ô\ãôõY‹ÀôŸ]
+ú›]\◊Ÿ]Z[»ã
 
+JBàYà\⁄[ú›[òŸJ]Z[À
+\›\JJNÇàôX[Ÿ]Z[Hô^
+à
+à][Bàõ‹à][H[à]Z[¬àYà\⁄[ú›[òŸJ][KX›
+Bà[ô›ä][KôŸ]
+ö[ú›[òŸW⁄YäH‹ààäHOH›ä]Z[»ö[ú›[òŸW⁄YóJBà
+Kàõ€ôKà
+Bà‹ô\ôYò\[ô
+à¬àú›\éàúôX[‹›]\◊€\›[ô\ó€X]⁄Yÿ[ôŸõ‹õX[‹õ€›‹›\ùYãàòÿ[òX⁄◊⁄Yéàÿ[òX⁄◊⁄Yàú›]\◊⁄[ú›[òŸW⁄Yéà›ä]Z[»ö[ú›[òŸW⁄YóJKàúôX[Ÿ]Z[‹ô\Ÿ[ùéàôX[Ÿ]Z[\»õ›õ€ôKàú›]\◊‹õ€›Ÿ‹ò\⁄Yéà›äõ›÷»ú›]\◊‹õ€›Ÿ‹ò\⁄YóJKàBà
+Bàô]\õà‹öY⁄[ò[‹õ€›
+›\úô[ù‹›]K
+äö›ÿ\ô‹ Bà^X›]‹ãô]ô[ùŸ\‹]⁄\ãú›]\◊ÿÿ[òX⁄‹Àô^X›]WÿX›[€ó›⁄[ô›◊Ÿõ‹õX[‹õ€›Hõ€›‹õÿôH»\NàY€õ‹ôV€Y]ŸX\‹⁄Y€óBÇà‹öY⁄[ò[⁄[ùõÿÿ][€àH^X›]‹ãòXö[]W›\⁄‹Àó‹›]\◊€ô\›Y⁄[ùõÿÿ][€óŸõ‹ó‹ô\]Y\›àYà[ùõÿÿ][€ó‹õÿôJà€€ù^à›]\”ô\›YXö[]P€€ù^àô\]Y\›à\⁄—‹ò\€⁄‘ô\]Y\›à›\úô[ù‹›]Nàò]T›]Kà
+HOà[ûNÇà[ùõÿÿ][€ãôX\€€àH‹öY⁄[ò[⁄[ùõÿÿ][€ä€€ù^ô\]Y\››\úô[ù‹›]JBàYàô\]Y\›ô‹ò\⁄YOHõ›÷»õô\›YŸ‹ò\⁄YóNÇà‹ô\ôYò\[ô
+à¬àú›\éàùöYŸŸ\óÿXö[]W‹Ÿ[X›Y›\Y€ô\›Y€€õWŸ‹ò\ÿ[ô‹ôXX⁄YÿXö[]Wÿ]]‹ö]Hãàúõ€›Ÿ‹ò\⁄Yéà€€ù^úõ€›Ÿ‹ò\⁄Yàò⁄[Ÿ‹ò\⁄Yéàô\]Y\›ô‹ò\⁄Yàò⁄[Ÿ‹ò\€õŸW⁄Yéàô\]Y\›ô‹ò\€õŸW⁄Yàôõ‹õX[›\⁄◊⁄Yéàô\]Y\›ôõ‹õX[›\⁄◊⁄YàòX›‹ó⁄Yéà[ùõÿÿ][€ãòX›‹ó⁄YYà[ùõÿÿ][€à\»õ›õ€ôH[ŸHàãàù\ôŸ]⁄Y»éà\›
+[ùõÿÿ][€ãù\ôŸ]‹ô\€€][€ãúŸ[X›Y
+HYà[ùõÿÿ][€à\»õ›õ€ôH[ŸH◊Kàòõÿ⁄ŸY‹ôX\€€àéàôX\€€ãàBà
+Bàô]\õà[ùõÿÿ][€ãôX\€€Çà^X›]‹ãòXö[]W›\⁄‹Àó‹›]\◊€ô\›Y⁄[ùõÿÿ][€óŸõ‹ó‹ô\]Y\›H[ùõÿÿ][€ó‹õÿôH»\NàY€õ‹ôV€Y]ŸX\‹⁄Y€óBÇà‹öY⁄[ò[›ŸZY⁄YH^X›]‹ãòXö[]W›\⁄‹Àó‹ô\€€ôWŸõ‹õX[›ŸZY⁄Y‹Ÿ[X›[€ÇàYàŸZY⁄Y‹õÿôJô\]Y\›à\⁄—‹ò\€⁄‘ô\]Y\›Ÿ[X›[€éà[ûK›\úô[ù‹›]Nàò]T›]JHOà[ûNÇàô\›[H‹öY⁄[ò[›ŸZY⁄Y
+ô\]Y\›Ÿ[X›[€ã›\úô[ù‹›]JBàYàô\]Y\›ô‹ò\⁄YOHõ›÷»õô\›YŸ‹ò\⁄YóNÇà‹ô\ôYò\[ô
+à¬àú›\éàùŸZY⁄Y‹Ÿ[X›[€ó‹ôXX⁄YÿXö[]W€›€ôYŸYô\úôY⁄€⁄»ãàúŸ[X›[€ó⁄YéàŸ[X›[€ãúŸ[X›[€ó⁄Yàô‹ò\€õŸW⁄Yéàô\]Y\›ô‹ò\€õŸW⁄Yàòõÿ⁄ŸY‹ôX\€€àéàô\›[òõÿ⁄ŸY‹ôX\€€ãàúõô◊Ÿ]ô[ù‹ô\Ÿ[ùéàô\›[úõô◊Ÿ]ô[ù\»õ›õ€ôKàBà
+Bàô]\õàô\›[à^X›]‹ãòXö[]W›\⁄‹Àó‹ô\€€ôWŸõ‹õX[›ŸZY⁄Y‹Ÿ[X›[€àHŸZY⁄Y‹õÿôH»\NàY€õ‹ôV€Y]ŸX\‹⁄Y€óBÇàôYõ‹ôHH›]\◊‹›]Kú€ò\⁄›
 
-def _attach_real_status(
-    rules: RuleBook,
-    base_state: BattleState,
-    row: Mapping[str, Any],
-) -> tuple[BattleState, dict[str, Any], dict[str, Any]] | None:
-    system = StatusSystem(rules)
-    reducer = MutationReducer()
-    setup_resolution = TargetResolution(
-        requested=("validation:actor",),
-        selectable=("validation:actor",),
-        legal=("validation:actor",),
-        primary="validation:actor",
-        impact_group=("validation:actor",),
-        selected=("validation:actor",),
-        reason="production_status_setup",
-        source="status_system_setup_target",
-    )
-    failures: list[dict[str, Any]] = []
-    for effect in _real_add_modifier_effects(rules, str(row["modifier_name"])):
-        for caster_id in ("validation:actor", "validation:enemy"):
-            result = system.apply_add_modifier(
-                base_state,
-                effect,
-                caster_id=caster_id,
-                source_id=caster_id,
-                owner_id="validation:actor",
-                param_entity_id="validation:actor",
-                current_action_target_id="validation:actor",
-                target_resolution=setup_resolution,
-                event_payload={
-                    "validation_stage": "P9-A2",
-                    "actor_id": "validation:actor",
-                    "target_id": "validation:actor",
-                    "selected_target_ids": ["validation:actor"],
-                    "primary_action_target_id": "validation:actor",
-                },
-                binding_sources=(
-                    {
-                        "source_kind": "p9_a2_direct_status_setup",
-                        "effect_id": effect.effect_id,
-                        "callback_id": str(row["callback_id"]),
-                    },
-                ),
-            )
-            if not result.ok:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "unsupported": list(result.unsupported),
-                    }
-                )
-                continue
-            reduced = reducer.apply_all_result(base_state, result.mutations)
-            if not reduced.ok:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reducer_conflicts": [item.code for item in reduced.conflicts],
-                    }
-                )
-                continue
-            detail = _attached_callback_detail(reduced.after_state, row)
-            if detail is None:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reason": "callback_not_attached_to_actor_after_real_status_admission",
-                    }
-                )
-                continue
-            if status_control_gate_for_actor(reduced.after_state.units["validation:actor"]) is not None:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reason": "attached_status_controls_action_actor",
-                    }
-                )
-                continue
-            return (
-                reduced.after_state,
-                detail,
-                {
-                    "effect_id": effect.effect_id,
-                    "effect_source_path": effect.source.source_path,
-                    "caster_id": caster_id,
-                    "setup_mutation_count": len(result.mutations),
-                    "setup_event_count": len(result.events),
-                    "setup_rng_event_count": len(result.rng_events),
-                    "setup_record_count": len(result.records),
-                },
-            )
-    return None
+Kù◊⁄ú€€ä
+BàYù\ó‹›]Kò[ú⁄][€àH^X›]‹ãô^X›]Jà€€[X[ôà›]\◊‹›]Kà\ôŸ]‹Ÿ[X›[€óÿ€€ù^]\ôŸ]ÿ€€ù^à
+BàYù\àHYù\ó‹›]Kú€ò\⁄›
 
+Kù◊⁄ú€€ä
+BàŸ][Y[ùHò[ú⁄][€ãùò[úÿX›[€ãúŸ][Y[ùàôX€‹ô»H\JŸ][Y[ùúôX€‹ô HYàŸ][Y[ù\»õ›õ€ôH[ŸH
 
-def _accepted_action_on_state(
-    rules: RuleBook,
-    state: BattleState,
-    definition: Any,
-) -> tuple[ActionCommand, Any, Any] | None:
-    selector = ActionTargetSelectionSystem(rules)
-    query = selector.query(
-        state,
-        "validation:actor",
-        definition.action_id,
-        definition.level,
-    )
-    if query.status != "resolved":
-        return None
-    submitted = (
-        ()
-        if query.selection_mode == "automatic"
-        else tuple(query.candidate_ids[: (query.selection_min or 1)])
-    )
-    accepted = selector.accept(state, query, submitted)
-    if accepted.status != "accepted" or accepted.context is None:
-        return None
-    command = ActionCommand(
-        actor_id="validation:actor",
-        action_id=definition.action_id,
-        action_level=definition.level,
-        target_ids=(
-            ()
-            if query.selection_mode == "automatic"
-            else accepted.context.accepted.selected_target_ids
-        ),
-    )
-    if selector.context_blocked_reason(state, command, accepted.context):
-        return None
-    decision = ActionContractSystem(rules).evaluate(
-        state,
-        command,
-        submission_mode="external_turn",
-        target_selection_fingerprint=accepted.context.context_fingerprint,
-    )
-    if not decision.ok:
-        return None
-    return command, accepted.context, decision
+Bà›XÿŸ\‹◊›\⁄◊€õŸ\»H¬à][Bàõ‹à][H[àò[ú⁄][€ãõ›]€€YKõõŸW‹ô\›[¬àYà][KõõŸW⁄⁄[ôOHù\⁄◊Ÿ‹ò\€õŸHà[ô][Kú›]\»OHò€€\]HÇàBàŸ[X›Y›⁄[ô›»H[ûJà][KôŸ]
+ú›\äHOHòX›[€ó›⁄[ô›◊Ÿ]ô[ùŸ\‹]⁄YÇà[ô][KôŸ]
+ô]ô[ù›\HäH[àõ›÷»òX›[€ó›⁄[ô›◊Ÿ]ô[ù›\\»óBàõ‹à][H[à‹ô\ôYà
+BàôX[‹õ€›H[ûJà][KôŸ]
+ú›\äHOHúôX[‹›]\◊€\›[ô\ó€X]⁄Yÿ[ôŸõ‹õX[‹õ€›‹›\ùYÇà[ô][KôŸ]
+úôX[Ÿ]Z[‹ô\Ÿ[ùäH\»ùYBàõ‹à][H[à‹ô\ôYà
+BàXö[]Wÿ]]‹ö]HH[ûJà][KôŸ]
+ú›\äHOHùöYŸŸ\óÿXö[]W‹Ÿ[X›Y›\Y€ô\›Y€€õWŸ‹ò\ÿ[ô‹ôXX⁄YÿXö[]Wÿ]]‹ö]HÇà[ô][KôŸ]
+ò⁄[Ÿ‹ò\⁄YäHOHõ›÷»õô\›YŸ‹ò\⁄YóBà[ôõ›][KôŸ]
+òõÿ⁄ŸY‹ôX\€€àäBàõ‹à][H[à‹ô\ôYà
+BàŸZY⁄Y⁄]»H¬à][Bàõ‹à][H[à‹ô\ôYàYà][KôŸ]
+ú›\äHOHùŸZY⁄Y‹Ÿ[X›[€ó‹ôXX⁄YÿXö[]W€›€ôYŸYô\úôY⁄€⁄»ÇàBà‹‹õô◊Ÿ]ô[ù»H\Jò[ú⁄][€ãúõô◊Ÿ]ô[ù BÇàYà^X››ŸZY⁄YÇà^X›Y›\õZ[ò[H
+àõ€€
+ŸZY⁄Y⁄] Bà[ô[
+][KôŸ]
+òõÿ⁄ŸY‹ôX\€€àäHOHQëTîëQ‘ëPT””àõ‹à][H[àŸZY⁄Y⁄] Bà[ô[
+][KôŸ]
+úõô◊Ÿ]ô[ù‹ô\Ÿ[ùäH\»ò[ŸHõ‹à][H[àŸZY⁄Y⁄] Bà[ôYù\àOHôYõ‹ôBà[ôõ›ò[ú⁄][€ãõ›]€€YKú›XÿŸ\‹€‹óŸ[Y⁄XõBà[ôõ›ò[ú⁄][€ãùò[úÿX›[€ãõ]]][€ú¬à[ôõ›ò[ú⁄][€ãùò[úÿX›[€ãô]ô[ù¬à[ôõ›‹‹õô◊Ÿ]ô[ù¬à[ôõ››XÿŸ\‹◊›\⁄◊€õŸ\¬à
+Bà[ŸNÇà^X›Y›\õZ[ò[Hò[ú⁄][€ãõ›]€€YKú›XÿŸ\‹€‹óŸ[Y⁄XõBÇàô]\õà¬àõ⁄»éàŸ[X›Y›⁄[ô›»[ôôX[‹õ€›[ôXö[]Wÿ]]‹ö]H[ô^X›Y›\õZ[ò[àú›YŸHéàò€€Xò]Ÿ^X›]‹óŸ^X›]HãàòX›[€àéà¬àòX›[€ó⁄Yéà€€[X[ôòX›[€ó⁄YàòX›[€ó€]ô[éà€€[X[ôòX›[€ó€]ô[àôYö[ö][€ó⁄YéàYö[ö][€ãôYö[ö][€ó⁄YàKàú›]\◊‹Ÿ]\éàŸ]\Ÿ]öY[òŸKàú›]\◊⁄[ú›[òŸW⁄Yéà›ä]Z[»ö[ú›[òŸW⁄YóJKàõ‹ô\ôYŸ]öY[òŸHéà‹ô\ôYàõ›]€€YHéà¬àú›XÿŸ\‹€‹óŸ[Y⁄XõHéàò[ú⁄][€ãõ›]€€YKú›XÿŸ\‹€‹óŸ[Y⁄XõKàúôX\€€óÿ€Ÿ\»éà\›
+ò[ú⁄][€ãõ›]€€YKúôX\€€óÿ€Ÿ\ Kàõ]]][€óÿ€›[ùéà[äò[ú⁄][€ãùò[úÿX›[€ãõ]]][€ú Kàô]ô[ùÿ€›[ùéà[äò[ú⁄][€ãùò[úÿX›[€ãô]ô[ù Kàúõô◊Ÿ]ô[ùÿ€›[ùéà[ä‹‹õô◊Ÿ]ô[ù KàúŸ][Y[ù‹ôX€‹ôÿ€›[ùéà[äôX€‹ô Kàú›XÿŸ\‹Ÿù[›\⁄◊Ÿ‹ò\€õŸWÿ€›[ùéà[ä›XÿŸ\‹◊›\⁄◊€õŸ\ Kàú›]Wÿ⁄[ôŸYéàYù\àOHôYõ‹ôKàKàBÇÇôYàÿùZ[Ÿõÿ›\ŸYŸ\ôX›‹ù[Xõ€⁄ 
+HOà\V‘ù[Põ€⁄ÀX›‹›ã[ûWWNÇàôX[ÿ€€ù^H‹ŒÃX◊ÿùZ[‹ôX[ÿ€€ù^
+ë—‘ì”’
+Bà›€ôYHôX[ÿ€€ù^õ›Ÿ\ö[ôÀòùZ[€›€ôYÿ€€Xò][ùÿYZ\‹⁄[€ó‹õ⁄ôX›[€äàŸôô[ú⁄]ôWÿX›[€ó€€õOUùYKàX^‹Ÿ\ùò[ùÿ€›[ùLKà
+BàYàõ››€ôYõ⁄ŒÇàòZ\ŸH\‹Ÿ\ù[€ë\úõ‹äàõ›€ôY€€Xò][ùõ⁄ôX›[€àòZ[YàÇà
+»ããöõ⁄[ä€‹ùY
+⁄][Kò€ŸHõ‹à][H[à›€ôYö\‹›Y\ﬂJJBà
+Bà›]\◊›öY]»HôX[ÿ€€ù^ú›]\◊ÿù[ôKùöY]¬à€›\òŸW‹ÿ€‹W‹]»H¬à][Kú€›\òŸKú€›\òŸW‹]õ‹à][H[àôX[ÿ€€ù^ú€›\òŸWŸ‹ò\ú€›\òŸ\¬àBà[ÿÿ[òX⁄‹»H‹ŒÃX◊ŸY\Jà
 
+õ›€ôYú›]\◊ÿÿ[òX⁄‹À
+úôX[ÿ€€ù^ú›]\◊ÿù[ôKòÿ[òX⁄‹ Kàòÿ[òX⁄◊⁄Yãà
+Bàÿ[òX⁄‹»H\Jàÿ[òX⁄¬àõ‹àÿ[òX⁄»[à[ÿÿ[òX⁄‹¬àYàÿ[òX⁄Àú€›\òŸKú€›\òŸW‹][à€›\òŸW‹ÿ€‹W‹]¬à
+Bàÿ[òX⁄◊⁄Y»Hÿÿ[òX⁄Àòÿ[òX⁄◊⁄Yõ‹àÿ[òX⁄»[àÿ[òX⁄‹ﬂBà[‹›]\◊›\⁄‹»H‹ŒÃX◊ŸY\Jà
 
-def _attempt_direct(
-    rules: RuleBook,
-    row: Mapping[str, Any],
-    definition: Any,
-    base_context: Any,
-    *,
-    expect_weighted: bool,
-) -> dict[str, Any]:
-    base_state = base_context[0]
-    attached = _attach_real_status(rules, base_state, row)
-    if attached is None:
-        return {"ok": False, "stage": "status_attach", "reason": "real_status_producer_gap"}
-    status_state, detail, setup_evidence = attached
-    accepted = _accepted_action_on_state(rules, status_state, definition)
-    if accepted is None:
-        return {"ok": False, "stage": "action_readmission", "reason": "action_not_admitted_after_status_setup"}
-    command, target_context, decision = accepted
+õ›€ôYú›]\◊ÿÿ[òX⁄◊›\⁄‹À
+úôX[ÿ€€ù^ú›]\◊ÿù[ôKú›]\◊›\⁄‹ Kàù\⁄◊⁄Yãà
+Bà›]\◊›\⁄‹»H\Jà\⁄»õ‹à\⁄»[à[‹›]\◊›\⁄‹»Yà\⁄Àòÿ[òX⁄◊⁄Y[àÿ[òX⁄◊⁄Y¬à
+Bà\Ÿ\»H‹ŒÃX◊ŸY\Jà
 
-    executor = CombatExecutor(rules)
-    ordered: list[dict[str, Any]] = [
-        {
-            "step": "action_admission_accepted",
-            "admission_id": decision.admission.admission_id if decision.admission else "",
-            "action_id": command.action_id,
-            "action_level": command.action_level,
-            "target_selection_fingerprint": target_context.context_fingerprint,
-        }
-    ]
+õ›€ôYòXö[]W‹\Ÿ\À
+ú›]\◊›öY]ÀòXö[]W‹\Ÿ\ Kàú\ŸW⁄Yãà
+BàXö[]W›\⁄‹»H‹ŒÃX◊ŸY\Jà
 
-    original_window = executor.event_dispatcher.dispatch_action_window_listeners
-    def window_probe(current_state: BattleState, **kwargs: Any) -> Any:
-        event = kwargs["event"]
-        ordered.append(
-            {
-                "step": "action_window_event_dispatched",
-                "event_type": event.event_type,
-                "event_id": event.event_id,
-            }
-        )
-        return original_window(current_state, **kwargs)
-    executor.event_dispatcher.dispatch_action_window_listeners = window_probe  # type: ignore[method-assign]
+õ›€ôYòXö[]W›\⁄‹À
+ú›]\◊›öY]ÀòXö[]W›\⁄‹ Kàù\⁄◊⁄Yãà
+BàYôôX›»H‹ŒÃX◊ŸY\Jà
 
-    original_root = executor.event_dispatcher.status_callbacks.execute_action_window_formal_root
-    def root_probe(current_state: BattleState, **kwargs: Any) -> Any:
-        callback_id = str(kwargs.get("callback_id") or "")
-        if callback_id == row["callback_id"]:
-            owner = current_state.units.get(str(kwargs.get("unit_id") or ""))
-            real_detail = None
-            if owner is not None:
-                details = owner.flags.get("status_details", ())
-                if isinstance(details, (list, tuple)):
-                    real_detail = next(
-                        (
-                            item
-                            for item in details
-                            if isinstance(item, dict)
-                            and str(item.get("instance_id") or "") == str(detail["instance_id"])
-                        ),
-                        None,
-                    )
-            ordered.append(
-                {
-                    "step": "real_status_listener_matched_and_formal_root_started",
-                    "callback_id": callback_id,
-                    "status_instance_id": str(detail["instance_id"]),
-                    "real_detail_present": real_detail is not None,
-                    "status_root_graph_id": str(row["status_root_graph_id"]),
-                }
-            )
-        return original_root(current_state, **kwargs)
-    executor.event_dispatcher.status_callbacks.execute_action_window_formal_root = root_probe  # type: ignore[method-assign]
+õ›€ôYôYôôX›À
+ú›]\◊›öY]ÀôYôôX› KàôYôôX›⁄Yãà
+Bà€€ô][€ú»H‹ŒÃX◊ŸY\Jà
 
-    original_invocation = executor.ability_tasks._status_nested_invocation_for_request
-    def invocation_probe(
-        context: StatusNestedAbilityContext,
-        request: TaskGraphHookRequest,
-        current_state: BattleState,
-    ) -> Any:
-        invocation, reason = original_invocation(context, request, current_state)
-        if request.graph_id == row["nested_graph_id"]:
-            ordered.append(
-                {
-                    "step": "trigger_ability_selected_typed_nested_only_graph_and_reached_ability_authority",
-                    "root_graph_id": context.root_graph_id,
-                    "child_graph_id": request.graph_id,
-                    "child_graph_node_id": request.graph_node_id,
-                    "formal_task_id": request.formal_task_id,
-                    "actor_id": invocation.actor_id if invocation is not None else "",
-                    "target_ids": list(invocation.target_resolution.selected) if invocation is not None else [],
-                    "blocked_reason": reason,
-                }
-            )
-        return invocation, reason
-    executor.ability_tasks._status_nested_invocation_for_request = invocation_probe  # type: ignore[method-assign]
+õ›€ôYò€€ô][€úÀ
+ú›]\◊›öY]Àò€€ô][€ú Kàò€€ô][€ó⁄Yãà
+Bà\ôŸ]»H‹ŒÃX◊ŸY\Jà
 
-    original_weighted = executor.ability_tasks._resolve_formal_weighted_selection
-    def weighted_probe(request: TaskGraphHookRequest, selection: Any, current_state: BattleState) -> Any:
-        result = original_weighted(request, selection, current_state)
-        if request.graph_id == row["nested_graph_id"]:
-            ordered.append(
-                {
-                    "step": "weighted_selection_reached_ability_owned_deferred_hook",
-                    "selection_id": selection.selection_id,
-                    "graph_node_id": request.graph_node_id,
-                    "blocked_reason": result.blocked_reason,
-                    "rng_event_present": result.rng_event is not None,
-                }
-            )
-        return result
-    executor.ability_tasks._resolve_formal_weighted_selection = weighted_probe  # type: ignore[method-assign]
+õ›€ôYù\ôŸ]Ÿ^ô\‹⁄[€úÀ
+ú›]\◊›öY]Àù\ôŸ]Ÿ^ô\‹⁄[€ú Kàù\ôŸ]Ÿ^ô\‹⁄[€ó⁄Yãà
+Bà]Y]YW⁄[ù[ù»H‹ŒÃX◊ŸY\Jà
 
-    before = status_state.snapshot().to_json()
-    after_state, transition = executor.execute(
-        command,
-        status_state,
-        target_selection_context=target_context,
-    )
-    after = after_state.snapshot().to_json()
-    settlement = transition.transaction.settlement
-    records = tuple(settlement.records) if settlement is not None else ()
-    success_task_nodes = [
-        item
-        for item in transition.outcome.node_results
-        if item.node_kind == "task_graph_node" and item.status == "complete"
-    ]
-    selected_window = any(
-        item.get("step") == "action_window_event_dispatched"
-        and item.get("event_type") in row["action_window_event_types"]
-        for item in ordered
-    )
-    real_root = any(
-        item.get("step") == "real_status_listener_matched_and_formal_root_started"
-        and item.get("real_detail_present") is True
-        for item in ordered
-    )
-    ability_authority = any(
-        item.get("step") == "trigger_ability_selected_typed_nested_only_graph_and_reached_ability_authority"
-        and item.get("child_graph_id") == row["nested_graph_id"]
-        and not item.get("blocked_reason")
-        for item in ordered
-    )
-    weighted_hits = [
-        item
-        for item in ordered
-        if item.get("step") == "weighted_selection_reached_ability_owned_deferred_hook"
-    ]
-    top_rng_events = tuple(transition.rng_events)
+õ›€ôYú]Y]YW⁄[ù[ùÀ
+úôX[ÿ€€ù^ú›]\◊ÿù[ôKú]Y]YW⁄[ù[ù Kàú]Y]YW⁄[ù[ù⁄Yãà
+Bà›]\◊Ÿ]ô[ùŸò[Z[Y\»H\Jà€›Ÿ\ó‹›]\◊Ÿ]ô[ùŸò[Z[Y\ \›
+ÿ[òX⁄‹ K\›
+›]\◊›\⁄‹ JBà
+Bà[ô⁄[ôW‹ù[\»HùZ[Ÿ[ô⁄[ôW‹ù[W‹ôY⁄\›ûJ
+BàöY]»Hÿ[õ€öXÿ[Täàô\ú⁄[€è\›]\◊›öY]Àùô\ú⁄[€ãà[ù]Y\œ[›€ôYô[ù]Y\Àà›[ô[€ôWÿXö[]WŸ‹ò\œ\›]\◊›öY]Àú›[ô[€ôWÿXö[]WŸ‹ò\ÀàXö[]W‹\Ÿ\œ\\Ÿ\ÀàXö[]W›\⁄‹œXXö[]W›\⁄‹ÀàYôôX›œYYôôX›Àà€€ô][€úœX€€ô][€úÀàõ‹õ][\œ[›€ôYôõ‹õ][\Àà\ôŸ]Ÿ^ô\‹⁄[€úœ]\ôŸ]Àà›]\◊ÿÿ[òX⁄‹œXÿ[òX⁄‹Àà›]\◊ÿÿ[òX⁄◊›\⁄‹œ\›]\◊›\⁄‹Àà›]\◊Ÿ]ô[ùŸò[Z[Y\œ\›]\◊Ÿ]ô[ùŸò[Z[Y\Àà›]\◊Ÿ[XYŸWŸ[Z\‹⁄[€úœ[›€ôYú›]\◊Ÿ[XYŸWŸ[Z\‹⁄[€úÀà[XYŸW€[ŸYöY\úœ[›€ôYô[XYŸW€[ŸYöY\úÀàX›[€óŸ[^WŸ[Z\‹⁄[€úœ[›€ôYòX›[€óŸ[^WŸ[Z\‹⁄[€úÀà]Y]YW⁄[ù[ùœ\]Y]YW⁄[ù[ùÀà⁄⁄[ÿ€€ù[ùX][€úœ[›€ôYú⁄⁄[ÿ€€ù[ùX][€úÀàöYŸŸ\úœ[›€ôYùöYŸŸ\úÀàŸ\ùò[ùŸYö[ö][€úœ[›€ôYúŸ\ùò[ùŸYö[ö][€úÀàX›[€óŸYö[ö][€úœ[›€ôYòX›[€óŸYö[ö][€úÀàX›[€óÿXö[]Wÿö[ô[ô‹œ[›€ôYòX›[€óÿXö[]Wÿö[ô[ô‹ÀàX›[€óÿYZ\‹⁄[€úœ[›€ôYòX›[€óÿYZ\‹⁄[€úÀà[ö]ÿö\ù›[\]\œ[›€ôYù[ö]ÿö\ù›[\]\Àà€€Xò][ùÿX›[€ó‹Ÿ]œ[›€ôYò€€Xò][ùÿX›[€ó‹Ÿ]ÀàX›[€óŸ]ô[ùœ[›€ôYòX›[€óŸ]ô[ùÀà]‹õŸö[\œ[›€ôYö]‹õŸö[\Àà⁄⁄[Ÿõ‹õ][Wÿö[ô[ô‹œ[›€ôYú⁄⁄[Ÿõ‹õ][Wÿö[ô[ô‹Àà[XYŸWŸ[Z\‹⁄[€úœ[›€ôYô[XYŸWŸ[Z\‹⁄[€úÀà›Y⁄ô\‹◊Ÿ[Z\‹⁄[€úœ[›€ôYù›Y⁄ô\‹◊Ÿ[Z\‹⁄[€úÀà]ò]\ó‹õŸö[\œ[›€ôYò]ò]\ó‹õŸö[\Àà⁄\òX›\óŸ]Wÿÿ\ôœ[›€ôYò⁄\òX›\óŸ]Wÿÿ\ôÀà⁄\òX›\óŸ\]Z\Y[ùŸ[Y⁄Xö[]Y\œ[›€ôYò⁄\òX›\óŸ\]Z\Y[ùŸ[Y⁄Xö[]Y\Àà⁄\òX›\ó€YX⁄[ö\€W‹€›œ[›€ôYò⁄\òX›\ó€YX⁄[ö\€W‹€›Àà⁄\òX›\ó›òXŸW€õŸ\œ[›€ôYò⁄\òX›\ó›òXŸW€õŸ\Àà⁄\òX›\óŸZY€€ó‹€›œ[›€ôYò⁄\òX›\óŸZY€€ó‹€›Ààõ›[òŸW‹€X⁄Y\œ[›€ôYòõ›[òŸW‹€X⁄Y\Àà[Y[[ôW‹ù[\œY[ô⁄[ôW‹ù[\Àù[Y[[ôW‹ù[\Ààô\€›\òŸW‹ù[\œY[ô⁄[ôW‹ù[\Àúô\€›\òŸW‹ù[\Àà[XYŸWŸõ‹õ][W‹ù[\œY[ô⁄[ôW‹ù[\Àô[XYŸWŸõ‹õ][W‹ù[\Àà[XYŸW‹õ›]W‹ù[\œY[ô⁄[ôW‹ù[\Àô[XYŸW‹õ›]W‹ù[\Àà⁄Y[‹ö[‹ö]W‹ù[\œY[ô⁄[ôW‹ù[\Àú⁄Y[‹ö[‹ö]W‹ù[\ÀàY]Y]O^¬àùò[Y][€ó‹ÿ€‹HéàúWÿLóŸõÿ›\ŸYŸ\ôX›ãàôù[›ôŸ€›Ÿ\ö[ô◊ÿùZ[ÿ€›[ùéààKà
+Bàÿ][Ÿ»HX]\öX[^ôWÿ⁄\òX›\ó‹ù[ù[YW›\⁄◊Ÿ‹ò\ÿÿ][Ÿ àôX[ÿ€€ù^ú€›\òŸWÿÿ][ŸÀàöY]Àà€›\òŸW‹€ò\⁄›\ôX[ÿ€€ù^ú€ò\⁄›àYö[ö][€ó‹ÿ€‹Wÿ€€\]OUùYKà
+Bà^\õò[Ÿ\[ô[ò⁄Y\»HùZ[Ÿ^\õò[›\⁄◊›‹€ŸﬁWŸ\[ô[òﬁW€YŸ\äàX›[€óÿXö[]Wÿö[ô[ô‹œ]öY]ÀòX›[€óÿXö[]Wÿö[ô[ô‹ÀàXö[]W‹\Ÿ\œ]öY]ÀòXö[]W‹\Ÿ\ÀàXö[]W›\⁄‹œ]öY]ÀòXö[]W›\⁄‹Àà›[ô[€ôWÿXö[]WŸ‹ò\œ]öY]Àú›[ô[€ôWÿXö[]WŸ‹ò\Àà›]\◊ÿÿ[òX⁄‹œ]öY]Àú›]\◊ÿÿ[òX⁄‹Àà›]\◊ÿÿ[òX⁄◊›\⁄‹œ]öY]Àú›]\◊ÿÿ[òX⁄◊›\⁄‹Àà
+Bàÿ[õ€öXÿ[Hô\XŸJàöY]Àà\⁄◊Ÿ‹ò\ÿÿ][ŸœXÿ][ŸÀà^\õò[›\⁄◊›‹€ŸﬁWŸ\[ô[ò⁄Y\œY^\õò[Ÿ\[ô[ò⁄Y\Àà
+Bàô]\õàù[Põ€⁄ ÿ[õ€öXÿ[
+K¬àôù[›ôŸ€›Ÿ\ö[ô◊ÿùZ[ÿ€›[ùéààõ›€ôYÿX›[€óŸYö[ö][€óÿ€›[ùéà[ä›€ôYòX›[€óŸYö[ö][€ú Kàú€›\òŸW‹ÿ€‹W‹]ÿ€›[ùéà[ä€›\òŸW‹ÿ€‹W‹] Kàú›]\◊ÿÿ[òX⁄◊ÿ€›[ùéà[äÿ[òX⁄‹ Kàú›]\◊›\⁄◊ÿ€›[ùéà[ä›]\◊›\⁄‹ Kàù\⁄◊Ÿ‹ò\Ÿ[ùûWÿ€›[ùéà[äÿ][ŸÀô[ùûW€X]\öX[^ò][€ú Kàô^\õò[›\⁄◊›‹€ŸﬁWŸ\[ô[òﬁWÿ€›[ùéà[ä^\õò[Ÿ\[ô[ò⁄Y\ KàBÇÇôYà›⁄[ô›◊‹›]\◊›\⁄◊ŸXY€õ‹›X‹ ù[\Œàù[Põ€⁄ HOàX›‹›ã[ûWNÇàÿ[òX⁄◊›◊Ÿ]ô[ùÀ»HÿX›[€ó›⁄[ô›◊ÿÿ[òX⁄◊€X\
+ù[\ Bàõ›‹Œà\›ŸX›‹›ã[ûWWHH◊Bà‹€ŸWÿ€›ô\òYŸNàX›‹›ã[ùHHﬂBàöYŸŸ\ó‹õ›‹Œà\›ŸX›‹›ã[ûWWHH◊Bàõ‹àÿ[òX⁄»[àù[\Àö\ãú›]\◊ÿÿ[òX⁄‹ŒÇàYà
+àÿ[òX⁄Àú€›\òŸW€[ŸHOHõXZ[õ[ôWÿ]ò]\óÿXö[]HÇà‹àÿ[òX⁄Àò€›ô\òYŸW‹›]\»OHô^X›]XõHÇà‹àÿ[òX⁄ÀòYZ\‹⁄[€ó‹›]\»OHô^X›]XõHÇà‹àÿ[òX⁄Àô]ô[ùõ›[àÿ[òX⁄◊›◊Ÿ]ô[ù¬à
+NÇà€€ù[ùYBà\⁄‹»H\Jù[\Àú›]\◊ÿÿ[òX⁄◊›\⁄‹◊Ÿõ‹óÿÿ[òX⁄ ÿ[òX⁄Àòÿ[òX⁄◊⁄Y
+JBàõ‹à\⁄»[à\⁄‹ŒÇàŸ^HHàû›\⁄Àõ‹€Ÿ__›\⁄Àò€›ô\òYŸW‹›]\ﬂ_›\⁄Àòõÿ⁄ŸY‹ôX\€€üHÇà‹€ŸWÿ€›ô\òYŸV⁄Ÿ^WHH‹€ŸWÿ€›ô\òYŸKôŸ]
+Ÿ^K
+H
+»BàYà\⁄Àõ‹€ŸHOHïöYŸŸ\êXö[]HéÇàöYŸŸ\ó‹õ›‹Àò\[ô
+¬àòÿ[òX⁄◊⁄Yéàÿ[òX⁄Àòÿ[òX⁄◊⁄Yàõ[ŸYöY\ó€ò[YHéàÿ[òX⁄Àõ[ŸYöY\ó€ò[YKàô]ô[ùéàÿ[òX⁄Àô]ô[ùàòÿ[òX⁄◊‹€›\òŸW‹]éàÿ[òX⁄Àú€›\òŸKú€›\òŸW‹]àù\⁄◊⁄Yéà\⁄Àù\⁄◊⁄Yàù\⁄◊‹]éà\⁄Àù\⁄◊‹]àò€›ô\òYŸW‹›]\»éà\⁄Àò€›ô\òYŸW‹›]\Ààòõÿ⁄ŸY‹ôX\€€àéà\⁄Àòõÿ⁄ŸY‹ôX\€€ãàôYôôX›⁄Yéà\⁄ÀôYôôX›⁄Yàõ[öŸYÿXö[]W‹\ŸW⁄Yéà\⁄Àõ[öŸYÿXö[]W‹\ŸW⁄Yàõ[öŸY‹›[ô[€ôWŸ‹ò\⁄Yéà\⁄Àõ[öŸY‹›[ô[€ôWŸ‹ò\⁄YàJBàõ›‹Àò\[ô
+¬àòÿ[òX⁄◊⁄Yéàÿ[òX⁄Àòÿ[òX⁄◊⁄Yàõ[ŸYöY\ó€ò[YHéàÿ[òX⁄Àõ[ŸYöY\ó€ò[YKàô]ô[ùéàÿ[òX⁄Àô]ô[ùàú€›\òŸW‹]éàÿ[òX⁄Àú€›\òŸKú€›\òŸW‹]àù\⁄◊ÿ€›[ùéà[ä\⁄‹ Kàù\⁄◊€‹€Ÿ\»éà¬à¬àù\⁄◊⁄Yéà\⁄Àù\⁄◊⁄Yàõ‹€ŸHéà\⁄Àõ‹€ŸKàò€›ô\òYŸW‹›]\»éà\⁄Àò€›ô\òYŸW‹›]\Ààòõÿ⁄ŸY‹ôX\€€àéà\⁄Àòõÿ⁄ŸY‹ôX\€€ãàú\ô[ù›\⁄◊⁄Yéà\⁄Àú\ô[ù›\⁄◊⁄YàBàõ‹à\⁄»[à\⁄‹¬àKàJBàô]\õà¬àù⁄[ô›◊ÿÿ[òX⁄◊ÿ€›[ùéà[äõ›‹ Kàõ‹€ŸWÿ€›ô\òYŸWÿ€›[ù»éàX›
+€‹ùY
+‹€ŸWÿ€›ô\òYŸKö][\ 
+JJKàùöYŸŸ\óÿXö[]W›\⁄◊ÿ€›[ùÿ[ÿ€›ô\òYŸ\»éà[äöYŸŸ\ó‹õ›‹ KàùöYŸŸ\ó‹õ›‹»éàöYŸŸ\ó‹õ›‹÷ŒéKàòÿ[òX⁄◊‹õ›‹»éàõ›‹÷ŒåçKàBÇÇôYà‹ù[óŸ\ôX›
 
-    if expect_weighted:
-        expected_terminal = (
-            bool(weighted_hits)
-            and all(item.get("blocked_reason") == DEFERRED_REASON for item in weighted_hits)
-            and all(item.get("rng_event_present") is False for item in weighted_hits)
-            and after == before
-            and not transition.outcome.successor_eligible
-            and not transition.transaction.mutations
-            and not transition.transaction.events
-            and not top_rng_events
-            and not success_task_nodes
-        )
-    else:
-        expected_terminal = transition.outcome.successor_eligible
+HOàX›‹›ã[ûWNÇà›\ùYH[YKú\ôóÿ€›[ù\ä
+Bàù[\ÀùZ[Ÿ]öY[òŸHHÿùZ[Ÿõÿ›\ŸYŸ\ôX›‹ù[Xõ€⁄ 
+BàYàõ›Ÿ]]äù[\Àö\ãù\⁄◊Ÿ‹ò\ÿÿ][Ÿ»ãõ€ôJNÇàòZ\ŸH\‹Ÿ\ù[€ë\úõ‹äôõÿ›\ŸYõŸX›[€àÿ[õ€öXÿ[Tà\»õ»\⁄»‹ò\ÿ][Ÿ»äBÇà[õ€Z[ò]‹ãÿ[òX⁄◊›◊Ÿ]ô[ù»H‹›]\◊Ÿ[õ€Z[ò]‹äù[\ Bà[õ€Z[ò]‹óŸXY€õ‹›X‹»H›⁄[ô›◊‹›]\◊›\⁄◊ŸXY€õ‹›X‹ ù[\ BàYàõ›[õ€Z[ò]‹éÇà[\ŸYH[YKú\ôóÿ€›[ù\ä
+HH›\ùYàXZ»Hô\€›\òŸKôŸ]ù\ÿYŸJô\€›\òŸKîïT–Q—W‘—SäKúùW€X^ú‹¬àô]\õà¬àõ⁄»éàò[ŸKàõ[ŸHéàô\ôX›ãàúôX\€€àéàêLàôX[\€›\òŸH›]\ÀOõô\›YXö[]H[õ€Z[ò]‹à\»[\Hãàô[õ€Z[ò]‹àéà◊Kàô[õ€Z[ò]‹óÿ€›[ùéààòùZ[Ÿ]öY[òŸHéàùZ[Ÿ]öY[òŸKàô[õ€Z[ò]‹óŸXY€õ‹›X‹»éà[õ€Z[ò]‹óŸXY€õ‹›X‹Ààúô\€›\òŸHéà¬àùÿ[‹ŸX€€ô»éàõ›[ô
+[\ŸYäKàúXZ◊‹ú‹◊⁄⁄XàéàXZÀàùÿ[ÿùYŸ]‹ŸX€€ô»éà—TëP’“Të‘—P””ëÀàúú‹◊ÿùYŸ]⁄⁄Xàéà—TëP’‘î‘◊”SRU““PãàKàBàŸZY⁄YH‹õ›»õ‹àõ›»[à[õ€Z[ò]‹àYàõ›÷»ùŸZY⁄Y‹Ÿ[X›[€ó⁄Y»óWBàõ€ùŸZY⁄YH‹õ›»õ‹àõ›»[à[õ€Z[ò]‹àYàõ›õ›÷»ùŸZY⁄Y‹Ÿ[X›[€ó⁄Y»óWBàX›[€óÿÿ[ôY]\»HÿX›[€óÿÿ[ôY]\◊ÿûW›⁄[ô› ù[\ BÇà][\Œà\›ŸX›‹›ã[ûWWHH◊BàŸZY⁄Y‹›XÿŸ\‹ŒàX›‹›ã[ûWHõ€ôHHõ€ôBàõ‹àõ›»[àŸZY⁄YÇàõ‹à]ô[ù›\H[àõ›÷»òX›[€ó›⁄[ô›◊Ÿ]ô[ù›\\»óNÇàõ‹àYö[ö][€ãò\ŸWÿ€€ù^[àX›[€óÿÿ[ôY]\ÀôŸ]
+]ô[ù›\K
 
-    return {
-        "ok": selected_window and real_root and ability_authority and expected_terminal,
-        "stage": "combat_executor_execute",
-        "action": {
-            "action_id": command.action_id,
-            "action_level": command.action_level,
-            "definition_id": definition.definition_id,
-        },
-        "status_setup": setup_evidence,
-        "status_instance_id": str(detail["instance_id"]),
-        "ordered_evidence": ordered,
-        "outcome": {
-            "successor_eligible": transition.outcome.successor_eligible,
-            "reason_codes": list(transition.outcome.reason_codes),
-            "mutation_count": len(transition.transaction.mutations),
-            "event_count": len(transition.transaction.events),
-            "rng_event_count": len(top_rng_events),
-            "settlement_record_count": len(records),
-            "successful_task_graph_node_count": len(success_task_nodes),
-            "state_changed": after != before,
-        },
-    }
+JNÇà][\Hÿ][\Ÿ\ôX›
+àù[\Ààõ›ÀàYö[ö][€ãàò\ŸWÿ€€ù^à^X››ŸZY⁄YUùYKà
+Bà][\Àò\[ô
+à¬àö⁄[ôéàùŸZY⁄Yãàòÿ[òX⁄◊⁄Yéàõ›÷»òÿ[òX⁄◊⁄YóKàô]ô[ù›\Héà]ô[ù›\KàòX›[€ó⁄YéàYö[ö][€ãòX›[€ó⁄Yàõ⁄»éà][\ôŸ]
+õ⁄»ãò[ŸJKàú›YŸHéà][\ôŸ]
+ú›YŸHãàäKàúôX\€€àéà][\ôŸ]
+úôX\€€àãàäKàBà
+BàYà][\ôŸ]
+õ⁄»äNÇàŸZY⁄Y‹›XÿŸ\‹»H»ô[õ€Z[ò]‹ó‹õ›»éàõ›Àô\ôX›éà][\BàúôXZ¬àYàŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôNÇàúôXZ¬àYàŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôNÇàúôXZ¬Çàõ€ùŸZY⁄Y‹›XÿŸ\‹ŒàX›‹›ã[ûWHõ€ôHHõ€ôBàYàõ€ùŸZY⁄YÇàõ‹àõ›»[àõ€ùŸZY⁄YÇàõ‹à]ô[ù›\H[àõ›÷»òX›[€ó›⁄[ô›◊Ÿ]ô[ù›\\»óNÇàõ‹àYö[ö][€ãò\ŸWÿ€€ù^[àX›[€óÿÿ[ôY]\ÀôŸ]
+]ô[ù›\K
 
+JNÇà][\Hÿ][\Ÿ\ôX›
+àù[\Ààõ›ÀàYö[ö][€ãàò\ŸWÿ€€ù^à^X››ŸZY⁄YQò[ŸKà
+Bà][\Àò\[ô
+à¬àö⁄[ôéàõõ€ùŸZY⁄Yãàòÿ[òX⁄◊⁄Yéàõ›÷»òÿ[òX⁄◊⁄YóKàô]ô[ù›\Héà]ô[ù›\KàòX›[€ó⁄YéàYö[ö][€ãòX›[€ó⁄Yàõ⁄»éà][\ôŸ]
+õ⁄»ãò[ŸJKàú›YŸHéà][\ôŸ]
+ú›YŸHãàäKàúôX\€€àéà][\ôŸ]
+úôX\€€àãàäKàBà
+BàYà][\ôŸ]
+õ⁄»äNÇàõ€ùŸZY⁄Y‹›XÿŸ\‹»H»ô[õ€Z[ò]‹ó‹õ›»éàõ›Àô\ôX›éà][\BàúôXZ¬àYàõ€ùŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôNÇàúôXZ¬àYàõ€ùŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôNÇàúôXZ¬Çà[\ŸYH[YKú\ôóÿ€›[ù\ä
+HH›\ùYàXZ»Hô\€›\òŸKôŸ]ù\ÿYŸJô\€›\òŸKîïT–Q—W‘—SäKúùW€X^ú‹¬àôYXÿ]\»H¬àúõŸX›[€óÿÿ[õ€öXÿ[⁄\óÿùZ[éàùYKàô[ò[ZX◊Ÿ[õ€Z[ò]‹ó€õ€ô[\Héàõ€€
+[õ€Z[ò]‹äKàùŸZY⁄YŸ[õ€Z[ò]‹ó‹ôXX⁄\◊ÿXö[]WŸYô\úôYÿõ›[ô\ûHéà
+àõ›ŸZY⁄Y‹àŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôBà
+Kàõõ€ùŸZY⁄YŸ[õ€Z[ò]‹ó‹›XÿŸ\‹◊Ÿ^X›]\◊›⁄[ó‹ô\Ÿ[ùéà
+àõ›õ€ùŸZY⁄Y‹àõ€ùŸZY⁄Y‹›XÿŸ\‹»\»õ›õ€ôBà
+KàúôX[Ÿ\ôX›Ÿ[ùûW⁄\◊ÿ€€Xò]Ÿ^X›]‹óŸ^X›]HéàùYKàúﬁ[ù]X◊Ÿ\ôX›ÿ€›[ù⁄\◊ﬁô\õ»éàùYKàô\ôX››⁄][ó‹ôX€€[Y[ôY›ÿ[ÿùYŸ]éà[\ŸYH—TëP’“Të‘—P””ëÀàô\ôX››⁄][ó‹ôX€€[Y[ôY‹ú‹◊ÿùYŸ]éàXZ»H—TëP’‘î‘◊”SRU““PãàBàô]\õà¬àõ⁄»éà[
+ôYXÿ]\Àùò[Y\ 
+JKàõ[ŸHéàô\ôX›ãàúôYXÿ]\»éàôYXÿ]\Ààô[õ€Z[ò]‹àéà[õ€Z[ò]‹ãàô[õ€Z[ò]‹óÿ€›[ùéà[ä[õ€Z[ò]‹äKàùŸZY⁄YŸ[õ€Z[ò]‹óÿ€›[ùéà[äŸZY⁄Y
+Kàõõ€ùŸZY⁄YŸ[õ€Z[ò]‹óÿ€›[ùéà[äõ€ùŸZY⁄Y
+KàòX›[€ó›⁄[ô›◊ÿÿ[òX⁄◊Ÿ]ô[ù»éà¬àŸ^Nà\›
+ò[YJHõ‹àŸ^Kò[YH[à€‹ùY
+ÿ[òX⁄◊›◊Ÿ]ô[ùÀö][\ 
+JBàKàùŸZY⁄Y‹ô\ô\Ÿ[ù]]ôHéàŸZY⁄Y‹›XÿŸ\‹Ààõõ€ùŸZY⁄Y‹ô\ô\Ÿ[ù]]ôHéàõ€ùŸZY⁄Y‹›XÿŸ\‹Ààò][\»éà][\÷ÀNóKàòùZ[Ÿ]öY[òŸHéàùZ[Ÿ]öY[òŸKàô[õ€Z[ò]‹óŸXY€õ‹›X‹»éà[õ€Z[ò]‹óŸXY€õ‹›X‹Ààúô\€›\òŸHéà¬àùÿ[‹ŸX€€ô»éàõ›[ô
+[\ŸYäKàúXZ◊‹ú‹◊⁄⁄XàéàXZÀàùÿ[ÿùYŸ]‹ŸX€€ô»éà—TëP’“Të‘—P””ëÀàúú‹◊ÿùYŸ]⁄⁄Xàéà—TëP’‘î‘◊”SRU““PãàKàBÇÇôYà‹\úŸWÿ\ô‹ 
+HOà\ô‹\úŸKìò[Y\‹XŸNÇà\úŸ\àH\ô‹\úŸKê\ô›[Y[ù\úŸ\äà\ÿ‹ö\[€èHïò[Y]HKPLàX›[€ã]⁄[ô›»›]\»ô\›YXö[]Hò[ú‹‹ùàÇà
+Bà[ŸHH\úŸ\ãòY€]]X[WŸ^€\⁄]ôWŸ‹õ›\
+ô\]Z\ôYUùYJBà[ŸKòYÿ\ô›[Y[ù
+ãKYò\›ãX›[€èHú›‹ôW›ùYHäBà[ŸKòYÿ\ô›[Y[ù
+ãKY\ôX›ãX›[€èHú›‹ôW›ùYHäBàô]\õà\úŸ\ãú\úŸWÿ\ô‹ 
+BÇÇôYàXZ[ä
+HOà[ùÇà\ô‹»H‹\úŸWÿ\ô‹ 
+Bàô\›[H‹ù[óŸò\›
 
-def _run_direct() -> dict[str, Any]:
-    started = time.perf_counter()
-    canonical = TBGDLowering(TBGD_ROOT).build()
-    rules = RuleBook(canonical)
-    if not getattr(rules.ir, "task_graph_catalog", None):
-        raise AssertionError("production CanonicalIR has no task graph catalog")
+HYà\ô‹Àôò\›[ŸH‹ù[óŸ\ôX›
 
-    denominator, callback_to_events = _status_denominator(rules)
-    if not denominator:
-        raise AssertionError("A2 real-source status->nested ability denominator is empty")
-    weighted = [row for row in denominator if row["weighted_selection_ids"]]
-    nonweighted = [row for row in denominator if not row["weighted_selection_ids"]]
-    action_candidates = _action_candidates_by_window(rules)
-
-    attempts: list[dict[str, Any]] = []
-    weighted_success: dict[str, Any] | None = None
-    for row in weighted:
-        for event_type in row["action_window_event_types"]:
-            for definition, base_context in action_candidates.get(event_type, ()):
-                attempt = _attempt_direct(
-                    rules,
-                    row,
-                    definition,
-                    base_context,
-                    expect_weighted=True,
-                )
-                attempts.append(
-                    {
-                        "kind": "weighted",
-                        "callback_id": row["callback_id"],
-                        "event_type": event_type,
-                        "action_id": definition.action_id,
-                        "ok": attempt.get("ok", False),
-                        "stage": attempt.get("stage", ""),
-                        "reason": attempt.get("reason", ""),
-                    }
-                )
-                if attempt.get("ok"):
-                    weighted_success = {"denominator_row": row, "direct": attempt}
-                    break
-            if weighted_success is not None:
-                break
-        if weighted_success is not None:
-            break
-
-    nonweighted_success: dict[str, Any] | None = None
-    if nonweighted:
-        for row in nonweighted:
-            for event_type in row["action_window_event_types"]:
-                for definition, base_context in action_candidates.get(event_type, ()):
-                    attempt = _attempt_direct(
-                        rules,
-                        row,
-                        definition,
-                        base_context,
-                        expect_weighted=False,
-                    )
-                    attempts.append(
-                        {
-                            "kind": "nonweighted",
-                            "callback_id": row["callback_id"],
-                            "event_type": event_type,
-                            "action_id": definition.action_id,
-                            "ok": attempt.get("ok", False),
-                            "stage": attempt.get("stage", ""),
-                            "reason": attempt.get("reason", ""),
-                        }
-                    )
-                    if attempt.get("ok"):
-                        nonweighted_success = {"denominator_row": row, "direct": attempt}
-                        break
-                if nonweighted_success is not None:
-                    break
-            if nonweighted_success is not None:
-                break
-
-    elapsed = time.perf_counter() - started
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    predicates = {
-        "production_canonical_ir_built": True,
-        "dynamic_denominator_nonempty": bool(denominator),
-        "weighted_denominator_reaches_ability_deferred_boundary": (
-            not weighted or weighted_success is not None
-        ),
-        "nonweighted_denominator_success_executes_when_present": (
-            not nonweighted or nonweighted_success is not None
-        ),
-        "real_direct_entry_is_combat_executor_execute": True,
-        "synthetic_direct_count_is_zero": True,
-        "direct_within_recommended_wall_budget": elapsed <= _DIRECT_HARD_SECONDS,
-        "direct_within_recommended_rss_budget": peak <= _DIRECT_RSS_LIMIT_KIB,
-    }
-    return {
-        "ok": all(predicates.values()),
-        "mode": "direct",
-        "predicates": predicates,
-        "denominator": denominator,
-        "denominator_count": len(denominator),
-        "weighted_denominator_count": len(weighted),
-        "nonweighted_denominator_count": len(nonweighted),
-        "action_window_callback_events": {
-            key: list(value) for key, value in sorted(callback_to_events.items())
-        },
-        "weighted_representative": weighted_success,
-        "nonweighted_representative": nonweighted_success,
-        "attempts": attempts[-80:],
-        "resource": {
-            "wall_seconds": round(elapsed, 6),
-            "peak_rss_kib": peak,
-            "wall_budget_seconds": _DIRECT_HARD_SECONDS,
-            "rss_budget_kib": _DIRECT_RSS_LIMIT_KIB,
-        },
-    }
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Validate P9-A2 action-window status nested ability transport."
-    )
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--fast", action="store_true")
-    mode.add_argument("--direct", action="store_true")
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = _parse_args()
-    result = _run_fast() if args.fast else _run_direct()
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
-    return 0 if result.get("ok") is True else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+Bàö[ù
+ú€€ãô[\ ô\›[[ú›\ôWÿ\ÿ⁄ZOQò[ŸK€‹ù⁄Ÿ^\œUùYK[ô[ùLäJBàô]\õàYàô\›[ôŸ]
+õ⁄»äH\»ùYH[ŸHBÇÇöYà◊€ò[YW◊»OHó◊€XZ[ó◊»éÇàòZ\ŸHﬁ\›[Q^]
+XZ[ä
+JB
