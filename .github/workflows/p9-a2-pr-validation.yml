@@ -6,16 +6,16 @@ on:
       - plan/p9-a2-action-window-status-transport-20260907
 
 jobs:
-  wire-executor-once:
-    if: github.actor != 'github-actions[bot]'
+  materialize-executor-patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply exact executor transport patch
+      - name: Materialize exact executor transport patch
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
 
           path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py')
@@ -25,14 +25,13 @@ jobs:
           count = text.count(old)
           if count != 1:
               raise SystemExit(f'expected exactly one executor transport site, found {count}')
-          path.write_text(text.replace(old, new), encoding='utf-8')
+          patched = text.replace(old, new)
+          path.write_text(patched, encoding='utf-8')
+          encoded = base64.b64encode(patched.encode('utf-8')).decode('ascii')
+          print(f'EXECUTOR_B64_LENGTH:{len(encoded)}')
+          chunk = 40000
+          for index in range(0, len(encoded), chunk):
+              print(f'EXECUTOR_B64_{index // chunk:03d}:{encoded[index:index + chunk]}')
           PY
           git diff --check
-      - name: Commit exact executor transport patch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
-          git diff --cached --quiet && exit 0
-          git commit -m "feat(p9-a2): wire action-window nested ability transport"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git diff --stat
