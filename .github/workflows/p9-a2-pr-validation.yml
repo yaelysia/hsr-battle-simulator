@@ -48,7 +48,9 @@ jobs:
           echo "exit_code=$code"
           exit "$code"
 
-      - name: A2 Fast
+      - name: A2 Fast diagnostic
+        id: a2_fast
+        continue-on-error: true
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
           /usr/bin/time -v -o /tmp/p9-a2-fast.time \
@@ -58,7 +60,8 @@ jobs:
           echo "exit_code=$code"
           exit "$code"
 
-      - name: A2 real Direct
+      - name: A2 real Direct diagnostic
+        if: always()
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
           /usr/bin/time -v -o /tmp/p9-a2-direct.time \
@@ -69,6 +72,7 @@ jobs:
           exit "$code"
 
       - name: Fixed-base diff check
+        if: always()
         run: |
           /usr/bin/time -v -o /tmp/p9-a2-diff.time \
             git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
@@ -76,3 +80,9 @@ jobs:
           cat /tmp/p9-a2-diff.time
           echo "exit_code=$code"
           exit "$code"
+
+      - name: Preserve Fast gate
+        if: always()
+        run: |
+          echo "fast_outcome=${{ steps.a2_fast.outcome }}"
+          test "${{ steps.a2_fast.outcome }}" = "success"
