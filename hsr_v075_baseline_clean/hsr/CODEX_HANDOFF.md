@@ -28,6 +28,7 @@ TurnBasedGameData -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat 
 - P9-S8C1C 已验收：现有 `ability_phase_callback` 与 `status_callback` 对 `RandomConfig` 共用同一 weighted-selection materializer；完整 raw/S8A/source-ledger 来源分母与 level-specific formal-position multiplicity 已通过 STRICT 双向闭合，status 单 entry 与联合目录一致，S8C1B action 回归保持。
 - P9-S8C1 聚合已验收：独立 STRICT 审计从实时来源重新得到 direct `RandomConfig` 分母 `24`，raw/S8A/source-ledger exact-equal，`formal_bound/no_formal_producer=14/10`；全部正式 producer/definition-level/task multiplicity 的 expected/actual formal positions 为 `117/117`，公开联合 catalog 的 weighted-selection ordinal/branch/`OddsList[i]`/numeric/source identity 一一闭合。最终执行 head `7a75e80a02f886ab1036cbe041b3b031d7057e82` 的 PR CI run `33857786539` 通过；`full_canonical_ir_build_count=0`，未执行 runtime RNG、mutation/event/settlement/replay。该检查点只完成静态任务图契约，不代表 S8C runtime/RNG 或 S5D2 transaction/replay 已闭合。
 - P9-S8C2 已验收：共享 `TaskGraphExecutor` 现在具备 `RandomConfig` / `weighted_single` 专用的类型化 weighted-selection hook/result contract，由 executor 反查 accepted IR 校验 selection/choice/ordinal/branch identity，只执行被选 branch，并将恰一个合法 `RNGEvent` 纳入既有 task-graph result、duplicate identity 与原子 rollback 空间。执行 head `5e14526f4046626528aee4a594a8e7eb8a9ef14a` 的 PR #5 CI run `34080289369` 已通过独立核验。该检查点不计算动态权重、不接真实 ability/status RNG ledger caller，也不代表 projectile、barrier、parallel、sequence-select 或整个 S8C 已闭合。
+- Route A 前置 A1 `P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY` 已通过独立 REVIEW：正式 action admission 现在从与 `AbilityTaskSystem` 一致的 `action_root` 图闭包做静态支持投影，只通过真实 `TriggerAbility` 链接纳入 `nested_only`，排除闭包外 bound phase/task，同时保留 reachable blocker、process-only 区分、external-legacy 与上游准入门。REVIEW 返修补齐了跨图路径敏感 active-cycle fail-closed；实现 head `84ee94b4d1bf25221d783f8a84d7b79f8e46f896` 的 hosted CI run `34122026242` 已通过。该检查点不包含 A2，也不代表 PR #9 caller/RNG-ledger 已完成。
 - P9-S5D2 的随机目标基础和弹射目标消费已完成，但其完整动作 transaction/replay 正例明确等待 S8
   随机控制流闭合后回验，因此该聚合项仍未勾选。
 
@@ -44,13 +45,14 @@ simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
 当前检查点停在：
 
 ```text
-P9-S8C2_RANDOM_CONFIG_RUNTIME_EXECUTOR — accepted
+P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY — accepted (Route A prerequisite A1)
 ```
 
-当前没有可直接执行的下一张 P9 卡。S8C2 共享 executor contract 已完成独立验收；真实 ability/status dynamic-weight + 既有 RNG-ledger caller integration、projectile、barrier、parallel、sequence-select/timeline-wait 与 S5D2 回验均未启动，本检查点不创建下一阶段执行卡、不创建新 PR，也不自动推进后续施工。
+当前没有可直接执行的下一张 P9 卡。Route A 的 A1 已完成独立验收；下一步必须先由 PLAN 从合并后的 master 为 A2 `action-window status callback -> nested formal ability continuation/hook transport/routing` 建立独立 STRICT 执行卡。PR #9 继续保持暂停，只有 A1 与 A2 都合并后才允许在原 PR 上恢复 RandomConfig caller/RNG-ledger 工作；不得降低其原有真实 `CombatExecutor.execute(ActionCommand)` Direct。
 
 ## 仍未完成
 
+- Route A 前置 A2：action-window status callback -> nested formal ability continuation/hook transport/routing。
 - P9-S8C 剩余真实 RandomConfig caller/RNG-ledger integration、projectile、多 hit identity、barrier、parallel、sequence-select/timeline-wait，以及后续角色共享控制流、事件、状态、伤害、资源、队列、死亡、击破、形态和独立行动实体。
 - P9-S5D2 的完整动作 transaction/replay 回验，仍等待 S8 随机控制流闭合。
 - P9 完成后的全角色目录回验，以及记忆、欢愉专属内容增量。
@@ -81,6 +83,7 @@ P9-S8C2_RANDOM_CONFIG_RUNTIME_EXECUTOR — accepted
 - P9-S8C1C 执行证据：`live_validation_reports/P9-S8C1C_REMAINING_ENTRY_RANDOM_CONFIG_SOURCE_CLOSURE_execution_report.md`；其 STRICT Direct/Catalog 证明当前完整 RandomConfig 来源与 formal-position 闭合，不代表 runtime RNG、S8C1/S8C 聚合或 S5D2 已完成。
 - P9-S8C1 聚合执行证据：`live_validation_reports/P9-S8C1_RANDOM_CONFIG_GRAPH_AGGREGATE_execution_report.md`；其 STRICT Fast/Direct/Catalog 与 PR #4 最终 CI 证明当前静态 RandomConfig task-graph aggregate contract，不代表 S8C runtime/RNG 或 S5D2 已完成。
 - P9-S8C2 执行证据：PR #5 正式 `[HANDOFF:REVIEW]` 评论 `5564689207`、执行 head `5e14526f4046626528aee4a594a8e7eb8a9ef14a` 与 CI run `34080289369`；独立 REVIEW 已核对生产 diff、聚焦测试和 Actions 日志。该证据只接受共享 weighted-selection executor contract，不接受真实 caller 或 S8C 聚合。
+- Route A A1 执行与 REVIEW 证据：`live_validation_reports/P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY_execution_report.md`、PR #10 `[RETURN_FOR_FIX]` 评论 `5570308533`、修复后实现 head `84ee94b4d1bf25221d783f8a84d7b79f8e46f896` 与 CI run `34122026242`。该证据只接受 formal action graph admission authority；A2 与 PR #9 caller/RNG-ledger 仍未验收。
 - P9 阶段状态只认总计划 checklist 和已验收 Git 检查点；`ready_for_review` 报告不是最终验收。
 - 文档归属与归档：`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`。
 - 瘦身前交接全文：`simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-07-24.md`。
