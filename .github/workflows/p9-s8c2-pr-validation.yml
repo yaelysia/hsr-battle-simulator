@@ -1,4 +1,4 @@
-name: P9 S8C RandomConfig R1 Direct Bootstrap
+name: P9 S8C RandomConfig Action Caller R1 Validation
 
 on:
   pull_request:
@@ -8,76 +8,76 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
     paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
+      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C_RANDOM_CONFIG_ACTION_CALLER_RNG_LEDGER_execution_report.md'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/**'
+      - 'hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md'
       - '.github/workflows/p9-s8c2-pr-validation.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  bootstrap:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
-      - name: Checkout PR branch
+      - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          submodules: true
 
-      - name: Patch real CombatExecutor Direct validator
-        shell: bash
-        env:
-          DIRECT_ZLIB_B64: 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
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check pytest==8.3.5
+
+      - name: Compile R1 scoped implementation and validators
         run: |
-          python - <<'PY'
-          import base64
-          import os
-          import zlib
-          from pathlib import Path
+          env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py
 
-          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py')
-          text = path.read_text()
-          text = text.replace(
-              'import time\nfrom pathlib import Path\n',
-              'import time\nfrom collections import defaultdict\nfrom collections.abc import Mapping\nfrom dataclasses import replace\nfrom pathlib import Path\n',
-              1,
-          )
-          text = text.replace(
-              'from ..core.model import ActionCommand, BattleState, TargetResolution\n',
-              'from ..core.executor import CombatExecutor\nfrom ..core.model import ActionCommand, BattleState, TargetResolution, UnitState\n',
-              1,
-          )
-          marker = 'from ..systems.task_graph import (\n'
-          imports = (
-              'from ..tbgd.lowering import TBGDLowering, build_character_action_definition_ir\n'
-              'from ..tbgd.task_graph_materializer import materialize_ability_task_graph_catalog\n'
-          )
-          if imports not in text:
-              text = text.replace(marker, imports + marker, 1)
-          text = text.replace(
-              'from .validate_p9_s8c1b_action_entry_weighted_selection import (\n    DEFAULT_TBGD,\n    _run_direct as _run_s8c1b_direct,\n)\n',
-              'from .validate_p9_s8c1b_action_entry_weighted_selection import (\n    DEFAULT_TBGD,\n    _build_slice,\n    _candidate_action_ids,\n    _verify_selection,\n)\n',
-              1,
-          )
-          start = text.index('def _run_direct(root: Path) -> dict[str, Any]:\n')
-          end = text.index('\n\ndef main() -> int:\n', start)
-          direct = zlib.decompress(base64.b64decode(os.environ['DIRECT_ZLIB_B64'])).decode().rstrip()
-          text = text[:start] + direct + text[end:]
-          path.write_text(text)
-          PY
-
-      - name: Commit focused Direct validator
-        shell: bash
-        env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      - name: Fast RandomConfig action caller validation
         run: |
-          if git diff --quiet -- hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py; then
-            echo 'no validator diff to commit'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py
-          git commit -m 'test: run PR9 Direct through CombatExecutor [skip ci]'
-          git push origin "HEAD:${HEAD_REF}"
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --fast
+
+      - name: S8C2 shared executor regression
+        run: |
+          python3 -m pytest -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
+
+      - name: Direct real CombatExecutor RandomConfig action validation
+        run: |
+          timeout --signal=TERM --kill-after=5s 240s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --direct
+
+      - name: S8C1B direct materializer regression
+        run: |
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
+
+      - name: S8C1C direct source-closure regression
+        run: |
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --direct
+
+      - name: Diff hygiene against planning base
+        run: git diff --check b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce...HEAD
