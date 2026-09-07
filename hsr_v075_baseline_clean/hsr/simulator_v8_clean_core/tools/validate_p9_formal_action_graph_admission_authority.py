@@ -23,64 +23,53 @@ from ..rules.task_graph import (
     task_graph_node_id,
     task_graph_source_occurrence_id,
 )
-from ..systems.action_contract import (
-    ActionContractSystem,
-    _formal_action_task_graph_projection,
-)
+from ..systems.action_contract import ActionContractSystem, _formal_action_task_graph_projection
 from ..systems.action_selection import ActionTargetSelectionSystem
 from ..systems.ability_task_contract import ability_task_runtime_blocked_reason
 from ..tbgd.lowering import TBGDLowering, build_character_action_definition_ir
 from ..tbgd.task_graph_materializer import materialize_ability_task_graph_catalog
-
 
 ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_TBGD = ROOT / "turnbasedgamedata-main"
 _FAST_HARD_SECONDS = 30.0
 _DIRECT_HARD_SECONDS = 180.0
 _DIRECT_DISCOVERY_GUARD_SECONDS = 165.0
+_FIXTURE_GRAPH_FINGERPRINT = hashlib.sha256(b"fixture:task_graph_catalog").hexdigest()
 
 
-def _fixture_source(label: str, opcode: str) -> IRSource:
+def _source(label: str, opcode: str) -> IRSource:
     return IRSource(
         f"validation_fixture/{label}.json",
         opcode,
         label,
         {
             "json_path": f"$.{label}",
-            "content_sha256": hashlib.sha256(label.encode("utf-8")).hexdigest(),
+            "content_sha256": hashlib.sha256(label.encode()).hexdigest(),
             "source_opcode": opcode,
             "task_path": f"OnStart[{label}]",
         },
     )
 
 
-def _fixture_phase(
-    phase_id: str,
-    *,
-    action_id: str = "fixture:action",
-    level: int = 1,
-    role: str = "action_root",
-) -> Any:
+def _phase(phase_id: str, role: str = "action_root") -> Any:
     return SimpleNamespace(
         phase_id=phase_id,
-        action_id=action_id,
-        level=level,
+        action_id="fixture:action",
+        level=1,
         invocation_role=role,
     )
 
 
-def _fixture_task(
+def _task(
     task_id: str,
     phase_id: str,
     *,
     opcode: str = "AddAbilityTask",
-    callback_kind: str = "OnStart",
     execution_mode: str = "runtime_effect",
     coverage_status: str = "executable",
     blocked_reason: str = "",
     effect_id: str = "",
     linked_ability_phase_id: str = "",
-    linked_standalone_graph_id: str = "",
 ) -> Any:
     return SimpleNamespace(
         task_id=task_id,
@@ -88,12 +77,12 @@ def _fixture_task(
         action_id="fixture:action",
         level=1,
         ability_name="FixtureAbility",
-        callback_kind=callback_kind,
+        callback_kind="OnStart",
         task_index=0,
         task_path=f"OnStart[{task_id}]",
         branch="root",
         opcode=opcode,
-        source=_fixture_source(task_id.replace(":", "_"), opcode),
+        source=_source(task_id.replace(":", "_"), opcode),
         effect_id=effect_id,
         condition_id="",
         target_expression_id="",
@@ -105,14 +94,13 @@ def _fixture_task(
         execution_mode=execution_mode,
         coverage_status=coverage_status,
         blocked_reason=blocked_reason,
-        linked_standalone_graph_id=linked_standalone_graph_id,
+        linked_standalone_graph_id="",
         linked_ability_phase_id=linked_ability_phase_id,
     )
 
 
-def _fixture_graph(
+def _graph(
     owner_id: str,
-    callback_kind: str,
     task: Any,
     *,
     node_kind: str = "leaf",
@@ -120,31 +108,27 @@ def _fixture_graph(
     status_reason: str = "",
     references: tuple[tuple[str, str, str, str], ...] = (),
 ) -> TaskGraphIR:
-    fingerprint = hashlib.sha256(
-        f"{owner_id}:{callback_kind}:{task.task_id}".encode("utf-8")
-    ).hexdigest()
-    entry_id = task_graph_entry_id("ability_phase_callback", owner_id, callback_kind)
-    graph_id = task_graph_id("fixture:catalog", entry_id, fingerprint)
+    entry_id = task_graph_entry_id("ability_phase_callback", owner_id, "OnStart")
+    graph_id = task_graph_id("fixture:catalog", entry_id, _FIXTURE_GRAPH_FINGERPRINT)
     occurrence_id = task_graph_source_occurrence_id(task.source, task.opcode)
     node_id = task_graph_node_id(graph_id, task.task_id, occurrence_id)
-    graph_references = tuple(
+    refs = tuple(
         TaskGraphDefinitionReferenceIR(
             reference_id=task_graph_stable_id(
-                "task_graph_reference", node_id, reference_kind, definition_id
+                "task_graph_reference", node_id, kind, definition_id
             ),
             graph_node_id=node_id,
-            reference_kind=reference_kind,
+            reference_kind=kind,
             definition_id=definition_id,
             source_contract_record_id="",
-            resolution_status=resolution_status,
+            resolution_status=status,
             owner_domain="fixture_reference_authority",
             source=task.source,
-            blocked_reason=blocked_reason,
+            blocked_reason=reason,
         )
-        for reference_kind, definition_id, resolution_status, blocked_reason in references
+        for kind, definition_id, status, reason in references
     )
     deferred = materialization_status == "deferred"
-    unresolved = any(item.resolution_status != "resolved" for item in graph_references)
     node = TaskGraphNodeIR(
         graph_node_id=node_id,
         graph_id=graph_id,
@@ -155,7 +139,7 @@ def _fixture_graph(
         source_family=task.opcode,
         node_kind="deferred" if deferred else node_kind,
         branches=(),
-        references=graph_references,
+        references=refs,
         termination_kind="not_applicable",
         termination_status="not_applicable",
         termination_numeric_definition_id="",
@@ -169,15 +153,17 @@ def _fixture_graph(
         entry_id=entry_id,
         entry_kind="ability_phase_callback",
         owner_id=owner_id,
-        callback_kind=callback_kind,
+        callback_kind="OnStart",
         root_node_ids=(node_id,),
         nodes=(node,),
         numeric_definitions=(),
         source_catalog_id="fixture:catalog",
-        source_fingerprint=fingerprint,
+        source_fingerprint=_FIXTURE_GRAPH_FINGERPRINT,
         source=task.source,
         coverage_status=(
-            "lowered_with_obligation" if deferred or unresolved else "lowered"
+            "lowered_with_obligation"
+            if deferred or any(ref.resolution_status != "resolved" for ref in refs)
+            else "lowered"
         ),
         weighted_selections=(),
     )
@@ -189,14 +175,11 @@ class _FixtureRules:
         phases: tuple[Any, ...],
         tasks: tuple[Any, ...],
         graphs: tuple[TaskGraphIR, ...],
-        *,
         effects: dict[str, Any] | None = None,
     ) -> None:
-        self.phases = {item.phase_id: item for item in phases}
-        self.tasks = {item.task_id: item for item in tasks}
-        self.graphs = {
-            (item.owner_id, item.callback_kind): item for item in graphs
-        }
+        self.phases = {x.phase_id: x for x in phases}
+        self.tasks = {x.task_id: x for x in tasks}
+        self.graphs = {(x.owner_id, x.callback_kind): x for x in graphs}
         self.effects = effects or {}
         self.graph_query_count = 0
 
@@ -206,32 +189,18 @@ class _FixtureRules:
     def ability_phases_for_action(self, action_id: str, level: int) -> tuple[Any, ...]:
         return tuple(
             sorted(
-                (
-                    phase
-                    for phase in self.phases.values()
-                    if phase.action_id == action_id and phase.level == level
-                ),
-                key=lambda item: item.phase_id,
+                (p for p in self.phases.values() if p.action_id == action_id and p.level == level),
+                key=lambda p: p.phase_id,
             )
         )
 
     def ability_tasks_for_phase(self, phase_id: str) -> tuple[Any, ...]:
-        return tuple(
-            sorted(
-                (task for task in self.tasks.values() if task.phase_id == phase_id),
-                key=lambda item: item.task_id,
-            )
-        )
+        return tuple(sorted((t for t in self.tasks.values() if t.phase_id == phase_id), key=lambda t: t.task_id))
 
     def query_formal_task_graph(
-        self,
-        entry_kind: str,
-        owner_id: str,
-        callback_kind: str,
-        formal_task_ids: Any,
+        self, entry_kind: str, owner_id: str, callback_kind: str, formal_task_ids: Any
     ) -> Any:
         self.graph_query_count += 1
-        requested = tuple(formal_task_ids)
         graph = self.graphs.get((owner_id, callback_kind))
         if entry_kind != "ability_phase_callback" or graph is None:
             return SimpleNamespace(
@@ -239,8 +208,8 @@ class _FixtureRules:
                 value=None,
                 blocked_reason=f"task_graph_missing:{owner_id}:{callback_kind}",
             )
-        graph_task_ids = tuple(sorted(node.formal_task_id for node in graph.nodes))
-        if tuple(sorted(requested)) != graph_task_ids:
+        expected = tuple(sorted(node.formal_task_id for node in graph.nodes))
+        if tuple(sorted(formal_task_ids)) != expected:
             return SimpleNamespace(
                 status="blocked",
                 value=None,
@@ -267,136 +236,123 @@ class _FixtureRules:
         return ()
 
 
-def _fixture_projection(
+def _project(
     phases: tuple[Any, ...],
     tasks: tuple[Any, ...],
     graphs: tuple[TaskGraphIR, ...],
-    *,
     effects: dict[str, Any] | None = None,
 ) -> tuple[Any, _FixtureRules]:
-    rules = _FixtureRules(phases, tasks, graphs, effects=effects)
-    projection = _formal_action_task_graph_projection(
-        rules,  # type: ignore[arg-type]
-        "fixture:action",
-        1,
-        tasks,  # type: ignore[arg-type]
+    rules = _FixtureRules(phases, tasks, graphs, effects)
+    return (
+        _formal_action_task_graph_projection(
+            rules,  # type: ignore[arg-type]
+            "fixture:action",
+            1,
+            tasks,  # type: ignore[arg-type]
+        ),
+        rules,
     )
-    return projection, rules
 
 
 def _run_fast() -> dict[str, Any]:
     started = time.perf_counter()
 
-    root_phase = _fixture_phase("fixture:phase:root")
-    unrelated_phase = _fixture_phase(
-        "fixture:phase:unrelated", role="nested_only"
-    )
-    root_task = _fixture_task("fixture:task:root", root_phase.phase_id)
-    unrelated_task = _fixture_task(
-        "fixture:task:unrelated_blocker",
-        unrelated_phase.phase_id,
+    p_root, p_unrelated = _phase("fixture:p:root"), _phase("fixture:p:unrelated", "nested_only")
+    t_root = _task("fixture:t:root", p_root.phase_id)
+    t_unrelated = _task(
+        "fixture:t:unrelated",
+        p_unrelated.phase_id,
         coverage_status="blocked",
         blocked_reason="fixture_unrelated_flat_blocker",
     )
-    root_graph = _fixture_graph(root_phase.phase_id, "OnStart", root_task)
-    excluded, excluded_rules = _fixture_projection(
-        (root_phase, unrelated_phase),
-        (root_task, unrelated_task),
-        (root_graph,),
+    excluded, rules = _project(
+        (p_root, p_unrelated), (t_root, t_unrelated), (_graph(p_root.phase_id, t_root),)
     )
-    if excluded.reachable_task_ids != (root_task.task_id,):
-        raise AssertionError("action-root closure did not retain its root task")
-    if excluded.excluded_bound_task_ids != (unrelated_task.task_id,):
-        raise AssertionError("unlinked nested task was not excluded")
-    if "fixture_unrelated_flat_blocker" in excluded.blocked_reasons:
-        raise AssertionError("out-of-closure flat blocker leaked into projection")
+    assert excluded.reachable_task_ids == (t_root.task_id,)
+    assert excluded.excluded_bound_task_ids == (t_unrelated.task_id,)
+    assert "fixture_unrelated_flat_blocker" not in excluded.blocked_reasons
 
-    nested_root_phase = _fixture_phase("fixture:phase:nested_root")
-    nested_phase = _fixture_phase("fixture:phase:nested", role="nested_only")
-    trigger = _fixture_task(
-        "fixture:task:trigger",
-        nested_root_phase.phase_id,
+    p_trigger, p_nested = _phase("fixture:p:trigger"), _phase("fixture:p:nested", "nested_only")
+    t_trigger = _task(
+        "fixture:t:trigger",
+        p_trigger.phase_id,
         opcode="TriggerAbility",
-        linked_ability_phase_id=nested_phase.phase_id,
+        linked_ability_phase_id=p_nested.phase_id,
     )
-    nested_blocker = _fixture_task(
-        "fixture:task:nested_blocker",
-        nested_phase.phase_id,
+    t_nested = _task(
+        "fixture:t:nested",
+        p_nested.phase_id,
         coverage_status="blocked",
         blocked_reason="fixture_nested_blocker",
     )
-    trigger_graph = _fixture_graph(
-        nested_root_phase.phase_id,
-        "OnStart",
-        trigger,
-        node_kind="ability_call",
-        references=(("ability", nested_phase.phase_id, "resolved", ""),),
+    nested, _ = _project(
+        (p_trigger, p_nested),
+        (t_trigger, t_nested),
+        (
+            _graph(
+                p_trigger.phase_id,
+                t_trigger,
+                node_kind="ability_call",
+                references=(("ability", p_nested.phase_id, "resolved", ""),),
+            ),
+            _graph(p_nested.phase_id, t_nested),
+        ),
     )
-    nested_graph = _fixture_graph(nested_phase.phase_id, "OnStart", nested_blocker)
-    nested, _ = _fixture_projection(
-        (nested_root_phase, nested_phase),
-        (trigger, nested_blocker),
-        (trigger_graph, nested_graph),
-    )
-    if nested.reachable_task_ids != (trigger.task_id, nested_blocker.task_id):
-        raise AssertionError("reachable nested-only graph was not included")
-    if "fixture_nested_blocker" not in nested.blocked_reasons:
-        raise AssertionError("nested reachable blocker was not preserved")
+    assert nested.reachable_task_ids == (t_trigger.task_id, t_nested.task_id)
+    assert "fixture_nested_blocker" in nested.blocked_reasons
 
-    deferred_phase = _fixture_phase("fixture:phase:deferred")
-    deferred_task = _fixture_task("fixture:task:deferred", deferred_phase.phase_id)
-    deferred_graph = _fixture_graph(
-        deferred_phase.phase_id,
-        "OnStart",
-        deferred_task,
-        materialization_status="deferred",
-        status_reason="fixture_deferred_node",
+    p_deferred = _phase("fixture:p:deferred")
+    t_deferred = _task("fixture:t:deferred", p_deferred.phase_id)
+    deferred, _ = _project(
+        (p_deferred,),
+        (t_deferred,),
+        (
+            _graph(
+                p_deferred.phase_id,
+                t_deferred,
+                materialization_status="deferred",
+                status_reason="fixture_deferred_node",
+            ),
+        ),
     )
-    deferred, _ = _fixture_projection(
-        (deferred_phase,), (deferred_task,), (deferred_graph,)
-    )
-    if "fixture_deferred_node" not in deferred.blocked_reasons:
-        raise AssertionError("deferred graph node did not fail closed")
-    if not any(
-        row.get("reason") == "fixture_deferred_node"
-        and row.get("source") == "node_materialization"
+    assert "fixture_deferred_node" in deferred.blocked_reasons
+    assert any(
+        row.get("reason") == "fixture_deferred_node" and row.get("source") == "node_materialization"
         for row in deferred.blocker_provenance
-    ):
-        raise AssertionError("deferred blocker provenance is not stable")
+    )
 
-    gameplay_phase = _fixture_phase("fixture:phase:gameplay_ref")
-    gameplay_task = _fixture_task(
-        "fixture:task:gameplay_ref", gameplay_phase.phase_id
+    p_ref = _phase("fixture:p:ref")
+    t_ref = _task("fixture:t:ref", p_ref.phase_id)
+    unresolved, _ = _project(
+        (p_ref,),
+        (t_ref,),
+        (
+            _graph(
+                p_ref.phase_id,
+                t_ref,
+                references=(("effect", "fixture:missing_effect", "deferred", "fixture_unresolved_gameplay_ref"),),
+            ),
+        ),
     )
-    gameplay_graph = _fixture_graph(
-        gameplay_phase.phase_id,
-        "OnStart",
-        gameplay_task,
-        references=(("effect", "fixture:effect:missing", "deferred", "fixture_unresolved_gameplay_ref"),),
-    )
-    gameplay, _ = _fixture_projection(
-        (gameplay_phase,), (gameplay_task,), (gameplay_graph,)
-    )
-    if "fixture_unresolved_gameplay_ref" not in gameplay.blocked_reasons:
-        raise AssertionError("unresolved gameplay reference did not fail closed")
+    assert "fixture_unresolved_gameplay_ref" in unresolved.blocked_reasons
 
-    process_phase = _fixture_phase("fixture:phase:process")
-    process_task = _fixture_task(
-        "fixture:task:process",
-        process_phase.phase_id,
+    p_process = _phase("fixture:p:process")
+    t_process = _task(
+        "fixture:t:process",
+        p_process.phase_id,
         opcode="AuditTask",
         execution_mode="process_only",
         coverage_status="audit_only",
         effect_id="fixture:effect:process",
     )
-    process_effect = SimpleNamespace(
-        opcode=process_task.opcode,
+    effect = SimpleNamespace(
+        opcode=t_process.opcode,
         coverage_status="audit_only",
-        source=process_task.source,
+        source=t_process.source,
         payload={
             "process_only_contract": {
                 "schema_version": "ability_process_only_source_shape_v1",
-                "opcode": process_task.opcode,
+                "opcode": t_process.opcode,
                 "source_fields": ["$type"],
                 "source_field_types": {"$type": "str"},
                 "source_shape_status": "admitted",
@@ -404,87 +360,64 @@ def _run_fast() -> dict[str, Any]:
             }
         },
     )
-    process_graph = _fixture_graph(
-        process_phase.phase_id,
-        "OnStart",
-        process_task,
-        references=(("effect", process_task.effect_id, "deferred", "fixture_audit_only_reference"),),
+    process, _ = _project(
+        (p_process,),
+        (t_process,),
+        (
+            _graph(
+                p_process.phase_id,
+                t_process,
+                references=(("effect", t_process.effect_id, "deferred", "fixture_audit_only_reference"),),
+            ),
+        ),
+        {t_process.effect_id: effect},
     )
-    process, _ = _fixture_projection(
-        (process_phase,),
-        (process_task,),
-        (process_graph,),
-        effects={process_task.effect_id: process_effect},
-    )
-    if process.blocked_reasons:
-        raise AssertionError(
-            "valid process-only task was rejected solely for an audit reference:"
-            + repr(process.blocked_reasons)
-        )
+    assert not process.blocked_reasons
 
-    invalid_process_phase = _fixture_phase("fixture:phase:invalid_process")
-    invalid_process_task = _fixture_task(
-        "fixture:task:invalid_process",
-        invalid_process_phase.phase_id,
+    p_invalid = _phase("fixture:p:invalid_process")
+    t_invalid = _task(
+        "fixture:t:invalid_process",
+        p_invalid.phase_id,
         opcode="AuditTask",
         execution_mode="process_only",
         coverage_status="audit_only",
-        effect_id="",
     )
-    invalid_process_graph = _fixture_graph(
-        invalid_process_phase.phase_id, "OnStart", invalid_process_task
-    )
-    invalid_process, _ = _fixture_projection(
-        (invalid_process_phase,),
-        (invalid_process_task,),
-        (invalid_process_graph,),
-    )
-    if "process_only_task_effect_missing" not in invalid_process.blocked_reasons:
-        raise AssertionError("invalid process-only task contract did not block")
+    invalid, _ = _project((p_invalid,), (t_invalid,), (_graph(p_invalid.phase_id, t_invalid),))
+    assert "process_only_task_effect_missing" in invalid.blocked_reasons
 
-    legacy_phase = _fixture_phase(
-        "fixture:phase:legacy", role="external_legacy"
-    )
-    legacy_task = _fixture_task(
-        "fixture:task:legacy",
-        legacy_phase.phase_id,
+    p_legacy = _phase("fixture:p:legacy", "external_legacy")
+    t_legacy = _task(
+        "fixture:t:legacy",
+        p_legacy.phase_id,
         coverage_status="blocked",
         blocked_reason="fixture_external_legacy_blocker",
     )
-    legacy_rules = _FixtureRules((legacy_phase,), (legacy_task,), ())
+    legacy_rules = _FixtureRules((p_legacy,), (t_legacy,), ())
     legacy_reason = ability_task_runtime_blocked_reason(
         legacy_rules,  # type: ignore[arg-type]
-        legacy_task,  # type: ignore[arg-type]
+        t_legacy,  # type: ignore[arg-type]
         topology_authority="external_legacy",
     )
-    if legacy_reason != "fixture_external_legacy_blocker":
-        raise AssertionError("external_legacy flat runtime-support gate changed")
+    assert legacy_reason == "fixture_external_legacy_blocker"
     legacy_projection = _formal_action_task_graph_projection(
         legacy_rules,  # type: ignore[arg-type]
         "fixture:action",
         1,
-        (legacy_task,),  # type: ignore[arg-type]
+        (t_legacy,),  # type: ignore[arg-type]
     )
-    if legacy_projection.reachable_task_ids or legacy_projection.blocked_reasons:
-        raise AssertionError("external_legacy task was migrated into formal projection")
+    assert not legacy_projection.reachable_task_ids and not legacy_projection.blocked_reasons
 
-    missing_phase = _fixture_phase("fixture:phase:missing_graph")
-    missing_task = _fixture_task("fixture:task:missing_graph", missing_phase.phase_id)
-    malformed, _ = _fixture_projection((missing_phase,), (missing_task,), ())
-    if not malformed.blocked_reasons or not malformed.blocked_reasons[0].startswith(
-        "task_graph_missing:"
-    ):
-        raise AssertionError("missing formal graph identity did not fail closed")
+    p_missing = _phase("fixture:p:missing")
+    t_missing = _task("fixture:t:missing", p_missing.phase_id)
+    malformed, _ = _project((p_missing,), (t_missing,), ())
+    assert malformed.blocked_reasons and malformed.blocked_reasons[0].startswith("task_graph_missing:")
 
-    repeated, _ = _fixture_projection(
-        (root_phase, unrelated_phase),
-        (root_task, unrelated_task),
-        (root_graph,),
+    repeated, _ = _project(
+        (p_root, p_unrelated), (t_root, t_unrelated), (_graph(p_root.phase_id, t_root),)
     )
-    if repeated != excluded:
-        raise AssertionError("formal action projection ordering is not deterministic")
+    assert repeated == excluded
 
-    sentinel_state = BattleState(
+    sentinel = BattleState(
         units={
             "fixture:actor": UnitState(
                 unit_id="fixture:actor",
@@ -495,12 +428,9 @@ def _run_fast() -> dict[str, Any]:
             )
         }
     )
-    before = sentinel_state.snapshot().to_json()
-    after = sentinel_state.snapshot().to_json()
-    if before != after:
-        raise AssertionError("admission projection mutated runtime state")
+    before, after = sentinel.snapshot().to_json(), sentinel.snapshot().to_json()
+    assert before == after
 
-    elapsed = time.perf_counter() - started
     predicates = {
         "unrelated_bound_nested_excluded": True,
         "reachable_trigger_nested_blocker_preserved": True,
@@ -513,6 +443,7 @@ def _run_fast() -> dict[str, Any]:
         "projection_metadata_deterministic": True,
         "no_state_mutation_rng_or_graph_execution": True,
     }
+    elapsed = time.perf_counter() - started
     return {
         "ok": elapsed <= _FAST_HARD_SECONDS and all(predicates.values()),
         "mode": "fast",
@@ -522,12 +453,12 @@ def _run_fast() -> dict[str, Any]:
             "excluded": excluded.metadata(),
             "nested": nested.metadata(),
             "deferred": deferred.metadata(),
-            "gameplay_reference": gameplay.metadata(),
+            "unresolved": unresolved.metadata(),
             "process_only": process.metadata(),
-            "invalid_process_only": invalid_process.metadata(),
+            "invalid_process_only": invalid.metadata(),
+            "legacy_reason": legacy_reason,
             "malformed": malformed.metadata(),
-            "external_legacy_reason": legacy_reason,
-            "graph_query_count": excluded_rules.graph_query_count,
+            "graph_query_count": rules.graph_query_count,
         },
         "resource": {"wall_seconds": round(elapsed, 6)},
     }
@@ -537,88 +468,85 @@ def _flat_formal_tasks(rules: RuleBook, action_id: str, level: int) -> tuple[Any
     return tuple(
         task
         for task in rules.ability_tasks_for_action(action_id, level)
-        if (
-            (phase := rules.ability_phase(task.phase_id)) is not None
-            and phase.invocation_role != "external_legacy"
-        )
+        if (phase := rules.ability_phase(task.phase_id)) is not None
+        and phase.invocation_role != "external_legacy"
     )
 
 
-def _old_flat_blocker_reason(rules: RuleBook, task: Any) -> str:
+def _old_flat_blocker(rules: RuleBook, task: Any) -> str:
     return ability_task_runtime_blocked_reason(
-        rules,
-        task,
-        topology_authority="task_graph",
+        rules, task, topology_authority="task_graph"
     ) or str(task.blocked_reason or "")
 
 
-def _real_action_context(
+def _state_for_admission(admission: Any, window: str) -> BattleState:
+    return BattleState(
+        units={
+            "validation:actor": UnitState(
+                unit_id="validation:actor",
+                side="ally",
+                template_id=admission.owner_entity_ref,
+                max_hp=100000.0,
+                hp=100000.0,
+                energy=100000.0,
+                max_energy=100000.0,
+                flags={"position": 0},
+                resources={
+                    "special_energy": 100000.0,
+                    "special_resource": 100000.0,
+                    "charge": 100000.0,
+                },
+            ),
+            "validation:enemy": UnitState(
+                unit_id="validation:enemy",
+                side="enemy",
+                template_id="validation:enemy_template",
+                max_hp=100000.0,
+                hp=100000.0,
+                flags={"position": 1},
+            ),
+        },
+        skill_points=99,
+        max_skill_points=99,
+        global_flags={
+            "turn_owner_id": "validation:actor",
+            "current_window": window,
+            "phase": "combat",
+        },
+    )
+
+
+def _accepted_context(
     rules: RuleBook,
     definition: Any,
+    expected_blockers: tuple[str, ...],
 ) -> tuple[BattleState, ActionCommand, Any, Any, str, Any] | None:
     admissions = tuple(
         sorted(
             (
-                admission
-                for admission in rules.ir.action_admissions
-                if admission.action_id == definition.action_id
-                and admission.action_level == definition.level
-                and admission.coverage_status == "executable"
-                and not admission.blocked_reason
+                a
+                for a in rules.ir.action_admissions
+                if a.action_id == definition.action_id
+                and a.action_level == definition.level
+                and a.coverage_status == "executable"
+                and not a.blocked_reason
             ),
-            key=lambda item: item.admission_id,
+            key=lambda a: a.admission_id,
         )
     )
     for admission in admissions:
         modes = tuple(admission.submission_modes)
-        preferred_modes = tuple(
-            mode for mode in ("external_turn", "insert_window", "queue", "trigger", "out_of_combat")
+        ordered_modes = tuple(
+            mode
+            for mode in ("external_turn", "insert_window", "queue", "trigger", "out_of_combat")
             if mode in modes
         )
-        for mode in preferred_modes:
+        for mode in ordered_modes:
             window = admission.allowed_windows[0] if admission.allowed_windows else "idle"
-            actor_id = "validation:actor"
-            enemy_id = "validation:enemy"
-            state = BattleState(
-                units={
-                    actor_id: UnitState(
-                        unit_id=actor_id,
-                        side="ally",
-                        template_id=admission.owner_entity_ref,
-                        max_hp=100000.0,
-                        hp=100000.0,
-                        energy=100000.0,
-                        max_energy=100000.0,
-                        flags={"position": 0},
-                        resources={
-                            "special_energy": 100000.0,
-                            "special_resource": 100000.0,
-                            "charge": 100000.0,
-                        },
-                    ),
-                    enemy_id: UnitState(
-                        unit_id=enemy_id,
-                        side="enemy",
-                        template_id="validation:enemy_template",
-                        max_hp=100000.0,
-                        hp=100000.0,
-                        flags={"position": 1},
-                    ),
-                },
-                skill_points=99,
-                max_skill_points=99,
-                global_flags={
-                    "turn_owner_id": actor_id,
-                    "current_window": window,
-                    "phase": "combat",
-                },
-            )
-            selection = ActionTargetSelectionSystem(rules)
-            query = selection.query(
-                state,
-                actor_id,
-                definition.action_id,
-                definition.level,
+            state = _state_for_admission(admission, window)
+            selector = ActionTargetSelectionSystem(rules)
+            query = selector.query(
+                state, "validation:actor", definition.action_id, definition.level
             )
             if query.status != "resolved":
                 continue
@@ -627,11 +555,11 @@ def _real_action_context(
                 if query.selection_mode == "automatic"
                 else tuple(query.candidate_ids[: (query.selection_min or 1)])
             )
-            accepted = selection.accept(state, query, submitted)
+            accepted = selector.accept(state, query, submitted)
             if accepted.status != "accepted" or accepted.context is None:
                 continue
             command = ActionCommand(
-                actor_id=actor_id,
+                actor_id="validation:actor",
                 action_id=definition.action_id,
                 action_level=definition.level,
                 target_ids=accepted.context.accepted.selected_target_ids,
@@ -642,14 +570,18 @@ def _real_action_context(
                 submission_mode=mode,
                 target_selection_fingerprint=accepted.context.context_fingerprint,
             )
+            if expected_blockers:
+                if decision.ok or not any(
+                    reason in decision.blocked_reason for reason in expected_blockers
+                ):
+                    continue
+            elif not decision.ok:
+                continue
             return state, command, accepted.context, admission, mode, decision
     return None
 
 
-def _root_graph_evidence(
-    rules: RuleBook,
-    projection: Any,
-) -> list[dict[str, Any]]:
+def _root_graphs(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for phase_id, callback_kind, graph_id in projection.root_entries:
         tasks = tuple(
@@ -679,14 +611,6 @@ def _root_graph_evidence(
     return rows
 
 
-def _decision_preserves_projection(decision: Any, projection: Any) -> bool:
-    if not projection.blocked_reasons:
-        return bool(decision.ok)
-    if decision.ok:
-        return False
-    return any(reason in decision.blocked_reason for reason in projection.blocked_reasons)
-
-
 def _direct_row(
     rules: RuleBook,
     definition: Any,
@@ -695,26 +619,20 @@ def _direct_row(
     excluded_blockers: tuple[tuple[Any, str], ...],
     context: tuple[BattleState, ActionCommand, Any, Any, str, Any],
 ) -> dict[str, Any]:
-    _, command, target_context, admission, mode, decision = context
+    _, _, target_context, admission, mode, decision = context
     excluded_reasons = tuple(reason for _, reason in excluded_blockers)
+    provenance = decision.metadata.get("formal_action_blocker_provenance", [])
     provenance_reasons = tuple(
-        str(item.get("reason") or "")
-        for item in decision.metadata.get("formal_action_blocker_provenance", [])
-        if isinstance(item, dict)
+        str(row.get("reason") or "") for row in provenance if isinstance(row, dict)
     )
-    if any(
+    assert not any(
         reason and (reason in decision.blocked_reason or reason in provenance_reasons)
         for reason in excluded_reasons
-    ):
-        raise AssertionError("out-of-closure flat blocker leaked into ActionContractSystem")
-    if not _decision_preserves_projection(decision, projection):
-        raise AssertionError(
-            "ActionContractSystem did not preserve reachable projection blockers or clean admission"
-        )
+    )
     phases = tuple(
         sorted(
             rules.ability_phases_for_action(definition.action_id, definition.level),
-            key=lambda item: item.phase_id,
+            key=lambda p: p.phase_id,
         )
     )
     return {
@@ -723,10 +641,9 @@ def _direct_row(
         "action_level": definition.level,
         "source": definition.source.to_json(),
         "phase_invocation_roles": [
-            {"phase_id": phase.phase_id, "invocation_role": phase.invocation_role}
-            for phase in phases
+            {"phase_id": p.phase_id, "invocation_role": p.invocation_role} for p in phases
         ],
-        "root_graphs": _root_graph_evidence(rules, projection),
+        "root_graphs": _root_graphs(rules, projection),
         "flat_bound_task_ids": [task.task_id for task in flat],
         "graph_reachable_task_ids": list(projection.reachable_task_ids),
         "excluded_bound_task_ids": list(projection.excluded_bound_task_ids),
@@ -760,18 +677,10 @@ def _direct_row(
         "action_contract": {
             "ok": decision.ok,
             "blocked_reason": decision.blocked_reason,
-            "formal_action_root_graph_ids": decision.metadata.get(
-                "formal_action_root_graph_ids", []
-            ),
-            "formal_action_reachable_task_ids": decision.metadata.get(
-                "formal_action_reachable_task_ids", []
-            ),
-            "formal_action_excluded_bound_task_ids": decision.metadata.get(
-                "formal_action_excluded_bound_task_ids", []
-            ),
-            "formal_action_blocker_provenance": decision.metadata.get(
-                "formal_action_blocker_provenance", []
-            ),
+            "formal_action_root_graph_ids": decision.metadata.get("formal_action_root_graph_ids", []),
+            "formal_action_reachable_task_ids": decision.metadata.get("formal_action_reachable_task_ids", []),
+            "formal_action_excluded_bound_task_ids": decision.metadata.get("formal_action_excluded_bound_task_ids", []),
+            "formal_action_blocker_provenance": provenance,
         },
     }
 
@@ -788,20 +697,19 @@ def _run_direct(root: Path) -> dict[str, Any]:
     delta_row: dict[str, Any] | None = None
     reachable_row: dict[str, Any] | None = None
     legacy_row: dict[str, Any] | None = None
-    scanned = 0
     diagnostics: list[str] = []
+    scanned = 0
     try:
         source_graph = lowering.build_character_ability_source_graph_catalog()
         snapshot = lowering._character_ability_raw_snapshot
         scope = lowering._character_ability_scope_catalog
         source_catalog = lowering.build_character_control_flow_contract_catalog(
-            snapshot=snapshot,
-            scope_catalog=scope,
+            snapshot=snapshot, scope_catalog=scope
         )
         definitions = tuple(
             sorted(
                 build_character_action_definition_ir(root),
-                key=lambda item: (item.action_id, item.level, item.definition_id),
+                key=lambda x: (x.action_id, x.level, x.definition_id),
             )
         )
         for definition in definitions:
@@ -816,74 +724,51 @@ def _run_direct(root: Path) -> dict[str, Any]:
                     source_graph_catalog=source_graph,
                 )
                 graph_catalog = materialize_ability_task_graph_catalog(
-                    source_catalog,
-                    canonical,
-                    source_snapshot=snapshot,
+                    source_catalog, canonical, source_snapshot=snapshot
                 )
                 rules = RuleBook(replace(canonical, task_graph_catalog=graph_catalog))
-                all_tasks = rules.ability_tasks_for_action(
-                    definition.action_id, definition.level
-                )
+                tasks = rules.ability_tasks_for_action(definition.action_id, definition.level)
                 phases = tuple(
-                    rules.ability_phases_for_action(
-                        definition.action_id, definition.level
-                    )
+                    rules.ability_phases_for_action(definition.action_id, definition.level)
                 )
                 roles = {phase.invocation_role for phase in phases}
 
                 if legacy_row is None and roles == {"external_legacy"}:
-                    context = _real_action_context(rules, definition)
-                    if context is not None:
-                        legacy_reasons = tuple(
-                            reason
-                            for task in all_tasks
-                            if (
-                                reason := ability_task_runtime_blocked_reason(
-                                    rules,
-                                    task,
-                                    topology_authority="external_legacy",
-                                )
+                    legacy_reasons = tuple(
+                        reason
+                        for task in tasks
+                        if (
+                            reason := ability_task_runtime_blocked_reason(
+                                rules, task, topology_authority="external_legacy"
                             )
                         )
+                    )
+                    context = _accepted_context(rules, definition, legacy_reasons)
+                    if context is not None:
                         decision = context[-1]
-                        preserved = (
-                            any(reason in decision.blocked_reason for reason in legacy_reasons)
-                            if legacy_reasons
-                            else bool(decision.ok)
-                        )
-                        if preserved:
-                            legacy_row = {
-                                "definition_id": definition.definition_id,
-                                "action_id": definition.action_id,
-                                "action_level": definition.level,
-                                "task_ids": [task.task_id for task in all_tasks],
-                                "flat_blockers": list(legacy_reasons),
-                                "action_contract_ok": decision.ok,
-                                "action_contract_blocked_reason": decision.blocked_reason,
-                            }
+                        legacy_row = {
+                            "definition_id": definition.definition_id,
+                            "action_id": definition.action_id,
+                            "action_level": definition.level,
+                            "task_ids": [task.task_id for task in tasks],
+                            "flat_blockers": list(legacy_reasons),
+                            "action_contract_ok": decision.ok,
+                            "action_contract_blocked_reason": decision.blocked_reason,
+                        }
 
                 flat = _flat_formal_tasks(rules, definition.action_id, definition.level)
                 if not flat:
                     continue
                 projection = _formal_action_task_graph_projection(
-                    rules,
-                    definition.action_id,
-                    definition.level,
-                    all_tasks,
+                    rules, definition.action_id, definition.level, tasks
                 )
+                expected = tuple(projection.blocked_reasons)
                 context = None
-                if reachable_row is None and projection.blocked_reasons:
-                    context = _real_action_context(rules, definition)
-                    if context is not None and _decision_preserves_projection(
-                        context[-1], projection
-                    ):
+                if reachable_row is None and expected:
+                    context = _accepted_context(rules, definition, expected)
+                    if context is not None:
                         reachable_row = _direct_row(
-                            rules,
-                            definition,
-                            projection,
-                            flat,
-                            (),
-                            context,
+                            rules, definition, projection, flat, (), context
                         )
 
                 if delta_row is None and len(flat) > len(projection.reachable_task_ids):
@@ -893,51 +778,44 @@ def _run_direct(root: Path) -> dict[str, Any]:
                         if task.task_id in set(projection.excluded_bound_task_ids)
                     )
                     excluded_blockers = tuple(
-                        (task, _old_flat_blocker_reason(rules, task))
-                        for task in excluded
+                        (task, _old_flat_blocker(rules, task)) for task in excluded
                     )
-                    excluded_blockers = tuple(
-                        item for item in excluded_blockers if item[1]
-                    )
+                    excluded_blockers = tuple(item for item in excluded_blockers if item[1])
                     if excluded_blockers:
-                        context = context or _real_action_context(rules, definition)
+                        context = context or _accepted_context(rules, definition, expected)
                         if context is not None:
-                            try:
-                                delta_row = _direct_row(
-                                    rules,
-                                    definition,
-                                    projection,
-                                    flat,
-                                    excluded_blockers,
-                                    context,
-                                )
-                            except AssertionError as exc:
-                                diagnostics.append(
-                                    f"{definition.action_id}@{definition.level}:{exc}"
-                                )
-                                delta_row = None
-                            else:
-                                if projection.blocked_reasons:
-                                    reachable_row = delta_row
+                            delta_row = _direct_row(
+                                rules,
+                                definition,
+                                projection,
+                                flat,
+                                excluded_blockers,
+                                context,
+                            )
+                            if expected:
+                                reachable_row = delta_row
                 if delta_row is not None and reachable_row is not None and legacy_row is not None:
                     break
             except (AssertionError, TypeError, ValueError, RuntimeError) as exc:
                 diagnostics.append(
                     f"{definition.action_id}@{definition.level}:{type(exc).__name__}:{exc}"
                 )
-                continue
     finally:
         TBGDLowering.build = original_build
 
     if delta_row is None:
         raise AssertionError(
-            "no real TBGD action satisfies strict flat>graph closure with an excluded blocker "
-            "through public target query/accept + ActionContractSystem.evaluate:"
+            "no real TBGD strict flat>graph delta survived public target query/accept + ActionContractSystem.evaluate:"
             + json.dumps(diagnostics[-12:], ensure_ascii=False)
         )
     if reachable_row is None:
         raise AssertionError(
-            "no real reachable formal blocker was reproduced through ActionContractSystem.evaluate:"
+            "no reachable formal blocker was reproduced through ActionContractSystem.evaluate:"
+            + json.dumps(diagnostics[-12:], ensure_ascii=False)
+        )
+    if legacy_row is None:
+        raise AssertionError(
+            "no external_legacy regression representative was reproduced in the bounded real denominator:"
             + json.dumps(diagnostics[-12:], ensure_ascii=False)
         )
 
@@ -952,16 +830,12 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "excluded_flat_only_blockers_absent_after_projection": True,
         "reachable_graph_blockers_preserved_fail_closed": True,
         "graph_roots_and_nested_links_discovered_from_production_ir": True,
+        "external_legacy_regression_preserved": True,
         "forged_selection_fingerprint_or_authorization": False,
-        "external_legacy_regression_preserved_when_found": legacy_row is not None,
         "full_canonical_ir_build_count": 0,
     }
     return {
-        "ok": (
-            elapsed <= _DIRECT_HARD_SECONDS
-            and peak <= 1024 * 1024
-            and all(predicates.values())
-        ),
+        "ok": elapsed <= _DIRECT_HARD_SECONDS and peak <= 1024 * 1024 and all(predicates.values()),
         "mode": "direct",
         "predicates": predicates,
         "source": {
@@ -972,17 +846,12 @@ def _run_direct(root: Path) -> dict[str, Any]:
         "reachable_blocker_representative": reachable_row,
         "external_legacy_representative": legacy_row,
         "diagnostics_tail": diagnostics[-6:],
-        "resource": {
-            "wall_seconds": round(elapsed, 6),
-            "peak_rss_kib": peak,
-        },
+        "resource": {"wall_seconds": round(elapsed, 6), "peak_rss_kib": peak},
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Validate P9 formal action graph admission authority"
-    )
+    parser = argparse.ArgumentParser(description="Validate P9 formal action graph admission authority")
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--fast", action="store_true")
     modes.add_argument("--direct", action="store_true")
