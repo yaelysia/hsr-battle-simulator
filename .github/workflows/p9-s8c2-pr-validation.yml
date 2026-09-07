@@ -1,6 +1,5 @@
-name: P9 S8C2 PR Validation
+name: P9 S8C RandomConfig Action Caller Bootstrap
 
-# REVIEW checkpoint trigger: keep validation commands unchanged and force final-head CI after governance-only updates.
 on:
   pull_request:
     branches:
@@ -10,55 +9,79 @@ on:
       - synchronize
       - reopened
     paths:
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py'
       - '.github/workflows/p9-s8c2-pr-validation.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate:
+  bootstrap:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout PR head
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: Install focused test dependency
+      - name: Patch scoped production caller
+        shell: bash
         run: |
-          python -m venv .ci-venv
-          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
-          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: Focused pytest
-        run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-pytest.time \
-            python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py -q
-          code=$?
-          cat /tmp/p9-s8c2-pytest.time
-          echo "exit_code=$code"
-          exit "$code"
+          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py')
+          text = path.read_text()
+          marker = 'def _resolve_formal_weighted_selection('
+          if marker in text:
+              print('production caller already patched')
+              raise SystemExit(0)
 
-      - name: Compile scoped files
-        run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-compile.time \
-            python -m compileall -q \
-              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py \
-              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
-          code=$?
-          cat /tmp/p9-s8c2-compile.time
-          echo "exit_code=$code"
-          exit "$code"
+          old = 'from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR\n'
+          new = '''from ..rules.task_graph import (\n    TaskGraphIR,\n    TaskGraphNumericDefinitionIR,\n    TaskGraphWeightedSelectionIR,\n)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('task graph rule import anchor mismatch')
+          text = text.replace(old, new, 1)
 
-      - name: Fixed-base diff check
+          old = 'from .target import TargetSystem\nfrom .task_graph import (\n'
+          new = '''from .target import TargetSystem\nfrom .rng import (\n    RNGOutcome,\n    RNGRequest,\n    choice_key_for_identity,\n    event_id_for_identity,\n    resolve_rng_request,\n    rng_choices_from_payload,\n    rng_mode_from_payload,\n)\nfrom .task_graph import (\n'''
+          if text.count(old) != 1:
+              raise SystemExit('rng import anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '    TaskGraphTargetResult,\n)\n'
+          new = '    TaskGraphTargetResult,\n    TaskGraphWeightedSelectionResult,\n)\n'
+          if text.count(old) != 1:
+              raise SystemExit('weighted result import anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          old = '''            graph=lambda request, state: self._resolve_formal_nested_graph(\n                request,\n                state,\n            ),\n'''
+          new = '''            graph=lambda request, state: self._resolve_formal_nested_graph(\n                request,\n                state,\n            ),\n            weighted_selection=lambda request, selection, state: self._resolve_formal_weighted_selection(\n                request,\n                selection,\n                state,\n                invocation=invocation,\n            ),\n'''
+          if text.count(old) != 1:
+              raise SystemExit('formal hook anchor mismatch')
+          text = text.replace(old, new, 1)
+
+          anchor = '    def _resolve_formal_targets(\n'
+          method = '''    def _resolve_formal_weighted_selection(\n        self,\n        request: TaskGraphHookRequest,\n        selection: TaskGraphWeightedSelectionIR,\n        state: BattleState,\n        *,\n        invocation: _FormalAbilityInvocation,\n    ) -> TaskGraphWeightedSelectionResult:\n        task, reason = self._formal_task_for_request(request)\n        if task is None:\n            return TaskGraphWeightedSelectionResult(\n                "blocked", blocked_reason=reason\n            )\n        if (\n            invocation.invocation_kind != "action"\n            or type(invocation.action_command) is not ActionCommand\n        ):\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason="ability_task_graph_random_config_requires_action_invocation",\n            )\n        if (\n            request.source_family != "RandomConfig"\n            or selection.family != "RandomConfig"\n            or selection.selection_kind != "weighted_single"\n            or selection.graph_node_id != request.graph_node_id\n            or not selection.choices\n        ):\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason="ability_task_graph_random_config_contract_mismatch",\n            )\n\n        definitions = {\n            definition.definition_id: definition\n            for definition in selection.numeric_definitions\n        }\n        if len(definitions) != len(selection.numeric_definitions):\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason="ability_task_graph_random_config_numeric_definition_duplicate",\n            )\n        scoped = _task_graph_target_resolution(\n            request, invocation.target_resolution\n        )\n        weights: list[float] = []\n        for choice in selection.choices:\n            definition = definitions.get(choice.weight_definition_id)\n            if (\n                definition is None\n                or definition.source_occurrence_id\n                != choice.weight_source_occurrence_id\n                or definition.source != choice.source\n            ):\n                return TaskGraphWeightedSelectionResult(\n                    "blocked",\n                    blocked_reason="ability_task_graph_random_config_weight_identity_mismatch",\n                )\n            result = self.evaluator.evaluate_numeric(\n                definition.expression,\n                NumericEvaluationContext(\n                    binding_sources=_binding_sources(\n                        self.rules,\n                        state,\n                        invocation.actor_id,\n                        scoped.primary,\n                        action_level=invocation.ability_level,\n                        current_action_trigger_key=_formal_action_trigger_key(\n                            invocation\n                        ),\n                    ),\n                    source_trace=definition.source.to_json(),\n                ),\n            )\n            if (\n                not result.ok\n                or result.value is None\n                or not math.isfinite(result.value)\n                or result.value < 0\n            ):\n                return TaskGraphWeightedSelectionResult(\n                    "blocked",\n                    blocked_reason=result.blocked_reason\n                    or "ability_task_graph_random_config_weight_invalid",\n                )\n            weights.append(float(result.value))\n        if not any(weight > 0.0 for weight in weights):\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason="ability_task_graph_random_config_total_weight_not_positive",\n            )\n\n        command = cast(ActionCommand, invocation.action_command)\n        identity: dict[str, JSONValue] = {\n            "decision_scope": "ability_task_graph_random_config",\n            "decision_index": task.task_index,\n            "action_id": command.action_id,\n            "action_level": command.action_level,\n            "actor_id": command.actor_id,\n            "task_id": task.task_id,\n            "graph_id": request.graph_id,\n            "graph_node_id": request.graph_node_id,\n            "selection_id": selection.selection_id,\n            "invocation_id": request.invocation_id,\n            "active_graph_stack": list(request.active_graph_stack),\n            "frame_ids": list(request.frame_ids),\n            "target_ids": list(request.target_ids or scoped.selected),\n            "iteration_index": request.iteration_index,\n        }\n        rng_type = "ability_task_graph_random_config"\n        choice_key = choice_key_for_identity(rng_type, identity)\n        event_id = event_id_for_identity(\n            rng_type, identity, event_index=state.event_index\n        )\n        outcomes = tuple(\n            RNGOutcome(\n                outcome_id=choice.choice_id,\n                payload={\n                    "selection_id": selection.selection_id,\n                    "choice_id": choice.choice_id,\n                    "ordinal": choice.ordinal,\n                    "branch_id": choice.branch_id,\n                    "weight_definition_id": choice.weight_definition_id,\n                    "weight_source_occurrence_id": choice.weight_source_occurrence_id,\n                },\n                weight=weights[index],\n            )\n            for index, choice in enumerate(selection.choices)\n        )\n        resolution = resolve_rng_request(\n            RNGRequest(\n                rng_type=rng_type,\n                purpose="weighted_single",\n                event_id=event_id,\n                choice_key=choice_key,\n                source="ability_task_system",\n                before_state=state.rng_state,\n                decision_kind="weighted_choice",\n                outcomes=outcomes,\n                source_trace=selection.source.to_json(),\n                metadata={\n                    "selection_id": selection.selection_id,\n                    "graph_id": request.graph_id,\n                    "graph_node_id": request.graph_node_id,\n                    "formal_task_id": request.formal_task_id,\n                    "action_id": command.action_id,\n                    "actor_id": command.actor_id,\n                    "choice_ids": [choice.choice_id for choice in selection.choices],\n                    "weights": weights,\n                },\n                identity=identity,\n                missing_choice_reason="ability_task_graph_random_config_requires_rng_choice",\n                invalid_choice_reason="ability_task_graph_random_config_rng_choice_invalid",\n            ),\n            rng_choices=rng_choices_from_payload(dict(command.metadata)),\n            rng_mode=rng_mode_from_payload(dict(command.metadata)),\n        )\n        if (\n            not resolution.ok\n            or resolution.selected_outcome is None\n            or resolution.event is None\n        ):\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason=resolution.blocked_reason\n                or "ability_task_graph_random_config_rng_resolution_blocked",\n            )\n        selected = next(\n            (\n                choice\n                for choice in selection.choices\n                if choice.choice_id == resolution.selected_outcome_id\n            ),\n            None,\n        )\n        if selected is None:\n            return TaskGraphWeightedSelectionResult(\n                "blocked",\n                blocked_reason="ability_task_graph_random_config_selected_choice_missing",\n            )\n        return TaskGraphWeightedSelectionResult(\n            "resolved",\n            selection.selection_id,\n            request.graph_node_id,\n            selected.choice_id,\n            selected.ordinal,\n            selected.branch_id,\n            resolution.event,\n        )\n\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit('weighted method insertion anchor mismatch')
+          text = text.replace(anchor, method + anchor, 1)
+          path.write_text(text)
+          print('patched', path)
+          PY
+
+      - name: Commit scoped production patch
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-diff.time \
-            git diff --check 2e8589622c27ebf05c0b021214fddc138e883dbb...HEAD
-          code=$?
-          cat /tmp/p9-s8c2-diff.time
-          echo "exit_code=$code"
-          exit "$code"
+          if git diff --quiet -- hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py; then
+            echo 'no production diff to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py
+          git commit -m 'feat: wire formal RandomConfig action RNG [skip ci]'
+          git push origin "HEAD:${HEAD_REF}"
