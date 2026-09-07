@@ -390,6 +390,9 @@ def _formal_action_task_graph_projection(
             )
 
     visited_graph_ids: set[str] = set()
+    nested_edges_by_graph_id: dict[
+        str, list[tuple[TaskGraphIR, str, str, str, str]]
+    ] = {}
     while pending_graphs:
         graph, expected_phase_id, expected_callback_kind, is_root, active_path = (
             pending_graphs.pop(0)
@@ -629,6 +632,15 @@ def _formal_action_task_graph_projection(
                 continue
 
             nested_graph, nested_phase_id = candidates[0]
+            nested_edges_by_graph_id.setdefault(graph.graph_id, []).append(
+                (
+                    nested_graph,
+                    nested_phase_id,
+                    task.callback_kind,
+                    node.graph_node_id,
+                    task.task_id,
+                )
+            )
             if nested_graph.graph_id in active_path:
                 block(
                     f"task_graph_active_cycle:{nested_graph.graph_id}",
@@ -649,6 +661,40 @@ def _formal_action_task_graph_projection(
                     (*active_path, nested_graph.graph_id),
                 )
             )
+
+    # Static support collection is globally de-duplicated above. Runtime graph
+    # re-entry is path-sensitive, so cycle detection must be a separate DFS over
+    # the resolved nested-graph edge relation rather than reuse that global set.
+    cycle_state: dict[str, int] = {}
+
+    def detect_nested_graph_cycles(graph_id: str) -> None:
+        cycle_state[graph_id] = 1
+        for (
+            nested_graph,
+            nested_phase_id,
+            callback_kind,
+            graph_node_id,
+            task_id,
+        ) in nested_edges_by_graph_id.get(graph_id, ()):
+            nested_state = cycle_state.get(nested_graph.graph_id, 0)
+            if nested_state == 1:
+                block(
+                    f"task_graph_active_cycle:{nested_graph.graph_id}",
+                    phase_id=nested_phase_id,
+                    callback_kind=callback_kind,
+                    graph_id=nested_graph.graph_id,
+                    graph_node_id=graph_node_id,
+                    task_id=task_id,
+                    source="nested_graph_cycle",
+                )
+                continue
+            if nested_state == 0:
+                detect_nested_graph_cycles(nested_graph.graph_id)
+        cycle_state[graph_id] = 2
+
+    for root_graph_id in _stable_unique(root_graph_ids):
+        if cycle_state.get(root_graph_id, 0) == 0:
+            detect_nested_graph_cycles(root_graph_id)
 
     reachable = _stable_unique(reachable_task_ids)
     excluded = tuple(sorted(set(formal_bound_task_ids) - set(reachable)))
