@@ -209,7 +209,9 @@ def _execute(
         action_command=command,
         action_definition=None,
     )
-    weighted = system._formal_task_graph_hooks(cast(Any, invocation)).weighted_selection
+    weighted = system._formal_task_graph_hooks(
+        invocation=cast(Any, invocation)
+    ).weighted_selection
     if weighted is None:
         raise AssertionError("AbilityTaskSystem omitted RandomConfig weighted hook")
     seen: list[str] = []
