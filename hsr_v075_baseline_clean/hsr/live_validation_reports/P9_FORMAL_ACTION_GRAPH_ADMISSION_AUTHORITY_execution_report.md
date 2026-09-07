@@ -9,15 +9,16 @@ Execution handoff result: `ready_for_review`.
 - Branch: `plan/p9-formal-action-graph-admission-authority`
 - Planning/base authority: `master@b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce`
 - Execution card: `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY.md`
-- Code-validation head: `bb057de0fa1abc9ecab668836d2482d1fcee7ee3`
-- Code-validation hosted CI: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34117081776`
-- Code-validation job: `101726310045`
+- REVIEW return-for-fix handoff: PR comment `5570308533`
+- Remediation code-validation head: `8f4aa5df14abc7cc5a9385a86330a987228ddb0b`
+- Remediation code-validation hosted CI: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34121219910`
+- Remediation code-validation job: `101739442339`
 - Repository-pinned TBGD submodule: `14c1d18f91a8101d610e6c523447a7517de3fae1`
 - Report-containing final PR head and its final hosted CI are intentionally recorded in the PR `[HANDOFF:REVIEW]` comment because this report cannot self-reference its own commit.
 
 ## 2. Authorized write set
 
-The execution diff is confined to the planner-owned card plus the card-authorized execution paths.
+The execution diff remains confined to the planner-owned card plus the card-authorized execution paths.
 
 Execution-authorized paths:
 
@@ -30,7 +31,7 @@ Planner-owned path already present before EXEC implementation:
 
 - `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY.md`
 
-No `AbilityTaskSystem`, `TaskGraphExecutor`, task-graph IR/materializer, RuleBook storage, event/status transport, RNG, `CombatExecutor`, or PR #9 production file was modified.
+No `AbilityTaskSystem`, `TaskGraphExecutor`, task-graph IR/materializer, RuleBook storage, event/status transport, RNG, `CombatExecutor`, or PR #9 production file was modified. The REVIEW remediation did not expand this write set.
 
 ## 3. Authority and implementation result
 
@@ -52,10 +53,24 @@ Key properties of the implementation:
 - Process-only tasks retain the current formal runtime distinction: their existing process-only contract is checked, while an audit-only unresolved graph reference is not by itself promoted into a gameplay blocker.
 - Missing/mismatched graph/task/phase/callback/owner/nested-link identities fail closed.
 - Admission does not evaluate runtime conditions, select branches, consume RNG, mutate state, or execute the graph.
-- A1 does not add a second task-graph topology walker. `TaskGraphIR` already enforces that every graph node belongs to the canonical root-reachable, acyclic, single-parent graph. Admission scans that canonical graph node set for static support and only recursively resolves exact nested formal graphs.
+- **Intra-graph topology remains solely authoritative in `TaskGraphIR`**: admission scans the canonical node set and does not re-walk runtime branches inside a graph.
+- **Cross-graph nested-call cycle detection is path-sensitive**: one-time static support collection may globally de-duplicate graph bodies, but every resolved nested-graph call edge is recorded and then checked by a separate three-state DFS recursion stack from each formal action root. Re-entry into a currently active nested graph emits `task_graph_active_cycle:<graph_id>` with `source="nested_graph_cycle"` and fails closed.
+- This DFS is limited to the resolved nested-graph call relation. It is not a second interpreter and does not evaluate branch/condition/count/target/RNG semantics.
 - Deterministic metadata records root graph IDs, root entries, reachable task IDs, excluded bound task IDs, and blocker provenance. This metadata is evidence only and is not a gameplay input.
 
-## 4. Focused Fast validation
+## 4. REVIEW return-for-fix remediation
+
+REVIEW comment `5570308533` identified a real correctness defect in the first A1 implementation: the breadth-first support scan used one global `visited_graph_ids` set. For the reachable nested topology
+
+`A -> {B, C}, B -> C, C -> B`
+
+a graph body could already be globally visited through one sibling route before the other route reached the same graph. That global support-scan de-duplication could therefore suppress a path-sensitive active-cycle finding even though runtime graph execution is guarded by an active graph stack.
+
+The remediation keeps the global set only for its valid purpose — scanning each graph body once for static support — and separately records the resolved nested graph edges. After support collection, a DFS with states `unvisited / visiting / done` walks that edge relation from each formal root. Any edge to a `visiting` graph is a fail-closed cross-graph active cycle.
+
+No timeout, memory budget, target/admission gate, source authority, production write authority, dependency, or deferred boundary was relaxed.
+
+## 5. Focused Fast validation
 
 Command:
 
@@ -64,22 +79,25 @@ env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
   python3 -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --fast
 ```
 
-Code-validation run `34117081776`: **success**. The validator reports `cases=10`, `ok=true` and proves all required bounded cases:
+Remediation code-validation run `34121219910`: **success**. The focused validator now reports `cases=11`, `ok=true` and covers:
 
 1. unrelated bound `nested_only` task with a flat blocker is excluded from ordinary formal action admission;
 2. reachable `TriggerAbility -> nested_only` graph is included and a blocker inside it remains fail-closed;
-3. reachable deferred node blocks with stable provenance;
-4. reachable non-process-only unresolved gameplay reference blocks;
-5. process-only unresolved audit-only reference is not by itself a gameplay blocker when the existing process-only contract is valid;
-6. invalid process-only task contract still blocks;
-7. `external_legacy` keeps the existing flat gate;
-8. missing/malformed graph identity fails closed;
-9. projection/metadata are deterministic across repeated runs;
-10. admission performs no state mutation, RNG selection, graph execution, or runtime branch evaluation.
+3. **explicit cross-graph topology `A -> {B,C}, B -> C, C -> B` fails closed with `task_graph_active_cycle:*` and `source="nested_graph_cycle"` provenance;**
+4. reachable deferred node blocks with stable provenance;
+5. reachable non-process-only unresolved gameplay reference blocks;
+6. process-only unresolved audit-only reference is not by itself a gameplay blocker when the existing process-only contract is valid;
+7. invalid process-only task contract still blocks;
+8. `external_legacy` keeps the existing flat gate;
+9. missing/malformed graph identity fails closed;
+10. projection/metadata are deterministic across repeated runs;
+11. admission performs no state mutation, RNG selection, graph execution, or runtime branch evaluation.
 
-The workflow keeps a hard `30s` Fast timeout. Code-validation remained within this gate.
+The cycle regression uses independently constructed fixture topology and independently expected cycle/provenance properties; it does not call the production projection helper to derive its expected answer. Because canonical node ordering may enter either side of the B/C strongly connected pair first, the assertion accepts either valid deterministic back edge while still requiring an actual `task_graph_active_cycle:*` result tied to one of the B<->C cycle edges and `nested_graph_cycle` provenance.
 
-## 5. Real TBGD Direct validation
+The workflow retains the hard `30s` Fast timeout. The green remediation run passed this unchanged gate.
+
+## 6. Real TBGD Direct validation
 
 Command:
 
@@ -88,99 +106,61 @@ env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
   python3 -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --direct
 ```
 
-Code-validation run `34117081776`: **success**. The workflow keeps the existing hard `180s` Direct timeout; the validator independently enforces `<= 180s` and `<= 1 GiB`. The green code-validation head passed both limits. Full `TBGDLowering.build()` is instrumented fail-closed and the measured full-CanonicalIR build count is `0`.
+Remediation code-validation run `34121219910`: **success**. The workflow retains the hard `180s` Direct timeout; the validator independently enforces `<= 180s` and `<= 1 GiB`. A successful exit therefore proves the current remediation head remained inside both unchanged limits and all Direct semantic predicates were true. Full `TBGDLowering.build()` remains instrumented fail-closed and the Direct gate requires the measured full-CanonicalIR build count to be exactly `0`.
 
-The Direct denominator is dynamically discovered from current merged-master production lowering/materialization and the repository-pinned TBGD submodule. It does not import PR #9 or hard-code the representative as the only denominator. The bounded scan selected a reproducible strict flat-vs-graph representative from the current production denominator.
+The Direct denominator is dynamically discovered from current merged-master production lowering/materialization and the repository-pinned TBGD submodule. It does not import PR #9 or hard-code the representative as the only denominator.
 
-### Representative identity
+The established real-source representative remains:
 
 - Action: `avatar_skill:100103`
 - Level: `1`
 - Definition: `action_def:avatar_skill:100103:1`
 - Owner entity: `avatar:1001`
-- Public submission mode used by the representative: `insert_window`
+- Public submission mode: `insert_window`
 - Allowed/current window: `ultimate`
 - Formal action-root phase: `ability_phase:avatar_skill:100103:1:0:Avatar_Mar_7th_00_Skill03_Phase01`
 - Nested-only phase reachable from the formal graph: `ability_phase:avatar_skill:100103:1:1:Avatar_Mar_7th_00_Skill03_Phase02`
 - Unrelated bound nested-only phase excluded from the action-root closure: `ability_phase:avatar_skill:100103:1:2:Avatar_Mar_7th_00_Skill03_EnterReady`
 - Root graph: `task_graph:20dbeb7ef7e53fa28d4bb9283c986192533be95e2b08a16d6a674e9e0720cdf0`
 
-The validator emits the exact root-node IDs, full reachable-task list, excluded-task list, phase invocation roles and blocker provenance in its Direct JSON output for reproduction from run `34117081776`.
+The old flat formal bound-task set is strictly broader than the action-root graph closure. A reproducible unique old flat-only blocker is the excluded `HeadLookAt` task under `Avatar_Mar_7th_00_Skill03_EnterReady` with `effect_coverage_status:unsupported:HeadLookAt`; after A1 it is absent from reachable-task/provenance output and does not leak into `ActionContractSystem.evaluate(...)`.
 
-### Before-vs-after projection delta
+Reachable graph blockers remain fail-closed. The representative still exercises real public target selection through `ActionTargetSelectionSystem.query(...)`, `accept(...)`, context revalidation, and `ActionContractSystem.evaluate(...)`; no selection fingerprint or authorization is forged. The bounded real scan records external-legacy presence when encountered, while Fast independently proves the existing external-legacy flat gate.
 
-The old flat formal bound-task set is strictly broader than the action-root graph closure. In particular, the unrelated `Avatar_Mar_7th_00_Skill03_EnterReady` bound phase contributes flat-only tasks that are not reachable from the formal action root.
+## 7. Upstream regressions and hosted CI
 
-A reproducible unique old flat-only blocker is the excluded `HeadLookAt` task under `Avatar_Mar_7th_00_Skill03_EnterReady`:
+For remediation code-validation head `8f4aa5df14abc7cc5a9385a86330a987228ddb0b`, hosted run `34121219910`, job `101739442339`, every workflow step completed **success**:
 
-- opcode/family: `HeadLookAt`
-- old flat blocker: `effect_coverage_status:unsupported:HeadLookAt`
-- Direct marks this reason as unique to the excluded set for the representative.
+- checkout with the pinned TBGD submodule;
+- scoped compile;
+- S8C1A upstream weighted-selection IR validation;
+- S8C1B weighted-selection Fast;
+- S8C1B weighted-selection Direct;
+- A1 focused Fast, including the new cross-graph active-cycle regression;
+- A1 focused real-TBGD Direct;
+- `git diff --check` against PR base.
 
-After A1, that excluded task is absent from `formal_action_reachable_task_ids` and from `formal_action_blocker_provenance`; its unique flat-only blocker does not leak into `ActionContractSystem.evaluate(...)`.
-
-### Reachable blockers remain fail-closed
-
-The same representative also contains blockers inside its actual formal graph closure, so Direct verifies the opposite side of the authority change at the same time. Reachable examples include:
-
-- `effect_coverage_status:unsupported:AlignTargetToTeamCenter`
-- `task_graph_definition_not_admitted:effect:unsupported`
-- `process_only_task_effect_source_mismatch`
-
-These reachable blockers remain present in the projection/provenance and keep the action contract fail-closed. A1 therefore removes only out-of-closure false blockers; it does not weaken blockers belonging to an actually reachable possible formal execution path.
-
-### Public target/admission path
-
-The representative is not admitted with a forged selection fingerprint or an internal shortcut. Direct performs:
-
-1. `ActionTargetSelectionSystem.query(...)`;
-2. `ActionTargetSelectionSystem.accept(...)`;
-3. target-selection context revalidation against the unchanged state/command;
-4. `ActionContractSystem.evaluate(...)` with the accepted context fingerprint;
-5. comparison of ActionContract metadata against the independently derived production projection.
-
-The selected representative uses the real automatic target-selection path against the validation enemy. Direct verifies that ActionContract root IDs, reachable IDs, excluded IDs and blocker provenance exactly equal the production projection.
-
-### External legacy denominator
-
-The bounded real scan did not encounter an `external_legacy` representative in the scanned current denominator. Direct records that fact and treats the real regression as applicable only when present; Fast independently proves the existing `external_legacy` flat gate is preserved.
-
-## 6. Accepted upstream regressions and CI
-
-The reused `.github/workflows/p9-s8c1b-pr-validation.yml` retains the accepted upstream gates. Code-validation run `34117081776`, job `101726310045`, completed **success** for every step:
-
-- checkout with the pinned TBGD submodule: success;
-- scoped compile: success;
-- S8C1A upstream weighted-selection IR validation: success;
-- S8C1B weighted-selection Fast: success;
-- S8C1B weighted-selection Direct: success;
-- A1 focused Fast: success;
-- A1 focused Direct: success;
-- `git diff --check` against PR base: success.
-
-The workflow uses the normal GitHub-hosted Ubuntu runner only. No paid/self-hosted runner or new dependency was introduced.
-
-The retained PR-base diff check is:
+The retained PR-base diff check remains:
 
 ```bash
 git diff --check b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce HEAD
 ```
 
-and it passed on the code-validation head.
+No paid/self-hosted runner or new dependency was introduced.
 
-## 7. Validator remediation trace
+## 8. Validation/remediation trace
 
-The final production authority did not need scope expansion during this continuation. The remaining failures were validator/reporting defects and were repaired without lowering any gate.
+Historical failed heads are evidence only and are not used as current results:
 
-- At head `040ddeeac4836f1ff5f2d6b7a2446a36a337dda9`, the real Direct produced the required semantic evidence inside the unchanged resource budgets, but the summary put a deliberately negative evidence field (`forged_selection_fingerprint_or_authorization=false`) inside `all(predicates.values())`, making the aggregate result false. The field was converted to the positive predicate `no_forged_selection_fingerprint_or_authorization=true`.
-- At head `7e696196a5be1fb36cc804761e366a4b42d3b8bd`, all semantic predicates were true and Direct again remained inside the unchanged `180s / 1GiB` gates, but numeric evidence `full_canonical_ir_build_count=0` was still included in `all(...)`; Python correctly treats integer zero as false. The final validator instruments attempted full builds, records the numeric count independently, and gates on the positive boolean `full_canonical_ir_build_count_is_zero`. Any future full-build attempt increments the counter and fails closed.
-- Head `bb057de0fa1abc9ecab668836d2482d1fcee7ee3` then passed compile, all retained upstream regressions, focused Fast, focused Direct and PR-base diff check on the hosted runner.
+- `040ddeeac4836f1ff5f2d6b7a2446a36a337dda9`: semantic evidence was inside the unchanged resource gates, but a deliberately negative evidence field was incorrectly included directly in `all(predicates.values())`; fixed by using positive `no_forged_selection_fingerprint_or_authorization` semantics.
+- `7e696196a5be1fb36cc804761e366a4b42d3b8bd`: numeric evidence `full_canonical_ir_build_count=0` was incorrectly placed inside `all(...)`, where integer zero is false; fixed by retaining the numeric count separately and gating on `full_canonical_ir_build_count_is_zero`.
+- `bb057de0fa1abc9ecab668836d2482d1fcee7ee3`: prior code-validation head passed before REVIEW discovered the independent cross-graph cycle defect.
+- `3d2a4806d6cbe40abd1f3f6f130cad0bf6aff185`, run `34120718536`: production DFS remediation compiled and all upstream S8C1A/S8C1B checks passed, but the new fixture over-specified that B rather than C must be the DFS back-edge target. The test assertion was corrected without changing production semantics or weakening the required cycle/provenance property.
+- `8f4aa5df14abc7cc5a9385a86330a987228ddb0b`, run `34121219910`: current remediation code-validation head; compile, all upstream regressions, focused Fast 11/11, focused Direct, and PR-base diff check all passed.
 
-No remediation changed the production write set, Direct/Fast timeouts, memory limit, target/admission requirements, authority chain, dependency set, or deferred boundary.
+## 9. Deferred / remaining scope
 
-## 8. Deferred / remaining scope
-
-A1 does **not** claim or implement A2. The following remains deferred exactly as the execution card requires:
+A1 still does **not** claim or implement A2. The following remains deferred exactly as the execution card requires:
 
 - action-window status callback -> nested formal ability continuation/hook transport and routing;
 - status-hook composition or any `StatusCallbackSystem` RandomConfig/RNG implementation;
@@ -188,11 +168,12 @@ A1 does **not** claim or implement A2. The following remains deferred exactly as
 - any task-graph executor/IR/materializer change;
 - broader P9/S8C aggregate acceptance or unrelated mechanic families.
 
-PR #9 remains paused until A1 and the separately planned A2 prerequisite are accepted and merged. Only after both prerequisites merge should PR #9 be reconciled to the new master and resume its original real `CombatExecutor.execute(ActionCommand)` Direct.
+PR #9 remains outside this PR's implementation scope. The present remediation is limited to the REVIEW finding on A1 formal-admission cross-graph cycle detection.
 
-## 9. Handoff
+## 10. Handoff
 
 - EXEC result: `ready_for_review`
-- Remaining implementation work in A1: none known.
-- Next role: `REVIEW`
-- REVIEW should independently reproduce the strict flat-vs-action-root-closure representative, the preserved reachable blocker evidence, the target query/accept -> ActionContract path, the zero full-build condition, the final-head hosted CI and the authorized diff boundary before acceptance.
+- REVIEW return-for-fix `5570308533`: remediated.
+- Remaining implementation work in A1 known to EXEC: none.
+- Next role: `REVIEW`.
+- REVIEW should independently reproduce the explicit A->{B,C}, B->C, C->B Fast cycle case, the real-source flat-vs-action-root-closure Direct evidence, the public target query/accept -> ActionContract path, zero full-build gate, final-head hosted CI, and authorized diff boundary before acceptance.
