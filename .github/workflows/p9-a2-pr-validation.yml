@@ -28,10 +28,11 @@ jobs:
           PY
           git diff --check
           git diff --stat
-      - name: Upload exact patched executor
-        uses: actions/upload-artifact@v4
-        with:
-          name: p9-a2-patched-executor
-          path: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
-          if-no-files-found: error
-          retention-days: 1
+      - name: Create exact local commit and probe remote object admission
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py
+          git commit -m "feat(p9-a2): wire action-window nested ability transport"
+          echo "FULL_COMMIT=$(git rev-parse HEAD)"
+          git push origin HEAD:${GITHUB_REF_NAME} || true
