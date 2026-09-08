@@ -2151,6 +2151,25 @@ class TBGDLowering:
             monster_data_cards=monster_data_cards,
         )
         status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
+        (
+            status_callbacks,
+            status_callback_tasks,
+            status_callback_finalization_audit,
+        ) = _finalize_action_window_status_callback_admission(
+            status_callbacks,
+            status_callback_tasks,
+            status_event_families,
+            effects,
+            standalone_ability_graphs,
+            ability_phases,
+            formal_status_root_paths,
+        )
+        self._action_window_status_callback_finalization_audit = (
+            status_callback_finalization_audit
+        )
+        status_event_families = _lower_status_event_families(
+            status_callbacks, status_callback_tasks
+        )
         status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
         status_callbacks = _block_status_callbacks_by_event_family(status_callbacks, status_event_blocked_reasons)
         effects = _link_status_effect_runtime_fields(
@@ -12193,6 +12212,333 @@ def _link_status_trigger_ability_graphs(
             )
         )
     return linked
+
+def _finalize_action_window_status_callback_admission(
+    callbacks: list[StatusCallbackIR],
+    tasks: list[StatusCallbackTaskIR],
+    event_families: list[StatusEventFamilyIR],
+    effects: list[EffectIR],
+    graphs: list[StandaloneAbilityGraphIR],
+    phases: list[AbilityPhaseIR],
+    formal_source_paths: set[str],
+) -> tuple[
+    list[StatusCallbackIR],
+    list[StatusCallbackTaskIR],
+    tuple[dict[str, JSONValue], ...],
+]:
+    """Finalize only stale action-window event admission after typed links exist."""
+
+    def unique_index(items: list[Any], field_name: str, subject: str) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for item in items:
+            identity = getattr(item, field_name)
+            if identity in result:
+                raise ValueError(f"{subject} identity is ambiguous")
+            result[identity] = item
+        return result
+
+    callbacks_by_id = unique_index(
+        callbacks, "callback_id", "status finalization callback"
+    )
+    effects_by_id = unique_index(effects, "effect_id", "status finalization effect")
+    graphs_by_id = unique_index(
+        graphs,
+        "standalone_ability_graph_id",
+        "status finalization standalone graph",
+    )
+    phases_by_id = unique_index(phases, "phase_id", "status finalization phase")
+
+    families_by_event: dict[str, list[StatusEventFamilyIR]] = {}
+    for family in event_families:
+        families_by_event.setdefault(family.callback_event, []).append(family)
+
+    graphs_by_phase: dict[str, list[StandaloneAbilityGraphIR]] = {}
+    for graph in graphs:
+        for phase_id in graph.phase_ids:
+            graphs_by_phase.setdefault(phase_id, []).append(graph)
+
+    tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
+    task_ids: set[str] = set()
+    for task in tasks:
+        if task.task_id in task_ids:
+            raise ValueError("status finalization task identity is ambiguous")
+        task_ids.add(task.task_id)
+        tasks_by_callback.setdefault(task.callback_id, []).append(task)
+
+    decisions: dict[str, str] = {}
+    action_source_by_task: dict[str, str] = {}
+    target_by_task: dict[str, str] = {}
+    formal_graph_by_task: dict[str, str] = {}
+    eligible_task_ids: set[str] = set()
+
+    for task in tasks:
+        if task.opcode != "TriggerAbility":
+            continue
+        owner = callbacks_by_id.get(task.callback_id)
+        if owner is None:
+            raise ValueError("status finalization callback owner is missing")
+
+        decision = ""
+        action_window_source = ""
+        typed_target = ""
+        formal_graph_id = ""
+        stale_reason = f"status_callback_event_not_admitted:{owner.event}"
+
+        if owner.event != task.event:
+            decision = "callback_event_mismatch"
+        elif owner.source_mode != "mainline_avatar_ability":
+            decision = "source_mode_not_admitted"
+        elif (
+            owner.source.source_path not in formal_source_paths
+            or task.source.source_path != owner.source.source_path
+        ):
+            decision = "formal_source_mismatch"
+        else:
+            families = tuple(families_by_event.get(owner.event, ()))
+            if not families:
+                decision = "event_family_missing"
+            elif len(families) != 1:
+                decision = "event_family_ambiguous"
+            else:
+                family = families[0]
+                action_sources = tuple(
+                    source
+                    for source in family.runtime_event_sources
+                    if source.startswith("action.window.")
+                )
+                if not action_sources:
+                    decision = "action_window_producer_missing"
+                elif len(action_sources) != 1:
+                    decision = "action_window_producer_ambiguous"
+                else:
+                    action_window_source = action_sources[0]
+                    if (
+                        family.coverage_status != "executable"
+                        or family.admission_status != "executable"
+                        or family.blocked_reason
+                    ):
+                        decision = "event_family_blocked"
+
+        callback_is_stale = (
+            owner.coverage_status == "blocked"
+            and owner.admission_status == "blocked"
+            and owner.blocked_reason == stale_reason
+            and owner.blocking_dependency == stale_reason
+        )
+        callback_is_already_executable = (
+            owner.coverage_status == "executable"
+            and owner.admission_status == "executable"
+            and not owner.blocked_reason
+            and not owner.blocking_dependency
+        )
+        if not decision and not (
+            callback_is_stale or callback_is_already_executable
+        ):
+            decision = "callback_not_exact_stale_blocker"
+
+        if not decision and (
+            task.coverage_status != "blocked"
+            or task.blocked_reason != stale_reason
+        ):
+            decision = "task_not_exact_stale_blocker"
+
+        effect = effects_by_id.get(task.effect_id)
+        if not decision:
+            if effect is None:
+                decision = "trigger_ability_effect_missing"
+            elif (
+                effect.opcode != "TriggerAbility"
+                or effect.source.source_path != owner.source.source_path
+            ):
+                decision = "trigger_ability_effect_source_mismatch"
+            elif (
+                effect.coverage_status != "executable"
+                or bool(getattr(effect, "blocked_reason", ""))
+                or bool(getattr(effect, "link_blocked_reason", ""))
+            ):
+                decision = "trigger_ability_effect_blocked"
+
+        ability_name = ""
+        if not decision:
+            standard = effect.payload.get("standard")
+            ability_name = (
+                str(standard.get("ability_name") or "")
+                if isinstance(standard, Mapping)
+                else ""
+            )
+            if not ability_name:
+                decision = "trigger_ability_name_missing"
+
+        graph_id = task.linked_standalone_graph_id
+        phase_id = task.linked_ability_phase_id
+        if not decision:
+            if not graph_id and not phase_id:
+                decision = "typed_target_missing"
+            elif graph_id and phase_id:
+                decision = "typed_target_ambiguous"
+            elif graph_id:
+                typed_target = graph_id
+                graph = graphs_by_id.get(graph_id)
+                if graph is None:
+                    decision = "typed_target_graph_missing"
+                elif (
+                    graph.coverage_status != "executable"
+                    or graph.blocked_reason
+                    or graph.source_mode != "mainline_avatar"
+                    or graph.source.source_path != owner.source.source_path
+                    or graph.ability_name != ability_name
+                    or not graph.phase_ids
+                ):
+                    decision = "typed_target_graph_not_formal"
+                else:
+                    invalid_phase = False
+                    for target_phase_id in graph.phase_ids:
+                        phase = phases_by_id.get(target_phase_id)
+                        if (
+                            phase is None
+                            or phase.source.source_path != owner.source.source_path
+                            or phase.binding_id != graph_id
+                            or phase.ability_name != ability_name
+                        ):
+                            invalid_phase = True
+                            break
+                    if invalid_phase:
+                        decision = "typed_target_graph_phase_inconsistent"
+                    else:
+                        formal_graph_id = graph_id
+            else:
+                typed_target = phase_id
+                phase = phases_by_id.get(phase_id)
+                owner_graphs = tuple(graphs_by_phase.get(phase_id, ()))
+                if phase is None:
+                    decision = "typed_target_phase_missing"
+                elif len(owner_graphs) != 1:
+                    decision = "typed_target_phase_ambiguous"
+                else:
+                    graph = owner_graphs[0]
+                    if (
+                        phase.source.source_path != owner.source.source_path
+                        or phase.ability_name != ability_name
+                        or graph.coverage_status != "executable"
+                        or graph.blocked_reason
+                        or graph.source_mode != "mainline_avatar"
+                        or graph.source.source_path != owner.source.source_path
+                        or graph.ability_name != ability_name
+                        or phase.binding_id != graph.standalone_ability_graph_id
+                    ):
+                        decision = "typed_target_phase_not_formal"
+                    else:
+                        formal_graph_id = graph.standalone_ability_graph_id
+
+        if not decision:
+            decision = "eligible"
+            eligible_task_ids.add(task.task_id)
+
+        decisions[task.task_id] = decision
+        action_source_by_task[task.task_id] = action_window_source
+        target_by_task[task.task_id] = typed_target
+        formal_graph_by_task[task.task_id] = formal_graph_id
+
+    promotable_callbacks: set[str] = set()
+    for callback in callbacks:
+        candidate_ids = {
+            task.task_id
+            for task in tasks_by_callback.get(callback.callback_id, ())
+            if task.task_id in eligible_task_ids
+        }
+        if not candidate_ids:
+            continue
+        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))
+        callback_task_ids = tuple(callback.task_ids)
+        owned_task_ids = {task.task_id for task in owned_tasks}
+        callback_root_ids = set(callback_task_ids)
+        closure_ok = (
+            bool(callback_task_ids)
+            and len(callback_task_ids) == len(callback_root_ids)
+            and callback_root_ids.issubset(owned_task_ids)
+            and all(
+                task.event == callback.event
+                and task.source.source_path == callback.source.source_path
+                and (
+                    task.task_id in callback_root_ids
+                    or ".formal_branch[" in getattr(task, "task_path", "")
+                )
+                and (
+                    task.task_id in candidate_ids
+                    or (
+                        task.coverage_status == "executable"
+                        and not task.blocked_reason
+                    )
+                )
+                for task in owned_tasks
+            )
+        )
+        if not closure_ok:
+            for task_id in candidate_ids:
+                decisions[task_id] = "callback_closure_blocked"
+            continue
+        promotable_callbacks.add(callback.callback_id)
+
+    promoted_task_ids = {
+        task.task_id
+        for callback_id in promotable_callbacks
+        for task in tasks_by_callback.get(callback_id, ())
+        if task.task_id in eligible_task_ids
+    }
+    updated_tasks = [
+        replace(task, coverage_status="executable", blocked_reason="")
+        if task.task_id in promoted_task_ids
+        else task
+        for task in tasks
+    ]
+    updated_callbacks = [
+        replace(
+            callback,
+            coverage_status="executable",
+            blocked_reason="",
+            admission_status="executable",
+            blocking_dependency="",
+        )
+        if callback.callback_id in promotable_callbacks
+        else callback
+        for callback in callbacks
+    ]
+
+    updated_task_by_id = {task.task_id: task for task in updated_tasks}
+    audit: list[dict[str, JSONValue]] = []
+    for task in tasks:
+        if task.task_id not in decisions:
+            continue
+        owner = callbacks_by_id[task.callback_id]
+        updated = updated_task_by_id[task.task_id]
+        decision = (
+            "promoted"
+            if task.task_id in promoted_task_ids
+            else decisions[task.task_id]
+        )
+        audit.append(
+            {
+                "callback_id": owner.callback_id,
+                "task_id": task.task_id,
+                "source_path": owner.source.source_path,
+                "source_mode": owner.source_mode,
+                "event": owner.event,
+                "old_callback_coverage_status": owner.coverage_status,
+                "old_callback_blocked_reason": owner.blocked_reason,
+                "old_task_coverage_status": task.coverage_status,
+                "old_task_blocked_reason": task.blocked_reason,
+                "new_task_coverage_status": updated.coverage_status,
+                "new_task_blocked_reason": updated.blocked_reason,
+                "action_window_runtime_source": action_source_by_task.get(
+                    task.task_id, ""
+                ),
+                "typed_target": target_by_task.get(task.task_id, ""),
+                "formal_graph_id": formal_graph_by_task.get(task.task_id, ""),
+                "decision": decision,
+            }
+        )
+
+    return updated_callbacks, updated_tasks, tuple(audit)
 
 
 def _link_status_effect_runtime_fields(
