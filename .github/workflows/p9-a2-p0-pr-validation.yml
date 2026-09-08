@@ -1,104 +1,49 @@
-name: P9 A2 P0 authorized production-only writeback
+name: P9 A2 P0 PR validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - "plan/p9-a2-p0-action-window-status-admission"
+      - master
     paths:
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION_execution_report.md"
 
 jobs:
-  writeback:
-    permissions:
-      contents: write
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact triggering head and pinned TBGD
+      - name: Checkout committed head and pinned TBGD
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Validate candidate and push production files only
-        env:
-          EXPECTED_PARENT: "272d31641875c1e35c2bb3f718d86efca08937d1"
-          EXPECTED_BRANCH: "plan/p9-a2-p0-action-window-status-admission"
-          VALIDATED_WRITEBACK_SOURCE_COMMIT: "272d31641875c1e35c2bb3f718d86efca08937d1"
-          WRITEBACK_SOURCE_COMMIT: "874e9f9231e786f6474569ac891bd14f87227a71"
-          BASE_SHA: "bd1a4ac94ca394d2ea563d086eaf56e9ed45b285"
-          HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
-          FOCUSED_BUILDER_SOURCE_COMMIT: "988c85bfd77dee79a5108beb9d87d398ac86a12d"
-          FINAL_WORKFLOW_SOURCE_COMMIT: "bc3d745c9e96d1c44c01fed1a7b26a365ab0719d"
+      - name: Show source pin
         run: |
-          set -euo pipefail
-          current_head="$(git rev-parse HEAD)"
-          parent_head="$(git rev-parse HEAD^)"
-          test "$current_head" = "$GITHUB_SHA"
-          test "$parent_head" = "$EXPECTED_PARENT"
-          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
-          test "$remote_head" = "$current_head"
+          git submodule status turnbasedgamedata-main
+          git rev-parse HEAD
 
-          python - <<'PY'
-          import os
-          import re
-          import subprocess
-          import textwrap
-          from pathlib import Path
-
-          workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
-          source = subprocess.check_output(
-              [
-                  "git",
-                  "show",
-                  f"{os.environ['VALIDATED_WRITEBACK_SOURCE_COMMIT']}:{workflow_path}",
-              ],
-              text=True,
-          )
-          match = re.search(
-              r"          python - <<'PY'\n(.*?)\n          PY\n",
-              source,
-              re.S,
-          )
-          if match is None:
-              raise SystemExit("validated writeback python block missing")
-          script = textwrap.dedent(match.group(1))
-          compile(script, "<validated-writeback>", "exec")
-          exec(script, {"__name__": "__validated_writeback__"})
-          PY
-
+      - name: Compile
+        run: |
           python -m compileall -q \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          git diff --check "$BASE_SHA"
 
+      - name: Fast
+        run: |
           /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
+            --fast
+
+      - name: Direct
+        run: |
           /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
+            --direct
 
-          # The validated worktree restored the pinned read-only workflow. Do not
-          # include any workflow change in the Actions-token push: GitHub rejects
-          # workflow-file pushes without the separate workflows permission.
-          git checkout -- .github/workflows/p9-a2-p0-pr-validation.yml
-
-          changed="$(git diff --name-only | sort)"
-          expected="$(printf '%s\n%s\n' \
-            'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py' \
-            'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py' | sort)"
-          test "$changed" = "$expected"
-
-          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
-          test "$remote_head" = "$current_head"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          git diff --cached --check
-          cached="$(git diff --cached --name-only | sort)"
-          test "$cached" = "$expected"
-          git commit -m "Implement A2-P0 status callback admission finalizer"
-          git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
+      - name: Fixed-base diff check
+        run: |
+          git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
