@@ -1,49 +1,165 @@
-name: P9 A2 P0 PR validation
+name: P9 A2 P0 one-time authorized writeback
 
 on:
-  pull_request:
+  push:
     branches:
-      - master
+      - "plan/p9-a2-p0-action-window-status-admission"
     paths:
-      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
-      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
-      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION_execution_report.md"
 
 jobs:
-  validate:
+  apply:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout committed head and pinned TBGD
+      - name: Checkout exact triggering head and pinned TBGD
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Show source pin
+      - name: Apply authorized scoped patch, validate, and restore read-only workflow
+        env:
+          EXPECTED_PARENT: "bc3d745c9e96d1c44c01fed1a7b26a365ab0719d"
+          EXPECTED_BRANCH: "plan/p9-a2-p0-action-window-status-admission"
+          HELPER_SOURCE_COMMIT: "e32c6a41f211bdd2f88aca6402d2eac916572f48"
+          FINAL_WORKFLOW_SOURCE_COMMIT: "bc3d745c9e96d1c44c01fed1a7b26a365ab0719d"
         run: |
-          git submodule status turnbasedgamedata-main
-          git rev-parse HEAD
+          set -euo pipefail
+          current_head="$(git rev-parse HEAD)"
+          parent_head="$(git rev-parse HEAD^)"
+          if [ "$current_head" != "$GITHUB_SHA" ]; then
+            echo "trigger head mismatch: $current_head != $GITHUB_SHA" >&2
+            exit 1
+          fi
+          if [ "$parent_head" != "$EXPECTED_PARENT" ]; then
+            echo "unexpected parent head: $parent_head != $EXPECTED_PARENT" >&2
+            exit 1
+          fi
+          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
+          if [ "$remote_head" != "$current_head" ]; then
+            echo "remote branch moved before writeback: $remote_head != $current_head" >&2
+            exit 1
+          fi
 
-      - name: Compile
-        run: |
+          python - <<'PY'
+          import ast
+          import base64
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
+          workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
+          helper_source = os.environ["HELPER_SOURCE_COMMIT"]
+          final_source = os.environ["FINAL_WORKFLOW_SOURCE_COMMIT"]
+
+          old_workflow = subprocess.check_output(
+              ["git", "show", f"{helper_source}:{workflow_path.as_posix()}"],
+              text=True,
+          )
+          match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', old_workflow)
+          if match is None:
+              raise SystemExit("pinned helper payload missing")
+          helper = base64.b64decode(match.group(1)).decode("utf-8")
+          broken = "\n] -> tuple[\n"
+          fixed = "\n) -> tuple[\n"
+          if helper.count(broken) != 1:
+              raise SystemExit("pinned helper signature mismatch")
+          helper = helper.replace(broken, fixed, 1)
+          ast.parse(helper)
+
+          text = lowering_path.read_text(encoding="utf-8")
+          if "_finalize_action_window_status_callback_admission(" in text:
+              raise SystemExit("production finalizer unexpectedly already present")
+          helper_anchor = "    return linked\n\n\ndef _link_status_effect_runtime_fields(\n"
+          if text.count(helper_anchor) != 1:
+              raise SystemExit("helper insertion anchor missing or ambiguous")
+          text = text.replace(
+              helper_anchor,
+              "    return linked\n" + helper + "\n\ndef _link_status_effect_runtime_fields(\n",
+              1,
+          )
+
+          call_anchor = (
+              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
+              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          )
+          call_replacement = (
+              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
+              "        (\n"
+              "            status_callbacks,\n"
+              "            status_callback_tasks,\n"
+              "            status_callback_finalization_audit,\n"
+              "        ) = _finalize_action_window_status_callback_admission(\n"
+              "            status_callbacks,\n"
+              "            status_callback_tasks,\n"
+              "            status_event_families,\n"
+              "            effects,\n"
+              "            standalone_ability_graphs,\n"
+              "            ability_phases,\n"
+              "            formal_status_root_paths,\n"
+              "        )\n"
+              "        self._action_window_status_callback_finalization_audit = (\n"
+              "            status_callback_finalization_audit\n"
+              "        )\n"
+              "        status_event_families = _lower_status_event_families(\n"
+              "            status_callbacks, status_callback_tasks\n"
+              "        )\n"
+              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          )
+          if text.count(call_anchor) != 1:
+              raise SystemExit("build insertion anchor missing or ambiguous")
+          text = text.replace(call_anchor, call_replacement, 1)
+          lowering_path.write_text(text, encoding="utf-8")
+
+          final_workflow = subprocess.check_output(
+              ["git", "show", f"{final_source}:{workflow_path.as_posix()}"],
+          )
+          workflow_path.write_bytes(final_workflow)
+
+          changed = set(
+              subprocess.check_output(["git", "diff", "--name-only"], text=True)
+              .splitlines()
+          )
+          expected = {
+              lowering_path.as_posix(),
+              workflow_path.as_posix(),
+          }
+          if changed != expected:
+              raise SystemExit(
+                  "unexpected writeback paths:" + ",".join(sorted(changed ^ expected))
+              )
+          PY
+
           python -m compileall -q \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
+          git diff --check
 
-      - name: Fast
-        run: |
           /usr/bin/time -v python \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
             --fast
 
-      - name: Direct
-        run: |
           /usr/bin/time -v python \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
             --direct
 
-      - name: Fixed-base diff check
-        run: |
-          git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
+          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
+          if [ "$remote_head" != "$current_head" ]; then
+            echo "remote branch moved during validation: $remote_head != $current_head" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            .github/workflows/p9-a2-p0-pr-validation.yml
+          git diff --cached --check
+          git commit -m "Implement A2-P0 status callback admission finalizer"
+          git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
