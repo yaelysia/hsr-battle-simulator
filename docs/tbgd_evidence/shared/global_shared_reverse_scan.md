@@ -245,13 +245,45 @@ Classification:
 
 Do not infer SPD→AV, defence/resistance, BP initialization, clamping or RNG formulas from the field names.
 
+## AssistantTrigger — battle-capable definition, ordinary owner/parameter producer unresolved
+
+The W17 tail re-read exact pinned:
+
+`Config/ConfigGlobalModifier/GlobalModifier_Avatar_AssistantTrigger.json`
+
+blob:
+
+`9abe696bd09b44457a60f29ed2083eda56f200a4`
+
+The file contains real battle listeners and inserted-assistant operations. Representative definitions include:
+
+- `MAssistant_Trigger_EnemyDelayChange`: `OnListenModifierAdd`, checks enemy `STAT_SpeedDown`, then `TurnInsertAssistantAbility`;
+- `MAssistant_Trigger_EnemyStatusChangeToBurn`: reacts to `STAT_DOT_Burn` and inserts assistant ability;
+- `MAssistant_Trigger_AllEnemyBeingHitByFire`: `OnListenBreak` plus random retarget, then assistant insertion on its failure branch;
+- `MAssistant_Trigger_AvatarHPLoss` + helper: `OnBeforeAttack` / `OnAfterBeingHitAll` path to assistant insertion;
+- `MAssistant_Trigger_OnAfterMazeSkill`: `OnEnterBattle` with priority `-55`, then assistant insertion.
+
+The inserted operation is:
+
+`RPG.GameCore.TurnInsertAssistantAbility`
+
+and its `AssistantAbilityID` comes from a dynamic hash (`640129697`) whose local `ReadInfo.Type` is `None` in these modifiers.
+
+What the pin does **not** close:
+
+- an ordinary avatar/monster/stage owner that installs these trigger modifiers;
+- the authoritative producer/binding for `AssistantAbilityID`;
+- a generic engine-owned injection path that would establish ordinary reachability independently of an explicit config owner.
+
+Pinned/default-branch searches were used only as navigation and did not surface another owner/ID producer. Absence of a search hit is not retirement proof, so the family remains battle-capable/unresolved rather than `non-battle`.
+
+Durable classification:
+
+**definition present; ordinary owner and assistant-ID producer unresolved/export-gap**
+
+This tail is now frozen for the current pin. Reopen only if a new authoritative source family or explicit ordinary owner appears; do not repeat broad searches of the same dump each checkpoint.
+
 ## Residual unresolved shared infrastructure
-
-### AssistantTrigger
-
-`GlobalModifier_Avatar_AssistantTrigger.json` contains real battle listeners and `TurnInsertAssistantAbility` operations, but no ordinary avatar/monster/stage owner or authoritative assistant-ID table was closed in the first pass.
-
-Classification: battle-capable infrastructure, ordinary owner unresolved.
 
 ### `MGM_Endurance_00`
 
@@ -271,15 +303,17 @@ Several siblings remain candidate/unresolved or mode-specific because the first 
 - `SummonUnitGlobalConfig` is dominated by scene placement/navigation/interaction behavior and is not servant battle authority without a battle consumer.
 - `_Test`, `Global`, `Reference`, `GM`, `IL` and similar naming tokens are navigation hints, never sufficient scope classification.
 - an entity target lookup is not creation/config-selection authority.
+- battle-capable AssistantTrigger definitions are not automatically ordinary-reachable without an owner/injection source.
 
-## First-pass W17 conclusion
+## W17 conclusion after tail pass
 
-The broad reverse scan found multiple important ordinary producers missed by actor-centric forward traversal, but no battle-state consequence requiring a new W19+ work package. Findings fit existing W04/W06/W07/W08/W09/W10/W13/W16 domains.
+The broad reverse scan found multiple important ordinary producers missed by actor-centric forward traversal, but no battle-state consequence requiring a new W19+ work package.
 
-The broad scan is now near diminishing returns. Follow-up should be narrow:
+The remaining high-risk tails now have durable outcomes:
 
-1. resolve or freeze AssistantTrigger ordinary ownership;
-2. preserve CommonSkillPool as consumer-present/export-gap unless another pinned artifact exposes the executable payload;
-3. seek a generic skill-tree loader only if a new source family appears; otherwise preserve the export gap;
-4. inspect additional global siblings only when navigation finds a concrete ordinary consumer;
-5. stop repeatedly searching `GameCoreConstValue` formulas inside the same release-data dump without a new engine/source family.
+1. `AssistantTrigger`: battle-capable definitions confirmed; ordinary owner/assistant-ID producer unresolved and frozen as an export/ownership gap;
+2. `ConfigCommonSkillPool`: ordinary consumer/key confirmed; executable pin payload absent = export gap;
+3. generic skill-tree loader: consumer/producer spaces exist, generic loader body absent = export gap unless a new source appears;
+4. `GameCoreConstValue`: raw values present, generic formula consumers absent = engine-consumer gap.
+
+Accordingly, W17 should no longer perform repeated broad sibling scans or repeat these same missing-owner searches without new navigation signal. New shared definitions remain reviewable when a concrete ordinary consumer/reference edge appears.
