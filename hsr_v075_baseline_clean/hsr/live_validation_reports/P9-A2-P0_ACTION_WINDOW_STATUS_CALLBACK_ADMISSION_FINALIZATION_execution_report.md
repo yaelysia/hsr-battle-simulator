@@ -1,12 +1,17 @@
 # P9-A2-P0 Action-window Status Callback Admission Finalization — Execution Report
 
-## 1. Scope and heads
+## 1. Scope, authority, and heads
 
-- Base: `master@bd1a4ac94ca394d2ea563d086eaf56e9ed45b285`.
-- Production implementation commit: `a73576c6d5d751f6c5d14713e5ed49883fc82b2f` (`Implement A2-P0 status callback admission finalizer`).
-- Validated committed code/workflow head before this report: `6780464df87e7f98ec1b31793b2f808bd313f7f2` (`Restore PR12 read-only final validation workflow`).
-- Final PR governance head: the commit containing this report. Its exact 40-character SHA is recorded in the PR EXEC handoff / CI-wait comment because a Git commit cannot literally contain its own SHA before that commit exists.
-- PR remains independent of unmerged PR #11 implementation and of PR #9 RandomConfig/RNG work.
+- Fixed base: `master@bd1a4ac94ca394d2ea563d086eaf56e9ed45b285`.
+- Pinned TBGD source: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
+- Production implementation commit remains `a73576c6d5d751f6c5d14713e5ed49883fc82b2f` (`Implement A2-P0 status callback admission finalizer`).
+- Read-only validation workflow restore commit remains `6780464df87e7f98ec1b31793b2f808bd313f7f2`.
+- REVIEW returned the first execution report for STRICT evidence remediation in PR comment `5578826676`.
+- The final validator-only remediation head before this report is `fd300413dd4c0e330c711b6542c74d81bda1b91b`.
+- Its committed-head validation run is `34188668989`, conclusion `success`.
+- This report update creates a later governance-only head. The exact final report-containing head and its own committed-head CI are recorded in the subsequent PR WAIT/HANDOFF comment because a Git commit cannot contain its own SHA before it exists.
+
+No production file changed after `a73576c6d5d751f6c5d14713e5ed49883fc82b2f`. All remediation after REVIEW comment `5578826676` was confined to the card-authorized validator and this execution report.
 
 ## 2. Exact production diff
 
@@ -16,51 +21,62 @@ The only production file changed by this card is:
 
 Production changes are limited to:
 
-1. In `TBGDLowering.build()`, after the existing initial `_lower_status_event_families(status_callbacks, status_callback_tasks)` projection and after typed `TriggerAbility` links/facts are available, call `_finalize_action_window_status_callback_admission(...)` with the existing callbacks, tasks, event families, effects, standalone graphs, phases, and `formal_status_root_paths`.
-2. Store the returned audit as `_action_window_status_callback_finalization_audit` and recompute the existing `StatusEventFamilyIR` projection from the finalized callback/task state before the existing status-event blocker projection continues.
-3. Add `_finalize_action_window_status_callback_admission(...)` as the single post-link L0 admission finalizer. It consumes existing source/typed facts only and changes only `coverage_status` / blocker fields and callback aggregate admission fields for rows that satisfy the exact stale-event criteria.
-4. The finalizer verifies unique callback/task/effect/graph/phase identities, exact source mode and formal source path, a unique executable `action.window.*` producer, the exact stale `status_callback_event_not_admitted:<event>` blocker, executable `TriggerAbility` effect semantics, exactly one typed linked phase-or-standalone target, formal target consistency, callback root-ledger membership, formal-branch provenance for non-root owned tasks, and fail-closed sibling closure.
+1. In `TBGDLowering.build()`, after existing status callback/task lowering, initial `StatusEventFamilyIR` projection, and typed `TriggerAbility` linking, call `_finalize_action_window_status_callback_admission(...)` using existing callbacks, tasks, event families, effects, standalone graphs/phases, and formal source paths.
+2. Store the returned audit and recompute the existing status event family projection before the pre-existing blocker propagation / queue / invocation-role / task-graph materialization sequence continues.
+3. The finalizer only re-adjudicates the exact stale `status_callback_event_not_admitted:<event>` blocker when source mode, real action-window producer, typed target, formal graph identity, callback root ledger, formal-branch closure, and all independent blockers prove the row is admissible.
+4. Stable callback/task/source/link/topology identity is preserved. No event registry, callback allowlist, character/ability/file special case, public IR schema, TaskGraphIR/continuation change, runtime routing authority, RandomConfig caller, weighted-selection implementation, or RNG ledger was added.
 
-No second event registry, callback allowlist, role/ability/file-name special case, synthetic producer, public IR schema, TaskGraphIR contract, continuation contract, or runtime routing authority was added.
+## 3. Production order and existing authorities
 
-Validation-only file:
-
-`hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py`
-
-Governance-only files in the PR are this execution card/report and `.github/workflows/p9-a2-p0-pr-validation.yml`.
-
-## 3. Real build call position and authorities
-
-Observed production order on the merged-master lineage used by PR #12:
+Observed production order used by the validator is:
 
 ```text
 raw character ability source
   -> per-file status callback/task lowering
-  -> existing callback/task source + effect/task semantics
+  -> existing source/effect/task semantics
   -> existing status event family/runtime producer projection
-  -> existing typed TriggerAbility link facts
-  -> _finalize_action_window_status_callback_admission   # A2-P0
-  -> recomputed existing StatusEventFamilyIR projection
-  -> existing formal status task-graph materialization/catalog
-  -> CanonicalIR
-  -> RuleBook
+  -> existing typed TriggerAbility link pass
+  -> A2-P0 final admission projection
+  -> recomputed status event family / callback blocker propagation
+  -> existing queue intent blocking
+  -> existing queue resolution authority
+  -> existing invocation-role authority
+  -> existing task-graph materialization/catalog
+  -> CanonicalIR / RuleBook
 ```
 
-Authorities consumed, not replaced:
+Existing authorities are consumed, not replaced:
 
-- event/runtime producer authority: existing `StatusEventFamilyIR.runtime_event_sources`;
-- source identity: existing mainline character ability lowering and formal source paths;
-- nested target identity: existing `linked_ability_phase_id` / `linked_standalone_graph_id`;
-- formal graph/root resolution: existing standalone graph/phase catalog and task-graph materializer;
-- callback aggregate fields: existing `StatusCallbackIR` semantics.
+- event/runtime producer: existing `StatusEventFamilyIR.runtime_event_sources`;
+- callback/task identity: current mainline character ability lowering and source graph;
+- typed target: existing `linked_ability_phase_id` / `linked_standalone_graph_id`;
+- queue roots: existing `_lower_queue_resolutions(...)`;
+- invocation role: existing `_assign_character_ability_invocation_roles(...)`;
+- formal task graphs: existing task-graph materializer helpers and catalog invariants;
+- A1 admission: existing `systems/action_contract.py`, `rules/task_graph.py`, `tbgd/task_graph_materializer.py`, and `validate_p9_formal_action_graph_admission_authority.py`.
 
-The finalizer does not execute callbacks and does not implement PR #11 action-window runtime transport.
+## 4. REVIEW remediation summary
 
-## 4. Independent source denominator
+REVIEW comment `5578826676` identified three ordinary STRICT-evidence defects. The final validator closes them as follows.
 
-Committed-head Direct run rebuilt the focused formal character-source denominator from the pinned TBGD submodule (`14c1d18f91a8101d610e6c523447a7517de3fae1`) and production lowering. The validator does not hard-code a character, callback ID, task ID, source file, or denominator count as a pass gate.
+### 4.1 Independent source denominator and bidirectional reconciliation
 
-Focused build evidence:
+Before invoking the production finalizer, Direct independently builds the candidate set from pinned TBGD + current character source graph + raw lowered callback/task/effect facts + current event-family producer facts + typed TriggerAbility target facts.
+
+The independent candidate key is `(source_path, callback_id, task_id, event)`. For every candidate, Direct records and reconciles:
+
+- source path / source mode;
+- callback and task IDs;
+- event;
+- pre-finalizer callback coverage/blocker;
+- pre-finalizer task coverage/blocker;
+- unique real `action.window.*` runtime source;
+- typed linked phase/standalone target;
+- independently resolved formal graph identity.
+
+Production finalizer audit rows with action-window producer facts must have exactly the same key set. Missing or extra rows, duplicate identities, or any field mismatch fail Direct. The final run reported `bidirectional_reconciliation = exact`.
+
+Dynamic current-source result in run `34188668989`:
 
 - `snapshot_source_count = 80`
 - `formal_source_path_count = 80`
@@ -68,20 +84,108 @@ Focused build evidence:
 - `status_callback_count = 2470`
 - `status_callback_task_count = 9392`
 - `standalone_graph_count = 1084`
-- `task_graph_materialization_count = 2396`
+- independent action-window TriggerAbility denominator count = `1`
+- promoted count = `1`
 
-The dynamic action-window producer-backed `mainline_avatar_ability` `TriggerAbility` denominator contained `1` real candidate in this source snapshot.
+No role, character, callback ID, task ID, file name, or count is hard-coded as a pass condition.
 
-## 5. Before/after audit histograms
+### 4.2 Production-equivalent queue / invocation-role context
 
-The production audit covered eight `TriggerAbility` audit rows. Decision histogram:
+The focused Direct no longer supplies an empty queue context. It first applies the existing callback-derived queue blocking, then uses the existing queue resolver and invocation-role authority.
+
+Run `34188668989` evidence:
+
+- total source-backed queue intents in the focused source build: `213`;
+- production-relevant `TurnInsertAbility` queue intent denominator used for role resolution: `178`;
+- queue resolutions: `178`;
+- queue resolution coverage: `150 executable`, `28 blocked`;
+- executable queue-root standalone graphs: `43`;
+- full queue-aware standalone phase role histogram:
+  - `nested_only = 35`
+  - `standalone_root = 43`
+  - `unbound_definition = 983`
+  - `non_gameplay_noop = 23`
+
+Every blocked queue resolution has an explicit reason. Existing blocked/deferred/unsupported queue facts are not erased.
+
+The dynamically promoted status target is not one of the executable queue-root graphs. Its focused target closure contains exactly one phase and that phase remains `nested_only` under the real queue-aware invocation-role projection.
+
+For the final focused RuleBook, the validator uses existing production task-graph helpers to build a source-closed formal slice consisting of the dynamic action-window candidate callback plus its queue-aware typed-target ability closure. This keeps CanonicalIR formal ability/status graph denominators internally complete instead of omitting queue authority or claiming unrelated formal entries were materialized.
+
+Final focused formal slice evidence:
+
+- formal target graph count: `1`;
+- formal target phase count: `1`;
+- ability formal slice count: `1`;
+- status formal slice count: `1`;
+- installed task-graph materializations: `2`;
+- focused queue-aware invocation-role histogram: `nested_only = 1`.
+
+### 4.3 A1 admission regression
+
+Fast and Direct both reuse the existing A1 validator rather than inventing a parallel authority.
+
+The following A1 authority paths are byte-for-byte equal to fixed base `bd1a4ac94ca394d2ea563d086eaf56e9ed45b285`:
+
+```text
+hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py
+hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py
+hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py
+hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_formal_action_graph_admission_authority.py
+```
+
+Run `34188668989`:
+
+- A1 Fast behavior digest: `7b47540c2cd8bea0dd218ae9898552f2f5d3bcae31ce76cd27a3f249144b8dc7`;
+- A1 Direct behavior digest: `44c94fe263d7e75761e4d0747318dfa1418d0b8daa481c7daddc5cfce350cf28`;
+- A1 Direct scanned `31` real action definitions from signed TBGD source;
+- all A1 Fast/Direct predicates passed, including graph-root/nested-link discovery, reachable blocker preservation, public target query/accept, action-contract evaluation after target acceptance, no forged authorization/fingerprint, and zero full CanonicalIR builds inside the A1 Direct helper.
+
+## 5. Complete same-action-window-event transition ledger
+
+Direct independently snapshots every formal `mainline_avatar_ability` callback whose event has a unique real action-window runtime source, plus all owned callback tasks, before finalization and after the normal post-finalizer blocker propagation.
+
+Run `34188668989` denominator:
+
+- action-window callbacks: `238`;
+- owned callback tasks: `1008`.
+
+Callback status histogram was unchanged:
+
+```text
+before: blocked=112, executable=126
+after:  blocked=112, executable=126
+```
+
+There were no callback aggregate field changes.
+
+Task status histogram changed by exactly one row:
+
+```text
+before: blocked=458, executable=550
+after:  blocked=457, executable=551
+```
+
+The stale `OnAfterAttack` task reason changed from `111` rows to `110`; empty task reason changed from `550` to `551`. All other independent condition/effect/queue/source/target blocker reason counts remained unchanged.
+
+The only task transition was the same dynamically reconciled TriggerAbility candidate selected by the production finalizer:
+
+- before: `blocked`, `status_callback_event_not_admitted:OnAfterAttack`;
+- after: `executable`, no blocker;
+- `promoted_by_finalizer = true`.
+
+Any blocked task becoming executable without a corresponding production finalizer `promoted` audit row fails Direct. Any promoted row whose old reason is not the exact stale event blocker fails Direct.
+
+## 6. Production audit and promoted row evidence
+
+The production finalizer audit currently contains eight TriggerAbility audit rows:
 
 ```text
 action_window_producer_missing: 7
 promoted: 1
 ```
 
-Before-task blocker histogram:
+Before-task reason histogram for those audit rows:
 
 ```text
 status_callback_event_not_admitted:OnAfterAttack: 1
@@ -92,43 +196,39 @@ status_callback_event_not_admitted:OnListenBreak: 1
 status_callback_task_opcode_not_admitted:TriggerAbility: 2
 ```
 
-After-task coverage histogram:
+After-task status histogram:
 
 ```text
 blocked: 7
 executable: 1
 ```
 
-Callback aggregate transition summary:
+The dynamic positive representative in the current source snapshot is the Silver Wolf `OnAfterAttack -> TriggerAbility` formal branch. This identity is report evidence only and is not used as a validator or production allowlist.
 
-- no audited callback identity/source/event/root ledger changed;
-- the one promoted task belonged to a callback whose aggregate callback coverage/admission was already executable with no callback blocker, so that callback remained executable before/after;
-- the seven non-promoted rows caused no callback aggregate transition;
-- therefore callback aggregate admission was not used as a blanket promotion path, and all callback-level transitions in this audit were unchanged.
+For that dynamic row, run `34188668989` proves:
 
-## 6. Promoted row ledger
+- pre-finalizer task blocker is exactly `status_callback_event_not_admitted:OnAfterAttack`;
+- event producer is uniquely `action.window.after_attack`;
+- callback/task are executable after finalization;
+- typed target is unique;
+- typed target resolves to the existing standalone formal graph;
+- target is `nested_only` under real queue context and is not a queue root;
+- formal status root materializes as `task_graph:1547145a4dc70ef3ce732420f661012705efcaa561441dce019adb58a9e1b20d`;
+- no callback/task/source/link stable identity changes.
 
-The dynamically selected real positive row in the current source snapshot was:
+The other seven audited TriggerAbility rows remain blocked.
 
-- source: `Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Silwolf_00_Ability.json`
-- callback: `status_callback:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Silwolf_00_Ability.json:MAvatar_Advanced_Silwolf_00_Passive:2:OnAfterAttack`
-- task: `status_callback_task:status_callback:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Silwolf_00_Ability.json:MAvatar_Advanced_Silwolf_00_Passive:2:OnAfterAttack:$.AbilityList[7].Modifiers.MAvatar_Advanced_Silwolf_00_Passive._CallbackList[1].CallbackConfig[1].formal_branch[0].child[0]:TriggerAbility`
-- event: `OnAfterAttack`
-- old reason: `status_callback_event_not_admitted:OnAfterAttack`
-- new task status: `executable`
-- action-window producer: `action.window.after_attack`
-- typed target: `standalone_ability_graph:Config_ConfigAbility_Avatar_Advanced_Avatar_Advanced_Silwolf_00_Ability_json:Avatar_Advanced_Silwolf_00_PassiveSkill_RandomBug`
-- formal graph: same standalone graph identity above
-- resolved formal status root graph: `task_graph:1547145a4dc70ef3ce732420f661012705efcaa561441dce019adb58a9e1b20d`
-- target phases were verified by Direct to have the existing `nested_only` invocation role.
+## 7. Fast validation
 
-This row is report evidence only; its role/character/file identity is not a production or validator allowlist.
+Command:
 
-## 7. Non-promoted rows
+```bash
+python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
+```
 
-Seven audited `TriggerAbility` rows remained blocked because no unique real `action.window.*` producer existed for their event family in the current runtime-source mapping. The finalizer did not remove their original independent blockers or promote them through callback aggregation.
+Run `34188668989`: `FAST PASS`.
 
-Fast negative coverage additionally exercised and reported the following fail-closed reasons:
+Negative reason classes emitted:
 
 ```text
 action_window_producer_ambiguous
@@ -142,25 +242,26 @@ typed_target_graph_missing
 typed_target_missing
 ```
 
-## 8. Fast validation
+Fast also verifies:
 
-Command:
+- positive exact-stale promotion;
+- independent task blocker preservation;
+- typed target missing/ambiguous/missing-graph fail closed;
+- synthetic/wrong source mode fail closed;
+- blocked/missing/ambiguous producer fail closed;
+- blocked sibling closure;
+- formal-branch child closure semantics;
+- stable callback/task/source/link identity;
+- S8B5B link pass alone does not promote the parent;
+- A1 behavior regression;
+- governance guards against forbidden runtime/task-graph/RandomConfig-RNG scope expansion.
 
-```bash
-python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
-```
+Resource evidence from run `34188668989`:
 
-Committed-head CI result: `FAST PASS`.
+- elapsed command time: about `2.66 s`;
+- peak RSS: `135144 KiB`.
 
-Current final-code CI resource evidence:
-
-- elapsed wall clock: about `1.68 s` in run `34180077591`;
-- peak RSS: `118596 KiB`;
-- all required negative reason classes above were emitted.
-
-Fast also retains governance guards against runtime / task-graph / RandomConfig-RNG scope expansion and checks stable identity plus the S8B5B rule that the typed-link pass alone does not promote a blocked parent.
-
-## 9. Real L0 Direct validation
+## 8. Real L0 Direct validation
 
 Command:
 
@@ -168,37 +269,37 @@ Command:
 python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
 ```
 
-Committed-head CI result: `DIRECT PASS`.
+Run `34188668989`: `DIRECT PASS`.
 
-Evidence from run `34180077591`:
+Key evidence:
 
 - builder: `focused_formal_character_source_denominator`;
+- independent denominator builder: `pre_finalizer_source_backed_ir`;
+- bidirectional reconciliation: `exact`;
 - denominator count: `1`;
 - promoted count: `1`;
-- internal source-build wall time: `23.942 s`;
-- measured command elapsed: about `25.63 s`;
-- peak RSS: `636092 KiB`;
-- formal source coverage: `80 / 80` selected formal source files;
-- final CanonicalIR/RuleBook contains executable callback/task state, unique typed nested target, existing nested-only invocation role, and a materialized formal status root.
+- complete same-action-window-event transition ledger: `238 callbacks / 1008 tasks`;
+- queue-aware role resolution: `178` real `TurnInsertAbility` resolutions;
+- focused formal closure: `1` target graph, `1` target phase, `1` ability slice, `1` status slice;
+- installed materializations: `2`;
+- internal focused build wall time before the separate A1 Direct regression: `21.664 s`;
+- total measured Direct command elapsed: about `3:12.03`;
+- peak RSS: `733968 KiB`.
 
-## 10. CI and fixed-base check
+The higher total Direct time includes the independent A1 real-source behavior regression; no validation criterion was removed to reduce runtime.
 
-Committed-head validation run:
+## 9. CI, fixed-base check, and token permissions
 
-- run id: `34180077591`
-- URL: `https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34180077591`
-- conclusion: `success`
+Validated pre-report head:
+
+`fd300413dd4c0e330c711b6542c74d81bda1b91b`
+
+Committed-head workflow run:
+
+- run id: `34188668989`;
+- job id: `101942040773`;
+- conclusion: `success`;
 - successful steps: checkout pinned TBGD, source pin, compile, Fast, Direct, fixed-base diff check.
-
-The run log shows the restored final workflow token permissions as:
-
-```text
-Contents: read
-Metadata: read
-Packages: read
-```
-
-Thus the one-off Actions write permission used during implementation is no longer present in the final validation workflow.
 
 Fixed-base command:
 
@@ -208,30 +309,51 @@ git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
 
 Result: PASS.
 
-## 11. Write-permission cleanup history
+The successful final-code job shows normal read-only `GITHUB_TOKEN` permissions:
 
-- The first one-off writeback attempt validated Fast/Direct but GitHub rejected a push that also modified the workflow because the Actions token lacked the separate `workflows` permission. That runner-local commit never reached the branch.
-- A production-only retry (`34179929026`) again passed Fast/Direct and pushed only `lowering.py` plus the validator as `a73576c6d5d751f6c5d14713e5ed49883fc82b2f`.
-- Commit `6780464df87e7f98ec1b31793b2f808bd313f7f2` then restored `.github/workflows/p9-a2-p0-pr-validation.yml` to the normal read-only PR validator.
-- The subsequent committed-head run `34180077591` passed with read-only token permissions.
+```text
+Contents: read
+Metadata: read
+Packages: read
+```
 
-No new write permission is retained or requested by this report/finalization step.
+No write permission is retained or requested by the final workflow.
 
-## 12. Scope proof
+## 10. Remediation CI audit trail
 
-PR changed-file scope before adding this report was exactly:
+After REVIEW comment `5578826676`, several intermediate validator-only heads intentionally failed while strengthening the STRICT evidence. These failures did not change production behavior and were repaired under EXEC rather than re-planned:
+
+- run `34185605704`: focused Direct widened ability/materializer context incorrectly;
+- run `34186604858`: transition ledger incorrectly required formal descendants to share callback root source path;
+- run `34187325178`: unrelated nested-only ability entries were still included in the focused formal materializer denominator;
+- run `34187867529`: status-only formal slice was attached to a CanonicalIR still claiming all formal ability entries;
+- final validator head `fd300413dd4c0e330c711b6542c74d81bda1b91b`, run `34188668989`: all Compile/Fast/Direct/fixed-base gates passed.
+
+These are ordinary validation harness corrections. They did not require production scope expansion, new dependency, new permission, or public-contract change.
+
+## 11. Scope proof
+
+Current PR changed-file scope is limited to the card-authorized five files:
 
 ```text
 .github/workflows/p9-a2-p0-pr-validation.yml
+hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION_execution_report.md
 hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION.md
 hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py
 hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
 ```
 
-This report adds only the card-authorized report path. No `core/**`, `systems/**`, `rules/**`, `task_graph_materializer.py`, `systems/task_graph.py`, `TaskGraphContinuation`, PR #11 runtime file, RandomConfig weighted-selection caller, or RNG ledger implementation was modified.
+No `core/**`, `systems/**`, `rules/**`, `tbgd/task_graph_materializer.py`, `TaskGraphContinuation`, PR #11 runtime file, or PR #9 RandomConfig/weighted-selection/RNG implementation changed in this PR. The A1 authority files are exact-equal to the fixed base.
 
-## 13. Remaining work / handoff boundary
+## 12. Remaining work / handoff boundary
 
-A2-P0 closes only the merged-master L0 source-backed action-window status callback/task admission finalization prerequisite.
+A2-P0 closes only the merged-master L0 source-backed action-window status callback/task admission-finalization prerequisite.
 
-After REVIEW independently accepts and merges PR #12, PR #11 must preserve its existing implementation, update onto the newly merged master, and rerun its original Fast plus the unchanged real `CombatExecutor.execute(ActionCommand)` Direct. This report and A2-P0 L0 Direct are not substitutes for PR #11 runtime Direct. PR #9 RandomConfig/RNG remains deferred until the PR #11 chain is accepted/merged.
+After REVIEW independently accepts and merges PR #12:
+
+1. preserve PR #11's existing implementation;
+2. update PR #11 onto the newly merged master;
+3. rerun PR #11's original Fast unchanged;
+4. rerun PR #11's unchanged real `CombatExecutor.execute(ActionCommand)` Direct;
+5. do not substitute this A2-P0 L0 Direct for PR #11 runtime Direct;
+6. keep PR #9 RandomConfig/RNG deferred until the PR #11 chain is independently accepted/merged.
