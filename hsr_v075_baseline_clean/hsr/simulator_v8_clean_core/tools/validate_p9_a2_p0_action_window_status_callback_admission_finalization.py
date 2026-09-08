@@ -32,6 +32,7 @@ from hsr.simulator_v8_clean_core import BASELINE_VERSION
 from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
+    STATUS_EVENT_RUNTIME_SOURCES,
     TBGDLowering,
     _assign_character_ability_invocation_roles,
     _block_status_callback_derived_by_callback,
@@ -531,6 +532,264 @@ def _action_window_event_sources(families: list[Any]) -> dict[str, str]:
     return result
 
 
+def _static_action_window_source(event: str) -> str:
+    sources = tuple(
+        source
+        for source in STATUS_EVENT_RUNTIME_SOURCES.get(event, ())
+        if source.startswith("action.window.")
+    )
+    return sources[0] if len(sources) == 1 else ""
+
+
+def _raw_opcode(task: Mapping[str, Any]) -> str:
+    raw_type = task.get("$type")
+    return raw_type.removeprefix("RPG.GameCore.") if isinstance(raw_type, str) else ""
+
+
+def _raw_occurrence_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row.get("callback_source_path") or ""),
+        str(row.get("callback_json_path") or ""),
+        str(row.get("event") or ""),
+        str(row.get("task_source_path") or ""),
+        str(row.get("task_json_path") or ""),
+        str(row.get("raw_opcode") or ""),
+    )
+
+
+def _raw_source_trigger_ability_denominator(
+    lowerer: TBGDLowering,
+    formal_context: Any,
+    formal_source_paths: set[str],
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    callback_locations: set[tuple[str, str, str]] = set()
+
+    def walk_task(
+        task: Mapping[str, Any],
+        *,
+        callback_source_path: str,
+        callback_json_path: str,
+        event: str,
+        action_window_source: str,
+        task_source_path: str,
+        task_json_path: str,
+        template_stack: tuple[str, ...],
+    ) -> None:
+        opcode = _raw_opcode(task)
+        if opcode == "TriggerAbility":
+            rows.append(
+                {
+                    "callback_source_path": callback_source_path,
+                    "callback_json_path": callback_json_path,
+                    "event": event,
+                    "source_mode": "mainline_avatar_ability",
+                    "action_window_runtime_source": action_window_source,
+                    "task_source_path": task_source_path,
+                    "task_json_path": task_json_path,
+                    "raw_opcode": opcode,
+                    "callback_content_sha256": str(
+                        formal_context.content_sha256_by_path.get(
+                            callback_source_path, ""
+                        )
+                    ),
+                    "task_content_sha256": str(
+                        formal_context.content_sha256_by_path.get(
+                            task_source_path, ""
+                        )
+                    ),
+                }
+            )
+        if not opcode:
+            return
+        children, topology_blocked_reason = lowerer._formal_ability_task_children(
+            task,
+            source_path=task_source_path,
+            source_json_path=task_json_path,
+            source_opcode=opcode,
+            context=formal_context,
+            template_stack=template_stack,
+        )
+        if topology_blocked_reason:
+            return
+        for child in children:
+            walk_task(
+                child.raw,
+                callback_source_path=callback_source_path,
+                callback_json_path=callback_json_path,
+                event=event,
+                action_window_source=action_window_source,
+                task_source_path=child.source_path,
+                task_json_path=child.json_path,
+                template_stack=child.template_stack,
+            )
+
+    def visit(value: Any, path: str, source_path: str) -> None:
+        if isinstance(value, Mapping):
+            callbacks = value.get("_CallbackList")
+            if isinstance(callbacks, (list, tuple)):
+                for callback_index, callback in enumerate(callbacks):
+                    if not isinstance(callback, Mapping):
+                        continue
+                    event = callback.get("Event")
+                    if not isinstance(event, str) or not event:
+                        continue
+                    action_window_source = _static_action_window_source(event)
+                    if not action_window_source:
+                        continue
+                    tasks = callback.get("CallbackConfig")
+                    if not isinstance(tasks, (list, tuple)):
+                        continue
+                    callback_json_path = f"{path}._CallbackList[{callback_index}]"
+                    callback_locations.add(
+                        (source_path, callback_json_path, event)
+                    )
+                    for task_index, task in enumerate(tasks):
+                        if not isinstance(task, Mapping):
+                            continue
+                        walk_task(
+                            task,
+                            callback_source_path=source_path,
+                            callback_json_path=callback_json_path,
+                            event=event,
+                            action_window_source=action_window_source,
+                            task_source_path=source_path,
+                            task_json_path=(
+                                f"{callback_json_path}.CallbackConfig[{task_index}]"
+                            ),
+                            template_stack=(),
+                        )
+            for key, child in value.items():
+                visit(child, f"{path}.{key}", source_path)
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                visit(child, f"{path}[{index}]", source_path)
+
+    for source_path in sorted(formal_source_paths):
+        document = formal_context.documents.get(source_path)
+        if not isinstance(document, Mapping):
+            _fail(f"raw_formal_source_document_missing:{source_path}")
+        if not formal_context.content_sha256_by_path.get(source_path):
+            _fail(f"raw_formal_source_fingerprint_missing:{source_path}")
+        visit(document, "$", source_path)
+
+    by_key = {_raw_occurrence_key(row): row for row in rows}
+    if len(by_key) != len(rows):
+        _fail("raw_source_trigger_ability_occurrence_not_unique")
+    ordered = tuple(by_key[key] for key in sorted(by_key))
+    return ordered, {
+        "source": "formal_context.documents + control_by_location/template references",
+        "producer_authority": "STATUS_EVENT_RUNTIME_SOURCES",
+        "callback_count": len(callback_locations),
+        "trigger_ability_occurrence_count": len(ordered),
+        "occurrence_key_schema": [
+            "callback_source_path",
+            "callback_json_path",
+            "event",
+            "task_source_path",
+            "task_json_path",
+            "raw_opcode",
+        ],
+        "occurrence_digest": _json_digest(
+            [_raw_occurrence_key(row) for row in ordered]
+        ),
+    }
+
+
+def _pre_finalizer_trigger_ability_occurrences(
+    callbacks: list[Any],
+    tasks: list[Any],
+    formal_source_paths: set[str],
+    formal_context: Any,
+) -> tuple[dict[str, Any], ...]:
+    callbacks_by_id = _unique_index(callbacks, "callback_id", "callback")
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        if task.opcode != "TriggerAbility":
+            continue
+        callback = callbacks_by_id.get(task.callback_id)
+        if callback is None:
+            _fail(f"raw_reconciliation_callback_missing:{task.callback_id}")
+        action_window_source = _static_action_window_source(callback.event)
+        if (
+            not action_window_source
+            or callback.source.source_path not in formal_source_paths
+            or callback.source_mode != "mainline_avatar_ability"
+        ):
+            continue
+        callback_json_path = callback.source.evidence.get("callback_json_path")
+        task_json_path = task.source.evidence.get("json_path")
+        raw_opcode = task.source.evidence.get("raw_opcode")
+        admission_source_path = task.source.evidence.get("admission_source_path")
+        if (
+            not isinstance(callback_json_path, str)
+            or not callback_json_path.startswith("$")
+            or not isinstance(task_json_path, str)
+            or not task_json_path.startswith("$")
+            or raw_opcode != "TriggerAbility"
+            or admission_source_path != callback.source.source_path
+            or not formal_context.content_sha256_by_path.get(task.source.source_path)
+        ):
+            _fail(f"pre_finalizer_trigger_source_location_invalid:{task.task_id}")
+        rows.append(
+            {
+                "callback_source_path": callback.source.source_path,
+                "callback_json_path": callback_json_path,
+                "event": callback.event,
+                "source_mode": callback.source_mode,
+                "action_window_runtime_source": action_window_source,
+                "task_source_path": task.source.source_path,
+                "task_json_path": task_json_path,
+                "raw_opcode": raw_opcode,
+                "callback_id": callback.callback_id,
+                "task_id": task.task_id,
+                "old_callback_coverage_status": callback.coverage_status,
+                "old_callback_admission_status": callback.admission_status,
+                "old_callback_blocked_reason": callback.blocked_reason,
+                "old_callback_blocking_dependency": callback.blocking_dependency,
+                "old_task_coverage_status": task.coverage_status,
+                "old_task_blocked_reason": task.blocked_reason,
+            }
+        )
+    by_key = {_raw_occurrence_key(row): row for row in rows}
+    if len(by_key) != len(rows):
+        _fail("pre_finalizer_trigger_source_occurrence_not_unique")
+    return tuple(by_key[key] for key in sorted(by_key))
+
+
+def _reconcile_raw_source_with_pre_finalizer_ir(
+    raw_rows: tuple[dict[str, Any], ...],
+    lowered_rows: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    raw_by_key = {_raw_occurrence_key(row): row for row in raw_rows}
+    lowered_by_key = {_raw_occurrence_key(row): row for row in lowered_rows}
+    if set(raw_by_key) != set(lowered_by_key):
+        missing = sorted(set(raw_by_key) - set(lowered_by_key))
+        extra = sorted(set(lowered_by_key) - set(raw_by_key))
+        _fail(
+            "raw_source_to_pre_finalizer_ir_bidirectional_mismatch:"
+            + json.dumps({"missing": missing, "extra": extra}, sort_keys=True)
+        )
+    reconciled: list[dict[str, Any]] = []
+    for key in sorted(raw_by_key):
+        raw = raw_by_key[key]
+        lowered = lowered_by_key[key]
+        for field in (
+            "callback_source_path",
+            "callback_json_path",
+            "event",
+            "source_mode",
+            "action_window_runtime_source",
+            "task_source_path",
+            "task_json_path",
+            "raw_opcode",
+        ):
+            if str(raw.get(field) or "") != str(lowered.get(field) or ""):
+                _fail(f"raw_source_to_pre_finalizer_ir_field_mismatch:{field}:{key}")
+        reconciled.append({**raw, **lowered})
+    return tuple(reconciled)
+
+
 def _independent_expected_denominator(
     callbacks: list[Any],
     tasks: list[Any],
@@ -539,11 +798,15 @@ def _independent_expected_denominator(
     graphs: list[Any],
     phases: list[Any],
     formal_source_paths: set[str],
+    raw_reconciled: tuple[dict[str, Any], ...],
 ) -> tuple[dict[str, Any], ...]:
     callbacks_by_id = _unique_index(callbacks, "callback_id", "callback")
     effects_by_id = _unique_index(effects, "effect_id", "effect")
     graphs_by_id = _unique_index(graphs, "standalone_ability_graph_id", "graph")
     phases_by_id = _unique_index(phases, "phase_id", "phase")
+    raw_task_ids = {str(row.get("task_id") or "") for row in raw_reconciled}
+    if not raw_task_ids or "" in raw_task_ids:
+        _fail("raw_reconciled_trigger_task_identity_missing")
     families_by_event: dict[str, list[Any]] = {}
     for family in families:
         families_by_event.setdefault(family.callback_event, []).append(family)
@@ -554,8 +817,10 @@ def _independent_expected_denominator(
 
     rows: list[dict[str, Any]] = []
     for task in tasks:
-        if task.opcode != "TriggerAbility":
+        if task.task_id not in raw_task_ids:
             continue
+        if task.opcode != "TriggerAbility":
+            _fail(f"raw_reconciled_task_opcode_changed:{task.task_id}")
         callback = callbacks_by_id.get(task.callback_id)
         if callback is None:
             _fail(f"independent_denominator_callback_missing:{task.callback_id}")
@@ -955,6 +1220,11 @@ def _build_focused_direct_ir() -> tuple[
     formal_source_paths = {item.source.source_path for item in snapshot.sources}
     if not formal_source_paths:
         _fail("focused_formal_source_denominator_empty")
+    raw_source_occurrences, raw_source_meta = _raw_source_trigger_ability_denominator(
+        lowerer, formal_context, formal_source_paths
+    )
+    if not raw_source_occurrences:
+        _fail("raw_source_action_window_trigger_ability_denominator_empty")
 
     queue_priorities = lowerer._lower_queue_priorities()
     queue_priority_lookup = {
@@ -999,6 +1269,16 @@ def _build_focused_direct_ir() -> tuple[
     if selected_paths != expected_paths or not selected_paths:
         _fail("focused_formal_source_file_denominator_incomplete")
 
+    pre_finalizer_source_occurrences = _pre_finalizer_trigger_ability_occurrences(
+        status_callbacks,
+        status_callback_tasks,
+        formal_source_paths,
+        formal_context,
+    )
+    raw_to_pre_finalizer = _reconcile_raw_source_with_pre_finalizer_ir(
+        raw_source_occurrences, pre_finalizer_source_occurrences
+    )
+
     (
         standalone_graphs,
         standalone_phases,
@@ -1038,6 +1318,7 @@ def _build_focused_direct_ir() -> tuple[
         standalone_graphs,
         standalone_phases,
         formal_source_paths,
+        raw_to_pre_finalizer,
     )
     if not expected_denominator:
         _fail("independent_source_denominator_empty")
@@ -1360,6 +1641,11 @@ def _build_focused_direct_ir() -> tuple[
         "snapshot_source_count": len(snapshot.sources),
         "formal_source_path_count": len(formal_source_paths),
         "selected_formal_ability_file_count": len(selected_files),
+        "raw_source_denominator": {
+            **raw_source_meta,
+            "raw_to_pre_finalizer_ir_reconciliation": "exact",
+            "pre_finalizer_occurrence_count": len(raw_to_pre_finalizer),
+        },
         "status_callback_count": len(status_callbacks),
         "status_callback_task_count": len(status_callback_tasks),
         "standalone_graph_count": len(standalone_graphs),
@@ -1367,7 +1653,7 @@ def _build_focused_direct_ir() -> tuple[
         "queue_resolution": queue_evidence,
         "queue_aware_invocation_role_histogram": role_histogram,
         "focused_queue_aware_invocation_role_histogram": focused_role_histogram,
-        "formal_slice_scope": "independent action-window candidates plus queue-aware typed-target ability closure",
+        "formal_slice_scope": "raw-source-proven action-window candidates plus queue-aware typed-target ability closure",
         "formal_slice_candidate_callback_ids": candidate_callback_ids,
         "formal_slice_promoted_callback_ids": promoted_callback_ids,
         "formal_slice_graph_ids": sorted(selected_graph_ids),
@@ -1597,7 +1883,11 @@ def run_direct() -> None:
     evidence = {
         "mode": "direct",
         "builder": "focused_formal_character_source_denominator",
-        "independent_denominator_builder": "pre_finalizer_source_backed_ir",
+        "independent_denominator_builder": (
+            "raw_formal_source_graph -> pre_finalizer_lowered_ir -> "
+            "typed_candidate -> finalizer_audit"
+        ),
+        "raw_to_pre_finalizer_ir_reconciliation": "exact",
         "bidirectional_reconciliation": "exact",
         "focused_denominator": focused_denominator,
         "same_action_window_event_transitions": same_event_transitions,
