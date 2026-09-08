@@ -46,7 +46,9 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import (
     _status_event_blocked_reasons,
 )
 from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
-    materialize_character_runtime_task_graph_catalog,
+    build_complete_task_graph_catalog,
+    materialize_status_callback_task_graph,
+    merge_task_graph_slices,
 )
 from hsr.simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority import (
     _run_direct as _run_a1_direct,
@@ -1135,23 +1137,22 @@ def _build_focused_direct_ir() -> tuple[
         if phase.invocation_role == "standalone_root" and phase.phase_id not in queue_root_phase_ids:
             _fail(f"standalone_root_without_queue_resolution:{phase.phase_id}")
 
-    materialization_phases = [
-        phase for phase in assigned_phases if phase.invocation_role != "standalone_root"
-    ]
-    if not materialization_phases:
-        _fail("focused_status_materialization_phase_denominator_empty")
-    excluded_queue_root_phase_ids = sorted(
-        phase.phase_id
-        for phase in assigned_phases
-        if phase.invocation_role == "standalone_root"
+    promoted_callback_ids = sorted(
+        {
+            str(row.get("callback_id") or "")
+            for row in audit
+            if row.get("decision") == "promoted"
+        }
     )
+    if not promoted_callback_ids or any(not item for item in promoted_callback_ids):
+        _fail("focused_status_materialization_callback_denominator_empty")
 
     control_flow_catalog = lowerer.build_character_control_flow_contract_catalog(
         snapshot=snapshot, scope_catalog=scope_catalog
     )
     task_graph_view = CanonicalIR(
         version=BASELINE_VERSION,
-        ability_phases=tuple(materialization_phases),
+        ability_phases=tuple(assigned_phases),
         ability_tasks=tuple(standalone_tasks),
         standalone_ability_graphs=tuple(standalone_graphs),
         effects=tuple(effects),
@@ -1164,11 +1165,33 @@ def _build_focused_direct_ir() -> tuple[
         status_callback_tasks=tuple(status_callback_tasks),
         status_event_families=tuple(status_event_families),
     )
-    task_graph_catalog = materialize_character_runtime_task_graph_catalog(
-        control_flow_catalog,
-        task_graph_view,
-        source_snapshot=snapshot,
-        definition_scope_complete=True,
+    complete_task_graph_catalog = build_complete_task_graph_catalog(
+        control_flow_catalog, snapshot
+    )
+    status_slices = []
+    for callback_id in promoted_callback_ids:
+        status_slice = materialize_status_callback_task_graph(
+            control_flow_catalog,
+            task_graph_view,
+            callback_id=callback_id,
+            source_snapshot=snapshot,
+        )
+        entries = tuple(
+            item
+            for item in status_slice.entry_materializations
+            if item.entry_kind == "status_callback" and item.owner_id == callback_id
+        )
+        if (
+            len(entries) != 1
+            or entries[0].status != "materialized"
+            or not entries[0].graph_id
+            or len(status_slice.graphs) != 1
+            or status_slice.graphs[0].graph_id != entries[0].graph_id
+        ):
+            _fail(f"promoted_status_formal_slice_not_materialized:{callback_id}")
+        status_slices.append(status_slice)
+    task_graph_catalog = merge_task_graph_slices(
+        complete_task_graph_catalog, status_slices
     )
     ir = replace(task_graph_view, task_graph_catalog=task_graph_catalog)
     rulebook = RuleBook(ir)
@@ -1186,8 +1209,9 @@ def _build_focused_direct_ir() -> tuple[
         "queue_intent_count": len(queue_intents),
         "queue_resolution": queue_evidence,
         "queue_aware_invocation_role_histogram": role_histogram,
-        "status_materializer_scope": "queue-aware phases excluding unrelated standalone_root entries",
-        "status_materializer_excluded_queue_root_phase_ids": excluded_queue_root_phase_ids,
+        "status_materializer_scope": "production status_callback formal slices with queue-aware ability definitions retained",
+        "status_materializer_callback_ids": promoted_callback_ids,
+        "status_materializer_slice_count": len(status_slices),
         "task_graph_materialization_count": len(task_graph_catalog.entry_materializations),
     }
     return (
