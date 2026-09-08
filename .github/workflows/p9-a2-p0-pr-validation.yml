@@ -1,4 +1,4 @@
-name: P9 A2 P0 read-only corrected diagnostic
+name: P9 A2 P0 read-only helper inspection
 
 on:
   push:
@@ -8,207 +8,36 @@ on:
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
 
 jobs:
-  diagnose:
+  inspect:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     steps:
-      - name: Checkout exact diagnostic head and pinned TBGD
+      - name: Checkout diagnostic head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-          submodules: recursive
 
-      - name: Print corrected Direct denominator and audit
+      - name: Print pinned helper target checks
         env:
-          WRITEBACK_SOURCE_COMMIT: "988c85bfd77dee79a5108beb9d87d398ac86a12d"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
         run: |
-          set -euo pipefail
           python - <<'PY'
-          import ast, base64, os, re, subprocess, zlib
+          import base64, os, re, subprocess
           from pathlib import Path
-
-          lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
-          validator_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py")
-          workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
-
-          helper_workflow = subprocess.check_output(
-              ["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"], text=True
+          workflow = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
+          text = subprocess.check_output(
+              ["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow}"],
+              text=True,
           )
-          helper_match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', helper_workflow)
-          if helper_match is None:
-              raise SystemExit("pinned helper payload missing")
-          helper = base64.b64decode(helper_match.group(1)).decode()
-          old_callback_gate = (
-              "        if not decision and (\n"
-              "            owner.coverage_status != \"blocked\"\n"
-              "            or owner.admission_status != \"blocked\"\n"
-              "            or owner.blocked_reason != stale_reason\n"
-              "            or owner.blocking_dependency != stale_reason\n"
-              "        ):\n"
-              "            decision = \"callback_not_exact_stale_blocker\"\n"
-          )
-          new_callback_gate = (
-              "        callback_is_stale = (\n"
-              "            owner.coverage_status == \"blocked\"\n"
-              "            and owner.admission_status == \"blocked\"\n"
-              "            and owner.blocked_reason == stale_reason\n"
-              "            and owner.blocking_dependency == stale_reason\n"
-              "        )\n"
-              "        callback_is_already_executable = (\n"
-              "            owner.coverage_status == \"executable\"\n"
-              "            and owner.admission_status == \"executable\"\n"
-              "            and not owner.blocked_reason\n"
-              "            and not owner.blocking_dependency\n"
-              "        )\n"
-              "        if not decision and not (\n"
-              "            callback_is_stale or callback_is_already_executable\n"
-              "        ):\n"
-              "            decision = \"callback_not_exact_stale_blocker\"\n"
-          )
-          if helper.count(old_callback_gate) != 1:
-              raise SystemExit("helper callback gate anchor mismatch")
-          helper = helper.replace(old_callback_gate, new_callback_gate, 1)
-          ast.parse(helper)
-
-          writeback_workflow = subprocess.check_output(
-              ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"], text=True
-          )
-          builder_match = re.search(r'FOCUSED_BUILDER_ZB64: "([A-Za-z0-9+/=]+)"', writeback_workflow)
-          if builder_match is None:
-              raise SystemExit("pinned focused builder payload missing")
-          builder = zlib.decompress(base64.b64decode(builder_match.group(1))).decode()
-          ast.parse(builder)
-
-          lowering = lowering_path.read_text()
-          helper_anchor = "    return linked\n\n\ndef _link_status_effect_runtime_fields(\n"
-          call_anchor = (
-              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
-              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
-          )
-          if lowering.count(helper_anchor) != 1 or lowering.count(call_anchor) != 1:
-              raise SystemExit("lowering anchor mismatch")
-          lowering = lowering.replace(
-              helper_anchor,
-              "    return linked\n" + helper + "\n\ndef _link_status_effect_runtime_fields(\n",
-              1,
-          )
-          call_replacement = (
-              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
-              "        (\n"
-              "            status_callbacks,\n"
-              "            status_callback_tasks,\n"
-              "            status_callback_finalization_audit,\n"
-              "        ) = _finalize_action_window_status_callback_admission(\n"
-              "            status_callbacks,\n"
-              "            status_callback_tasks,\n"
-              "            status_event_families,\n"
-              "            effects,\n"
-              "            standalone_ability_graphs,\n"
-              "            ability_phases,\n"
-              "            formal_status_root_paths,\n"
-              "        )\n"
-              "        self._action_window_status_callback_finalization_audit = (\n"
-              "            status_callback_finalization_audit\n"
-              "        )\n"
-              "        status_event_families = _lower_status_event_families(\n"
-              "            status_callbacks, status_callback_tasks\n"
-              "        )\n"
-              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
-          )
-          lowering_path.write_text(lowering.replace(call_anchor, call_replacement, 1))
-
-          validator = validator_path.read_text()
-          old_imports = (
-              "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\n"
-              "from hsr.simulator_v8_clean_core.tbgd.lowering import (\n"
-              "    TBGDLowering,\n"
-              "    _finalize_action_window_status_callback_admission,\n"
-              ")\n"
-          )
-          new_imports = (
-              "from hsr.simulator_v8_clean_core import BASELINE_VERSION\n"
-              "from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR\n"
-              "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\n"
-              "from hsr.simulator_v8_clean_core.tbgd.lowering import (\n"
-              "    TBGDLowering,\n"
-              "    _assign_character_ability_invocation_roles,\n"
-              "    _block_status_callbacks_by_event_family,\n"
-              "    _block_status_callback_tasks_by_callback,\n"
-              "    _dedupe_target_expressions,\n"
-              "    _finalize_action_window_status_callback_admission,\n"
-              "    _link_status_trigger_ability_graphs,\n"
-              "    _link_trigger_ability_graphs,\n"
-              "    _lower_status_event_families,\n"
-              "    _status_event_blocked_reasons,\n"
-              ")\n"
-              "from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n"
-              "    materialize_character_runtime_task_graph_catalog,\n"
-              ")\n"
-          )
-          if validator.count(old_imports) != 1:
-              raise SystemExit("validator import anchor mismatch")
-          validator = validator.replace(old_imports, new_imports, 1)
-          validator = validator.replace(
-              '_git("diff", "--name-only", BASE_SHA, "HEAD")',
-              '_git("diff", "--name-only", BASE_SHA)',
-              1,
-          )
-          validator = validator.replace(
-              '_git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING_PATH)',
-              '_git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)',
-              1,
-          )
-          start = validator.index("def run_direct() -> None:\n")
-          end = validator.index("\n\ndef main() -> int:\n", start)
-          direct = validator[start:end]
-          old_build = (
-              "    lowerer = TBGDLowering(TBGD_ROOT)\n"
-              "    ir = lowerer.build()\n"
-              "    rulebook = RuleBook(ir)\n"
-          )
-          old_audit = (
-              "    audit = getattr(lowerer, \"_action_window_status_callback_finalization_audit\", None)\n"
-              "    if not isinstance(audit, tuple) or not audit:\n"
-          )
-          if direct.count(old_build) != 1 or direct.count(old_audit) != 1:
-              raise SystemExit("validator direct anchors mismatch")
-          direct = direct.replace(
-              old_build,
-              "    lowerer, ir, rulebook, audit, focused_denominator = _build_focused_direct_ir()\n",
-              1,
-          ).replace(
-              old_audit,
-              "    if not isinstance(audit, tuple) or not audit:\n",
-              1,
-          )
-          original = (
-              "    if not promoted:\n"
-              "        _fail(\"direct_real_positive_missing\")\n"
-          )
-          diagnostic = (
-              "    if not promoted:\n"
-              "        print(\"DIRECT_DENOMINATOR_DIAGNOSTIC=\" + json.dumps(denominator, sort_keys=True))\n"
-              "        print(\"DIRECT_AUDIT_DIAGNOSTIC=\" + json.dumps(list(audit), sort_keys=True))\n"
-              "        print(\"DIRECT_AUDIT_DECISIONS=\" + json.dumps(sorted(Counter(str(row.get('decision') or '') for row in audit).items())))\n"
-              "        _fail(\"direct_real_positive_missing\")\n"
-          )
-          if direct.count(original) != 1:
-              raise SystemExit("direct positive anchor mismatch")
-          direct = direct.replace(original, diagnostic, 1)
-          validator = validator[:start] + builder.rstrip() + "\n\n" + direct + validator[end:]
-          ast.parse(validator)
-          validator_path.write_text(validator)
+          match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', text)
+          if match is None:
+              raise SystemExit("helper payload missing")
+          helper = base64.b64decode(match.group(1)).decode()
+          start = helper.index("        graph_id = task.linked_standalone_graph_id")
+          end = helper.index("        if not decision:\n            decision = \"eligible\"", start)
+          print("HELPER_TARGET_CHECKS_BEGIN")
+          print(helper[start:end])
+          print("HELPER_TARGET_CHECKS_END")
           PY
-
-          python -m compileall -q \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          set +e
-          python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
-          rc=$?
-          set -e
-          echo "diagnostic_direct_exit=$rc"
