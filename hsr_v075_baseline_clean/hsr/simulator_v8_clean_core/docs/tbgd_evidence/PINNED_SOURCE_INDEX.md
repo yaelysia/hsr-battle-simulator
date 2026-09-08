@@ -31,8 +31,8 @@ This file exists to make archaeology reusable across sessions. It records expens
 
 | Family / path | Exact-pin blob SHA | Classification | Indexed facts / negative evidence | Next semantic action |
 |---|---|---|---|---|
-| `ExcelOutput/AvatarSkillConfig.json` | `7b041fca79d43ce6f5372080e06bb51a6b6daae8` | `mixed` / unresolved for W02 | Exact pinned file exists. Exact searches for `"SkillID": 100102`, `140204`, and `140201` returned no match. Therefore this family is **not** the missing numeric ordinary-skill row for those IDs at this pin. | Inspect schema/consumer role only if another chain points back here; do not rescan these IDs. |
-| `ExcelOutput/AvatarSkillConfigLD.json` | `00591c03da335fb1732e047a728be0a6ce3f55da` | `mixed` / unresolved for W02 | Exact pinned file exists. Exact searches for `"SkillID": 100102` and `140204` returned no match. | Preserve as a candidate family, but do not repeat those exact-ID searches. |
+| `ExcelOutput/AvatarSkillConfig.json` | `a5416ced941c247d475b2aaa83277b9cdf474dd9` | `mixed` / unresolved for W02 | Exact pinned file exists. Exact searches for `"SkillID": 100102`, `140204`, and `140201` returned no match. Therefore this family is **not** the missing numeric ordinary-skill row for those IDs at this pin. | Inspect schema/consumer role only if another chain points back here; do not rescan these IDs. |
+| `ExcelOutput/AvatarSkillConfigLD.json` | `003abcf5527856f46e7598b99ea01cebf451af26` | `mixed` / unresolved for W02 | Exact pinned file exists. Fixed-pin full-content search was rechecked for `"SkillID": 100102` and returned no match; the previous `140204` negative remains indexed from the earlier audit. | Preserve as a candidate family, but do not repeat those exact-ID searches. |
 | `ExcelOutput/ILBattleAvatarSkill.json` | pending backfill | `false_positive` for March ordinary Skill02 | Record ID `100102` exists with `ParamList=[6,0.3,6,1,6]`, but manual parent/config tracing ties the record to `Config/Activity/RtBattle/**`; it is not March ordinary-combat Skill02 authority. | Retain as numeric-collision counterexample; never promote by ID equality. |
 | `ExcelOutput/MonsterConfig.json` | `f0096989cc770b8e50746c3ac929f3a7eaa58fc9` | `ordinary_confirmed` for Monster `1002011` | Exact pinned family identity recorded. Prior manual row audit establishes `MonsterID=1002011 -> MonsterTemplateID=1002011` plus instance-level battle facts. File is large enough that later navigation should reuse the existing evidence record rather than repeatedly loading the table. | Trace any instance override that participates in final-stat precedence; do not rebuild the already-closed identity chain. |
 | `ExcelOutput/MonsterTemplateConfig.json` | `cddb6b3d6d46ec12dc4c7a985190723aadbca57e` | `ordinary_confirmed` for Monster `1002011` | Exact pinned row `MonsterTemplateID=1002011`: `AttackBase=18`, `DefenceBase=210`, `HPBase=69.75`, `SpeedBase=100`, `StanceBase=60`; config/AI paths also match the existing monster evidence chain. This resolves the historical `1002010`/`1002011` template-ID ambiguity. | Reuse these base inputs in W14; do not treat them as final encounter stats. |
@@ -60,6 +60,7 @@ This file exists to make archaeology reusable across sessions. It records expens
 3. **Trigger-key hazard:** Aglaea's pinned ordinary ConfigCharacter does not contain a `Skill04` trigger key, so decimal suffix intuition (`140204 -> Skill04`) is not a valid mapping rule.
 4. **Search-index hazard:** GitHub code search covers the repository default branch, not the pinned commit. Search hits from it are navigation candidates only.
 5. **Arithmetic-name hazard:** fields named `AttackRatio`, `DefenceRatio`, or `HPRatio` identify candidate numeric inputs but do not prove addition/multiplication/normalization/replacement semantics or precedence.
+6. **Cached-identity hazard:** blob SHAs copied from prior navigation must be re-read from the exact pin before they are used as durable identity evidence; the W02 AvatarSkill entries were corrected under this rule.
 
 ## High-value unresolved reverse lookups
 
@@ -101,8 +102,10 @@ These entries deliberately remain non-authoritative until exact-pin verification
 - `ExcelOutput/MazeSkill.json` contains a default-branch `MazeSkillId=100102` hit; likely maze/technique-related and must not be conflated with March battle Skill02 without producer/consumer proof.
 - `ExcelOutput/ILBattleAvatarPromotion.json` and `ExcelOutput/ILBattleAvatarSkill.json` surfaced for the `100102 + ParamList` search; individual semantic ownership must be verified at the pin before any reuse.
 - `ExcelOutput/BattleEventSkillConfig.json` and GridFight families surface substring/numeric collisions and are retained as reverse-search candidates rather than filtered out automatically.
+- A default-branch code-search constrained to `ExcelOutput` for the token `SkillParam` returned only six matching files and did not surface an ordinary avatar-skill parameter authority. This is navigation evidence only because code search is not historical-pin search; it strengthens the omission hypothesis but does not prove it.
 
 ## Maintenance log
 
 - 2026-09-08: Created reusable pinned-source index. Seeded W02/W13/W14 findings, exact pinned negative searches for `AvatarSkillConfig*`, and known semantic hazards. The index is intentionally incomplete and must grow incrementally rather than be regenerated wholesale.
 - 2026-09-08: Backfilled exact pinned W14 source identities and values for `MonsterConfig`, `MonsterTemplateConfig`, `ILHardLevelGroup`, and `MonsterUniqueConfig`; resolved the template-ID ambiguity while explicitly leaving the final-stat arithmetic/precedence unresolved.
+- 2026-09-08: Re-read W02 AvatarSkill family identities directly from the exact pin, corrected stale/cached blob SHAs to `a5416ced...` and `003abcf...`, and revalidated the fixed-pin `AvatarSkillConfigLD` negative for March `100102`.
