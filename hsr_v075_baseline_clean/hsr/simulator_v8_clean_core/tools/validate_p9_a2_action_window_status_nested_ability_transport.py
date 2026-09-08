@@ -13,9 +13,9 @@ from typing import Any, Iterable, Mapping, cast
 from unittest.mock import patch
 
 if __package__ in {None, ""}:
-    _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+    _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(_PACKAGE_ROOT))
-    __package__ = "simulator_v8_clean_core.tools"
+    __package__ = "hsr.simulator_v8_clean_core.tools"
 
 from ..core.action_plan import build_action_execution_plan
 from ..core.executor import CombatExecutor
