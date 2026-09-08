@@ -36,8 +36,7 @@ jobs:
               raise SystemExit("helper payload missing")
           helper = base64.b64decode(match.group(1)).decode()
           start = helper.index("        graph_id = task.linked_standalone_graph_id")
-          end = helper.index("    return (", start)
           print("HELPER_TAIL_BEGIN")
-          print(helper[start:end])
+          print(helper[start:])
           print("HELPER_TAIL_END")
           PY
