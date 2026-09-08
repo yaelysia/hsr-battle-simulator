@@ -45,7 +45,9 @@ from ..systems.task_graph import (
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
-from ..tbgd.lowering import TBGDLowering
+from .validate_p9_a2_p0_action_window_status_callback_admission_finalization import (
+    _build_focused_direct_ir as _a2p0_build_focused_direct_ir,
+)
 from .validate_p9_formal_action_graph_admission_authority import (
     _accepted_context as _a1_accepted_context,
     _run_fast as _run_a1_fast,
@@ -587,8 +589,12 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             bool(wrong_provider.errors)
             and "action_window_nested_ability_provider_type_invalid" in wrong_provider.errors
             and not wrong_provider.mutations
-            and not wrong_provider.events
+            and tuple(event.event_id for event in wrong_provider.events)
+            == ("event:a2:wrong-provider",)
+            and all(event.process_only for event in wrong_provider.events)
             and not wrong_provider.rng_events
+            and not wrong_provider.task_graph_projections
+            and not wrong_provider_dispatcher.ability_property_watchers.transports
         ),
         "ordinary_listener_has_no_ambient_nested_only_capability": (
             bool(ordinary.errors)
@@ -1298,10 +1304,20 @@ def _attempt_direct(
 
 def _run_direct() -> dict[str, Any]:
     started = time.perf_counter()
-    canonical = TBGDLowering(TBGD_ROOT).build()
-    rules = RuleBook(canonical)
+    (
+        _lowerer,
+        _canonical,
+        rules,
+        finalizer_audit,
+        reconciled_denominator,
+        build_evidence,
+        same_event_transitions,
+    ) = _a2p0_build_focused_direct_ir()
+    del _lowerer, _canonical
     if not getattr(rules.ir, "task_graph_catalog", None):
-        raise AssertionError("production CanonicalIR has no task graph catalog")
+        raise AssertionError("production-focused CanonicalIR has no task graph catalog")
+    if not finalizer_audit or not reconciled_denominator:
+        raise AssertionError("PR12 action-window admission finalizer evidence is empty")
 
     denominator, callback_to_events = _status_denominator(rules)
     if not denominator:
@@ -1402,6 +1418,10 @@ def _run_direct() -> dict[str, Any]:
         "weighted_representative": weighted_success,
         "nonweighted_representative": nonweighted_success,
         "attempts": attempts[-80:],
+        "build_evidence": build_evidence,
+        "same_event_transitions": same_event_transitions,
+        "pr12_reconciled_denominator_count": len(reconciled_denominator),
+        "pr12_finalizer_audit_count": len(finalizer_audit),
         "resource": {
             "wall_seconds": round(elapsed, 6),
             "peak_rss_kib": peak,
