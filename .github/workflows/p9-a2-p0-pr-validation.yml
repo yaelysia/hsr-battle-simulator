@@ -31,10 +31,12 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import importlib.util
           import json
           import os
           import re
           import subprocess
+          import sys
           import textwrap
           from pathlib import Path
 
@@ -58,15 +60,13 @@ jobs:
               "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/"
               "validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
           )
-          namespace = {
-              "__name__": "candidate_validator",
-              "__file__": str(validator),
-          }
-          code = compile(validator.read_text(encoding="utf-8"), str(validator), "exec")
-          exec(code, namespace)
-          lowerer, ir, rulebook, audit, focused_denominator = namespace[
-              "_build_focused_direct_ir"
-          ]()
+          spec = importlib.util.spec_from_file_location("candidate_validator", validator)
+          if spec is None or spec.loader is None:
+              raise SystemExit("validator import spec unavailable")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          lowerer, ir, rulebook, audit, focused_denominator = module._build_focused_direct_ir()
           denominator = [
               row
               for row in audit
