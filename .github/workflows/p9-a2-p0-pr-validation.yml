@@ -1,0 +1,49 @@
+name: P9 A2 P0 PR validation
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
+      - ".github/workflows/p9-a2-p0-pr-validation.yml"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION_execution_report.md"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout committed head and pinned TBGD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Show source pin
+        run: |
+          git submodule status turnbasedgamedata-main
+          git rev-parse HEAD
+
+      - name: Compile
+        run: |
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
+
+      - name: Fast
+        run: |
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
+            --fast
+
+      - name: Direct
+        run: |
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
+            --direct
+
+      - name: Fixed-base diff check
+        run: |
+          git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
