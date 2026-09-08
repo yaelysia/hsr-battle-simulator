@@ -16,165 +16,164 @@ This inventory is triage, not a filename- or ID-based authority map.
 
 - Search/scripts may enumerate candidates, paths, IDs and references.
 - A final semantic status requires manual inspection of raw records and relevant producers/consumers.
-- Exact numeric ID equality across families is not identity proof. The March `100102` / `ILBattleAvatarSkill` collision below is a confirmed counterexample.
-- A family may be `mixed` even when some individual records or operations are clearly battle-authoritative or presentation-only.
+- Exact numeric ID equality across families is not identity proof.
+- A family may be `mixed` even when some records or operations are clearly battle-authoritative or presentation-only.
 - `unresolved` means not yet semantically closed; it must not be treated as exclusion.
-- “not encountered yet” is not negative evidence.
-- Mode-specific sources currently deferred by scope remain deferred even if mechanically easy to enumerate.
-- If a deferred mode references a lower-level primitive also used by ordinary combat, that shared primitive remains in scope through the ordinary-combat chain.
+- A missing executable definition can be an `export_gap` when an ordinary pinned consumer/key proves the mechanism exists.
+- An exported raw constant/opcode can be `engine_consumer_unavailable` when the generic GameCore implementation needed to interpret it is outside the release-data dump.
+- Mode-specific sources currently deferred by scope remain deferred, but a shared primitive independently reached by ordinary combat stays in scope.
 
 ## Status values
 
-- `include` — inspected family/record provides ordinary-combat semantics or a required battle relationship.
+- `include` — inspected source/record provides ordinary-combat semantics or a required battle relationship.
 - `mixed` — battle and non-battle/presentation/progression semantics coexist; lower-level filtering is required.
 - `exclude` — inspected evidence shows no ordinary-combat consequence under the current scope.
-- `deferred` — intentionally postponed by the current scope contract.
-- `unresolved` — candidate family exists but has not yet been semantically closed.
+- `deferred` — genuine battle authority intentionally postponed with its special mode/event owner.
+- `unresolved` — candidate family/record has not yet been semantically closed.
+- `export_gap` — ordinary consumer/identity is present but a required executable definition/loader is absent from the pinned corpus.
+- `engine_consumer_unavailable` — raw data-facing constants/opcodes are present but their generic engine implementation is not exported.
 
 ## Core playable-character and ability sources
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/AvatarConfig.json` | `mixed` | March 7th Preservation identity/config references | Supports playable-character identity and joins but also carries non-combat/display metadata. Keep field-level filtering. |
-| `Config/ConfigCharacter/Avatar/**` | `mixed` | `Avatar_Mar_7th_00_Config.json`; Aglaea config/ability links | Skill type, target, entry/prepare ability, DynamicValue binding and related battle wiring coexist with animation/camera/formation metadata. |
-| `Config/ConfigAbility/Avatar/**` | `mixed` | March 7th and Aglaea ability files | Contains battle execution/modifiers/triggers as well as camera/animation/presentation operations. Operation-level review is mandatory. |
-| `ExcelOutput/AvatarSkillConfigLD.json` | `mixed/unresolved family role` | rows contain `SkillID`, target/effect/AI-related fields and `ParamList`; exact `SkillID=100102` absent at pinned revision | This file is **not** a pure presentation false friend. It contains battle-facing skill data for some rows, but it is not the missing ordinary March `100102` source. Audit its producer/consumer population before assigning family-wide authority. |
-| ordinary avatar skill numeric/value authority beyond the above | `unresolved` | March ordinary `SkillParam(Skill02,index=0..4)` consumers known | Locate the exact pinned ordinary source for March `100102`, or prove the export omits it. Do not substitute same-ID event/live rows. |
-| character trace/eidolon/rank combat-value sources | `unresolved` | March shield record exposes unresolved trace/rank contributions | Identify tables and ability consumers that alter ordinary-combat skills/modifiers; exclude upgrade-cost/material-only portions. |
+| `ExcelOutput/AvatarConfig.json` | `mixed` | March, Sampo, Natasha, Gepard, YaoGuang and other ordinary identity/config references | Playable identity and joins coexist with display/non-combat metadata; filter fields. |
+| `ExcelOutput/AvatarSkillConfig.json` | `include` / mixed | exact pinned blob `a5416ced...`; March `100102`; Aglaea construction `140204`; Dan Heng cross-check | Ordinary per-level `SkillParam` producer. Earlier “100102/140204 absent” claim was a large-file/search false negative and is superseded. |
+| `ExcelOutput/AvatarSkillConfigLD.json` | `mixed` | battle-facing rows inspected; no longer needed for March producer closure | Contains battle-facing skill data for some rows but is not ordinary March `100102` authority. Audit only when a chain points here. |
+| `ExcelOutput/AvatarSkillTreeConfig.json` | `mixed` / pin-dependent export gaps | March PointB2 producer confirmed; other lane reads encountered empty/missing population for some generic loader questions | Trace concrete point rows when present; do not infer generic ability attachment/unlock transport from naming if the relevant exported edge is absent. |
+| `ExcelOutput/AvatarRankConfig.json` | `mixed/include` | March Rank02/Rank06; Anaxa Rank01 | Rank parameter arrays and rank-ability joins can be ordinary battle authority; acquisition/progression neighbors remain out of scope. |
+| `Config/ConfigCharacter/Avatar/**` | `mixed` | March, Dan Heng, Aglaea, Asta, Silver Wolf, etc. | Skill/target/entry ability and DynamicValue binding coexist with presentation/config metadata. |
+| `Config/ConfigAbility/Avatar/**` | `mixed` | March, Aglaea, Silver Wolf, Asta, Bailu, Aventurine, etc. | Battle execution/modifiers/triggers and presentation operations coexist; operation-level review mandatory. |
 
-### Confirmed same-ID event false positive
+### Same-ID / family false positive
 
-| Family / path | Status | Manually inspected anchors | Current interpretation |
+| Family / path | Status | Anchor | Interpretation |
 | --- | --- | --- | --- |
-| `ExcelOutput/ILBattleAvatar.json` | `deferred` | `ID=1001` points to `Config/Activity/RtBattle/ConfigCharacter/Avatar/IL_Launch_00_Config.json`, with Hunt/5★ event-character metadata | Event/RtBattle family under current scope. Its use of familiar avatar IDs does not make it ordinary avatar authority. |
-| `ExcelOutput/ILBattleAvatarSkill.json` | `deferred` | `ID=100102`, `ParamList=[6,0.3,6,1,6]`, `InitialCD=6`, `CoolDown=12` | The exact ID collides with ordinary March Skill02 but belongs to the parent `ILBattleAvatar` RtBattle family. These values are explicitly rejected for ordinary March evidence. |
+| `ExcelOutput/ILBattleAvatar.json` / `ILBattleAvatarSkill.json` | `deferred` / false positive for ordinary March | `ILBattleAvatarSkill[100102]` vs ordinary March SkillID `100102` | RtBattle/event family. Same numeric ID must not bridge source families. |
 
-This is retained as a methodology guardrail: mechanical `ID=100102` matching would have produced a plausible but wrong combat record without parent-family inspection.
-
-A previously mentioned `AvatarSkillConfigLDPath.json` path has not been re-established in the pinned tree. It is not an inventory fact until existence is confirmed.
-
-## Servants / memosprites
+## Servants / memosprites / special battle entities
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/AvatarServantConfig.json` | `mixed` | exact `ServantID=11402` row | Provides servant config/AI/skill references, HP/speed construction tokens and aggro. The `11402` row does **not** contain `AvatarID=1402`; owner relation is proven by the ordinary Aglaea `CreateServant(11402)` edge, not by an owner field in this row. |
-| `Config/ConfigCharacter/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Config.json` | Memosprite type, skill/target/AI/property-inherit wiring and DeathRattle skill definition are battle-relevant; audit remaining records and non-combat fields individually. |
-| `Config/ConfigAbility/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Ability.json` | Separate `CasterSummoner.Speed` / `Caster.Speed` reads and a death-rattle/death-event graph are confirmed. Exact speed formula, sync timing, lifecycle and scheduling remain unresolved. |
-| `Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json` | `unresolved` | exact path referenced by `AvatarServantConfig[11402]` and servant `DefaultAIPath` | Reference edge is confirmed; AI decision semantics still require manual inspection. |
-| `Config/ConfigSummonUnit/**` | `unresolved` family-wide | `SummonUnit_Aglaea_00_Config.json` inspected | **Do not equate with battle servants.** The Aglaea sample is a scene/maze/Technique-side follow entity using maze/adventure operations and is not the Garmentmaker battle authority. Other records remain unresolved. |
+| `ExcelOutput/AvatarServantConfig.json` | `mixed/include` | Servant `11402`; cross-servant `11413` | Config/AI/skill refs, HP/Speed construction tokens and aggro are battle inputs; owner is proven by CreateServant edge, not an AvatarID field. |
+| `ExcelOutput/AvatarServantSkillConfig.json` | `include` | `1140205/SkillP03`, `1140206/SkillP04` | Servant passive numeric producer: inspected values close BattleCry `-1 normalized delay` and DeathRattle `+20 ModifySPNew` raw chains. |
+| `Config/ConfigCharacter/Servant/**` | `mixed/include` | `Servant_AglaeaServant_00_Config.json` | Memosprite type, own skills/AI/passives/property wiring; speed family excluded from checked generic sync. |
+| `Config/ConfigAbility/Servant/**` | `mixed/include` | Aglaea servant Ability | Own Speed/action-delay operations, death-rattle retention and cleanup surfaces are battle authority; generic scheduler/death dispatcher remains outside local graph. |
+| `Config/ConfigSummonUnit/**` | `unresolved` family-wide | Aglaea sample | Aglaea sample is scene/maze/Technique-side and not Garmentmaker battle authority. Do not generalize the sample to all records. |
+| logical BattleEvent family (`BattleEventData/Config/SkillConfig` + ConfigCharacter/ConfigAbility) | `mixed/include` | Lingsha `11222`; Elation/YaoGuang `70001`; Aglaea separate event namespace | BattleEvent can be ordinary special-battle-entity/scheduling authority and also reused by modes/events. Classify per owner. |
 
-For `AvatarServantConfig[11402]`, exact confirmed raw fields include:
+Confirmed servant construction rule for inspected samples:
 
-- `Config = Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json`
-- `AIPath = Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json`
-- `SkillIDList = [1140201, 1140203, 1140205, 1140206]`
-- `HPBase = #6`, `HPInherit = #5`, `HPSkill = 140204`
-- `SpeedBase = 0`, `SpeedInherit = #4`, `SpeedSkill = 140204`
-- `Aggro.Value = 125`
+> corresponding `SpeedSkill/HPSkill` selects an `AvatarSkillConfig.SkillID` ParamList; `#N` selects its 1-based slot.
 
-`#4/#5/#6` remain raw tokens, not decoded formulas.
+The generic parser body for `#N` is not exported, but the practical producer/slot mapping is closed.
 
-## Monsters / enemy execution
+## Monsters / enemy execution and difficulty
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/MonsterConfig.json` | `mixed` | `MonsterID 1002011` | Joins concrete monster ID to template, unique config and character config. Battle-supporting identity data coexist with other metadata. |
-| `ExcelOutput/MonsterTemplateConfig.json` | `include` | `MonsterTemplateID 1002010` | Base HP/ATK/DEF/SPD/Stance fields are ordinary-combat stat inputs. Final scaling equation is not yet closed. |
-| `ExcelOutput/MonsterUniqueConfig.json` | `mixed` | `MonsterID 1002011` plus inspected non-unit-ratio rows | Provides HP/ATK/DEF/SPD/Stance modify ratios, HardLevelGroup and skill/ability relationships; exact final-stat composition remains unresolved. |
-| `Config/ConfigCharacter/Monster/**` | `mixed` | `Monster_W1_Humanoid_01_Config.json` | Enemy skills, target/entry abilities and AI references are battle wiring; presentation/runtime-adjacent data may coexist. |
-| `Config/ConfigAbility/Monster/**` | `mixed` | `Monster_W1_Humanoid_01_Ability.json` | Battle execution such as damage operations coexists with other ability operations; operation-level review required. |
-| ordinary-monster AI under `Config/ConfigAI/**` | `unresolved` | `ComplexSkillAI` references observed from inspected monster/servant configs | Need close decision inputs, priority/weights/targeting and any random authority used by normal enemies. |
+| `ExcelOutput/MonsterConfig.json` | `mixed/include` | Monster `1002011`; non-zero flat SpeedModifyValue samples | Concrete identity/template/skills/resists and per-instance modification inputs. |
+| `ExcelOutput/MonsterTemplateConfig.json` | `include` | corrected `MonsterTemplateID=1002011` | Base HP/ATK/DEF/SPD/Stance/config/AI inputs; not final encounter stats. |
+| `ExcelOutput/HardLevelGroup.json` | `include` | blob `9ee36b...`; group/level cross-samples | **Ordinary** five-stat ATK/DEF/HP/SPD/Stance scaling-input family. Final arithmetic/precedence still requires the consumer. |
+| `ExcelOutput/ILHardLevelGroup.json` / `ILBattleMonster.json` | `deferred` / false positive for ordinary W14 | numeric collision around `1002011` / group-level rows | Separate IL/RtBattle family for the inspected chain. The older ordinary classification is superseded. |
+| `ExcelOutput/EliteGroup.json` | `include` candidate/context | Stage and MonsterConfig EliteGroup coexistence | Additional encounter/monster context input; replace/compose/order semantics unresolved. |
+| `ExcelOutput/MonsterUniqueConfig.json` | `mixed/unresolved` | representative ordinary IDs had no matching row | Conditional family; do not insert as a universal override layer without an explicit reference. |
+| `ExcelOutput/MonsterSkillConfig.json` | `include` | `100201101.ParamList[0]=2`; Yanqing phase-param skill rows | Skill numeric producer when a DynamicHash/consumer chain closes the semantics. |
+| `Config/ConfigCharacter/Monster/**` | `mixed/include` | CocoliaP1, Yanqing RL, Svarog, Mecha, Sam, Junk, etc. | Enemy skills/AI/passives/phase/common-pool edges coexist with other config. |
+| `Config/ConfigAbility/Monster/**` | `mixed/include` | damage, common-property, phase, death-rattle and pool-consumer samples | Operation-level battle authority mixed with presentation. |
+| ordinary monster AI under `Config/ConfigAI/**` | `mixed/unresolved` | sequence AI plus random-source candidates | Need final skill/target selection semantics and RNG ownership. |
 
-## Encounter, stage and difficulty scaling
+## Encounter / stage / phase construction
 
-| Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
+| Family / path | Status | Anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/StageConfig.json` | `mixed` | Stage `103201` -> wave IDs, `Level = 29`, `HardLevelGroup = 1` | Ordinary encounter/wave construction and scaling keys are battle-relevant; stage records also carry non-battle context. |
-| `ExcelOutput/ILHardLevelGroup.json` | `include` for the confirmed lookup edge | `(HardLevelGroup=1, Level=29)` | Provides the observed HP/ATK/DEF ratio row used by the stage-level investigation. The `IL` prefix must **not** be mechanically equated with the deferred `ILBattleAvatar*` family; final consumer/formula tracing remains required. |
-| stage/wave/monster-group subordinate tables | `unresolved` | Stage `103201 -> [1022020, 1023010, 1022020]` chain previously inspected | Inventory each ordinary encounter edge through concrete enemy spawning/wave transition semantics. |
-| `StageAbilityConfig` / stage battle abilities | `mixed` | representative `StageAbility_301001` previously recorded | Stage/global effects can alter combat, but family must be separated from presentation/mode-specific records and deferred-mode variants. |
-| speed/stance difficulty scaling sources | `unresolved` | Monster template/unique and hard-level records expose the gap | Locate raw source/formula for final SPD and Stance, then prove precedence/composition including Stage vs MonsterUnique `HardLevelGroup`. |
+| `ExcelOutput/StageConfig.json` and reachable stage/wave data | `mixed/include` | stages `103201`, `301001`; recurring monster IDs across levels | Stage level/hard-level/elite/wave/StageAbility are independent context inputs; not complete monster state. |
+| `Config/Level/StageCommonTemplate.json` | `include` / mixed | stage bootstrap | Ordinary bootstrap installs shared stage abilities, binds pre/post-birth hooks, waves and BattleEvent infrastructure; presentation tasks coexist. |
+| `StageAbilityConfig` / level battle abilities | `mixed/include` | StageAbility_301001; StageAbility_BattleCommonRule; StageAbility_Elation | Can mutate live state or maintain global state; classify per StageAbility/owner. |
+| `Config/ConfigGlobalTaskListTemplate/**` | `mixed/include` | `Wave_CommonProcess`, `Monster_ChangePhase`, `DealSuperBreakDamage`, `StanceBreak_*`, camera/RT/GM negatives | Contains ordinary executable state authority and presentation/tooling templates. Template-level classification required. |
+| phase-property configuration / `SetMonsterPhase` surface | `mixed/include` inputs, operator unresolved | Yanqing variants; FeixiaoPart `ApplyOverrideConfig=false` | Phase can alter properties on the existing entity and is not wave respawn; exact application arithmetic/defaults remain engine/operator work. |
 
-## Global battle execution candidates
+## Global/shared battle producers
 
-These families are high priority because a corpus-complete audit cannot be derived only from character/enemy forward references; global producers may affect ordinary battles without being reached from a representative actor.
+The first W17 broad reverse scan is complete enough to replace the previous all-`unresolved` family placeholders with representative owner-backed classifications.
 
-| Family / path | Status | Current closure requirement |
+| Family / path | Status | Confirmed ordinary anchors / residual gap |
 | --- | --- | --- |
-| `Config/ConfigGlobalModifier/**` | `unresolved` | Manually identify ordinary-combat global modifier producers/consumers and separate mode/presentation variants. |
-| `Config/ConfigBattleEvent/**` | `unresolved` | Determine which events change battle state, spawning, transitions, victory/defeat or global effects in ordinary combat. |
-| `Config/ConfigCommonSkillPool/**` | `unresolved` | Determine shared skill dispatch used by ordinary actors and its relationship to character/monster ability graphs. |
-| `Config/ConfigGlobalTaskListTemplate/**` | `unresolved` | Inspect whether task lists encode battle-state callbacks or unrelated scripting/tooling. |
-| shared battle modifier/opcode families inside ability configs | `unresolved` | Build semantic inventory from manually traced consumers: damage, heal, shield, modifier add/remove, control, break/toughness, resource, timeline, spawn/death and targeting. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json` | `mixed/include` | ordinary `StanceBreakState`, elemental break statuses, monster common damage-reduction lifecycle. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Common_Property.json` | `mixed/include` | ordinary Svarog defence down; Mecha status-resistance down/fatigue; Sam_01 speed up. Do not bulk-promote siblings without owners. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Reference.json` | `mixed/include` | Anaxa Rank01 -> `MReference_DefenceRatioDown` closes a real ordinary reference-prototype chain. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Avatar.json` | `mixed/include` | Sampo `M_Ultra_ExtraSP`, Natasha heal-ratio, Gepard skill-tree aggro. Generic skill-tree loader may be export-blocked. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Avatar_AssistantTrigger.json` | `unresolved` ordinary ownership | Real battle callbacks/assistant insertion exist, but no ordinary owner/assistant-ID authority was closed. |
+| `Config/ConfigGlobalModifier/GlobalModifier_System.json` | `exclude` at pin | empty `ModifierMap` in inspected pinned file. |
+| `Config/ConfigGlobalModifier/GlobalModifier.json` | `mixed/unresolved` | some definitions/listeners are battle-capable; representative unowned/debug-only entries retained as unresolved/negative evidence. |
+| `Config/ConfigCommonSkillPool/**` | `export_gap` | ordinary Painter Ability contains exact pool consumer/key, but pinned executable pool JSON is absent; opaque opcode identity unresolved. |
+| logical BattleEvent family | `mixed/include` | Lingsha and YaoGuang/Elation ordinary chains; special modes/events coexist. |
+| `Config/GlobalConfig/GameCoreConstValue.json` | `engine_consumer_unavailable` | raw constants such as SpeedToDelayDistance, BP/SP, resistance and damage-random bounds exist; generic formula consumers not exported. |
+| `Config/GlobalConfig/PriorityConfig.json` | `include` shared ordering input | separate event/insert priority domains; lower number earlier within inspected domains; equal-priority/cross-domain arbitration unresolved. |
+| `Config/GlobalConfig/DamageBehaviorTemplateListConfig.json` | `mixed/include` data-side semantics | enum/template mapping has normal Sam battle-data consumer; final engine behavior limited to explicit flags and stage-instance edge may be export-blocked. |
+| shared common Avatar/Monster Ability producers | `mixed/include` | `Avatar_Common_PassiveSkill -> Local_SPAdd`, `TriggerStanceCountDown_Test`, common monster break passive | Important producer family outside global-modifier directories. `_Test` suffix is not an exclusion rule. |
+
+## RNG / callback cross-cutting sources
+
+| Source family | Status | Current interpretation |
+| --- | --- | --- |
+| Ability `RandomConfig` | `mixed/include` | ordinary Silver Wolf weighted choice closes a stateful chain; Jing Yuan shows presentation-risk occurrence. `OddsList` is raw weights/odds input, not final probability. |
+| `Retarget(ByRandom=true)` / shared bounce selector | `mixed/include` | Asta `MaxNumber=1` closes one random-target chain; no-MaxNumber cardinality/traversal remains unresolved. |
+| `SetDynamicValueByRandom` | `include` representative | Aventurine closes an ordinary random integer/state chain; endpoint/distribution/stream unresolved. |
+| `AddModifier.Chance` + StatusProbability/Resistance properties | input chain confirmed / `engine_consumer_unavailable` for final equation | raw application chance and probability/resistance state exist, but evaluator arithmetic is not exported. |
+| ComplexSkillAI random sources | `mixed/unresolved` | distinct AI decision-plane random sources exist; shared/separate RNG stream authority unresolved. |
+| modifier event / insert priorities | `include` inputs | PriorityConfig plus causal callback samples prove multiple ordering surfaces; full dispatcher/tie-break remains unresolved. |
 
 ## Techniques / maze-to-battle boundary
 
 | Family / path | Status | Current interpretation / next closure |
 | --- | --- | --- |
-| `Config/ConfigMazeBuff/**` | `unresolved` | Maze data is not automatically battle data, but some normal Techniques can establish battle-start effects. Include only proven battle-entry consequences. |
-| `Config/ConfigAdventureAbility/**` | `unresolved` | Often scene/Technique-side; trace only paths that alter ordinary battle initialization or actors. |
-| `Config/ConfigAdventureModifier/**` | `unresolved` | Same boundary rule: scene-only behavior excluded, ordinary-battle initialization consequence included. |
-| `Config/ConfigSummonUnit/**` | `unresolved` | Aglaea sample is a concrete maze-side false friend. Do not promote family by name; follow battle-entry consequence edges only. |
+| `Config/ConfigMazeBuff/**` | `unresolved` | Include only proven ordinary battle-entry consequences. |
+| `Config/ConfigAdventureAbility/**` | `unresolved` | Often scene/Technique-side; trace only actual battle initialization effects. |
+| `Config/ConfigAdventureModifier/**` | `unresolved` | Same boundary rule. |
+| `Config/ConfigSummonUnit/**` | `unresolved` | Aglaea sample is a concrete scene/maze false friend; other records need owner tracing. |
 
-## Equipment and ordinary build-derived combat effects
+## Equipment and ordinary build effects
 
-| Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
+| Family / path | Status | Anchor | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| Light Cone / equipment identity and effect tables | `unresolved` family-wide | equipment `21003` reference chain already recorded | Only battle-effect identity, equipped stat/effect contribution and combat ability/modifier wiring are in scope; acquisition/EXP/promotion/material economics are excluded. Need close a nontrivial effect chain and augment/rank semantics. |
-| relic / planar ornament base-stat and set-effect sources | `unresolved` | none yet promoted | Need locate normal equipment stat contributions and set-effect ability/modifier producers; exclude inventory UI, salvage, synthesis, reward and progression-only data. |
-| equipment augment/superimposition/rank families | `unresolved` | equipment `21003` exposes remaining semantics | Determine which rank data changes actual battle modifiers and how the active ability consumes it. |
+| Light Cone/equipment identity/effect tables | `mixed/include` representative | Light Cone `20000` closed chain | Battle effect/rank data in scope; acquisition/progression data excluded. Need generic augment/rank semantics and complex effects. |
+| relic / planar stat and set-effect sources | `unresolved` | none yet promoted | Locate battle property contributions and set Ability/Modifier producers. |
+| equipment augment/superimposition/rank families | `unresolved` generically | one Light Cone sample | Determine generic active battle-value transport. |
 
-## Presentation-oriented candidates requiring explicit negative evidence
+## Presentation-oriented candidates / negative evidence
 
-These are **not blanket-excluded merely by name**. They remain unresolved until representative/manual inspection is sufficient to establish that no logical combat consequence is encoded, or until individual mixed operations are separated.
+These are never excluded by naming alone. Current representative findings include:
 
-| Family / path | Status | Audit note |
-| --- | --- | --- |
-| `Config/ConfigBattlePerform/**` | `unresolved` | Likely performance/presentation-heavy; verify no logical action/timing/state authority before exclusion. |
-| `BattleMode/BattlePerformConfig/**` | `unresolved` | Same rule. Presentation timing is not automatically logical battle timing. |
-| `CameraTemplate/**` | `unresolved` | Expected presentation; record inspected negative evidence before family-level exclusion. |
-| `BattleMode/CameraState/**` | `unresolved` | Expected presentation; inspect representative data and references. |
-| `BattleMode/CameraBlend/**` | `unresolved` | Expected presentation; inspect representative data and references. |
-| `BattleMode/BattleBGMConfig.json` | `unresolved` | Expected audio/presentation; preserve negative evidence rather than assuming. |
-| UI/audio/localization/display families | `unresolved` family-wide | Exclude after semantic inspection where the family could plausibly be referenced from battle graphs; pure text/icon data need not be exhaustively interpreted field-by-field once role is proven. |
+- camera/RT global task templates: presentation-only in inspected samples;
+- GM/test files: can contain battle-real opcodes without ordinary reachability;
+- WhiteBox definitions: can contain battle producers without ordinary consumer;
+- battle-perform target lookup: can address an existing entity but is not creation/config-selection authority;
+- animation/preshow timing: not timeline authority without a logical scheduling consumer.
+
+Remaining presentation families (BattlePerform, camera states/blends, BGM, UI/audio/localization) should be closed with representative negative evidence rather than blanket prefix rules.
 
 ## Explicitly deferred special-mode families
 
-The current PR scope intentionally does **not** require exhaustive archaeology of mode-specific mechanics for:
+The current phase does not require exhaustive archaeology of:
 
 - Simulated Universe;
 - Divergent Universe;
 - Currency Wars;
-- event-specific battle modes and temporary event battle rules, including the inspected `Config/Activity/RtBattle/**` / `ILBattleAvatar*` character family.
+- event-specific/mode-owned battle mechanics, including inspected RtBattle/IL families.
 
-Relevant source families/records should be marked `deferred` when encountered rather than expanded recursively. Blessings, curios, equations, scepters/components, mode currencies, mode-only actors, mode-only stage rules and event-only combat modifiers therefore do not block completion of the current normal-combat pass.
-
-Exception: a shared primitive that is also reached by ordinary combat remains in scope through its ordinary-combat producer/consumer chain. A deferred mode's use of that primitive does not make the primitive itself deferred.
-
-## Reverse-scan obligations
-
-Forward traversal from playable characters, enemies and stages is insufficient for completeness. Before this inventory can be considered closed, archaeology must also manually audit candidate global producers for at least:
-
-1. battle initialization and actor construction;
-2. legal actions and external/internal target selection;
-3. action value / turn ordering / extra or advanced actions;
-4. HP, damage, healing and shielding;
-5. energy, skill points and actor-specific resources;
-6. weakness, toughness, break and recovery;
-7. modifier/status/control application, refresh, stacking and expiration;
-8. follow-up/counter/trigger/callback ordering;
-9. summon/servant creation, ownership, actions and cleanup;
-10. enemy AI and random-choice authority;
-11. ordinary encounter waves, reinforcements, phases and stage/global abilities;
-12. death, defeat, victory, battle end and other termination transitions;
-13. ordinary Light Cone/relic/set combat effects and their rank/level-derived active values.
+These are `deferred`, not `non_battle`. Shared lower-level primitives independently reached by ordinary combat remain in scope.
 
 ## Current checkpoint gaps
 
-Highest-value unresolved edges at this checkpoint:
+After the first five-lane parallel integration, the highest-value unresolved source-family boundaries are:
 
-1. March 7th Preservation ordinary `SkillID 100102` pinned numeric `SkillParam` source (or proof that the pinned export omits it), plus shield arithmetic/refresh semantics. `ILBattleAvatarSkill[100102]` has been rejected as an event false positive.
-2. Final monster-stat equation: Stage `Level + HardLevelGroup` lookup, MonsterTemplate base values, MonsterUnique modify ratios, precedence and final HP/ATK/DEF/SPD/Stance.
-3. Aglaea servant `#4/#5/#6` formula/value sources, synchronization timing, action ownership and cleanup ordering.
-4. A complex ordinary equipment effect chain including augment/superimposition semantics.
-5. Family-wide AI/global-modifier/battle-event reverse scan needed to detect ordinary-combat producers not reached from current samples.
+1. **Monster final-stat engine/operator:** ordinary `HardLevelGroup` inputs and join topology are known; final arithmetic/precedence/flat placement/phase application remain unclosed.
+2. **Generic Shield/Modifier engine semantics:** March-local numerics/application/replacement hooks are closed; generic ShieldByCasterDefence, snapshot capture, lifetime/depletion and replacement callback order remain.
+3. **Timeline scheduler engine boundary:** Speed/action-delay opcodes and servant scheduling are source-backed, but SPD→AV/queue/requeue/tie-break implementation is not exported.
+4. **RNG/application engine boundary:** RandomConfig algorithm, SetDynamicValueByRandom range semantics, AddModifier.Chance final equation and RNG stream owner remain outside located TBGD consumer data.
+5. **Death/callback dispatcher:** priorities and several causal/revive/death-rattle chains are closed, but universal non-muted death total order and equal-priority/cross-domain arbitration remain.
+6. **W17 residual owners/export gaps:** AssistantTrigger ordinary owner, opaque CommonSkillPool operation identity, generic skill-tree loader where required.
+7. **Uncovered major work packages:** W01 avatar stat construction, W04 full damage formula, W08 resource system, W09 generic modifier lifecycle, W15 AI decision authority, W18 relic/set/Technique boundary still need dedicated closure.
+
+No new W19+ mechanism was justified by the first broad W17 pass; the current taxonomy remains mutable if later evidence reveals an unrepresented battle-state consequence.
