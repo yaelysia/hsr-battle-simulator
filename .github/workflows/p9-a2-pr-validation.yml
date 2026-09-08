@@ -26,213 +26,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout PR head and source submodule
+      - name: Checkout exact PR head and pinned source submodule
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Apply exact validator diagnostic patch
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py')
-          text = path.read_text(encoding='utf-8')
-          replacements = (
-              (
-                  'from ..rules.rulebook import RuleBook\n',
-                  'from ..rules.engine_rule_registry import build_engine_rule_registry\nfrom ..rules.ir import CanonicalIR, build_external_task_topology_dependency_ledger\nfrom ..rules.rulebook import RuleBook\n',
-              ),
-              (
-                  'from ..tbgd.lowering import TBGDLowering\n',
-                  'from ..tbgd.lowering import TBGDLowering, _lower_status_event_families\nfrom ..tbgd.task_graph_materializer import materialize_character_runtime_task_graph_catalog\n',
-              ),
-              (
-                  '''from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (\n    _fixture as _random_fixture,\n)''',
-                  '''from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (\n    _build_real_context as _s8c1c_build_real_context,\n    _dedupe as _s8c1c_dedupe,\n    _fixture as _random_fixture,\n)''',
-              ),
-              (
-                  '''            and not wrong_provider.mutations\n            and not wrong_provider.events\n            and not wrong_provider.rng_events\n        ),''',
-                  '''            and not wrong_provider.mutations\n            and tuple(event.event_id for event in wrong_provider.events)\n            == ("event:a2:wrong-provider",)\n            and all(event.process_only for event in wrong_provider.events)\n            and not wrong_provider.rng_events\n            and not wrong_provider.task_graph_projections\n            and not wrong_provider_dispatcher.ability_property_watchers.transports\n        ),''',
-              ),
-          )
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected exactly one validator replacement, found {count}: {old[:100]!r}')
-              text = text.replace(old, new)
-
-          marker = 'def _run_direct() -> dict[str, Any]:\n'
-          if text.count(marker) != 1:
-              raise SystemExit('expected exactly one _run_direct marker')
-          helper = '''def _build_focused_direct_rulebook() -> tuple[RuleBook, dict[str, Any]]:\n    real_context = _s8c1c_build_real_context(TBGD_ROOT)\n    owned = real_context.lowering.build_owned_combatant_admission_projection(\n        offensive_action_only=True,\n        max_servant_count=1,\n    )\n    if not owned.ok:\n        raise AssertionError(\n            "owned combatant projection failed:"\n            + ",".join(sorted({item.code for item in owned.issues}))\n        )\n    status_view = real_context.status_bundle.view\n    source_scope_paths = {\n        item.source.source_path for item in real_context.source_graph.sources\n    }\n    all_callbacks = _s8c1c_dedupe(\n        (*owned.status_callbacks, *real_context.status_bundle.callbacks),\n        "callback_id",\n    )\n    callbacks = tuple(\n        callback\n        for callback in all_callbacks\n        if callback.source.source_path in source_scope_paths\n    )\n    callback_ids = {callback.callback_id for callback in callbacks}\n    all_status_tasks = _s8c1c_dedupe(\n        (*owned.status_callback_tasks, *real_context.status_bundle.status_tasks),\n        "task_id",\n    )\n    status_tasks = tuple(\n        task for task in all_status_tasks if task.callback_id in callback_ids\n    )\n    phases = _s8c1c_dedupe(\n        (*owned.ability_phases, *status_view.ability_phases),\n        "phase_id",\n    )\n    ability_tasks = _s8c1c_dedupe(\n        (*owned.ability_tasks, *status_view.ability_tasks),\n        "task_id",\n    )\n    effects = _s8c1c_dedupe(\n        (*owned.effects, *status_view.effects),\n        "effect_id",\n    )\n    conditions = _s8c1c_dedupe(\n        (*owned.conditions, *status_view.conditions),\n        "condition_id",\n    )\n    targets = _s8c1c_dedupe(\n        (*owned.target_expressions, *status_view.target_expressions),\n        "target_expression_id",\n    )\n    queue_intents = _s8c1c_dedupe(\n        (*owned.queue_intents, *real_context.status_bundle.queue_intents),\n        "queue_intent_id",\n    )\n    status_event_families = tuple(\n        _lower_status_event_families(list(callbacks), list(status_tasks))\n    )\n    engine_rules = build_engine_rule_registry()\n    view = CanonicalIR(\n        version=status_view.version,\n        entities=owned.entities,\n        standalone_ability_graphs=status_view.standalone_ability_graphs,\n        ability_phases=phases,\n        ability_tasks=ability_tasks,\n        effects=effects,\n        conditions=conditions,\n        formulas=owned.formulas,\n        target_expressions=targets,\n        status_callbacks=callbacks,\n        status_callback_tasks=status_tasks,\n        status_event_families=status_event_families,\n        status_damage_emissions=owned.status_damage_emissions,\n        damage_modifiers=owned.damage_modifiers,\n        action_delay_emissions=owned.action_delay_emissions,\n        queue_intents=queue_intents,\n        skill_continuations=owned.skill_continuations,\n        triggers=owned.triggers,\n        servant_definitions=owned.servant_definitions,\n        action_definitions=owned.action_definitions,\n        action_ability_bindings=owned.action_ability_bindings,\n        action_admissions=owned.action_admissions,\n        unit_birth_templates=owned.unit_birth_templates,\n        combatant_action_sets=owned.combatant_action_sets,\n        action_events=owned.action_events,\n        hit_profiles=owned.hit_profiles,\n        skill_formula_bindings=owned.skill_formula_bindings,\n        damage_emissions=owned.damage_emissions,\n        toughness_emissions=owned.toughness_emissions,\n        avatar_profiles=owned.avatar_profiles,\n        character_data_cards=owned.character_data_cards,\n        character_equipment_eligibilities=owned.character_equipment_eligibilities,\n        character_mechanism_slots=owned.character_mechanism_slots,\n        character_trace_nodes=owned.character_trace_nodes,\n        character_eidolon_slots=owned.character_eidolon_slots,\n        bounce_policies=owned.bounce_policies,\n        timeline_rules=engine_rules.timeline_rules,\n        resource_rules=engine_rules.resource_rules,\n        damage_formula_rules=engine_rules.damage_formula_rules,\n        damage_route_rules=engine_rules.damage_route_rules,\n        shield_priority_rules=engine_rules.shield_priority_rules,\n        metadata={\n            "validation_scope": "p9_a2_focused_direct",\n            "full_tbgd_lowering_build_count": 0,\n        },\n    )\n    catalog = materialize_character_runtime_task_graph_catalog(\n        real_context.source_catalog,\n        view,\n        source_snapshot=real_context.snapshot,\n        definition_scope_complete=True,\n    )\n    external_dependencies = build_external_task_topology_dependency_ledger(\n        action_ability_bindings=view.action_ability_bindings,\n        ability_phases=view.ability_phases,\n        ability_tasks=view.ability_tasks,\n        standalone_ability_graphs=view.standalone_ability_graphs,\n        status_callbacks=view.status_callbacks,\n        status_callback_tasks=view.status_callback_tasks,\n    )\n    canonical = replace(\n        view,\n        task_graph_catalog=catalog,\n        external_task_topology_dependencies=external_dependencies,\n    )\n    return RuleBook(canonical), {\n        "full_tbgd_lowering_build_count": 0,\n        "owned_action_definition_count": len(owned.action_definitions),\n        "source_scope_path_count": len(source_scope_paths),\n        "status_callback_count": len(callbacks),\n        "status_task_count": len(status_tasks),\n        "task_graph_entry_count": len(catalog.entry_materializations),\n        "external_task_topology_dependency_count": len(external_dependencies),\n    }\n\n\n'''
-          text = text.replace(marker, helper + marker)
-          old_direct = '''    canonical = TBGDLowering(TBGD_ROOT).build()\n    rules = RuleBook(canonical)\n    if not getattr(rules.ir, "task_graph_catalog", None):\n        raise AssertionError("production CanonicalIR has no task graph catalog")'''
-          new_direct = '''    rules, build_evidence = _build_focused_direct_rulebook()\n    if not getattr(rules.ir, "task_graph_catalog", None):\n        raise AssertionError("focused production CanonicalIR has no task graph catalog")'''
-          if text.count(old_direct) != 1:
-              raise SystemExit('expected exactly one Direct builder replacement')
-          text = text.replace(old_direct, new_direct)
-          old_return = '''        "attempts": attempts[-80:],\n        "resource": {'''
-          new_return = '''        "attempts": attempts[-80:],\n        "build_evidence": build_evidence,\n        "resource": {'''
-          if text.count(old_return) != 1:
-              raise SystemExit('expected exactly one Direct evidence replacement')
-          text = text.replace(old_return, new_return)
-          path.write_text(text, encoding='utf-8')
-          PY
-          git diff --check
-          git diff --stat
-
       - name: Compile scoped A2 files
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
-          /usr/bin/time -v -o /tmp/p9-a2-compile.time \
-            python -m compileall -q \
-              core/executor.py \
-              systems/event_dispatch.py \
-              systems/status_callbacks.py \
-              systems/ability.py \
-              tools/validate_p9_a2_action_window_status_nested_ability_transport.py
-          code=$?
-          cat /tmp/p9-a2-compile.time
-          echo "exit_code=$code"
-          exit "$code"
+          python -m compileall -q \
+            core/executor.py \
+            systems/event_dispatch.py \
+            systems/status_callbacks.py \
+            systems/ability.py \
+            tools/validate_p9_a2_action_window_status_nested_ability_transport.py
 
-      - name: A2 Fast diagnostic
-        id: a2_fast
-        continue-on-error: true
+      - name: A2 Fast
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
-        run: |
-          /usr/bin/time -v -o /tmp/p9-a2-fast.time \
-            python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --fast
-          code=$?
-          cat /tmp/p9-a2-fast.time
-          echo "exit_code=$code"
-          exit "$code"
+        run: python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --fast
 
-      - name: A2 TriggerAbility denominator state diagnostics
-        if: always()
+      - name: A2 real CombatExecutor Direct
         working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+        run: python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --direct
+
+      - name: Fixed merged-base diff check
         run: |
-          PYTHONPATH=.. python - <<'PY'
-          import json
-          from collections import Counter
-          from simulator_v8_clean_core.tools import validate_p9_a2_action_window_status_nested_ability_transport as v
-          from simulator_v8_clean_core.rules.task_graph import TaskGraphIR
-
-          rules, build = v._build_focused_direct_rulebook()
-          callback_to_events, event_types = v._action_window_callback_map(rules)
-          real_context = v._s8c1c_build_real_context(v.TBGD_ROOT)
-          all_callbacks = tuple(rules.ir.status_callbacks)
-          window_all = tuple(
-              c for c in all_callbacks
-              if c.source_mode == 'mainline_avatar_ability' and c.event in callback_to_events
-          )
-          window_exec = tuple(
-              c for c in window_all
-              if c.coverage_status == 'executable' and c.admission_status == 'executable'
-          )
-          callback_ids_all = {c.callback_id for c in window_all}
-          callback_ids_exec = {c.callback_id for c in window_exec}
-          focused_tasks = tuple(rules.ir.status_callback_tasks)
-          bundle_tasks = tuple(real_context.status_bundle.status_tasks)
-
-          def task_state(tasks, callback_ids):
-              selected = tuple(t for t in tasks if t.callback_id in callback_ids)
-              state_counts = Counter(
-                  (t.opcode, t.coverage_status, t.blocked_reason) for t in selected
-              )
-              triggers = tuple(t for t in selected if t.opcode == 'TriggerAbility')
-              return {
-                  'task_count': len(selected),
-                  'state_counts': [
-                      {'opcode': key[0], 'coverage_status': key[1], 'blocked_reason': key[2], 'count': count}
-                      for key, count in sorted(state_counts.items(), key=lambda item: (-item[1], item[0]))
-                  ],
-                  'trigger_count_all_coverages': len(triggers),
-                  'trigger_rows': [
-                      {
-                          'callback_id': t.callback_id,
-                          'modifier_name': t.modifier_name,
-                          'event': t.event,
-                          'task_id': t.task_id,
-                          'task_path': t.task_path,
-                          'parent_task_id': t.parent_task_id,
-                          'coverage_status': t.coverage_status,
-                          'blocked_reason': t.blocked_reason,
-                          'effect_id': t.effect_id,
-                          'linked_ability_phase_id': t.linked_ability_phase_id,
-                          'linked_standalone_graph_id': t.linked_standalone_graph_id,
-                          'source_path': t.source.source_path,
-                      }
-                      for t in triggers[:80]
-                  ],
-              }
-
-          callback_state_counts = Counter(
-              (c.event, c.coverage_status, c.admission_status, c.blocked_reason, c.blocking_dependency)
-              for c in window_all
-          )
-          root_resolved = 0
-          for callback in window_exec:
-              tasks = tuple(rules.status_callback_tasks_for_callback(callback.callback_id))
-              root = rules.query_formal_task_graph(
-                  'status_callback', callback.callback_id, callback.event,
-                  (t.task_id for t in tasks),
-              )
-              if root.status == 'resolved' and type(root.value) is TaskGraphIR:
-                  root_resolved += 1
-
-          print(json.dumps({
-              'build': build,
-              'action_window_event_types': list(event_types),
-              'callback_to_events': {k: list(vv) for k, vv in sorted(callback_to_events.items())},
-              'counts': {
-                  'window_callbacks_all_admissions': len(window_all),
-                  'window_callbacks_executable_admitted': len(window_exec),
-                  'root_graph_resolved_executable_callbacks': root_resolved,
-              },
-              'callback_state_counts': [
-                  {
-                      'event': key[0],
-                      'coverage_status': key[1],
-                      'admission_status': key[2],
-                      'blocked_reason': key[3],
-                      'blocking_dependency': key[4],
-                      'count': count,
-                  }
-                  for key, count in sorted(callback_state_counts.items(), key=lambda item: (-item[1], item[0]))
-              ],
-              'focused_all_window_tasks': task_state(focused_tasks, callback_ids_all),
-              'focused_executable_window_tasks': task_state(focused_tasks, callback_ids_exec),
-              's8c1c_bundle_all_window_tasks': task_state(bundle_tasks, callback_ids_all),
-              's8c1c_bundle_executable_window_tasks': task_state(bundle_tasks, callback_ids_exec),
-          }, ensure_ascii=False, indent=2, sort_keys=True))
-          PY
-
-      - name: A2 real Direct diagnostic
-        if: always()
-        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
-        run: |
-          /usr/bin/time -v -o /tmp/p9-a2-direct.time \
-            python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --direct
-          code=$?
-          cat /tmp/p9-a2-direct.time
-          echo "exit_code=$code"
-          exit "$code"
-
-      - name: Fixed-base diff check
-        if: always()
-        run: |
-          /usr/bin/time -v -o /tmp/p9-a2-diff.time \
-            git diff --check bd1a4ac94ca394d2ea563d086eaf56e9ed45b285 HEAD
-          code=$?
-          cat /tmp/p9-a2-diff.time
-          echo "exit_code=$code"
-          exit "$code"
-
-      - name: Preserve Fast gate
-        if: always()
-        run: |
-          echo "fast_outcome=${{ steps.a2_fast.outcome }}"
-          test "${{ steps.a2_fast.outcome }}" = "success"
+          git merge-base --is-ancestor 770a0649926932794585fcd30589c6776892bc3b HEAD
+          git diff --check 770a0649926932794585fcd30589c6776892bc3b HEAD
