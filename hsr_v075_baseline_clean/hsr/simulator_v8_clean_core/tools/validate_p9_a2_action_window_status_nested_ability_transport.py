@@ -48,6 +48,7 @@ from ..systems.task_graph import (
     TaskGraphWeightedSelectionResult,
 )
 from ..tbgd.action_target_contracts import build_action_target_contract_catalog
+from ..tbgd.lowering import build_character_action_definition_ir
 from ..tbgd.task_graph_materializer import (
     build_complete_task_graph_catalog,
     materialize_ability_phase_task_graph,
@@ -787,30 +788,19 @@ def _build_runtime_direct_rulebook() -> tuple[
         scope_catalog=scope,
     )
     complete_catalog = build_complete_task_graph_catalog(source_catalog, snapshot)
-
-    action_events_by_key = {
-        (event.action_id, event.level): event for event in owned.action_events
-    }
-    admissions_by_key: dict[tuple[str, int], list[Any]] = {}
-    for admission in owned.action_admissions:
-        if (
-            admission.coverage_status == "executable"
-            and not admission.blocked_reason
-            and "external_turn" in admission.submission_modes
-        ):
-            admissions_by_key.setdefault(
-                (admission.action_id, admission.action_level), []
-            ).append(admission)
+    character_action_definitions = tuple(
+        sorted(
+            build_character_action_definition_ir(TBGD_ROOT),
+            key=lambda item: (item.action_id, item.level, item.definition_id),
+        )
+    )
 
     selected_action_ir: CanonicalIR | None = None
     selected_action_definition: Any | None = None
     selected_action_context: Any | None = None
     selected_action_windows: tuple[str, ...] = ()
     action_slice_attempts: list[dict[str, str]] = []
-    for definition in sorted(
-        owned.action_definitions,
-        key=lambda item: (item.action_id, item.level, item.definition_id),
-    ):
+    for definition in character_action_definitions:
         character_action_sources = tuple(
             source
             for source in source_graph.action_sources
@@ -1023,6 +1013,7 @@ def _build_runtime_direct_rulebook() -> tuple[
         {
             **finalizer_build_evidence,
             "owned_action_definition_count": len(owned.action_definitions),
+            "character_action_definition_count": len(character_action_definitions),
             "selected_action_definition_id": selected_action_definition.definition_id,
             "selected_action_id": selected_action_definition.action_id,
             "selected_action_level": selected_action_definition.level,
