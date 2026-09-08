@@ -34,7 +34,10 @@ This file exists to make archaeology reusable across sessions. It records expens
 | `ExcelOutput/AvatarSkillConfig.json` | `7b041fca79d43ce6f5372080e06bb51a6b6daae8` | `mixed` / unresolved for W02 | Exact pinned file exists. Exact searches for `"SkillID": 100102`, `140204`, and `140201` returned no match. Therefore this family is **not** the missing numeric ordinary-skill row for those IDs at this pin. | Inspect schema/consumer role only if another chain points back here; do not rescan these IDs. |
 | `ExcelOutput/AvatarSkillConfigLD.json` | `00591c03da335fb1732e047a728be0a6ce3f55da` | `mixed` / unresolved for W02 | Exact pinned file exists. Exact searches for `"SkillID": 100102` and `140204` returned no match. | Preserve as a candidate family, but do not repeat those exact-ID searches. |
 | `ExcelOutput/ILBattleAvatarSkill.json` | pending backfill | `false_positive` for March ordinary Skill02 | Record ID `100102` exists with `ParamList=[6,0.3,6,1,6]`, but manual parent/config tracing ties the record to `Config/Activity/RtBattle/**`; it is not March ordinary-combat Skill02 authority. | Retain as numeric-collision counterexample; never promote by ID equality. |
-| `ExcelOutput/ILHardLevelGroup.json` | pending backfill | `ordinary_confirmed` for the already traced `(HardLevelGroup=1, Level=29)` lookup | Despite the `IL` prefix, prior manual producer/consumer tracing established this lookup as part of the investigated ordinary monster/stage scaling chain. | Backfill exact blob SHA and exact row into W14 evidence; determine composition/precedence with template/unique/stage inputs. |
+| `ExcelOutput/MonsterConfig.json` | `f0096989cc770b8e50746c3ac929f3a7eaa58fc9` | `ordinary_confirmed` for Monster `1002011` | Exact pinned family identity recorded. Prior manual row audit establishes `MonsterID=1002011 -> MonsterTemplateID=1002011` plus instance-level battle facts. File is large enough that later navigation should reuse the existing evidence record rather than repeatedly loading the table. | Trace any instance override that participates in final-stat precedence; do not rebuild the already-closed identity chain. |
+| `ExcelOutput/MonsterTemplateConfig.json` | `cddb6b3d6d46ec12dc4c7a985190723aadbca57e` | `ordinary_confirmed` for Monster `1002011` | Exact pinned row `MonsterTemplateID=1002011`: `AttackBase=18`, `DefenceBase=210`, `HPBase=69.75`, `SpeedBase=100`, `StanceBase=60`; config/AI paths also match the existing monster evidence chain. This resolves the historical `1002010`/`1002011` template-ID ambiguity. | Reuse these base inputs in W14; do not treat them as final encounter stats. |
+| `ExcelOutput/ILHardLevelGroup.json` | `0440228b44d6fd1cfbc1ac823f9148b48e02b595` | `ordinary_confirmed` for the already traced `(HardLevelGroup=1, Level=29)` lookup | Exact pinned row: `AttackRatio=700.23926`, `DefenceRatio=69.67834`, `HPRatio=619.263`. Despite the `IL` prefix, prior manual producer/consumer tracing established this lookup as part of the investigated ordinary monster/stage scaling chain. These are raw inputs, not a proven equation. | Find the real consumer/operator and precedence with template/unique/stage/instance inputs; do not infer arithmetic from `*Ratio` names. |
+| `ExcelOutput/MonsterUniqueConfig.json` | `a0fde2b2bbd00b82eaa48d2f2c1e253571bdec4b` | `ordinary_candidate` for W14 | Exact pinned family exists. This checkpoint does **not** promote a `1002011` row or any unique-scaling operator. | Determine whether this family contributes to Monster `1002011` or only other monster families, then trace its consumer if applicable. |
 
 ## Reverse-ID registry
 
@@ -56,6 +59,7 @@ This file exists to make archaeology reusable across sessions. It records expens
 2. **Prefix hazard:** `ILHardLevelGroup.json` demonstrates that an `IL` prefix is not an automatic special-mode exclusion rule.
 3. **Trigger-key hazard:** Aglaea's pinned ordinary ConfigCharacter does not contain a `Skill04` trigger key, so decimal suffix intuition (`140204 -> Skill04`) is not a valid mapping rule.
 4. **Search-index hazard:** GitHub code search covers the repository default branch, not the pinned commit. Search hits from it are navigation candidates only.
+5. **Arithmetic-name hazard:** fields named `AttackRatio`, `DefenceRatio`, or `HPRatio` identify candidate numeric inputs but do not prove addition/multiplication/normalization/replacement semantics or precedence.
 
 ## High-value unresolved reverse lookups
 
@@ -74,9 +78,21 @@ This file exists to make archaeology reusable across sessions. It records expens
 
 ### W14 — monster final stat composition
 
-- Re-read exact pinned `MonsterConfig[1002011]` and resolve the historical template-ID ambiguity before using any formula.
-- Backfill exact sources for MonsterTemplate, MonsterUnique, stage Level/HardLevelGroup, and `ILHardLevelGroup` row.
-- Establish precedence/operations manually; multi-sample fitting may generate candidates but cannot establish semantic authority alone.
+Closed at this checkpoint:
+
+- exact pinned `MonsterConfig` family identity for the previously audited `MonsterID=1002011` row;
+- exact `MonsterTemplateConfig[1002011]` identity and base ATK/DEF/HP/SPD/Stance values;
+- exact `(HardLevelGroup=1, Level=29)` `ILHardLevelGroup` HP/ATK/DEF scaling inputs;
+- exact pinned `MonsterUniqueConfig` family identity without assuming that it applies to this instance.
+
+Still unresolved:
+
+- actual arithmetic joining template base, hard-level values, any applicable unique values and instance overrides;
+- precedence among those layers;
+- final SPD/Stance construction, because the inspected hard-level row itself exposes HP/ATK/DEF fields rather than a complete property set;
+- whether `MonsterUniqueConfig` participates in this exact instance.
+
+The next W14 search should therefore target the **consumer/operator**, not re-extract the already-pinned numeric inputs.
 
 ## Navigation-only candidates from default-branch search
 
@@ -89,3 +105,4 @@ These entries deliberately remain non-authoritative until exact-pin verification
 ## Maintenance log
 
 - 2026-09-08: Created reusable pinned-source index. Seeded W02/W13/W14 findings, exact pinned negative searches for `AvatarSkillConfig*`, and known semantic hazards. The index is intentionally incomplete and must grow incrementally rather than be regenerated wholesale.
+- 2026-09-08: Backfilled exact pinned W14 source identities and values for `MonsterConfig`, `MonsterTemplateConfig`, `ILHardLevelGroup`, and `MonsterUniqueConfig`; resolved the template-ID ambiguity while explicitly leaving the final-stat arithmetic/precedence unresolved.
