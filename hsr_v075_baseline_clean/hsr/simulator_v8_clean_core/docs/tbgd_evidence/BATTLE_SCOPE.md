@@ -90,6 +90,41 @@ The following especially require human semantic review and must not be inferred 
 
 Automation may tell us **where to look**. It does not establish **what the data means**. Every `include`, `mixed`, important `exclude`, and semantic formula/behavior claim must have a manually reviewed evidence chain.
 
+## Game-mechanics-informed archaeology requirement
+
+Raw-data archaeology must be guided by an explicit understanding of the corresponding **in-game combat mechanic**. A researcher must not treat a mechanically resolved graph as semantically complete merely because every reference edge can be followed.
+
+Before declaring a mechanism or evidence leaf semantically closed, establish enough of the gameplay model to know what the TBGD chain must explain. Depending on the mechanic, this includes:
+
+- the observable battle-state transition or numeric outcome;
+- actor/source/owner/target identity and legal target relationships;
+- preconditions, branches, resource gates and trigger conditions;
+- timing/order, duration, refresh/stacking/snapshot rules and cleanup;
+- important edge cases or interactions that could expose a missing producer, consumer or precedence rule.
+
+This gameplay model may be built or corrected during the archaeology itself. It does not require relying on prior memory. Official descriptions, direct gameplay observation, official data and trusted mechanics references may be used to learn the mechanic, form search hypotheses, identify expected branches and detect missing evidence.
+
+The authority boundary remains strict:
+
+- **gameplay knowledge guides navigation and completeness testing** — it helps determine what behavior should exist and what the raw chain still needs to explain;
+- **pinned TBGD remains the source authority for this archaeology revision** — gameplay knowledge must not invent or overwrite a pinned numeric value, reference edge, formula, opcode meaning or ownership relation;
+- **runtime and external sources are reconciliation evidence** — if the raw interpretation conflicts with known gameplay behavior, record the mismatch as unresolved, `not_proven` or version drift rather than normalizing either side away.
+
+A closed reference graph is therefore necessary but not sufficient. The interpreted TBGD behavior must also form a coherent explanation of the actual combat mechanic at the relevant version. If a known gameplay branch, lifecycle rule, target behavior, timing rule or edge case has no accounted-for producer/consumer in the pinned chain, that absence is a named evidence gap, not permission to declare the mechanism closed.
+
+The required research loop is:
+
+```text
+gameplay semantic model
+  -> candidate/search expectations
+  -> pinned raw producer/consumer tracing
+  -> semantic interpretation
+  -> runtime/external reconciliation
+  -> closed evidence or explicit unresolved gap
+```
+
+This loop prevents both failure modes: guessing game rules from plausible-looking data names, and forcing raw TBGD to match an assumed game rule without source proof.
+
 ## Combat timing versus presentation timing
 
 Timing is a high-risk false friend. Animation waits and camera choreography may determine when an effect is displayed without defining the simulator's logical action order. Treat animation/presentation timing as excluded by default. Promote a timing value only after tracing that it gates or schedules a battle-state transition, hit, callback, action insertion, resource mutation or other logical event.
@@ -180,6 +215,8 @@ Directories such as camera templates, battle-perform/presentation graphs, UI and
 - deferred special-mode/event families are marked as deferred rather than silently classified as non-battle;
 - no unresolved in-scope source family is silently treated as non-battle;
 - representative manually audited reference chains cover each major in-scope combat-semantic category above;
+- each mechanism claimed as semantically closed has an explicit gameplay semantic model sufficient to identify the behavior, branches, ownership, timing/lifecycle and material edge cases that the raw chain must explain;
+- interpreted pinned-TBGD behavior has been reconciled with known gameplay behavior at the relevant version, with material discrepancies retained as explicit unresolved/version-drift evidence rather than silently normalized;
 - scripts have not been used as the sole basis for semantic promotion/rejection;
 - external corroboration/version context is recorded where useful;
 - no archaeology claim requires changing simulator runtime code in this PR.
