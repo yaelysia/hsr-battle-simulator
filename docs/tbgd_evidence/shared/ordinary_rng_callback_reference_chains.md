@@ -6,7 +6,7 @@
 - Evidence maturity: `manually_confirmed` for the representative raw chains below
 - Scope: W12 RNG/random-choice primitives and W10 callback/continuation ordering examples
 - Runtime production code changed: no
-- Important boundary: the pinned TBGD release-data dump exposes draw sites, weights/ranges, event registrations and priority inputs, but not the generic RNG-state owner or all dispatcher/effect-application implementation bodies.
+- Important boundary: the pinned TBGD revision is a release-data corpus (`Config`, `ExcelOutput`, `Stages`, `Story`, `TextMap`, README), not a GameCore implementation repository. It exposes draw sites, weights/ranges, event registrations and priority inputs, but not the generic RNG-state owner, scheduler/dispatcher body or all effect-application implementations.
 
 ## Gameplay semantic model
 
@@ -116,9 +116,9 @@ Pinned Asta/Guinaifen/Silver Wolf samples show `AddModifier.Chance` as an applic
 
 and category-specific anti-debuff/control-resistance grouping.
 
-No generic exported evaluator was found that states the arithmetic joining raw `Chance`, attacker probability properties, defender resistance, category-specific resistance and caps/floors.
+No generic exported evaluator states the arithmetic joining raw `Chance`, attacker probability properties, defender resistance, category-specific resistance and caps/floors.
 
-Therefore final effect-hit arithmetic is an **engine-authority gap**, not something to infer from field names or public formulas.
+Therefore final effect-hit arithmetic is an **engine-authority gap**. It must not be inferred from field names or public formulas.
 
 ## Callback-local RNG ordering example — Guinaifen
 
@@ -157,9 +157,22 @@ These are consumed through ComplexSkillAI scoring/decision data rather than ordi
 
 No pinned edge proves that AI randomness shares the same seed/state/stream with execution RNG. `FromRecord=true` is retained literally; its record ownership/reuse semantics are not inferred.
 
+## W12 — engine boundary is now explicit
+
+The exact pinned repository root contains data/configuration surfaces but no GameCore implementation source tree. Repeated representative archaeology has already located the data-facing RNG primitives and their battle consumers. The remaining questions require implementation contracts that are not present in this artifact:
+
+- `RandomConfig` weighted-selection algorithm for non-unit-sum inputs;
+- `SetDynamicValueByRandom` endpoint/distribution semantics;
+- `AddModifier.Chance` effective status-probability evaluator;
+- RNG seed/state/stream allocation and advancement;
+- whether execution, AI and presentation draws share a stream;
+- whether failed/guaranteed checks consume stream state.
+
+These are now classified as `engine_consumer_unavailable` / `blocked_evidence` for this pin. Future work should reopen them only if a new authoritative engine/source family appears. Additional character samples can improve the primitive census but cannot establish the missing generic algorithm by themselves.
+
 ## W10 — priority domains
 
-Pinned `Config/GlobalConfig/PriorityConfig.json` exposes separate priority domains for modifier events and inserted actions/abilities.
+Pinned `Config/GlobalConfig/PriorityConfig.json` (exact blob `ec353c8fb5a0d8fa0848948d46289a32d2a6a5c5`) exposes separate priority domains for modifier events and inserted actions/abilities.
 
 Representative symbolic mappings establish direction within inspected domains:
 
@@ -171,7 +184,9 @@ Combined raw evidence supports:
 
 > within an inspected configured priority domain, smaller numeric values execute earlier/have higher priority.
 
-Do **not** compare numbers directly across different priority domains. Equal-priority tie breaking remains unresolved.
+The same file has explicit tables for `OnEnterBattle`, `OnLimboWaitHeal`, `OnPhase1`, `OnAfterAttack`, `OnListenCharacterCreate` and `OnListenCharacterDie`, among others. It does not provide a generic implementation for comparing different event classes or breaking ties inside an equal-priority bucket.
+
+Do **not** compare numbers directly across different priority domains. Equal-priority tie breaking and universal cross-event arbitration remain unresolved.
 
 ## W10 — causal three-callback chain on Aglaea
 
@@ -213,27 +228,75 @@ HP <= 0 / enter limbo
 
 `OnBeforeDying` in the same family has a different cleanup/eligibility responsibility. Therefore `OnBeforeDying`, `OnBeingLimbo` and `OnLimboWaitHeal` are distinct lifecycle stages and must not be flattened into one death event.
 
-## Death-rattle retention versus muted cleanup
+## W10/W13 — Aglaea natural servant lifecycle surfaces
 
-Aglaea servant evidence provides two negative/positive rules:
+Aglaea Servant 11402 now supplies a pinned natural-death decomposition with multiple independently authored event surfaces.
 
-- a modifier with `KeepOnDeathrattle` + later `RemoveWhenCasterDead`/`OnDestroy` demonstrates cleanup can occur **after** death-rattle;
-- `ForceKill(...MuteAllTriggerDeath=true)` is an explicit trigger-suppressed cleanup path and must not be used as ordinary death-order evidence.
+### Pre-death surface
+
+`MServant_AglaeaServant_Passive.OnBeforeDying` performs battle-state cleanup/transfer before final death handling, including:
+
+- conditional speed-layer preservation onto `CasterSummoner`;
+- removal of owner-side Skill02/Rank06 state;
+- muted cleanup of a still-alive `BattleEventCountDown`.
+
+### Death-rattle surface
+
+`MServant_AglaeaServant_00_DeathRattle` carries the `Deathrattle` behavior flag and runs `OnDeathrattle -> ModifySPNew(CasterSummoner,+20 raw)`.
+
+A separate modifier with `KeepOnDeathrattle` and `RemoveWhenCasterDead` proves selected state may survive through the death-rattle interval and be removed after caster-death state is reached.
+
+### Post-character-death listener
+
+Aglaea's owner passive listens to `OnListenCharacterDie`. When the dead entity intersects `CasterServant`, it sets the owner's internal `_Energy` working value to `0`.
+
+These are source-backed distinct lifecycle stages/surfaces. They substantially narrow the natural-death model, but the generic dispatcher implementation that totally orders `OnBeforeDying`, `OnDeathrattle`, `OnListenCharacterDie`, `OnDestroy` and entity removal is absent from the pinned release-data corpus.
+
+## W10/W13 — BattleEvent-driven muted forced cleanup
+
+A separate Aglaea BattleEvent phase proves that forced cleanup does not reuse the natural death-rattle path:
+
+```text
+MAvatar_Aglaea_00_PassiveSkill01_BattleEvent.OnPhase1
+  -> select servant carrying MServant_AglaeaServant_Passive
+  -> TurnInsertAbility(
+       Servant_Aglaea_00_PassiveSkill01_ForceKill_Insert,
+       InsertAbilityPriority=AvatarBuffOthers)
+  -> ForceKill(servant, MuteHpChange=true, MuteAllTriggerDeath=true)
+  -> SetDieImmediately(servant)
+  -> explicit owner/servant-linked modifier cleanup
+```
+
+The insert priority is a real configured ordering input. Because `MuteAllTriggerDeath=true`, this branch is explicit negative evidence against treating every servant removal as a natural death-rattle sequence.
+
+Presentation waits/effects inside the inserted ability do not establish logical cleanup timing.
+
+## W10 — dispatcher boundary is now explicit
+
+`PriorityConfig.json` provides event/insert priority tables, and the exact data gives several causal chains, but the pinned repository does not contain the generic GameCore dispatcher implementation. Therefore the following are `engine_consumer_unavailable` / `blocked_evidence` at this pin:
+
+- same-priority tie breaking;
+- universal cross-event arbitration;
+- exact queue/stack/drain model for nested callbacks;
+- full universal non-muted death total order after the exported event surfaces;
+- final entity/modifier destruction arbitration when multiple listeners participate.
+
+This does **not** erase the source-backed local orders above. It prevents the ledger from converting event names or JSON order into a fabricated universal dispatcher.
 
 ## Current engine/export boundaries
 
 Still unresolved after representative source closure:
 
-1. RNG seed/state/stream owner across `RandomConfig`, random retarget, `AddModifier.Chance`, `SetDynamicValueByRandom`, AI and presentation draws;
-2. `RandomConfig` generic non-unit-sum selection algorithm;
-3. `SetDynamicValueByRandom` range endpoint/distribution;
-4. final `AddModifier.Chance` / StatusProbability / StatusResistance equation;
-5. whether failed/guaranteed checks consume RNG state;
-6. same-priority callback/insert tie break;
-7. universal cross-event ordering among attack/hit/damage/break/kill/death events;
-8. a complete non-muted, non-revived ordinary death total order through listeners, destruction and final entity removal.
+1. RNG seed/state/stream owner across `RandomConfig`, random retarget, `AddModifier.Chance`, `SetDynamicValueByRandom`, AI and presentation draws — `engine_consumer_unavailable`;
+2. `RandomConfig` generic non-unit-sum selection algorithm — `engine_consumer_unavailable`;
+3. `SetDynamicValueByRandom` range endpoint/distribution — `engine_consumer_unavailable`;
+4. final `AddModifier.Chance` / StatusProbability / StatusResistance equation — `engine_consumer_unavailable`;
+5. whether failed/guaranteed checks consume RNG state — `engine_consumer_unavailable`;
+6. same-priority callback/insert tie break — `engine_consumer_unavailable`;
+7. universal cross-event ordering among attack/hit/damage/break/kill/death events — `engine_consumer_unavailable`;
+8. universal final destruction/removal order after the now-identified Aglaea natural-death event surfaces — `engine_consumer_unavailable`.
 
-These should remain explicit engine-authority gaps if no accepted source outside the pinned release-data dump supplies the implementation.
+These should only be reopened when an accepted new source exposes the missing engine contracts.
 
 ## Durable lowering guardrails
 
@@ -245,4 +308,5 @@ These should remain explicit engine-authority gaps if no accepted source outside
 - Do not infer RNG stream ownership from nearby draw sites.
 - Keep event priority domains separate from insert priority domains.
 - Do not use JSON callback order as dispatch order.
-- Keep limbo/revive/death-rattle/muted-force-kill paths distinct.
+- Keep limbo/revive/death-rattle/natural-death-listener/muted-force-kill paths distinct.
+- Treat the release-data root shape as an explicit source boundary: data-facing opcode presence does not imply the GameCore implementation body is available.
