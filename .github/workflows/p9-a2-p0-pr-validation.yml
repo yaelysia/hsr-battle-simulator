@@ -1,4 +1,4 @@
-name: P9 A2 P0 read-only direct diagnostic
+name: P9 A2 P0 read-only candidate validation
 
 on:
   push:
@@ -8,20 +8,20 @@ on:
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
 
 jobs:
-  diagnose:
+  validate-candidate:
     permissions:
       contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact diagnostic head and pinned TBGD
+      - name: Checkout exact candidate head and pinned TBGD
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Rebuild candidate worktree and print Direct denominator
+      - name: Validate corrected finalizer in worktree
         env:
           WRITEBACK_SOURCE_COMMIT: "988c85bfd77dee79a5108beb9d87d398ac86a12d"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
@@ -43,6 +43,34 @@ jobs:
           if helper_match is None:
               raise SystemExit("pinned helper payload missing")
           helper = base64.b64decode(helper_match.group(1)).decode()
+          old_callback_gate = '''        if not decision and (
+            owner.coverage_status != "blocked"
+            or owner.admission_status != "blocked"
+            or owner.blocked_reason != stale_reason
+            or owner.blocking_dependency != stale_reason
+        ):
+            decision = "callback_not_exact_stale_blocker"
+'''
+          new_callback_gate = '''        callback_is_stale = (
+            owner.coverage_status == "blocked"
+            and owner.admission_status == "blocked"
+            and owner.blocked_reason == stale_reason
+            and owner.blocking_dependency == stale_reason
+        )
+        callback_is_already_executable = (
+            owner.coverage_status == "executable"
+            and owner.admission_status == "executable"
+            and not owner.blocked_reason
+            and not owner.blocking_dependency
+        )
+        if not decision and not (
+            callback_is_stale or callback_is_already_executable
+        ):
+            decision = "callback_not_exact_stale_blocker"
+'''
+          if helper.count(old_callback_gate) != 1:
+              raise SystemExit("helper callback gate anchor mismatch")
+          helper = helper.replace(old_callback_gate, new_callback_gate, 1)
           ast.parse(helper)
 
           writeback_workflow = subprocess.check_output(
@@ -134,7 +162,6 @@ jobs:
               '_git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)',
               1,
           )
-
           start = validator.index("def run_direct() -> None:\n")
           end = validator.index("\n\ndef main() -> int:\n", start)
           direct = validator[start:end]
@@ -143,35 +170,21 @@ jobs:
               "    ir = lowerer.build()\n"
               "    rulebook = RuleBook(ir)\n"
           )
-          new_build = (
-              "    lowerer, ir, rulebook, audit, focused_denominator = "
-              "_build_focused_direct_ir()\n"
-          )
           old_audit = (
               "    audit = getattr(lowerer, \"_action_window_status_callback_finalization_audit\", None)\n"
               "    if not isinstance(audit, tuple) or not audit:\n"
           )
           if direct.count(old_build) != 1 or direct.count(old_audit) != 1:
               raise SystemExit("validator direct anchors mismatch")
-          direct = direct.replace(old_build, new_build, 1)
           direct = direct.replace(
+              old_build,
+              "    lowerer, ir, rulebook, audit, focused_denominator = _build_focused_direct_ir()\n",
+              1,
+          ).replace(
               old_audit,
               "    if not isinstance(audit, tuple) or not audit:\n",
               1,
           )
-          diagnostic = (
-              "    if not promoted:\n"
-              "        print(\"DIRECT_DENOMINATOR_DIAGNOSTIC=\" + json.dumps(denominator, sort_keys=True))\n"
-              "        print(\"DIRECT_AUDIT_DECISIONS=\" + json.dumps(sorted(Counter(str(row.get('decision') or '') for row in audit).items())))\n"
-              "        _fail(\"direct_real_positive_missing\")\n"
-          )
-          original = (
-              "    if not promoted:\n"
-              "        _fail(\"direct_real_positive_missing\")\n"
-          )
-          if direct.count(original) != 1:
-              raise SystemExit("direct positive anchor mismatch")
-          direct = direct.replace(original, diagnostic, 1)
           validator = validator[:start] + builder.rstrip() + "\n\n" + direct + validator[end:]
           ast.parse(validator)
           validator_path.write_text(validator)
@@ -180,10 +193,8 @@ jobs:
           python -m compileall -q \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          set +e
-          python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
-            --direct
-          rc=$?
-          set -e
-          echo "diagnostic_direct_exit=$rc"
+          git diff --check
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
