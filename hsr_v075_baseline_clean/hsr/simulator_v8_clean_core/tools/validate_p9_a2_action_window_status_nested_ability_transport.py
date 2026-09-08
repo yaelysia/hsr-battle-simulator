@@ -791,6 +791,38 @@ def _build_runtime_direct_rulebook() -> tuple[
         (definition.action_id, definition.level): definition
         for definition in character_action_definitions
     }
+
+    focused_status_source_paths = tuple(
+        sorted(
+            {
+                callback.source.source_path
+                for callback in focused_ir.status_callbacks
+                if callback.source_mode == "mainline_avatar_ability"
+            }
+        )
+    )
+    focused_status_owner_ids = tuple(
+        sorted(
+            {
+                definition.owner_avatar_id
+                for definition in source_graph.definitions
+                if definition.source.source_path in focused_status_source_paths
+            }
+        )
+    )
+    if len(focused_status_owner_ids) != 1:
+        raise AssertionError(
+            "focused status source owner is missing or ambiguous:"
+            + json.dumps(
+                {
+                    "source_paths": focused_status_source_paths,
+                    "owner_ids": focused_status_owner_ids,
+                },
+                sort_keys=True,
+            )
+        )
+    focused_status_owner_id = focused_status_owner_ids[0]
+
     gap_action_source_ids: set[str] = set()
     for gap in source_graph.gaps:
         if gap.expected_binding_kind == "presentation":
@@ -799,17 +831,33 @@ def _build_runtime_direct_rulebook() -> tuple[
             gap_action_source_ids.add(gap.action_source_id)
         gap_action_source_ids.update(gap.candidate_action_source_ids)
     gameplay_binding_counts: dict[str, int] = {}
+    entry_binding_counts: dict[str, int] = {}
+    passive_binding_counts: dict[str, int] = {}
+    phase_binding_counts: dict[str, int] = {}
     for binding in source_graph.bindings:
         if binding.binding_kind not in {"entry", "phase", "passive"}:
             continue
         gameplay_binding_counts[binding.action_source_id] = (
             gameplay_binding_counts.get(binding.action_source_id, 0) + 1
         )
+        if binding.binding_kind == "entry":
+            entry_binding_counts[binding.action_source_id] = (
+                entry_binding_counts.get(binding.action_source_id, 0) + 1
+            )
+        elif binding.binding_kind == "passive":
+            passive_binding_counts[binding.action_source_id] = (
+                passive_binding_counts.get(binding.action_source_id, 0) + 1
+            )
+        elif binding.binding_kind == "phase":
+            phase_binding_counts[binding.action_source_id] = (
+                phase_binding_counts.get(binding.action_source_id, 0) + 1
+            )
     action_kind_priority = {"basic": 0, "skill": 1, "ultimate": 2}
     ranked_action_definitions: list[tuple[tuple[Any, ...], Any, str]] = []
     for source in source_graph.action_sources:
         if (
-            source.action_kind not in action_kind_priority
+            source.owner_avatar_id != focused_status_owner_id
+            or source.action_kind not in action_kind_priority
             or source.action_source_id in gap_action_source_ids
         ):
             continue
@@ -826,8 +874,10 @@ def _build_runtime_direct_rulebook() -> tuple[
                     (
                         action_kind_priority[source.action_kind],
                         level != minimum_level,
+                        entry_binding_counts.get(source.action_source_id, 0) != 1,
+                        passive_binding_counts.get(source.action_source_id, 0),
+                        phase_binding_counts.get(source.action_source_id, 0),
                         gameplay_binding_counts.get(source.action_source_id, 0),
-                        source.owner_avatar_id,
                         source.action_id,
                         level,
                         definition.definition_id,
@@ -837,19 +887,25 @@ def _build_runtime_direct_rulebook() -> tuple[
                 )
             )
     ranked_action_definitions.sort(key=lambda item: item[0])
+    if not ranked_action_definitions:
+        raise AssertionError(
+            "focused status owner has no source-closed active action candidates:"
+            + focused_status_owner_id
+        )
 
     selected_action_ir: CanonicalIR | None = None
     selected_action_definition: Any | None = None
     selected_action_context: Any | None = None
     selected_action_windows: tuple[str, ...] = ()
     selected_action_kind = ""
-    action_slice_attempts: list[dict[str, str]] = []
+    action_slice_attempts: list[dict[str, Any]] = []
     for _rank, definition, action_kind in ranked_action_definitions:
         if time.perf_counter() - build_started > _DIRECT_DISCOVERY_GUARD_SECONDS:
             action_slice_attempts.append(
                 {
                     "definition_id": definition.definition_id,
                     "reason": "direct_action_discovery_guard_exhausted",
+                    "elapsed_seconds": round(time.perf_counter() - build_started, 6),
                 }
             )
             break
@@ -860,6 +916,79 @@ def _build_runtime_direct_rulebook() -> tuple[
                 scope_catalog=scope,
                 source_graph_catalog=source_graph,
             )
+            candidate_admissions = tuple(
+                sorted(
+                    (
+                        admission
+                        for admission in candidate_ir.action_admissions
+                        if admission.action_id == definition.action_id
+                        and admission.action_level == definition.level
+                    ),
+                    key=lambda admission: admission.admission_id,
+                )
+            )
+            admission_summary = [
+                {
+                    "admission_id": admission.admission_id,
+                    "coverage_status": admission.coverage_status,
+                    "blocked_reason": str(admission.blocked_reason or ""),
+                    "submission_modes": list(admission.submission_modes),
+                    "allowed_windows": list(admission.allowed_windows),
+                }
+                for admission in candidate_admissions
+            ]
+            external_turn_admissions = tuple(
+                admission
+                for admission in candidate_admissions
+                if admission.coverage_status == "executable"
+                and not admission.blocked_reason
+                and "external_turn" in admission.submission_modes
+            )
+            if not external_turn_admissions:
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
+                        "reason": "no_executable_external_turn_admission",
+                        "admissions": admission_summary,
+                    }
+                )
+                continue
+
+            candidate_event = next(
+                (
+                    event
+                    for event in candidate_ir.action_events
+                    if event.action_id == definition.action_id
+                    and event.level == definition.level
+                ),
+                None,
+            )
+            event_windows = (
+                [
+                    step.canonical_window
+                    for step in candidate_event.phase_steps
+                    if step.kind == "trigger_window" and step.canonical_window
+                ]
+                if candidate_event is not None
+                else []
+            )
+            if (
+                candidate_event is None
+                or candidate_event.target_mode == "bounce"
+                or "after_attack" not in event_windows
+            ):
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
+                        "reason": "no_after_attack_event_window",
+                        "event_windows": event_windows,
+                        "admissions": admission_summary,
+                    }
+                )
+                continue
+
             candidate_slices = []
             for phase in candidate_ir.ability_phases:
                 if phase.invocation_role not in {"action_root", "nested_only"}:
@@ -886,7 +1015,10 @@ def _build_runtime_direct_rulebook() -> tuple[
                 action_slice_attempts.append(
                     {
                         "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
                         "reason": "formal_action_slice_empty",
+                        "event_windows": event_windows,
+                        "admissions": admission_summary,
                     }
                 )
                 continue
@@ -912,16 +1044,69 @@ def _build_runtime_direct_rulebook() -> tuple[
                 candidate_rules, definition, ()
             )
             candidate_windows = _action_windows(candidate_rules, definition)
-            if (
-                candidate_context is None
-                or candidate_context[4] != "external_turn"
-                or not candidate_context[-1].ok
-                or "action.window.after_attack" not in candidate_windows
-            ):
+            if candidate_context is None:
                 action_slice_attempts.append(
                     {
                         "definition_id": definition.definition_id,
-                        "reason": "production_action_not_admitted_after_slice",
+                        "action_kind": action_kind,
+                        "reason": "public_target_or_action_context_unresolved",
+                        "event_windows": event_windows,
+                        "execution_plan_windows": list(candidate_windows),
+                        "admissions": admission_summary,
+                    }
+                )
+                continue
+            _state_value, _command, _target_context, admission, mode, decision = (
+                candidate_context
+            )
+            if mode != "external_turn":
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
+                        "reason": "public_context_not_external_turn",
+                        "submission_mode": mode,
+                        "admission_id": admission.admission_id,
+                        "event_windows": event_windows,
+                        "execution_plan_windows": list(candidate_windows),
+                    }
+                )
+                continue
+            if not decision.ok:
+                metadata = decision.metadata if isinstance(decision.metadata, Mapping) else {}
+                provenance = metadata.get("formal_action_blocker_provenance", [])
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
+                        "reason": "formal_action_contract_blocked",
+                        "blocked_reason": str(decision.blocked_reason or "")[:400],
+                        "admission_id": admission.admission_id,
+                        "formal_root_graph_ids": list(
+                            metadata.get("formal_action_root_graph_ids", [])
+                        )[:8],
+                        "reachable_task_count": len(
+                            metadata.get("formal_action_reachable_task_ids", [])
+                        ),
+                        "blocker_provenance_tail": (
+                            list(provenance)[-4:]
+                            if isinstance(provenance, (list, tuple))
+                            else []
+                        ),
+                        "event_windows": event_windows,
+                        "execution_plan_windows": list(candidate_windows),
+                    }
+                )
+                continue
+            if "action.window.after_attack" not in candidate_windows:
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "action_kind": action_kind,
+                        "reason": "after_attack_execution_plan_missing",
+                        "admission_id": admission.admission_id,
+                        "event_windows": event_windows,
+                        "execution_plan_windows": list(candidate_windows),
                     }
                 )
                 continue
@@ -935,7 +1120,8 @@ def _build_runtime_direct_rulebook() -> tuple[
             action_slice_attempts.append(
                 {
                     "definition_id": definition.definition_id,
-                    "reason": str(exc)[:240],
+                    "action_kind": action_kind,
+                    "reason": f"{type(exc).__name__}:{exc}"[:400],
                 }
             )
 
@@ -1059,6 +1245,8 @@ def _build_runtime_direct_rulebook() -> tuple[
         {
             **finalizer_build_evidence,
             "character_action_definition_count": len(character_action_definitions),
+            "focused_status_source_paths": list(focused_status_source_paths),
+            "focused_status_owner_id": focused_status_owner_id,
             "ranked_action_candidate_count": len(ranked_action_definitions),
             "selected_action_kind": selected_action_kind,
             "selected_action_definition_id": selected_action_definition.definition_id,
@@ -1068,6 +1256,9 @@ def _build_runtime_direct_rulebook() -> tuple[
             "selected_action_admission_id": selected_action_context[3].admission_id,
             "selected_action_windows": list(selected_action_windows),
             "action_slice_failed_attempt_count": len(action_slice_attempts),
+            "direct_action_discovery_elapsed_seconds": round(
+                time.perf_counter() - build_started, 6
+            ),
             "combined_ability_phase_count": len(phases),
             "combined_ability_task_count": len(ability_tasks),
             "combined_effect_count": len(effects),
