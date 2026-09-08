@@ -727,13 +727,14 @@ def _status_transition_snapshot(
         callback = callback_rows.get(task.callback_id)
         if callback is None:
             continue
-        if task.event != callback["event"] or task.source.source_path != callback["source_path"]:
-            _fail(f"same_event_task_identity_mismatch:{task.task_id}")
+        if task.event != callback["event"]:
+            _fail(f"same_event_task_event_mismatch:{task.task_id}")
         task_rows[task.task_id] = {
             "task_id": task.task_id,
             "callback_id": task.callback_id,
             "event": task.event,
             "runtime_source": callback["runtime_source"],
+            "callback_source_path": callback["source_path"],
             "source_path": task.source.source_path,
             "source_identity": _source_identity(task.source),
             "opcode": task.opcode,
@@ -784,6 +785,7 @@ def _reconcile_same_event_transitions(
             "callback_id",
             "event",
             "runtime_source",
+            "callback_source_path",
             "source_path",
             "source_identity",
             "opcode",
