@@ -872,8 +872,8 @@ def _build_runtime_direct_rulebook() -> tuple[
             ranked_action_definitions.append(
                 (
                     (
-                        action_kind_priority[source.action_kind],
                         level != minimum_level,
+                        action_kind_priority[source.action_kind],
                         entry_binding_counts.get(source.action_source_id, 0) != 1,
                         passive_binding_counts.get(source.action_source_id, 0),
                         phase_binding_counts.get(source.action_source_id, 0),
