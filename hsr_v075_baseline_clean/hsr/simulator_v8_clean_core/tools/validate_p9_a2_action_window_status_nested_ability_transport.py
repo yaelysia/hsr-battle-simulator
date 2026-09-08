@@ -80,6 +80,7 @@ DEFERRED_REASON = "ability_task_weighted_selection_caller_deferred_to_pr9"
 _FAST_HARD_SECONDS = 30.0
 _FAST_RSS_LIMIT_KIB = 512 * 1024
 _DIRECT_HARD_SECONDS = 120.0
+_DIRECT_DISCOVERY_GUARD_SECONDS = 100.0
 _DIRECT_RSS_LIMIT_KIB = int(1.5 * 1024 * 1024)
 
 
@@ -754,6 +755,7 @@ def _build_runtime_direct_rulebook() -> tuple[
     dict[str, Any],
     dict[str, Any],
 ]:
+    build_started = time.perf_counter()
     (
         lowerer,
         focused_ir,
@@ -766,15 +768,6 @@ def _build_runtime_direct_rulebook() -> tuple[
     del _focused_rules
 
     lowerer.build_character_ability_source_resolution_catalog()
-    owned = lowerer.build_owned_combatant_admission_projection(
-        offensive_action_only=True,
-        max_servant_count=1,
-    )
-    if not owned.ok:
-        raise AssertionError(
-            "owned combatant projection failed:"
-            + ",".join(sorted({item.code for item in owned.issues}))
-        )
     snapshot = getattr(lowerer, "_character_ability_raw_snapshot", None)
     scope = getattr(lowerer, "_character_ability_scope_catalog", None)
     if snapshot is None or scope is None:
@@ -794,20 +787,72 @@ def _build_runtime_direct_rulebook() -> tuple[
             key=lambda item: (item.action_id, item.level, item.definition_id),
         )
     )
+    definitions_by_key = {
+        (definition.action_id, definition.level): definition
+        for definition in character_action_definitions
+    }
+    gap_action_source_ids: set[str] = set()
+    for gap in source_graph.gaps:
+        if gap.expected_binding_kind == "presentation":
+            continue
+        if gap.action_source_id:
+            gap_action_source_ids.add(gap.action_source_id)
+        gap_action_source_ids.update(gap.candidate_action_source_ids)
+    gameplay_binding_counts: dict[str, int] = {}
+    for binding in source_graph.bindings:
+        if binding.binding_kind not in {"entry", "phase", "passive"}:
+            continue
+        gameplay_binding_counts[binding.action_source_id] = (
+            gameplay_binding_counts.get(binding.action_source_id, 0) + 1
+        )
+    action_kind_priority = {"basic": 0, "skill": 1, "ultimate": 2}
+    ranked_action_definitions: list[tuple[tuple[Any, ...], Any, str]] = []
+    for source in source_graph.action_sources:
+        if (
+            source.action_kind not in action_kind_priority
+            or source.action_source_id in gap_action_source_ids
+        ):
+            continue
+        levels = tuple(sorted(source.levels))
+        if not levels:
+            continue
+        minimum_level = levels[0]
+        for level in levels:
+            definition = definitions_by_key.get((source.action_id, level))
+            if definition is None or definition.target_mode == "bounce":
+                continue
+            ranked_action_definitions.append(
+                (
+                    (
+                        action_kind_priority[source.action_kind],
+                        level != minimum_level,
+                        gameplay_binding_counts.get(source.action_source_id, 0),
+                        source.owner_avatar_id,
+                        source.action_id,
+                        level,
+                        definition.definition_id,
+                    ),
+                    definition,
+                    source.action_kind,
+                )
+            )
+    ranked_action_definitions.sort(key=lambda item: item[0])
 
     selected_action_ir: CanonicalIR | None = None
     selected_action_definition: Any | None = None
     selected_action_context: Any | None = None
     selected_action_windows: tuple[str, ...] = ()
+    selected_action_kind = ""
     action_slice_attempts: list[dict[str, str]] = []
-    for definition in character_action_definitions:
-        character_action_sources = tuple(
-            source
-            for source in source_graph.action_sources
-            if source.action_id == definition.action_id
-        )
-        if len(character_action_sources) != 1:
-            continue
+    for _rank, definition, action_kind in ranked_action_definitions:
+        if time.perf_counter() - build_started > _DIRECT_DISCOVERY_GUARD_SECONDS:
+            action_slice_attempts.append(
+                {
+                    "definition_id": definition.definition_id,
+                    "reason": "direct_action_discovery_guard_exhausted",
+                }
+            )
+            break
         try:
             candidate_ir = lowerer.build_character_action_ability_slice(
                 definition,
@@ -884,6 +929,7 @@ def _build_runtime_direct_rulebook() -> tuple[
             selected_action_definition = definition
             selected_action_context = candidate_context
             selected_action_windows = candidate_windows
+            selected_action_kind = action_kind
             break
         except (AssertionError, TypeError, ValueError) as exc:
             action_slice_attempts.append(
@@ -1012,8 +1058,9 @@ def _build_runtime_direct_rulebook() -> tuple[
         reconciled_denominator,
         {
             **finalizer_build_evidence,
-            "owned_action_definition_count": len(owned.action_definitions),
             "character_action_definition_count": len(character_action_definitions),
+            "ranked_action_candidate_count": len(ranked_action_definitions),
+            "selected_action_kind": selected_action_kind,
             "selected_action_definition_id": selected_action_definition.definition_id,
             "selected_action_id": selected_action_definition.action_id,
             "selected_action_level": selected_action_definition.level,
