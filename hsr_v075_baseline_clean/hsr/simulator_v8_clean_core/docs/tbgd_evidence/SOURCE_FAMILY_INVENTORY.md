@@ -12,10 +12,11 @@ The governing inclusion/exclusion rules are in [`BATTLE_SCOPE.md`](BATTLE_SCOPE.
 
 ## Reading rule
 
-This inventory is triage, not a filename-based authority map.
+This inventory is triage, not a filename- or ID-based authority map.
 
 - Search/scripts may enumerate candidates, paths, IDs and references.
 - A final semantic status requires manual inspection of raw records and relevant producers/consumers.
+- Exact numeric ID equality across families is not identity proof. The March `100102` / `ILBattleAvatarSkill` collision below is a confirmed counterexample.
 - A family may be `mixed` even when some individual records or operations are clearly battle-authoritative or presentation-only.
 - `unresolved` means not yet semantically closed; it must not be treated as exclusion.
 - “not encountered yet” is not negative evidence.
@@ -35,26 +36,49 @@ This inventory is triage, not a filename-based authority map.
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
 | `ExcelOutput/AvatarConfig.json` | `mixed` | March 7th Preservation identity/config references | Supports playable-character identity and joins but also carries non-combat/display metadata. Keep field-level filtering. |
-| `Config/ConfigCharacter/Avatar/**` | `mixed` | `Avatar_Mar_7th_00_Config.json` | Skill type, target, entry/prepare ability and related battle wiring coexist with animation/camera/formation metadata. |
+| `Config/ConfigCharacter/Avatar/**` | `mixed` | `Avatar_Mar_7th_00_Config.json`; Aglaea config/ability links | Skill type, target, entry/prepare ability, DynamicValue binding and related battle wiring coexist with animation/camera/formation metadata. |
 | `Config/ConfigAbility/Avatar/**` | `mixed` | March 7th and Aglaea ability files | Contains battle execution/modifiers/triggers as well as camera/animation/presentation operations. Operation-level review is mandatory. |
-| avatar skill numeric/config tables | `unresolved` | `AvatarSkillConfigLD.json`, `AvatarSkillConfigLDPath.json` inspected as presentation false friends | Need locate the pinned numeric authority for March 7th `SkillID 100102` and then inventory the relevant skill-value family. `LD` tables must not be used as combat numeric authority. |
-| character trace/eidolon/rank combat-value sources | `unresolved` | March 7th shield record exposes unresolved trace/rank contributions | Identify tables and ability consumers that alter ordinary-combat skills/modifiers; exclude upgrade-cost/material-only portions. |
+| `ExcelOutput/AvatarSkillConfigLD.json` | `mixed/unresolved family role` | rows contain `SkillID`, target/effect/AI-related fields and `ParamList`; exact `SkillID=100102` absent at pinned revision | This file is **not** a pure presentation false friend. It contains battle-facing skill data for some rows, but it is not the missing ordinary March `100102` source. Audit its producer/consumer population before assigning family-wide authority. |
+| ordinary avatar skill numeric/value authority beyond the above | `unresolved` | March ordinary `SkillParam(Skill02,index=0..4)` consumers known | Locate the exact pinned ordinary source for March `100102`, or prove the export omits it. Do not substitute same-ID event/live rows. |
+| character trace/eidolon/rank combat-value sources | `unresolved` | March shield record exposes unresolved trace/rank contributions | Identify tables and ability consumers that alter ordinary-combat skills/modifiers; exclude upgrade-cost/material-only portions. |
+
+### Confirmed same-ID event false positive
+
+| Family / path | Status | Manually inspected anchors | Current interpretation |
+| --- | --- | --- | --- |
+| `ExcelOutput/ILBattleAvatar.json` | `deferred` | `ID=1001` points to `Config/Activity/RtBattle/ConfigCharacter/Avatar/IL_Launch_00_Config.json`, with Hunt/5★ event-character metadata | Event/RtBattle family under current scope. Its use of familiar avatar IDs does not make it ordinary avatar authority. |
+| `ExcelOutput/ILBattleAvatarSkill.json` | `deferred` | `ID=100102`, `ParamList=[6,0.3,6,1,6]`, `InitialCD=6`, `CoolDown=12` | The exact ID collides with ordinary March Skill02 but belongs to the parent `ILBattleAvatar` RtBattle family. These values are explicitly rejected for ordinary March evidence. |
+
+This is retained as a methodology guardrail: mechanical `ID=100102` matching would have produced a plausible but wrong combat record without parent-family inspection.
+
+A previously mentioned `AvatarSkillConfigLDPath.json` path has not been re-established in the pinned tree. It is not an inventory fact until existence is confirmed.
 
 ## Servants / memosprites
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/AvatarServantConfig.json` | `mixed` | `ServantID 11402` / Aglaea Garmentmaker | Owner identity, config/AI/skill references, HP/speed construction inputs and aggro are battle-relevant; presentation fields coexist. |
-| `Config/ConfigCharacter/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Config.json` | Memosprite type, skill/target/AI/property-inherit wiring are battle-relevant; audit remaining records and non-combat fields individually. |
-| `Config/ConfigAbility/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Ability.json` | Dedicated servant/summoner property reads, speed modifiers and death paths are battle-relevant; presentation operations may coexist. |
-| `Config/ConfigAI/AvatarServant_CommonAI.json` and servant-specific AI | `unresolved` | referenced from `AvatarServantConfig[11402]` | Reference edge is confirmed; AI decision semantics still need manual inspection. |
-| `Config/ConfigSummonUnit/**` | `unresolved` family-wide | `SummonUnit_Aglaea_00_Config.json` inspected | **Do not equate with battle servants.** The Aglaea sample is a scene/maze/Technique-side follow entity using maze/adventure operations and is excluded from the Garmentmaker battle chain. Other records remain unresolved. |
+| `ExcelOutput/AvatarServantConfig.json` | `mixed` | exact `ServantID=11402` row | Provides servant config/AI/skill references, HP/speed construction tokens and aggro. The `11402` row does **not** contain `AvatarID=1402`; owner relation is proven by the ordinary Aglaea `CreateServant(11402)` edge, not by an owner field in this row. |
+| `Config/ConfigCharacter/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Config.json` | Memosprite type, skill/target/AI/property-inherit wiring and DeathRattle skill definition are battle-relevant; audit remaining records and non-combat fields individually. |
+| `Config/ConfigAbility/Servant/**` | `mixed` | `Servant_AglaeaServant_00_Ability.json` | Separate `CasterSummoner.Speed` / `Caster.Speed` reads and a death-rattle/death-event graph are confirmed. Exact speed formula, sync timing, lifecycle and scheduling remain unresolved. |
+| `Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json` | `unresolved` | exact path referenced by `AvatarServantConfig[11402]` and servant `DefaultAIPath` | Reference edge is confirmed; AI decision semantics still require manual inspection. |
+| `Config/ConfigSummonUnit/**` | `unresolved` family-wide | `SummonUnit_Aglaea_00_Config.json` inspected | **Do not equate with battle servants.** The Aglaea sample is a scene/maze/Technique-side follow entity using maze/adventure operations and is not the Garmentmaker battle authority. Other records remain unresolved. |
+
+For `AvatarServantConfig[11402]`, exact confirmed raw fields include:
+
+- `Config = Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json`
+- `AIPath = Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json`
+- `SkillIDList = [1140201, 1140203, 1140205, 1140206]`
+- `HPBase = #6`, `HPInherit = #5`, `HPSkill = 140204`
+- `SpeedBase = 0`, `SpeedInherit = #4`, `SpeedSkill = 140204`
+- `Aggro.Value = 125`
+
+`#4/#5/#6` remain raw tokens, not decoded formulas.
 
 ## Monsters / enemy execution
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/MonsterConfig.json` | `mixed` | `MonsterID 1002011` | Joins concrete monster ID to template, unique config and character config. Battle-supporting identity data coexists with other metadata. |
+| `ExcelOutput/MonsterConfig.json` | `mixed` | `MonsterID 1002011` | Joins concrete monster ID to template, unique config and character config. Battle-supporting identity data coexist with other metadata. |
 | `ExcelOutput/MonsterTemplateConfig.json` | `include` | `MonsterTemplateID 1002010` | Base HP/ATK/DEF/SPD/Stance fields are ordinary-combat stat inputs. Final scaling equation is not yet closed. |
 | `ExcelOutput/MonsterUniqueConfig.json` | `mixed` | `MonsterID 1002011` plus inspected non-unit-ratio rows | Provides HP/ATK/DEF/SPD/Stance modify ratios, HardLevelGroup and skill/ability relationships; exact final-stat composition remains unresolved. |
 | `Config/ConfigCharacter/Monster/**` | `mixed` | `Monster_W1_Humanoid_01_Config.json` | Enemy skills, target/entry abilities and AI references are battle wiring; presentation/runtime-adjacent data may coexist. |
@@ -65,8 +89,8 @@ This inventory is triage, not a filename-based authority map.
 
 | Family / path | Status | Manually inspected anchors | Current interpretation / next closure |
 | --- | --- | --- | --- |
-| `ExcelOutput/StageConfig.json` | `mixed` | Stage `103201` -> wave IDs, `Level = 29`, `HardLevelGroup = 1` | Ordinary encounter/wave construction and scaling keys are battle-relevant; stage files also contain non-battle context. |
-| `ExcelOutput/ILHardLevelGroup.json` | `include` | `(HardLevelGroup=1, Level=29)` | Confirmed lookup source for HP/ATK/DEF ratios. Units/operators and final composition with monster template/unique values remain unresolved. |
+| `ExcelOutput/StageConfig.json` | `mixed` | Stage `103201` -> wave IDs, `Level = 29`, `HardLevelGroup = 1` | Ordinary encounter/wave construction and scaling keys are battle-relevant; stage records also carry non-battle context. |
+| `ExcelOutput/ILHardLevelGroup.json` | `include` for the confirmed lookup edge | `(HardLevelGroup=1, Level=29)` | Provides the observed HP/ATK/DEF ratio row used by the stage-level investigation. The `IL` prefix must **not** be mechanically equated with the deferred `ILBattleAvatar*` family; final consumer/formula tracing remains required. |
 | stage/wave/monster-group subordinate tables | `unresolved` | Stage `103201 -> [1022020, 1023010, 1022020]` chain previously inspected | Inventory each ordinary encounter edge through concrete enemy spawning/wave transition semantics. |
 | `StageAbilityConfig` / stage battle abilities | `mixed` | representative `StageAbility_301001` previously recorded | Stage/global effects can alter combat, but family must be separated from presentation/mode-specific records and deferred-mode variants. |
 | speed/stance difficulty scaling sources | `unresolved` | Monster template/unique and hard-level records expose the gap | Locate raw source/formula for final SPD and Stance, then prove precedence/composition including Stage vs MonsterUnique `HardLevelGroup`. |
@@ -121,7 +145,7 @@ The current PR scope intentionally does **not** require exhaustive archaeology o
 - Simulated Universe;
 - Divergent Universe;
 - Currency Wars;
-- event-specific battle modes and temporary event battle rules.
+- event-specific battle modes and temporary event battle rules, including the inspected `Config/Activity/RtBattle/**` / `ILBattleAvatar*` character family.
 
 Relevant source families/records should be marked `deferred` when encountered rather than expanded recursively. Blessings, curios, equations, scepters/components, mode currencies, mode-only actors, mode-only stage rules and event-only combat modifiers therefore do not block completion of the current normal-combat pass.
 
@@ -149,7 +173,7 @@ Forward traversal from playable characters, enemies and stages is insufficient f
 
 Highest-value unresolved edges at this checkpoint:
 
-1. March 7th Preservation `SkillID 100102` pinned numeric `SkillParam` source and shield arithmetic/refresh semantics.
+1. March 7th Preservation ordinary `SkillID 100102` pinned numeric `SkillParam` source (or proof that the pinned export omits it), plus shield arithmetic/refresh semantics. `ILBattleAvatarSkill[100102]` has been rejected as an event false positive.
 2. Final monster-stat equation: Stage `Level + HardLevelGroup` lookup, MonsterTemplate base values, MonsterUnique modify ratios, precedence and final HP/ATK/DEF/SPD/Stance.
 3. Aglaea servant `#4/#5/#6` formula/value sources, synchronization timing, action ownership and cleanup ordering.
 4. A complex ordinary equipment effect chain including augment/superimposition semantics.
