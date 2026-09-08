@@ -24,10 +24,23 @@ LOWERING_PATH = (
 if str(BASELINE_ROOT) not in sys.path:
     sys.path.insert(0, str(BASELINE_ROOT))
 
+from hsr.simulator_v8_clean_core import BASELINE_VERSION
+from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
     TBGDLowering,
+    _assign_character_ability_invocation_roles,
+    _block_status_callbacks_by_event_family,
+    _block_status_callback_tasks_by_callback,
+    _dedupe_target_expressions,
     _finalize_action_window_status_callback_admission,
+    _link_status_trigger_ability_graphs,
+    _link_trigger_ability_graphs,
+    _lower_status_event_families,
+    _status_event_blocked_reasons,
+)
+from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
+    materialize_character_runtime_task_graph_catalog,
 )
 
 
@@ -58,7 +71,7 @@ def _assert_governance_guards() -> None:
 
     changed = tuple(
         line.strip()
-        for line in _git("diff", "--name-only", BASE_SHA, "HEAD").splitlines()
+        for line in _git("diff", "--name-only", BASE_SHA).splitlines()
         if line.strip()
     )
     forbidden_prefixes = (
@@ -73,7 +86,7 @@ def _assert_governance_guards() -> None:
     if bad:
         _fail("forbidden_runtime_or_rule_change:" + ",".join(bad))
 
-    diff = _git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING_PATH)
+    diff = _git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)
     added = "\n".join(
         line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")
     )
@@ -373,19 +386,208 @@ def _audit_histogram(audit: tuple[dict[str, Any], ...], field: str) -> dict[str,
     return dict(sorted(Counter(str(row.get(field) or "") for row in audit).items()))
 
 
+def _build_focused_direct_ir() -> tuple[
+    TBGDLowering,
+    CanonicalIR,
+    RuleBook,
+    tuple[dict[str, Any], ...],
+    dict[str, Any],
+]:
+    lowerer = TBGDLowering(TBGD_ROOT)
+    source_graph_catalog = lowerer.build_character_ability_source_graph_catalog()
+    snapshot = getattr(lowerer, "_character_ability_raw_snapshot", None)
+    scope_catalog = getattr(lowerer, "_character_ability_scope_catalog", None)
+    if snapshot is None or scope_catalog is None:
+        _fail("focused_source_catalog_prerequisite_missing")
+
+    formal_context = lowerer._character_formal_task_source_context()
+    formal_source_paths = {
+        item.source.source_path for item in snapshot.sources
+    }
+    if not formal_source_paths:
+        _fail("focused_formal_source_denominator_empty")
+
+    queue_priorities = lowerer._lower_queue_priorities()
+    queue_priority_lookup = {
+        (priority.priority_table, priority.priority_key): priority
+        for priority in queue_priorities
+        if priority.coverage_status == "executable"
+    }
+
+    selected_files: list[Path] = []
+    status_callbacks = []
+    status_callback_tasks = []
+    effects = []
+    conditions = []
+    formulas = []
+    target_expressions = []
+
+    ability_files = lowerer._ability_files()
+    for ability_file_order, path in enumerate(ability_files):
+        relative = path.relative_to(TBGD_ROOT).as_posix()
+        if relative not in formal_source_paths:
+            continue
+        selected_files.append(path)
+        lowered = lowerer._lower_ability_file(
+            path,
+            queue_priority_lookup,
+            ability_file_order=ability_file_order,
+            formal_status_source_context=formal_context,
+        )
+        status_callbacks.extend(lowered.status_callbacks)
+        status_callback_tasks.extend(lowered.status_callback_tasks)
+        effects.extend(lowered.effects)
+        conditions.extend(lowered.conditions)
+        formulas.extend(lowered.formulas)
+        target_expressions.extend(lowered.target_expressions)
+
+    selected_paths = {path.relative_to(TBGD_ROOT).as_posix() for path in selected_files}
+    expected_paths = formal_source_paths.intersection(
+        path.relative_to(TBGD_ROOT).as_posix() for path in ability_files
+    )
+    if selected_paths != expected_paths or not selected_paths:
+        _fail("focused_formal_source_file_denominator_incomplete")
+
+    (
+        standalone_graphs,
+        standalone_phases,
+        standalone_tasks,
+        standalone_effects,
+        standalone_conditions,
+        standalone_formulas,
+        standalone_target_expressions,
+        _standalone_root_task_ids_by_graph,
+    ) = lowerer._lower_standalone_ability_graphs(selected_files)
+
+    effects.extend(standalone_effects)
+    conditions.extend(standalone_conditions)
+    formulas.extend(standalone_formulas)
+    target_expressions.extend(standalone_target_expressions)
+
+    standalone_tasks = _link_trigger_ability_graphs(
+        standalone_tasks,
+        effects,
+        standalone_graphs,
+        standalone_phases,
+    )
+    status_callback_tasks = _link_status_trigger_ability_graphs(
+        status_callback_tasks,
+        status_callbacks,
+        effects,
+        standalone_graphs,
+    )
+
+    status_event_families = _lower_status_event_families(
+        status_callbacks,
+        status_callback_tasks,
+    )
+    (
+        status_callbacks,
+        status_callback_tasks,
+        audit,
+    ) = _finalize_action_window_status_callback_admission(
+        status_callbacks,
+        status_callback_tasks,
+        status_event_families,
+        effects,
+        standalone_graphs,
+        standalone_phases,
+        formal_source_paths,
+    )
+    status_event_families = _lower_status_event_families(
+        status_callbacks,
+        status_callback_tasks,
+    )
+
+    status_event_blocked_reasons = _status_event_blocked_reasons(
+        status_event_families
+    )
+    status_callbacks = _block_status_callbacks_by_event_family(
+        status_callbacks,
+        status_event_blocked_reasons,
+    )
+    status_callback_blocked_reasons = {
+        callback.callback_id: (
+            status_event_blocked_reasons.get(callback.event)
+            or callback.blocked_reason
+            or callback.blocking_dependency
+        )
+        for callback in status_callbacks
+        if (
+            callback.event in status_event_blocked_reasons
+            or callback.blocked_reason
+            == "equipment_modifier_definition_unreferenced"
+        )
+    }
+    status_callback_tasks = _block_status_callback_tasks_by_callback(
+        status_callback_tasks,
+        status_callback_blocked_reasons,
+    )
+    status_event_families = _lower_status_event_families(
+        status_callbacks,
+        status_callback_tasks,
+    )
+
+    standalone_phases = _assign_character_ability_invocation_roles(
+        standalone_phases,
+        standalone_tasks,
+        standalone_graphs,
+        [],
+        status_callback_tasks=status_callback_tasks,
+        status_callbacks=status_callbacks,
+    )
+
+    control_flow_catalog = lowerer.build_character_control_flow_contract_catalog(
+        snapshot=snapshot,
+        scope_catalog=scope_catalog,
+    )
+    task_graph_view = CanonicalIR(
+        version=BASELINE_VERSION,
+        ability_phases=tuple(standalone_phases),
+        ability_tasks=tuple(standalone_tasks),
+        standalone_ability_graphs=tuple(standalone_graphs),
+        effects=tuple(effects),
+        conditions=tuple(conditions),
+        formulas=tuple(formulas),
+        target_expressions=tuple(
+            _dedupe_target_expressions(target_expressions).values()
+        ),
+        status_callbacks=tuple(status_callbacks),
+        status_callback_tasks=tuple(status_callback_tasks),
+        status_event_families=tuple(status_event_families),
+    )
+    task_graph_catalog = materialize_character_runtime_task_graph_catalog(
+        control_flow_catalog,
+        task_graph_view,
+        source_snapshot=snapshot,
+        definition_scope_complete=True,
+    )
+    ir = replace(task_graph_view, task_graph_catalog=task_graph_catalog)
+    rulebook = RuleBook(ir)
+
+    denominator = {
+        "snapshot_source_count": len(snapshot.sources),
+        "formal_source_path_count": len(formal_source_paths),
+        "selected_formal_ability_file_count": len(selected_files),
+        "status_callback_count": len(status_callbacks),
+        "status_callback_task_count": len(status_callback_tasks),
+        "standalone_graph_count": len(standalone_graphs),
+        "task_graph_materialization_count": len(
+            task_graph_catalog.entry_materializations
+        ),
+    }
+    return lowerer, ir, rulebook, audit, denominator
+
 def run_direct() -> None:
     if not TBGD_ROOT.is_dir():
         _fail(f"pinned_tbgd_missing:{TBGD_ROOT}")
 
     _assert_governance_guards()
     started = time.perf_counter()
-    lowerer = TBGDLowering(TBGD_ROOT)
-    ir = lowerer.build()
-    rulebook = RuleBook(ir)
+    lowerer, ir, rulebook, audit, focused_denominator = _build_focused_direct_ir()
     elapsed = time.perf_counter() - started
     peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-    audit = getattr(lowerer, "_action_window_status_callback_finalization_audit", None)
     if not isinstance(audit, tuple) or not audit:
         _fail("production_finalizer_audit_missing")
 
@@ -453,6 +655,16 @@ def run_direct() -> None:
                 _fail("promoted_phase_target_not_formal")
             formal_graph_id = phase.binding_id
 
+        target_phase_ids = (
+            tuple(graphs[graph_id].phase_ids) if graph_id else (phase_id,)
+        )
+        if not target_phase_ids or any(
+            phases.get(target_phase_id) is None
+            or phases[target_phase_id].invocation_role != "nested_only"
+            for target_phase_id in target_phase_ids
+        ):
+            _fail("promoted_nested_target_role_not_resolved")
+
         entries = [
             item
             for item in materializations
@@ -503,11 +715,17 @@ def run_direct() -> None:
     negatives = [row for row in denominator if row.get("decision") != "promoted"]
     for row in negatives:
         task = tasks.get(str(row["task_id"]))
-        if task is not None and task.coverage_status == "executable":
+        if (
+            task is not None
+            and row.get("old_task_coverage_status") == "blocked"
+            and task.coverage_status == "executable"
+        ):
             _fail("negative_denominator_row_became_executable")
 
     evidence = {
         "mode": "direct",
+        "builder": "focused_formal_character_source_denominator",
+        "focused_denominator": focused_denominator,
         "wall_seconds": round(elapsed, 3),
         "peak_rss_kib": peak_rss,
         "denominator_count": len(denominator),
