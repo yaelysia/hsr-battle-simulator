@@ -778,35 +778,168 @@ def _build_runtime_direct_rulebook() -> tuple[
     scope = getattr(lowerer, "_character_ability_scope_catalog", None)
     if snapshot is None or scope is None:
         raise AssertionError("focused runtime source catalog prerequisite missing")
+    source_graph = lowerer.build_character_ability_source_graph_catalog(
+        snapshot=snapshot,
+        scope_catalog=scope,
+    )
     source_catalog = lowerer.build_character_control_flow_contract_catalog(
         snapshot=snapshot,
         scope_catalog=scope,
     )
+    complete_catalog = build_complete_task_graph_catalog(source_catalog, snapshot)
 
+    action_events_by_key = {
+        (event.action_id, event.level): event for event in owned.action_events
+    }
+    admissions_by_key: dict[tuple[str, int], list[Any]] = {}
+    for admission in owned.action_admissions:
+        if (
+            admission.coverage_status == "executable"
+            and not admission.blocked_reason
+            and "external_turn" in admission.submission_modes
+        ):
+            admissions_by_key.setdefault(
+                (admission.action_id, admission.action_level), []
+            ).append(admission)
+
+    selected_action_ir: CanonicalIR | None = None
+    selected_action_definition: Any | None = None
+    selected_action_context: Any | None = None
+    selected_action_windows: tuple[str, ...] = ()
+    action_slice_attempts: list[dict[str, str]] = []
+    for definition in sorted(
+        owned.action_definitions,
+        key=lambda item: (item.action_id, item.level, item.definition_id),
+    ):
+        key = (definition.action_id, definition.level)
+        action_event = action_events_by_key.get(key)
+        if (
+            action_event is None
+            or action_event.target_mode == "bounce"
+            or not admissions_by_key.get(key)
+            or not any(
+                step.kind == "trigger_window"
+                and step.canonical_window == "after_attack"
+                for step in action_event.phase_steps
+            )
+        ):
+            continue
+        try:
+            candidate_ir = lowerer.build_character_action_ability_slice(
+                definition,
+                snapshot=snapshot,
+                scope_catalog=scope,
+                source_graph_catalog=source_graph,
+            )
+            candidate_slices = []
+            for phase in candidate_ir.ability_phases:
+                if phase.invocation_role not in {"action_root", "nested_only"}:
+                    continue
+                phase_tasks = tuple(
+                    task
+                    for task in candidate_ir.ability_tasks
+                    if task.phase_id == phase.phase_id
+                )
+                callback_kinds = tuple(
+                    dict.fromkeys(task.callback_kind for task in phase_tasks)
+                )
+                for callback_kind in callback_kinds:
+                    candidate_slices.append(
+                        materialize_ability_phase_task_graph(
+                            source_catalog,
+                            candidate_ir,
+                            phase_id=phase.phase_id,
+                            callback_kind=callback_kind,
+                            source_snapshot=snapshot,
+                        )
+                    )
+            if not candidate_slices:
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "reason": "formal_action_slice_empty",
+                    }
+                )
+                continue
+            candidate_catalog = merge_task_graph_slices(
+                complete_catalog, candidate_slices
+            )
+            candidate_dependencies = build_external_task_topology_dependency_ledger(
+                action_ability_bindings=candidate_ir.action_ability_bindings,
+                ability_phases=candidate_ir.ability_phases,
+                ability_tasks=candidate_ir.ability_tasks,
+                standalone_ability_graphs=candidate_ir.standalone_ability_graphs,
+                status_callbacks=candidate_ir.status_callbacks,
+                status_callback_tasks=candidate_ir.status_callback_tasks,
+            )
+            candidate_rules = RuleBook(
+                replace(
+                    candidate_ir,
+                    task_graph_catalog=candidate_catalog,
+                    external_task_topology_dependencies=candidate_dependencies,
+                )
+            )
+            candidate_context = _a1_accepted_context(
+                candidate_rules, definition, ()
+            )
+            candidate_windows = _action_windows(candidate_rules, definition)
+            if (
+                candidate_context is None
+                or candidate_context[4] != "external_turn"
+                or not candidate_context[-1].ok
+                or "action.window.after_attack" not in candidate_windows
+            ):
+                action_slice_attempts.append(
+                    {
+                        "definition_id": definition.definition_id,
+                        "reason": "production_action_not_admitted_after_slice",
+                    }
+                )
+                continue
+            selected_action_ir = candidate_ir
+            selected_action_definition = definition
+            selected_action_context = candidate_context
+            selected_action_windows = candidate_windows
+            break
+        except (AssertionError, TypeError, ValueError) as exc:
+            action_slice_attempts.append(
+                {
+                    "definition_id": definition.definition_id,
+                    "reason": str(exc)[:240],
+                }
+            )
+
+    if (
+        selected_action_ir is None
+        or selected_action_definition is None
+        or selected_action_context is None
+    ):
+        raise AssertionError(
+            "production after-attack action slice denominator is empty:"
+            + json.dumps(action_slice_attempts[-12:], sort_keys=True)
+        )
+
+    action_ir = selected_action_ir
     standalone_graphs = _merge_ir(
-        (
-            *focused_ir.standalone_ability_graphs,
-            *tuple(getattr(owned, "standalone_ability_graphs", ())),
-        ),
+        (*focused_ir.standalone_ability_graphs, *action_ir.standalone_ability_graphs),
         "standalone_ability_graph_id",
     )
-    phases = _merge_ir((*focused_ir.ability_phases, *owned.ability_phases), "phase_id")
-    ability_tasks = _merge_ir((*focused_ir.ability_tasks, *owned.ability_tasks), "task_id")
-    effects = _merge_ir((*focused_ir.effects, *owned.effects), "effect_id")
-    conditions = _merge_ir((*focused_ir.conditions, *owned.conditions), "condition_id")
-    formulas = _merge_ir((*focused_ir.formulas, *owned.formulas), "formula_id")
+    phases = _merge_ir((*focused_ir.ability_phases, *action_ir.ability_phases), "phase_id")
+    ability_tasks = _merge_ir((*focused_ir.ability_tasks, *action_ir.ability_tasks), "task_id")
+    effects = _merge_ir((*focused_ir.effects, *action_ir.effects), "effect_id")
+    conditions = _merge_ir((*focused_ir.conditions, *action_ir.conditions), "condition_id")
+    formulas = _merge_ir((*focused_ir.formulas, *action_ir.formulas), "formula_id")
     targets = _merge_ir(
-        (*focused_ir.target_expressions, *owned.target_expressions),
+        (*focused_ir.target_expressions, *action_ir.target_expressions),
         "target_expression_id",
     )
     queue_intents = _merge_ir(
-        (*focused_ir.queue_intents, *owned.queue_intents),
+        (*focused_ir.queue_intents, *action_ir.queue_intents),
         "queue_intent_id",
     )
     engine_rules = build_engine_rule_registry()
-    view = CanonicalIR(
-        version=focused_ir.version,
-        entities=owned.entities,
+    view = replace(
+        action_ir,
         standalone_ability_graphs=standalone_graphs,
         ability_phases=phases,
         ability_tasks=ability_tasks,
@@ -814,57 +947,24 @@ def _build_runtime_direct_rulebook() -> tuple[
         conditions=conditions,
         formulas=formulas,
         target_expressions=targets,
-        action_target_contract_catalog=build_action_target_contract_catalog(
-            TBGD_ROOT,
-            definitions=owned.action_definitions,
-            snapshot=snapshot,
-            source_graph_catalog=lowerer.build_character_ability_source_graph_catalog(
-                snapshot=snapshot,
-                scope_catalog=scope,
-            ),
-            definition_scope_complete=False,
-        ),
         status_callbacks=focused_ir.status_callbacks,
         status_callback_tasks=focused_ir.status_callback_tasks,
         status_event_families=focused_ir.status_event_families,
-        status_damage_emissions=owned.status_damage_emissions,
-        damage_modifiers=owned.damage_modifiers,
-        action_delay_emissions=owned.action_delay_emissions,
         queue_intents=queue_intents,
-        skill_continuations=owned.skill_continuations,
-        triggers=owned.triggers,
-        servant_definitions=owned.servant_definitions,
-        action_definitions=owned.action_definitions,
-        action_ability_bindings=owned.action_ability_bindings,
-        action_admissions=owned.action_admissions,
-        unit_birth_templates=owned.unit_birth_templates,
-        combatant_action_sets=owned.combatant_action_sets,
-        action_events=owned.action_events,
-        hit_profiles=owned.hit_profiles,
-        skill_formula_bindings=owned.skill_formula_bindings,
-        damage_emissions=owned.damage_emissions,
-        toughness_emissions=owned.toughness_emissions,
-        avatar_profiles=owned.avatar_profiles,
-        character_data_cards=owned.character_data_cards,
-        character_equipment_eligibilities=owned.character_equipment_eligibilities,
-        character_mechanism_slots=owned.character_mechanism_slots,
-        character_trace_nodes=owned.character_trace_nodes,
-        character_eidolon_slots=owned.character_eidolon_slots,
-        bounce_policies=owned.bounce_policies,
         timeline_rules=engine_rules.timeline_rules,
         resource_rules=engine_rules.resource_rules,
         damage_formula_rules=engine_rules.damage_formula_rules,
         damage_route_rules=engine_rules.damage_route_rules,
         shield_priority_rules=engine_rules.shield_priority_rules,
         metadata={
-            "validation_scope": "p9_a2_pr12_finalized_status_plus_owned_actions",
+            **dict(action_ir.metadata),
+            "validation_scope": "p9_a2_pr12_finalized_status_plus_production_action_slice",
             "full_tbgd_lowering_build_count": 0,
         },
     )
 
-    complete_catalog = build_complete_task_graph_catalog(source_catalog, snapshot)
     formal_slices = []
-    formal_roles = {"action_root", "nested_only", "standalone_root"}
+    formal_roles = {"action_root", "nested_only"}
     ability_slice_keys: list[tuple[str, str]] = []
     for phase in phases:
         if phase.invocation_role not in formal_roles:
@@ -929,6 +1029,13 @@ def _build_runtime_direct_rulebook() -> tuple[
         {
             **finalizer_build_evidence,
             "owned_action_definition_count": len(owned.action_definitions),
+            "selected_action_definition_id": selected_action_definition.definition_id,
+            "selected_action_id": selected_action_definition.action_id,
+            "selected_action_level": selected_action_definition.level,
+            "selected_action_source_path": selected_action_definition.source.source_path,
+            "selected_action_admission_id": selected_action_context[3].admission_id,
+            "selected_action_windows": list(selected_action_windows),
+            "action_slice_failed_attempt_count": len(action_slice_attempts),
             "combined_ability_phase_count": len(phases),
             "combined_ability_task_count": len(ability_tasks),
             "combined_effect_count": len(effects),
