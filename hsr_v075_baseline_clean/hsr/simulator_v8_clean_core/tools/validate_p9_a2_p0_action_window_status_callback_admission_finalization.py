@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import resource
 import subprocess
@@ -10,15 +11,18 @@ import time
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BASELINE_ROOT = REPO_ROOT / "hsr_v075_baseline_clean"
-CORE_ROOT = BASELINE_ROOT / "hsr" / "simulator_v8_clean_core"
 TBGD_ROOT = REPO_ROOT / "turnbasedgamedata-main"
 BASE_SHA = "bd1a4ac94ca394d2ea563d086eaf56e9ed45b285"
-LOWERING_PATH = (
-    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+LOWERING_PATH = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+A1_AUTHORITY_PATHS = (
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_formal_action_graph_admission_authority.py",
 )
 
 if str(BASELINE_ROOT) not in sys.path:
@@ -30,30 +34,28 @@ from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
     TBGDLowering,
     _assign_character_ability_invocation_roles,
+    _block_status_callback_derived_by_callback,
     _block_status_callbacks_by_event_family,
     _block_status_callback_tasks_by_callback,
     _dedupe_target_expressions,
     _finalize_action_window_status_callback_admission,
     _link_status_trigger_ability_graphs,
     _link_trigger_ability_graphs,
+    _lower_queue_resolutions,
     _lower_status_event_families,
     _status_event_blocked_reasons,
 )
 from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
     materialize_character_runtime_task_graph_catalog,
 )
+from hsr.simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority import (
+    _run_direct as _run_a1_direct,
+    _run_fast as _run_a1_fast,
+)
 
 
 def _fail(message: str) -> None:
     raise AssertionError(message)
-
-
-def _function_ast(source: str, function_name: str) -> str:
-    module = ast.parse(source)
-    for node in module.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
-            return ast.dump(node, include_attributes=False)
-    _fail(f"function missing:{function_name}")
 
 
 def _git(*args: str) -> str:
@@ -62,7 +64,31 @@ def _git(*args: str) -> str:
     )
 
 
-def _assert_governance_guards() -> None:
+def _function_ast(source: str, function_name: str) -> str:
+    module = ast.parse(source)
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            return ast.dump(node, include_attributes=False)
+    _fail(f"function_missing:{function_name}")
+
+
+def _json_digest(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _assert_a1_authority_unchanged() -> dict[str, Any]:
+    equal_paths: list[str] = []
+    for relative in A1_AUTHORITY_PATHS:
+        current = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        baseline = _git("show", f"{BASE_SHA}:{relative}")
+        if current != baseline:
+            _fail(f"a1_authority_changed:{relative}")
+        equal_paths.append(relative)
+    return {"fixed_base": BASE_SHA, "exact_equal_paths": equal_paths}
+
+
+def _assert_governance_guards() -> dict[str, Any]:
     current = (REPO_ROOT / LOWERING_PATH).read_text(encoding="utf-8")
     baseline = _git("show", f"{BASE_SHA}:{LOWERING_PATH}")
     for name in ("_link_trigger_ability_graphs", "_link_status_trigger_ability_graphs"):
@@ -82,17 +108,28 @@ def _assert_governance_guards() -> None:
     forbidden_exact = (
         "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py",
     )
-    bad = [path for path in changed if path.startswith(forbidden_prefixes) or path in forbidden_exact]
+    bad = [
+        path
+        for path in changed
+        if path.startswith(forbidden_prefixes) or path in forbidden_exact
+    ]
     if bad:
         _fail("forbidden_runtime_or_rule_change:" + ",".join(bad))
 
     diff = _git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)
     added = "\n".join(
-        line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")
+        line[1:]
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
     )
     for token in ("RandomConfig", "weighted_selection", "weighted-selection", "rng", "RNG"):
         if token in added:
             _fail(f"pr9_rng_scope_leak:{token}")
+
+    return {
+        "changed_paths": list(changed),
+        "a1_authority": _assert_a1_authority_unchanged(),
+    }
 
 
 @dataclass(frozen=True)
@@ -125,6 +162,7 @@ class _Task:
     source: _Source
     coverage_status: str
     blocked_reason: str
+    task_path: str = "CallbackConfig[0]"
     linked_standalone_graph_id: str = ""
     linked_ability_phase_id: str = ""
 
@@ -146,6 +184,7 @@ class _Effect:
     source: _Source
     coverage_status: str = "executable"
     blocked_reason: str = ""
+    link_blocked_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,18 +282,25 @@ def _fixture(
 def _run_finalizer(fixture: tuple[Any, ...]) -> tuple[list[Any], list[Any], tuple[dict[str, Any], ...]]:
     callbacks, tasks, families, effects, graphs, phases, formal = fixture
     return _finalize_action_window_status_callback_admission(
-        callbacks,
-        tasks,
-        families,
-        effects,
-        graphs,
-        phases,
-        formal,
+        callbacks, tasks, families, effects, graphs, phases, formal
     )
 
 
+def _a1_fast_regression() -> dict[str, Any]:
+    authority = _assert_a1_authority_unchanged()
+    result = _run_a1_fast()
+    if not result.get("ok"):
+        _fail("a1_fast_behavior_regression")
+    stable = {"predicates": result.get("predicates"), "sample": result.get("sample")}
+    return {
+        "authority": authority,
+        "behavior_digest": _json_digest(stable),
+        "predicates": result.get("predicates"),
+    }
+
+
 def run_fast() -> None:
-    _assert_governance_guards()
+    governance = _assert_governance_guards()
     negative_reasons: list[str] = []
 
     callbacks, tasks, audit = _run_finalizer(_fixture())
@@ -263,8 +309,11 @@ def run_fast() -> None:
     if not any(row["decision"] == "promoted" for row in audit):
         _fail("positive_audit_missing")
 
-    fixture = _fixture(task_reason="unsupported_target_expression")
-    callbacks, tasks, audit = _run_finalizer(fixture)
+    callbacks, tasks, audit = _run_finalizer(_fixture(callback_reason="", task_reason=None))
+    if callbacks[0].coverage_status != "executable" or tasks[0].coverage_status != "executable":
+        _fail("already_executable_callback_stale_child_not_promoted")
+
+    callbacks, tasks, audit = _run_finalizer(_fixture(task_reason="unsupported_target_expression"))
     if tasks[0].coverage_status != "blocked" or callbacks[0].coverage_status != "blocked":
         _fail("independent_blocker_was_removed")
     negative_reasons.extend(row["decision"] for row in audit)
@@ -274,34 +323,29 @@ def run_fast() -> None:
         ("graph:1", "phase:1", "typed_target_ambiguous"),
         ("graph:missing", "", "typed_target_graph_missing"),
     ):
-        fixture = _fixture(link_graph=graph_id, link_phase=phase_id)
-        callbacks, tasks, audit = _run_finalizer(fixture)
+        callbacks, tasks, audit = _run_finalizer(_fixture(link_graph=graph_id, link_phase=phase_id))
         if tasks[0].coverage_status != "blocked":
             _fail(expected)
         negative_reasons.extend(row["decision"] for row in audit)
 
-    fixture = _fixture(source_mode="synthetic")
-    callbacks, tasks, audit = _run_finalizer(fixture)
+    callbacks, tasks, audit = _run_finalizer(_fixture(source_mode="synthetic"))
     if tasks[0].coverage_status != "blocked":
         _fail("synthetic_source_promoted")
     negative_reasons.extend(row["decision"] for row in audit)
 
-    fixture = _fixture(family_sources=("action.after_attack",))
-    callbacks, tasks, audit = _run_finalizer(fixture)
+    callbacks, tasks, audit = _run_finalizer(_fixture(family_sources=("action.after_attack",)))
     if tasks[0].coverage_status != "blocked":
         _fail("missing_action_window_producer_promoted")
     negative_reasons.extend(row["decision"] for row in audit)
 
-    fixture = _fixture(
-        family_sources=("action.window.after_attack", "action.window.after_attack.secondary")
+    callbacks, tasks, audit = _run_finalizer(
+        _fixture(family_sources=("action.window.after_attack", "action.window.after_attack.secondary"))
     )
-    callbacks, tasks, audit = _run_finalizer(fixture)
     if tasks[0].coverage_status != "blocked":
         _fail("ambiguous_action_window_producer_promoted")
     negative_reasons.extend(row["decision"] for row in audit)
 
-    fixture = _fixture(family_status="blocked")
-    callbacks, tasks, audit = _run_finalizer(fixture)
+    callbacks, tasks, audit = _run_finalizer(_fixture(family_status="blocked"))
     if tasks[0].coverage_status != "blocked":
         _fail("blocked_event_family_promoted")
     negative_reasons.extend(row["decision"] for row in audit)
@@ -317,9 +361,7 @@ def run_fast() -> None:
         blocked_reason="unsupported_status_callback_task",
         linked_standalone_graph_id="",
     )
-    callbacks0[0] = replace(
-        callbacks0[0], task_ids=(tasks0[0].task_id, sibling.task_id)
-    )
+    callbacks0[0] = replace(callbacks0[0], task_ids=(tasks0[0].task_id, sibling.task_id))
     callbacks, tasks, audit = _run_finalizer(
         (callbacks0, [tasks0[0], sibling], families, effects, graphs, phases, formal)
     )
@@ -327,63 +369,275 @@ def run_fast() -> None:
         _fail("blocked_sibling_closure_was_bypassed")
     negative_reasons.extend(row["decision"] for row in audit)
 
+    fixture = _fixture(callback_reason="", task_reason=None)
+    callbacks0, tasks0, families, effects, graphs, phases, formal = fixture
+    root = replace(
+        tasks0[0], task_id="task:root", opcode="Retarget", effect_id="",
+        coverage_status="executable", blocked_reason="", linked_standalone_graph_id=""
+    )
+    child = replace(
+        tasks0[0], task_id="task:child",
+        task_path="CallbackConfig[0].formal_branch[0].child[0]"
+    )
+    callbacks0[0] = replace(callbacks0[0], task_ids=(root.task_id,))
+    callbacks, tasks, audit = _run_finalizer(
+        (callbacks0, [root, child], families, effects, graphs, phases, formal)
+    )
+    promoted_child = next(item for item in tasks if item.task_id == child.task_id)
+    if promoted_child.coverage_status != "executable":
+        _fail("formal_branch_child_closure_not_admitted")
+
     before_cb, before_task, *_ = _fixture()
     callbacks, tasks, _ = _run_finalizer(_fixture())
     before_identity = (
-        before_cb[0].callback_id,
-        before_cb[0].modifier_name,
-        before_cb[0].event,
-        before_cb[0].task_ids,
-        before_cb[0].source,
-        before_task[0].task_id,
-        before_task[0].callback_id,
-        before_task[0].event,
-        before_task[0].opcode,
-        before_task[0].effect_id,
-        before_task[0].source,
-        before_task[0].linked_standalone_graph_id,
-        before_task[0].linked_ability_phase_id,
+        before_cb[0].callback_id, before_cb[0].modifier_name, before_cb[0].event,
+        before_cb[0].task_ids, before_cb[0].source, before_task[0].task_id,
+        before_task[0].callback_id, before_task[0].event, before_task[0].opcode,
+        before_task[0].effect_id, before_task[0].source,
+        before_task[0].linked_standalone_graph_id, before_task[0].linked_ability_phase_id,
     )
     after_identity = (
-        callbacks[0].callback_id,
-        callbacks[0].modifier_name,
-        callbacks[0].event,
-        callbacks[0].task_ids,
-        callbacks[0].source,
-        tasks[0].task_id,
-        tasks[0].callback_id,
-        tasks[0].event,
-        tasks[0].opcode,
-        tasks[0].effect_id,
-        tasks[0].source,
-        tasks[0].linked_standalone_graph_id,
+        callbacks[0].callback_id, callbacks[0].modifier_name, callbacks[0].event,
+        callbacks[0].task_ids, callbacks[0].source, tasks[0].task_id,
+        tasks[0].callback_id, tasks[0].event, tasks[0].opcode, tasks[0].effect_id,
+        tasks[0].source, tasks[0].linked_standalone_graph_id,
         tasks[0].linked_ability_phase_id,
     )
     if before_identity != after_identity:
         _fail("stable_identity_changed")
 
-    required_negative_prefixes = {
-        "task_not_exact_stale_blocker",
-        "typed_target_missing",
-        "typed_target_ambiguous",
-        "typed_target_graph_missing",
-        "source_mode_not_admitted",
-        "action_window_producer_missing",
-        "action_window_producer_ambiguous",
-        "event_family_blocked",
-        "callback_closure_blocked",
+    required = {
+        "task_not_exact_stale_blocker", "typed_target_missing", "typed_target_ambiguous",
+        "typed_target_graph_missing", "source_mode_not_admitted",
+        "action_window_producer_missing", "action_window_producer_ambiguous",
+        "event_family_blocked", "callback_closure_blocked",
     }
     observed = {reason.split(":", 1)[0] for reason in negative_reasons}
-    missing = required_negative_prefixes - observed
+    missing = required - observed
     if missing:
         _fail("negative_reason_coverage_missing:" + ",".join(sorted(missing)))
 
+    a1 = _a1_fast_regression()
     print("FAST PASS")
     print("negative_reasons=" + json.dumps(sorted(Counter(negative_reasons).items())))
+    print("a1_regression=" + json.dumps(a1, ensure_ascii=False, sort_keys=True))
+    print("governance=" + json.dumps(governance, ensure_ascii=False, sort_keys=True))
 
 
-def _audit_histogram(audit: tuple[dict[str, Any], ...], field: str) -> dict[str, int]:
-    return dict(sorted(Counter(str(row.get(field) or "") for row in audit).items()))
+def _unique_index(items: list[Any], field: str, subject: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for item in items:
+        key = str(getattr(item, field))
+        if key in result:
+            _fail(f"independent_denominator_duplicate:{subject}:{key}")
+        result[key] = item
+    return result
+
+
+def _formal_graph_for_target(
+    task: Any,
+    callback: Any,
+    ability_name: str,
+    graphs_by_id: dict[str, Any],
+    phases_by_id: dict[str, Any],
+    graphs_by_phase: dict[str, list[Any]],
+) -> tuple[str, str]:
+    graph_id = str(task.linked_standalone_graph_id or "")
+    phase_id = str(task.linked_ability_phase_id or "")
+    if bool(graph_id) == bool(phase_id):
+        return "", ""
+    if graph_id:
+        graph = graphs_by_id.get(graph_id)
+        if (
+            graph is not None
+            and graph.source.source_path == callback.source.source_path
+            and graph.ability_name == ability_name
+        ):
+            return graph_id, graph_id
+        return graph_id, ""
+    phase = phases_by_id.get(phase_id)
+    owner_graphs = tuple(graphs_by_phase.get(phase_id, ()))
+    if (
+        phase is not None
+        and len(owner_graphs) == 1
+        and phase.source.source_path == callback.source.source_path
+        and phase.ability_name == ability_name
+        and owner_graphs[0].source.source_path == callback.source.source_path
+        and owner_graphs[0].ability_name == ability_name
+    ):
+        return phase_id, owner_graphs[0].standalone_ability_graph_id
+    return phase_id, ""
+
+
+def _independent_expected_denominator(
+    callbacks: list[Any],
+    tasks: list[Any],
+    families: list[Any],
+    effects: list[Any],
+    graphs: list[Any],
+    phases: list[Any],
+    formal_source_paths: set[str],
+) -> tuple[dict[str, Any], ...]:
+    callbacks_by_id = _unique_index(callbacks, "callback_id", "callback")
+    effects_by_id = _unique_index(effects, "effect_id", "effect")
+    graphs_by_id = _unique_index(graphs, "standalone_ability_graph_id", "graph")
+    phases_by_id = _unique_index(phases, "phase_id", "phase")
+    families_by_event: dict[str, list[Any]] = {}
+    for family in families:
+        families_by_event.setdefault(family.callback_event, []).append(family)
+    graphs_by_phase: dict[str, list[Any]] = {}
+    for graph in graphs:
+        for phase_id in graph.phase_ids:
+            graphs_by_phase.setdefault(phase_id, []).append(graph)
+
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        if task.opcode != "TriggerAbility":
+            continue
+        callback = callbacks_by_id.get(task.callback_id)
+        if callback is None:
+            _fail(f"independent_denominator_callback_missing:{task.callback_id}")
+        if callback.source_mode != "mainline_avatar_ability":
+            continue
+        if (
+            callback.source.source_path not in formal_source_paths
+            or task.source.source_path != callback.source.source_path
+        ):
+            continue
+        event_families = tuple(families_by_event.get(callback.event, ()))
+        if len(event_families) != 1:
+            continue
+        action_sources = tuple(
+            source
+            for source in event_families[0].runtime_event_sources
+            if source.startswith("action.window.")
+        )
+        if len(action_sources) != 1:
+            continue
+        effect = effects_by_id.get(task.effect_id)
+        if effect is None or effect.opcode != "TriggerAbility":
+            continue
+        standard = effect.payload.get("standard")
+        ability_name = (
+            str(standard.get("ability_name") or "")
+            if isinstance(standard, Mapping)
+            else ""
+        )
+        if not ability_name:
+            continue
+        typed_target, formal_graph_id = _formal_graph_for_target(
+            task, callback, ability_name, graphs_by_id, phases_by_id, graphs_by_phase
+        )
+        rows.append(
+            {
+                "source_path": callback.source.source_path,
+                "source_mode": callback.source_mode,
+                "callback_id": callback.callback_id,
+                "task_id": task.task_id,
+                "event": callback.event,
+                "old_callback_coverage_status": callback.coverage_status,
+                "old_callback_admission_status": callback.admission_status,
+                "old_callback_blocked_reason": callback.blocked_reason,
+                "old_callback_blocking_dependency": callback.blocking_dependency,
+                "old_task_coverage_status": task.coverage_status,
+                "old_task_blocked_reason": task.blocked_reason,
+                "action_window_runtime_source": action_sources[0],
+                "linked_standalone_graph_id": str(task.linked_standalone_graph_id or ""),
+                "linked_ability_phase_id": str(task.linked_ability_phase_id or ""),
+                "typed_target": typed_target,
+                "formal_graph_id": formal_graph_id,
+                "effect_id": task.effect_id,
+                "ability_name": ability_name,
+            }
+        )
+    return tuple(
+        sorted(rows, key=lambda row: (
+            row["source_path"], row["callback_id"], row["task_id"], row["event"]
+        ))
+    )
+
+
+def _denominator_key(row: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(row.get("source_path") or ""), str(row.get("callback_id") or ""),
+        str(row.get("task_id") or ""), str(row.get("event") or ""),
+    )
+
+
+def _reconcile_expected_with_audit(
+    expected: tuple[dict[str, Any], ...],
+    audit: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    expected_by_key = {_denominator_key(row): row for row in expected}
+    if len(expected_by_key) != len(expected):
+        _fail("independent_denominator_key_not_unique")
+    audit_rows = tuple(
+        row
+        for row in audit
+        if row.get("source_mode") == "mainline_avatar_ability"
+        and row.get("action_window_runtime_source")
+    )
+    audit_by_key = {_denominator_key(row): row for row in audit_rows}
+    if len(audit_by_key) != len(audit_rows):
+        _fail("finalizer_audit_denominator_key_not_unique")
+    if set(expected_by_key) != set(audit_by_key):
+        missing = sorted(set(expected_by_key) - set(audit_by_key))
+        extra = sorted(set(audit_by_key) - set(expected_by_key))
+        _fail("independent_denominator_bidirectional_mismatch:" + json.dumps(
+            {"missing": missing, "extra": extra}, sort_keys=True
+        ))
+
+    compared = (
+        "source_path", "source_mode", "callback_id", "task_id", "event",
+        "old_callback_coverage_status", "old_callback_blocked_reason",
+        "old_task_coverage_status", "old_task_blocked_reason",
+        "action_window_runtime_source", "typed_target", "formal_graph_id",
+    )
+    reconciled: list[dict[str, Any]] = []
+    for key in sorted(expected_by_key):
+        left = expected_by_key[key]
+        right = audit_by_key[key]
+        for field in compared:
+            if str(left.get(field) or "") != str(right.get(field) or ""):
+                _fail(f"independent_denominator_field_mismatch:{field}:{key}")
+        reconciled.append({
+            **left,
+            "decision": right.get("decision"),
+            "new_task_coverage_status": right.get("new_task_coverage_status"),
+            "new_task_blocked_reason": right.get("new_task_blocked_reason"),
+        })
+    return tuple(reconciled)
+
+
+def _queue_resolution_evidence(queue_resolutions: list[Any]) -> dict[str, Any]:
+    status_histogram = Counter(
+        str(getattr(item, "coverage_status", "") or "") for item in queue_resolutions
+    )
+    blocker_histogram = Counter(
+        str(getattr(item, "blocked_reason", "") or "")
+        for item in queue_resolutions
+        if getattr(item, "coverage_status", "") != "executable"
+    )
+    if any(
+        getattr(item, "coverage_status", "") != "executable"
+        and not str(getattr(item, "blocked_reason", "") or "")
+        for item in queue_resolutions
+    ):
+        _fail("blocked_queue_resolution_without_reason")
+    queue_root_graph_ids = sorted({
+        str(item.resolved_ids.get("standalone_ability_graph_id"))
+        for item in queue_resolutions
+        if getattr(item, "coverage_status", "") == "executable"
+        and getattr(item, "resolved_kind", "") == "standalone_ability_graph"
+        and isinstance(item.resolved_ids.get("standalone_ability_graph_id"), str)
+        and item.resolved_ids.get("standalone_ability_graph_id")
+    })
+    return {
+        "count": len(queue_resolutions),
+        "coverage_histogram": dict(sorted(status_histogram.items())),
+        "blocked_reason_histogram": dict(sorted(blocker_histogram.items())),
+        "executable_queue_root_graph_ids": queue_root_graph_ids,
+    }
 
 
 def _build_focused_direct_ir() -> tuple[
@@ -391,19 +645,18 @@ def _build_focused_direct_ir() -> tuple[
     CanonicalIR,
     RuleBook,
     tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
     dict[str, Any],
 ]:
     lowerer = TBGDLowering(TBGD_ROOT)
-    source_graph_catalog = lowerer.build_character_ability_source_graph_catalog()
+    lowerer.build_character_ability_source_graph_catalog()
     snapshot = getattr(lowerer, "_character_ability_raw_snapshot", None)
     scope_catalog = getattr(lowerer, "_character_ability_scope_catalog", None)
     if snapshot is None or scope_catalog is None:
         _fail("focused_source_catalog_prerequisite_missing")
 
     formal_context = lowerer._character_formal_task_source_context()
-    formal_source_paths = {
-        item.source.source_path for item in snapshot.sources
-    }
+    formal_source_paths = {item.source.source_path for item in snapshot.sources}
     if not formal_source_paths:
         _fail("focused_formal_source_denominator_empty")
 
@@ -414,13 +667,26 @@ def _build_focused_direct_ir() -> tuple[
         if priority.coverage_status == "executable"
     }
 
+    action_definitions = lowerer._lower_action_definitions()
+    (
+        action_ability_bindings,
+        action_phases,
+        action_tasks,
+        action_effects,
+        action_conditions,
+        action_formulas,
+        action_target_expressions,
+    ) = lowerer._lower_action_ability_bindings(action_definitions)
+    combatant_action_sets = lowerer._lower_combatant_action_sets(action_definitions)
+
     selected_files: list[Path] = []
-    status_callbacks = []
-    status_callback_tasks = []
-    effects = []
-    conditions = []
-    formulas = []
-    target_expressions = []
+    status_callbacks: list[Any] = []
+    status_callback_tasks: list[Any] = []
+    queue_intents: list[Any] = []
+    effects: list[Any] = list(action_effects)
+    conditions: list[Any] = list(action_conditions)
+    formulas: list[Any] = list(action_formulas)
+    target_expressions: list[Any] = list(action_target_expressions)
 
     ability_files = lowerer._ability_files()
     for ability_file_order, path in enumerate(ability_files):
@@ -436,6 +702,7 @@ def _build_focused_direct_ir() -> tuple[
         )
         status_callbacks.extend(lowered.status_callbacks)
         status_callback_tasks.extend(lowered.status_callback_tasks)
+        queue_intents.extend(lowered.queue_intents)
         effects.extend(lowered.effects)
         conditions.extend(lowered.conditions)
         formulas.extend(lowered.formulas)
@@ -458,53 +725,41 @@ def _build_focused_direct_ir() -> tuple[
         standalone_target_expressions,
         _standalone_root_task_ids_by_graph,
     ) = lowerer._lower_standalone_ability_graphs(selected_files)
-
     effects.extend(standalone_effects)
     conditions.extend(standalone_conditions)
     formulas.extend(standalone_formulas)
     target_expressions.extend(standalone_target_expressions)
 
-    standalone_tasks = _link_trigger_ability_graphs(
-        standalone_tasks,
-        effects,
-        standalone_graphs,
-        standalone_phases,
-    )
+    standalone_phase_ids = {phase.phase_id for phase in standalone_phases}
+    standalone_task_ids = {task.task_id for task in standalone_tasks}
+    all_phases = [*action_phases, *standalone_phases]
+    all_tasks = [*action_tasks, *standalone_tasks]
+    all_tasks = _link_trigger_ability_graphs(all_tasks, effects, standalone_graphs, all_phases)
+    linked_standalone_tasks = [task for task in all_tasks if task.task_id in standalone_task_ids]
     status_callback_tasks = _link_status_trigger_ability_graphs(
-        status_callback_tasks,
-        status_callbacks,
-        effects,
-        standalone_graphs,
+        status_callback_tasks, status_callbacks, effects, standalone_graphs
     )
 
-    status_event_families = _lower_status_event_families(
-        status_callbacks,
-        status_callback_tasks,
+    status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
+    expected_denominator = _independent_expected_denominator(
+        status_callbacks, status_callback_tasks, status_event_families, effects,
+        standalone_graphs, all_phases, formal_source_paths
     )
-    (
-        status_callbacks,
-        status_callback_tasks,
-        audit,
-    ) = _finalize_action_window_status_callback_admission(
-        status_callbacks,
-        status_callback_tasks,
-        status_event_families,
-        effects,
-        standalone_graphs,
-        standalone_phases,
-        formal_source_paths,
-    )
-    status_event_families = _lower_status_event_families(
-        status_callbacks,
-        status_callback_tasks,
-    )
+    if not expected_denominator:
+        _fail("independent_source_denominator_empty")
 
-    status_event_blocked_reasons = _status_event_blocked_reasons(
-        status_event_families
+    status_callbacks, status_callback_tasks, audit = (
+        _finalize_action_window_status_callback_admission(
+            status_callbacks, status_callback_tasks, status_event_families,
+            effects, standalone_graphs, all_phases, formal_source_paths
+        )
     )
+    reconciled = _reconcile_expected_with_audit(expected_denominator, audit)
+
+    status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
+    status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
     status_callbacks = _block_status_callbacks_by_event_family(
-        status_callbacks,
-        status_event_blocked_reasons,
+        status_callbacks, status_event_blocked_reasons
     )
     status_callback_blocked_reasons = {
         callback.callback_id: (
@@ -515,112 +770,156 @@ def _build_focused_direct_ir() -> tuple[
         for callback in status_callbacks
         if (
             callback.event in status_event_blocked_reasons
-            or callback.blocked_reason
-            == "equipment_modifier_definition_unreferenced"
+            or callback.blocked_reason == "equipment_modifier_definition_unreferenced"
         )
     }
     status_callback_tasks = _block_status_callback_tasks_by_callback(
-        status_callback_tasks,
-        status_callback_blocked_reasons,
+        status_callback_tasks, status_callback_blocked_reasons
     )
-    status_event_families = _lower_status_event_families(
-        status_callbacks,
-        status_callback_tasks,
+    queue_intents = _block_status_callback_derived_by_callback(
+        queue_intents, status_callback_blocked_reasons
     )
+    status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
 
-    standalone_phases = _assign_character_ability_invocation_roles(
-        standalone_phases,
-        standalone_tasks,
-        standalone_graphs,
-        [],
+    queue_resolutions = _lower_queue_resolutions(
+        queue_intents=queue_intents,
+        action_bindings=action_ability_bindings,
+        ability_phases=all_phases,
+        standalone_graphs=standalone_graphs,
+        combatant_action_sets=combatant_action_sets,
+    )
+    assigned_phases = _assign_character_ability_invocation_roles(
+        all_phases, all_tasks, standalone_graphs, queue_resolutions,
         status_callback_tasks=status_callback_tasks,
         status_callbacks=status_callbacks,
     )
+    assigned_by_id = {phase.phase_id: phase for phase in assigned_phases}
+    focused_phases = [
+        assigned_by_id[phase_id]
+        for phase_id in sorted(standalone_phase_ids)
+        if phase_id in assigned_by_id
+    ]
+    if len(focused_phases) != len(standalone_phase_ids):
+        _fail("focused_invocation_role_phase_loss")
 
     control_flow_catalog = lowerer.build_character_control_flow_contract_catalog(
-        snapshot=snapshot,
-        scope_catalog=scope_catalog,
+        snapshot=snapshot, scope_catalog=scope_catalog
     )
     task_graph_view = CanonicalIR(
         version=BASELINE_VERSION,
-        ability_phases=tuple(standalone_phases),
-        ability_tasks=tuple(standalone_tasks),
+        ability_phases=tuple(focused_phases),
+        ability_tasks=tuple(linked_standalone_tasks),
         standalone_ability_graphs=tuple(standalone_graphs),
         effects=tuple(effects),
         conditions=tuple(conditions),
         formulas=tuple(formulas),
-        target_expressions=tuple(
-            _dedupe_target_expressions(target_expressions).values()
-        ),
+        target_expressions=tuple(_dedupe_target_expressions(target_expressions).values()),
         status_callbacks=tuple(status_callbacks),
         status_callback_tasks=tuple(status_callback_tasks),
         status_event_families=tuple(status_event_families),
     )
     task_graph_catalog = materialize_character_runtime_task_graph_catalog(
-        control_flow_catalog,
-        task_graph_view,
-        source_snapshot=snapshot,
+        control_flow_catalog, task_graph_view, source_snapshot=snapshot,
         definition_scope_complete=True,
     )
     ir = replace(task_graph_view, task_graph_catalog=task_graph_catalog)
     rulebook = RuleBook(ir)
-
-    denominator = {
+    queue_evidence = _queue_resolution_evidence(queue_resolutions)
+    denominator_meta = {
         "snapshot_source_count": len(snapshot.sources),
         "formal_source_path_count": len(formal_source_paths),
         "selected_formal_ability_file_count": len(selected_files),
         "status_callback_count": len(status_callbacks),
         "status_callback_task_count": len(status_callback_tasks),
         "standalone_graph_count": len(standalone_graphs),
-        "task_graph_materialization_count": len(
-            task_graph_catalog.entry_materializations
-        ),
+        "action_definition_count": len(action_definitions),
+        "action_binding_count": len(action_ability_bindings),
+        "queue_intent_count": len(queue_intents),
+        "queue_resolution": queue_evidence,
+        "task_graph_materialization_count": len(task_graph_catalog.entry_materializations),
     }
-    return lowerer, ir, rulebook, audit, denominator
+    return lowerer, ir, rulebook, audit, reconciled, denominator_meta
+
+
+def _audit_histogram(audit: tuple[dict[str, Any], ...], field: str) -> dict[str, int]:
+    return dict(sorted(Counter(str(row.get(field) or "") for row in audit).items()))
+
+
+def _a1_direct_regression() -> dict[str, Any]:
+    authority = _assert_a1_authority_unchanged()
+    result = _run_a1_direct(TBGD_ROOT)
+    if not result.get("ok"):
+        _fail("a1_direct_behavior_regression")
+    stable = {
+        "predicates": result.get("predicates"),
+        "source": result.get("source"),
+        "flat_vs_graph_delta": result.get("flat_vs_graph_delta"),
+        "reachable_blocker_representative": result.get("reachable_blocker_representative"),
+        "external_legacy_representative": result.get("external_legacy_representative"),
+    }
+    return {
+        "authority": authority,
+        "behavior_digest": _json_digest(stable),
+        "predicates": result.get("predicates"),
+        "source": result.get("source"),
+    }
+
 
 def run_direct() -> None:
     if not TBGD_ROOT.is_dir():
         _fail(f"pinned_tbgd_missing:{TBGD_ROOT}")
 
-    _assert_governance_guards()
+    governance = _assert_governance_guards()
     started = time.perf_counter()
-    lowerer, ir, rulebook, audit, focused_denominator = _build_focused_direct_ir()
+    lowerer, ir, rulebook, audit, reconciled_denominator, focused_denominator = (
+        _build_focused_direct_ir()
+    )
     elapsed = time.perf_counter() - started
     peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-
     if not isinstance(audit, tuple) or not audit:
         _fail("production_finalizer_audit_missing")
+    if not reconciled_denominator:
+        _fail("direct_source_denominator_empty")
 
     callbacks = {item.callback_id: item for item in ir.status_callbacks}
     tasks = {item.task_id: item for item in ir.status_callback_tasks}
-    graphs = {
-        item.standalone_ability_graph_id: item for item in ir.standalone_ability_graphs
-    }
+    graphs = {item.standalone_ability_graph_id: item for item in ir.standalone_ability_graphs}
     phases = {item.phase_id: item for item in ir.ability_phases}
     families = {item.callback_event: item for item in ir.status_event_families}
 
-    denominator = [
-        row
-        for row in audit
-        if row.get("source_mode") == "mainline_avatar_ability"
-        and row.get("action_window_runtime_source")
-    ]
-    if not denominator:
-        _fail("direct_source_denominator_empty")
+    audit_by_key = {_denominator_key(row): row for row in audit}
+    for expected in reconciled_denominator:
+        key = _denominator_key(expected)
+        audit_row = audit_by_key.get(key)
+        task = tasks.get(expected["task_id"])
+        callback = callbacks.get(expected["callback_id"])
+        if audit_row is None or task is None or callback is None:
+            _fail(f"reconciled_denominator_output_missing:{key}")
+        if (
+            task.coverage_status != audit_row.get("new_task_coverage_status")
+            or task.blocked_reason != audit_row.get("new_task_blocked_reason")
+        ):
+            _fail(f"finalizer_audit_output_mismatch:{key}")
+        if (
+            task.linked_standalone_graph_id != expected["linked_standalone_graph_id"]
+            or task.linked_ability_phase_id != expected["linked_ability_phase_id"]
+        ):
+            _fail(f"typed_link_identity_changed:{key}")
 
-    promoted = [row for row in denominator if row.get("decision") == "promoted"]
+    promoted = [row for row in reconciled_denominator if row.get("decision") == "promoted"]
     if not promoted:
         _fail("direct_real_positive_missing")
 
     materializations = (
         tuple(rulebook.ir.task_graph_catalog.entry_materializations)
-        if rulebook.ir.task_graph_catalog is not None
-        else ()
+        if rulebook.ir.task_graph_catalog is not None else ()
     )
     task_graphs = (
         {graph.graph_id: graph for graph in rulebook.ir.task_graph_catalog.graphs}
-        if rulebook.ir.task_graph_catalog is not None
-        else {}
+        if rulebook.ir.task_graph_catalog is not None else {}
+    )
+    queue_root_graph_ids = set(
+        focused_denominator["queue_resolution"]["executable_queue_root_graph_ids"]
     )
 
     promoted_ledger: list[dict[str, Any]] = []
@@ -655,19 +954,18 @@ def run_direct() -> None:
                 _fail("promoted_phase_target_not_formal")
             formal_graph_id = phase.binding_id
 
-        target_phase_ids = (
-            tuple(graphs[graph_id].phase_ids) if graph_id else (phase_id,)
-        )
+        target_phase_ids = tuple(graphs[graph_id].phase_ids) if graph_id else (phase_id,)
         if not target_phase_ids or any(
             phases.get(target_phase_id) is None
             or phases[target_phase_id].invocation_role != "nested_only"
             for target_phase_id in target_phase_ids
         ):
-            _fail("promoted_nested_target_role_not_resolved")
+            _fail("promoted_nested_target_role_not_resolved_with_queue_context")
+        if formal_graph_id in queue_root_graph_ids:
+            _fail("promoted_nested_target_is_executable_queue_root")
 
         entries = [
-            item
-            for item in materializations
+            item for item in materializations
             if item.entry_kind == "status_callback"
             and item.owner_id == callback.callback_id
             and item.status == "materialized"
@@ -677,34 +975,30 @@ def run_direct() -> None:
 
         family = families.get(callback.event)
         action_sources = (
-            tuple(
-                source
-                for source in family.runtime_event_sources
-                if source.startswith("action.window.")
-            )
-            if family is not None
-            else ()
+            tuple(source for source in family.runtime_event_sources if source.startswith("action.window."))
+            if family is not None else ()
         )
         if len(action_sources) != 1:
             _fail("promoted_action_window_producer_not_unique")
+        old_reason_lower = str(row["old_task_blocked_reason"]).lower()
+        if "queue" in old_reason_lower or "deferred" in old_reason_lower:
+            _fail("queue_or_deferred_blocker_was_promoted")
 
-        promoted_ledger.append(
-            {
-                "source": callback.source.source_path,
-                "callback_id": callback.callback_id,
-                "task_id": task.task_id,
-                "event": callback.event,
-                "old_reason": row["old_task_blocked_reason"],
-                "new_status": task.coverage_status,
-                "typed_target": graph_id or phase_id,
-                "formal_graph": formal_graph_id,
-                "status_root_graph": entries[0].graph_id,
-            }
-        )
+        promoted_ledger.append({
+            "source": callback.source.source_path,
+            "callback_id": callback.callback_id,
+            "task_id": task.task_id,
+            "event": callback.event,
+            "old_reason": row["old_task_blocked_reason"],
+            "new_status": task.coverage_status,
+            "typed_target": graph_id or phase_id,
+            "formal_graph": formal_graph_id,
+            "status_root_graph": entries[0].graph_id,
+            "queue_root_conflict": False,
+        })
 
     illegal = [
-        row
-        for row in audit
+        row for row in audit
         if row.get("decision") == "promoted"
         and row.get("old_task_blocked_reason")
         != f"status_callback_event_not_admitted:{row.get('event')}"
@@ -712,8 +1006,9 @@ def run_direct() -> None:
     if illegal:
         _fail("non_stale_blocker_promoted")
 
-    negatives = [row for row in denominator if row.get("decision") != "promoted"]
-    for row in negatives:
+    for row in reconciled_denominator:
+        if row.get("decision") == "promoted":
+            continue
         task = tasks.get(str(row["task_id"]))
         if (
             task is not None
@@ -722,18 +1017,23 @@ def run_direct() -> None:
         ):
             _fail("negative_denominator_row_became_executable")
 
+    a1 = _a1_direct_regression()
     evidence = {
         "mode": "direct",
         "builder": "focused_formal_character_source_denominator",
+        "independent_denominator_builder": "pre_finalizer_source_backed_ir",
+        "bidirectional_reconciliation": "exact",
         "focused_denominator": focused_denominator,
         "wall_seconds": round(elapsed, 3),
         "peak_rss_kib": peak_rss,
-        "denominator_count": len(denominator),
+        "denominator_count": len(reconciled_denominator),
         "promoted_count": len(promoted),
         "decision_histogram": _audit_histogram(audit, "decision"),
         "before_task_reason_histogram": _audit_histogram(audit, "old_task_blocked_reason"),
         "after_task_status_histogram": _audit_histogram(audit, "new_task_coverage_status"),
         "promoted_rows": promoted_ledger,
+        "a1_regression": a1,
+        "governance": governance,
     }
     print("DIRECT PASS")
     print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
