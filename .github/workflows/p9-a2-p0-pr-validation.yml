@@ -19,7 +19,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Print owner task-id checks from pinned helper
+      - name: Print closure decision context from pinned helper
         env:
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
         run: |
@@ -35,13 +35,13 @@ jobs:
           if match is None:
               raise SystemExit("helper payload missing")
           lines = base64.b64decode(match.group(1)).decode().splitlines()
-          hits = [i for i, line in enumerate(lines) if "owner.task_ids" in line]
+          hits = [i for i, line in enumerate(lines) if "callback_closure_blocked" in line]
           if not hits:
-              raise SystemExit("owner.task_ids not found")
+              raise SystemExit("callback_closure_blocked not found")
           for hit in hits:
-              lo = max(0, hit - 12)
-              hi = min(len(lines), hit + 20)
-              print(f"OWNER_TASK_IDS_CONTEXT_{hit}_BEGIN")
+              lo = max(0, hit - 35)
+              hi = min(len(lines), hit + 35)
+              print(f"CLOSURE_CONTEXT_{hit}_BEGIN")
               print("\n".join(lines[lo:hi]))
-              print(f"OWNER_TASK_IDS_CONTEXT_{hit}_END")
+              print(f"CLOSURE_CONTEXT_{hit}_END")
           PY
