@@ -33,6 +33,7 @@ from ..systems.ability import (
     StatusNestedAbilityHookProvider,
 )
 from ..systems.event_dispatch import EventDispatchSystem, _event_aliases
+from ..systems.scheduler import CombatScheduler
 from ..systems.status import StatusSystem, status_control_gate_for_actor
 from ..systems.status_callbacks import StatusCallbackExecutionResult
 from ..systems.task_graph import (
@@ -748,6 +749,58 @@ def _merge_ir(values: Iterable[Any], field: str) -> tuple[Any, ...]:
     return tuple(merged[key] for key in sorted(merged))
 
 
+def _direct_state_for_admission(admission: Any) -> BattleState:
+    return BattleState(
+        units={
+            "validation:actor": UnitState(
+                unit_id="validation:actor",
+                side="ally",
+                template_id=admission.owner_entity_ref,
+                max_hp=100000.0,
+                hp=100000.0,
+                energy=100000.0,
+                max_energy=100000.0,
+                flags={"position": 0},
+                resources={
+                    "special_energy": 100000.0,
+                    "special_resource": 100000.0,
+                    "charge": 100000.0,
+                },
+            ),
+            "validation:enemy": UnitState(
+                unit_id="validation:enemy",
+                side="enemy",
+                template_id="validation:enemy_template",
+                max_hp=100000.0,
+                hp=100000.0,
+                flags={"position": 1},
+            ),
+        },
+        skill_points=99,
+        max_skill_points=99,
+        global_flags={
+            "turn_owner_id": "validation:actor",
+            "current_window": (
+                admission.allowed_windows[0] if admission.allowed_windows else "idle"
+            ),
+            "phase": "combat",
+        },
+    )
+
+
+def _production_direct_modes(admission: Any) -> tuple[str, ...]:
+    modes = set(admission.submission_modes)
+    result: list[str] = []
+    if "external_turn" in modes:
+        result.append("external_turn")
+    # The only non-external-turn producer admitted by this validator is the
+    # existing production manual-ultimate route. It needs insert-window
+    # admission at enqueue time and queue admission at scheduler drain time.
+    if "queue" in modes and "insert_window" in modes:
+        result.append("queue")
+    return tuple(result)
+
+
 def _build_runtime_direct_rulebook() -> tuple[
     RuleBook,
     tuple[dict[str, Any], ...],
@@ -852,7 +905,9 @@ def _build_runtime_direct_rulebook() -> tuple[
             phase_binding_counts[binding.action_source_id] = (
                 phase_binding_counts.get(binding.action_source_id, 0) + 1
             )
-    action_kind_priority = {"basic": 0, "skill": 1, "ultimate": 2}
+    # Prefer the production manual-ultimate queue producer before known
+    # external-turn action roots that are blocked by existing A1 domains.
+    action_kind_priority = {"ultimate": 0, "basic": 1, "skill": 2}
     ranked_action_definitions: list[tuple[tuple[Any, ...], Any, str]] = []
     for source in source_graph.action_sources:
         if (
@@ -937,19 +992,19 @@ def _build_runtime_direct_rulebook() -> tuple[
                 }
                 for admission in candidate_admissions
             ]
-            external_turn_admissions = tuple(
-                admission
+            producer_admission_modes = tuple(
+                (admission, mode)
                 for admission in candidate_admissions
                 if admission.coverage_status == "executable"
                 and not admission.blocked_reason
-                and "external_turn" in admission.submission_modes
+                for mode in _production_direct_modes(admission)
             )
-            if not external_turn_admissions:
+            if not producer_admission_modes:
                 action_slice_attempts.append(
                     {
                         "definition_id": definition.definition_id,
                         "action_kind": action_kind,
-                        "reason": "no_executable_external_turn_admission",
+                        "reason": "no_executable_production_direct_producer",
                         "admissions": admission_summary,
                     }
                 )
@@ -1040,59 +1095,125 @@ def _build_runtime_direct_rulebook() -> tuple[
                     external_task_topology_dependencies=candidate_dependencies,
                 )
             )
-            candidate_context = _a1_accepted_context(
-                candidate_rules, definition, ()
-            )
             candidate_windows = _action_windows(candidate_rules, definition)
-            if candidate_context is None:
-                action_slice_attempts.append(
-                    {
-                        "definition_id": definition.definition_id,
-                        "action_kind": action_kind,
-                        "reason": "public_target_or_action_context_unresolved",
-                        "event_windows": event_windows,
-                        "execution_plan_windows": list(candidate_windows),
-                        "admissions": admission_summary,
-                    }
+            candidate_context = None
+            producer_attempts: list[dict[str, Any]] = []
+            for admission, mode in producer_admission_modes:
+                state = _direct_state_for_admission(admission)
+                accepted = _accepted_action_on_state(
+                    candidate_rules,
+                    state,
+                    definition,
+                    submission_mode=mode,
                 )
+                if accepted is None:
+                    producer_attempts.append(
+                        {
+                            "submission_mode": mode,
+                            "admission_id": admission.admission_id,
+                            "reason": "public_target_or_action_context_unresolved",
+                        }
+                    )
+                    continue
+                command, target_context, decision = accepted
+                if (
+                    decision.admission is None
+                    or decision.admission.admission_id != admission.admission_id
+                ):
+                    producer_attempts.append(
+                        {
+                            "submission_mode": mode,
+                            "admission_id": admission.admission_id,
+                            "reason": "action_contract_admission_identity_mismatch",
+                        }
+                    )
+                    continue
+                if mode == "queue":
+                    enqueue = CombatScheduler(candidate_rules).enqueue_manual_ultimate(
+                        state, command
+                    )
+                    enqueue_reason = str(
+                        enqueue.transition.coverage.get("blocked_reason") or ""
+                    )
+                    if enqueue_reason:
+                        producer_attempts.append(
+                            {
+                                "submission_mode": mode,
+                                "admission_id": admission.admission_id,
+                                "reason": f"manual_ultimate_enqueue_blocked:{enqueue_reason}",
+                            }
+                        )
+                        continue
+                candidate_context = (
+                    state,
+                    command,
+                    target_context,
+                    admission,
+                    mode,
+                    decision,
+                )
+                break
+
+            if candidate_context is None:
+                diagnostic = _a1_accepted_context(candidate_rules, definition, ())
+                if diagnostic is not None and not diagnostic[-1].ok:
+                    decision = diagnostic[-1]
+                    metadata = (
+                        decision.metadata
+                        if isinstance(decision.metadata, Mapping)
+                        else {}
+                    )
+                    provenance = metadata.get("formal_action_blocker_provenance", [])
+                    action_slice_attempts.append(
+                        {
+                            "definition_id": definition.definition_id,
+                            "action_kind": action_kind,
+                            "reason": "formal_action_contract_blocked",
+                            "blocked_reason": str(decision.blocked_reason or "")[:400],
+                            "submission_mode": diagnostic[4],
+                            "admission_id": diagnostic[3].admission_id,
+                            "formal_root_graph_ids": list(
+                                metadata.get("formal_action_root_graph_ids", [])
+                            )[:8],
+                            "reachable_task_count": len(
+                                metadata.get("formal_action_reachable_task_ids", [])
+                            ),
+                            "blocker_provenance_tail": (
+                                list(provenance)[-4:]
+                                if isinstance(provenance, (list, tuple))
+                                else []
+                            ),
+                            "event_windows": event_windows,
+                            "execution_plan_windows": list(candidate_windows),
+                            "producer_attempts": producer_attempts,
+                        }
+                    )
+                else:
+                    action_slice_attempts.append(
+                        {
+                            "definition_id": definition.definition_id,
+                            "action_kind": action_kind,
+                            "reason": "production_producer_context_unresolved",
+                            "event_windows": event_windows,
+                            "execution_plan_windows": list(candidate_windows),
+                            "admissions": admission_summary,
+                            "producer_attempts": producer_attempts,
+                        }
+                    )
                 continue
+
             _state_value, _command, _target_context, admission, mode, decision = (
                 candidate_context
             )
-            if mode != "external_turn":
-                action_slice_attempts.append(
-                    {
-                        "definition_id": definition.definition_id,
-                        "action_kind": action_kind,
-                        "reason": "public_context_not_external_turn",
-                        "submission_mode": mode,
-                        "admission_id": admission.admission_id,
-                        "event_windows": event_windows,
-                        "execution_plan_windows": list(candidate_windows),
-                    }
-                )
-                continue
             if not decision.ok:
-                metadata = decision.metadata if isinstance(decision.metadata, Mapping) else {}
-                provenance = metadata.get("formal_action_blocker_provenance", [])
                 action_slice_attempts.append(
                     {
                         "definition_id": definition.definition_id,
                         "action_kind": action_kind,
                         "reason": "formal_action_contract_blocked",
                         "blocked_reason": str(decision.blocked_reason or "")[:400],
+                        "submission_mode": mode,
                         "admission_id": admission.admission_id,
-                        "formal_root_graph_ids": list(
-                            metadata.get("formal_action_root_graph_ids", [])
-                        )[:8],
-                        "reachable_task_count": len(
-                            metadata.get("formal_action_reachable_task_ids", [])
-                        ),
-                        "blocker_provenance_tail": (
-                            list(provenance)[-4:]
-                            if isinstance(provenance, (list, tuple))
-                            else []
-                        ),
                         "event_windows": event_windows,
                         "execution_plan_windows": list(candidate_windows),
                     }
@@ -1104,6 +1225,7 @@ def _build_runtime_direct_rulebook() -> tuple[
                         "definition_id": definition.definition_id,
                         "action_kind": action_kind,
                         "reason": "after_attack_execution_plan_missing",
+                        "submission_mode": mode,
                         "admission_id": admission.admission_id,
                         "event_windows": event_windows,
                         "execution_plan_windows": list(candidate_windows),
@@ -1254,6 +1376,7 @@ def _build_runtime_direct_rulebook() -> tuple[
             "selected_action_level": selected_action_definition.level,
             "selected_action_source_path": selected_action_definition.source.source_path,
             "selected_action_admission_id": selected_action_context[3].admission_id,
+            "selected_action_submission_mode": selected_action_context[4],
             "selected_action_windows": list(selected_action_windows),
             "action_slice_failed_attempt_count": len(action_slice_attempts),
             "direct_action_discovery_elapsed_seconds": round(
@@ -1439,69 +1562,46 @@ def _action_candidates_by_window(rules: RuleBook) -> dict[str, list[tuple[Any, A
                     and admission.action_level == definition.level
                     and admission.coverage_status == "executable"
                     and not admission.blocked_reason
-                    and "external_turn" in admission.submission_modes
+                    and _production_direct_modes(admission)
                 ),
                 key=lambda admission: admission.admission_id,
             )
         )
         context = None
         for admission in admissions:
-            state = BattleState(
-                units={
-                    "validation:actor": UnitState(
-                        unit_id="validation:actor",
-                        side="ally",
-                        template_id=admission.owner_entity_ref,
-                        max_hp=100000.0,
-                        hp=100000.0,
-                        energy=100000.0,
-                        max_energy=100000.0,
-                        flags={"position": 0},
-                        resources={
-                            "special_energy": 100000.0,
-                            "special_resource": 100000.0,
-                            "charge": 100000.0,
-                        },
-                    ),
-                    "validation:enemy": UnitState(
-                        unit_id="validation:enemy",
-                        side="enemy",
-                        template_id="validation:enemy_template",
-                        max_hp=100000.0,
-                        hp=100000.0,
-                        flags={"position": 1},
-                    ),
-                },
-                skill_points=99,
-                max_skill_points=99,
-                global_flags={
-                    "turn_owner_id": "validation:actor",
-                    "current_window": (
-                        admission.allowed_windows[0]
-                        if admission.allowed_windows
-                        else "idle"
-                    ),
-                    "phase": "combat",
-                },
-            )
-            accepted = _accepted_action_on_state(rules, state, definition)
-            if accepted is None:
-                continue
-            command, target_context, decision = accepted
-            if (
-                decision.admission is None
-                or decision.admission.admission_id != admission.admission_id
-            ):
-                continue
-            context = (
-                state,
-                command,
-                target_context,
-                admission,
-                "external_turn",
-                decision,
-            )
-            break
+            for mode in _production_direct_modes(admission):
+                state = _direct_state_for_admission(admission)
+                accepted = _accepted_action_on_state(
+                    rules,
+                    state,
+                    definition,
+                    submission_mode=mode,
+                )
+                if accepted is None:
+                    continue
+                command, target_context, decision = accepted
+                if (
+                    decision.admission is None
+                    or decision.admission.admission_id != admission.admission_id
+                ):
+                    continue
+                if mode == "queue":
+                    enqueue = CombatScheduler(rules).enqueue_manual_ultimate(
+                        state, command
+                    )
+                    if enqueue.transition.coverage.get("blocked_reason"):
+                        continue
+                context = (
+                    state,
+                    command,
+                    target_context,
+                    admission,
+                    mode,
+                    decision,
+                )
+                break
+            if context is not None:
+                break
         if context is None:
             continue
         for event_type in _action_windows(rules, definition):
@@ -1616,6 +1716,8 @@ def _accepted_action_on_state(
     rules: RuleBook,
     state: BattleState,
     definition: Any,
+    *,
+    submission_mode: str = "external_turn",
 ) -> tuple[ActionCommand, Any, Any] | None:
     selector = ActionTargetSelectionSystem(rules)
     query = selector.query(state, "validation:actor", definition.action_id, definition.level)
@@ -1640,7 +1742,7 @@ def _accepted_action_on_state(
     decision = ActionContractSystem(rules).evaluate(
         state,
         command,
-        submission_mode="external_turn",
+        submission_mode=submission_mode,
         target_selection_fingerprint=accepted.context.context_fingerprint,
     )
     if not decision.ok:
@@ -1648,34 +1750,12 @@ def _accepted_action_on_state(
     return command, accepted.context, decision
 
 
-def _attempt_direct(
-    rules: RuleBook,
+def _install_direct_executor_probes(
+    executor: CombatExecutor,
     row: Mapping[str, Any],
-    definition: Any,
-    base_context: Any,
-    *,
-    expect_weighted: bool,
-) -> dict[str, Any]:
-    base_state = base_context[0]
-    attached = _attach_real_status(rules, base_state, row)
-    if attached is None:
-        return {"ok": False, "stage": "status_attach", "reason": "real_status_producer_gap"}
-    status_state, detail, setup_evidence = attached
-    accepted = _accepted_action_on_state(rules, status_state, definition)
-    if accepted is None:
-        return {"ok": False, "stage": "action_readmission", "reason": "action_not_admitted_after_status_setup"}
-    command, target_context, decision = accepted
-
-    executor = CombatExecutor(rules)
-    ordered: list[dict[str, Any]] = [
-        {
-            "step": "action_admission_accepted",
-            "admission_id": decision.admission.admission_id if decision.admission else "",
-            "action_id": command.action_id,
-            "action_level": command.action_level,
-            "target_selection_fingerprint": target_context.context_fingerprint,
-        }
-    ]
+    detail: Mapping[str, Any],
+    ordered: list[dict[str, Any]],
+) -> None:
     original_window = executor.event_dispatcher.dispatch_action_window_listeners
 
     def window_probe(current_state: BattleState, **kwargs: Any) -> Any:
@@ -1762,12 +1842,160 @@ def _attempt_direct(
         return result
 
     executor.ability_tasks._resolve_formal_weighted_selection = weighted_probe  # type: ignore[method-assign]
-    before = status_state.snapshot().to_json()
-    after_state, transition = executor.execute(
-        command,
+
+
+def _attempt_direct(
+    rules: RuleBook,
+    row: Mapping[str, Any],
+    definition: Any,
+    base_context: Any,
+    *,
+    expect_weighted: bool,
+) -> dict[str, Any]:
+    base_state = base_context[0]
+    submission_mode = str(base_context[4])
+    attached = _attach_real_status(rules, base_state, row)
+    if attached is None:
+        return {"ok": False, "stage": "status_attach", "reason": "real_status_producer_gap"}
+    status_state, detail, setup_evidence = attached
+    accepted = _accepted_action_on_state(
+        rules,
         status_state,
-        target_selection_context=target_context,
+        definition,
+        submission_mode=submission_mode,
     )
+    if accepted is None:
+        return {
+            "ok": False,
+            "stage": "action_readmission",
+            "reason": f"action_not_admitted_after_status_setup:{submission_mode}",
+        }
+    command, target_context, decision = accepted
+
+    ordered: list[dict[str, Any]] = [
+        {
+            "step": "action_admission_accepted",
+            "admission_id": decision.admission.admission_id if decision.admission else "",
+            "submission_mode": submission_mode,
+            "action_id": command.action_id,
+            "action_level": command.action_level,
+            "target_selection_fingerprint": target_context.context_fingerprint,
+        }
+    ]
+    producer_route: dict[str, Any] = {
+        "submission_mode": submission_mode,
+        "producer": "direct_external_turn" if submission_mode == "external_turn" else "combat_scheduler_manual_ultimate_queue",
+    }
+
+    if submission_mode == "queue":
+        scheduler = CombatScheduler(rules)
+        enqueue = scheduler.enqueue_manual_ultimate(status_state, command)
+        enqueue_reason = str(enqueue.transition.coverage.get("blocked_reason") or "")
+        if enqueue_reason:
+            return {
+                "ok": False,
+                "stage": "manual_ultimate_enqueue",
+                "reason": enqueue_reason,
+            }
+        ordered.append(
+            {
+                "step": "manual_ultimate_enqueued",
+                "queue_names": sorted(enqueue.after_state.queues),
+                "queue_entry_count": sum(
+                    len(entries) for entries in enqueue.after_state.queues.values()
+                ),
+            }
+        )
+        captured: dict[str, Any] = {}
+        original_execute = CombatExecutor.execute
+
+        def scheduler_execute_probe(
+            executor: CombatExecutor,
+            child_command: ActionCommand,
+            current_state: BattleState,
+            **kwargs: Any,
+        ) -> Any:
+            authorization = kwargs.get("submission_authorization")
+            authorization_mode = str(getattr(authorization, "submission_mode", ""))
+            ordered.append(
+                {
+                    "step": "combat_executor_execute_entered",
+                    "producer": "combat_scheduler_queue_drain",
+                    "authorization_present": authorization is not None,
+                    "authorization_mode": authorization_mode,
+                    "command_source": child_command.source,
+                    "queue_name": child_command.queue_name,
+                }
+            )
+            _install_direct_executor_probes(executor, row, detail, ordered)
+            before_snapshot = current_state.snapshot().to_json()
+            after_state, transition = original_execute(
+                executor,
+                child_command,
+                current_state,
+                **kwargs,
+            )
+            captured.update(
+                {
+                    "before": before_snapshot,
+                    "after_state": after_state,
+                    "transition": transition,
+                    "command": child_command,
+                    "authorization_mode": authorization_mode,
+                }
+            )
+            return after_state, transition
+
+        with patch.object(CombatExecutor, "execute", scheduler_execute_probe):
+            drain = scheduler._try_queue_drain(enqueue.after_state, command=command)
+        if drain is None:
+            return {
+                "ok": False,
+                "stage": "queue_drain",
+                "reason": "manual_ultimate_queue_drain_not_selected",
+            }
+        producer_route.update(
+            {
+                "enqueue_action_id": enqueue.transition.transaction.command.action_id,
+                "drain_action_id": drain.transition.transaction.command.action_id,
+                "drain_child_transition_count": len(drain.child_transitions),
+                "scheduler_transition_successor_eligible": drain.transition.outcome.successor_eligible,
+            }
+        )
+        if not captured:
+            return {
+                "ok": False,
+                "stage": "queue_drain",
+                "reason": str(drain.transition.coverage.get("blocked_reason") or "queue_drain_did_not_enter_combat_executor"),
+                "producer_route": producer_route,
+            }
+        before = captured["before"]
+        after_state = captured["after_state"]
+        transition = captured["transition"]
+        command = captured["command"]
+        producer_route["authorization_mode"] = captured["authorization_mode"]
+        producer_authorized = captured["authorization_mode"] == "queue"
+    else:
+        executor = CombatExecutor(rules)
+        _install_direct_executor_probes(executor, row, detail, ordered)
+        ordered.append(
+            {
+                "step": "combat_executor_execute_entered",
+                "producer": "direct_external_turn",
+                "authorization_present": False,
+                "authorization_mode": "external_turn",
+                "command_source": command.source,
+                "queue_name": command.queue_name,
+            }
+        )
+        before = status_state.snapshot().to_json()
+        after_state, transition = executor.execute(
+            command,
+            status_state,
+            target_selection_context=target_context,
+        )
+        producer_authorized = True
+
     after = after_state.snapshot().to_json()
     settlement = transition.transaction.settlement
     records = tuple(settlement.records) if settlement is not None else ()
@@ -1813,13 +2041,15 @@ def _attempt_direct(
     else:
         expected_terminal = transition.outcome.successor_eligible
     return {
-        "ok": selected_window and real_root and ability_authority and expected_terminal,
+        "ok": producer_authorized and selected_window and real_root and ability_authority and expected_terminal,
         "stage": "combat_executor_execute",
         "action": {
             "action_id": command.action_id,
             "action_level": command.action_level,
             "definition_id": definition.definition_id,
+            "submission_mode": submission_mode,
         },
+        "producer_route": producer_route,
         "status_setup": setup_evidence,
         "status_instance_id": str(detail["instance_id"]),
         "ordered_evidence": ordered,
@@ -1871,6 +2101,7 @@ def _run_direct() -> dict[str, Any]:
                         "callback_id": row["callback_id"],
                         "event_type": event_type,
                         "action_id": definition.action_id,
+                        "submission_mode": base_context[4],
                         "ok": attempt.get("ok", False),
                         "stage": attempt.get("stage", ""),
                         "reason": attempt.get("reason", ""),
@@ -1897,6 +2128,7 @@ def _run_direct() -> dict[str, Any]:
                         "callback_id": row["callback_id"],
                         "event_type": event_type,
                         "action_id": definition.action_id,
+                        "submission_mode": base_context[4],
                         "ok": attempt.get("ok", False),
                         "stage": attempt.get("stage", ""),
                         "reason": attempt.get("reason", ""),
