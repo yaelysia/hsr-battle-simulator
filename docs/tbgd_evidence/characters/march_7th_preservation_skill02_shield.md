@@ -3,204 +3,177 @@
 ## Evidence status
 
 - TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`
-- Maturity: `manually_confirmed`
-- Scope: ordinary-combat Skill02 entry wiring, DynamicValue roles, branch conditions, modifier parameter injection, trace/eidolon hooks, formal shield modifier location, and rejected same-ID event data
-- Battle-scope verdict: `mixed` at Ability-file operation level; battle execution retained, camera/animation/presentation operations excluded; event/RtBattle same-ID records are `deferred`
+- Maturity: `manually_confirmed` with unrelated ordinary-character cross-check for the `SkillParam` producer/binding model
+- Scope: ordinary-combat Skill02 numeric producer, typed parameter bindings, target/control flow, lifetime expression, trace/eidolon branches, formal shield modifier lifecycle hooks, and explicit engine-export boundaries
+- Battle-scope verdict: `mixed` at Ability-file operation level; battle execution retained, presentation operations excluded; same-ID RtBattle records are deferred/false friends for this ordinary chain
 - Runtime production code changed: no
 
-**Important:** this record does not yet claim the final numeric shield formula or base ordinary-combat Skill02 parameter values. The DynamicValue roles are closed to their consumers and the formal `MAvatar_March7th_00_BPSkill_Shield` definition has been located in the pinned ordinary Ability file. A mechanically tempting `ID=100102` row was also found in `ILBattleAvatarSkill.json`, but manual parent-table inspection proves that row belongs to an event `Config/Activity/RtBattle/**` character family and must not be used as the ordinary March 7th numeric authority.
+## Correction history
 
-## Ordinary-combat source chain
+This record supersedes two older claims from the archaeology:
+
+1. **The exact pinned `ExcelOutput/AvatarSkillConfig.json` does contain ordinary March `SkillID=100102` rows.** Earlier “no exact row” statements were false negatives caused by large-file/search/read behavior, not by the pinned corpus.
+2. The main shield modifier initializes the shield on **`OnStack`**, not `OnCreate`. It also explicitly declares `Stacking="Replace"` and `OnDestroy -> RemoveShield`.
+
+`ILBattleAvatarSkill[100102]` remains a real numeric-ID collision from the deferred RtBattle family and is still rejected as ordinary March authority.
+
+## Gameplay semantic model
+
+The ordinary Skill02 is a selected-ally support action. The pinned graph must account for:
+
+- selected ally targeting;
+- DEF-based shield operands;
+- base lifetime and trace lifetime extension;
+- an HP-ratio branch that conditionally injects aggro increase;
+- trace-gated dispel;
+- rank/eidolon healing behavior;
+- replacement/removal lifecycle of the formal Shield modifier.
+
+Public/live mechanics are used only as semantic corroboration. The pinned producer/consumer chain remains the authority for this revision.
+
+## Ordinary source chain
 
 ```text
 AvatarConfig[AvatarID=1001]
-    ├─ JsonPath = Config/ConfigCharacter/Avatar/Avatar_Mar_7th_00_Config.json
-    └─ SkillList includes 100102
-
-ConfigCharacter Skill02
-    ├─ target = FriendSelect
-    └─ EntryAbility = Avatar_Mar_7th_00_Skill02_Phase01
-         ↓
-ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json
-    ├─ Skill02 execution/control flow
-    └─ formal modifier definition
-         ↓
-AddModifier(MAvatar_March7th_00_BPSkill_Shield)
-         ↓
-MAvatar_March7th_00_BPSkill_Shield
+  -> ordinary SkillID 100102
+  -> ExcelOutput/AvatarSkillConfig.json[SkillID=100102, Level]
+       ParamList[index]
+  -> Config/ConfigCharacter/Avatar/Avatar_Mar_7th_00_Config.json
+       SkillParam(Skill02,index) -> DynamicHash
+  -> Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json
+       Skill02 control flow
+  -> AddModifier(MAvatar_March7th_00_BPSkill_Shield)
+  -> shield modifier callbacks / property consumers
 ```
 
-## Battle-scope filtering inside the Ability file
+Exact pinned `AvatarSkillConfig.json` blob:
 
-`Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json` is a concrete example of why `ConfigAbility` must be filtered below filename level.
+`a5416ced941c247d475b2aaa83277b9cdf474dd9`
 
-Retained battle operations include:
+Manually rechecked ordinary rows include:
 
-- reading caster `Defence` into a working DynamicValue;
-- trace/eidolon predicates;
-- debuff removal;
-- target HP-ratio comparison;
-- modifier application and lifetime inputs;
-- shield/heal/aggro DynamicValue injection;
-- the formal shield modifier and its callbacks/behavior flags;
-- resource operations only after their shared runtime semantics are traced.
+- Level 11: `ParamList = [0.589, 3, 0.3, 802.75, 5]`
+- Level 12: `ParamList = [0.608, 3, 0.3, 845.5, 5]`
 
-Excluded presentation operations include camera triggers, camera-root following, animation state triggers/waits, VFX and comparable choreography when no independent battle-state consequence is demonstrated.
+These are raw parameter-array values. Their meanings come from the downstream consumers below, not from their positions alone.
 
-The animation time at which a visual/effect operation is authored must not be promoted into logical simulator timing without proving that it gates battle-state execution.
+## Typed bindings and consumer mapping
 
-## DynamicValue bindings confirmed from ordinary ConfigCharacter
+The ordinary ConfigCharacter binds Skill02 parameters as:
 
-The ordinary character config maps Skill02 parameters to stable dynamic hashes:
+| Index | Dynamic hash | Confirmed consumer role |
+|---:|---:|---|
+| 0 | `-1091495116` | `MDF_ShieldPercentage` -> `InitShield.ShieldPercentage` |
+| 1 | `-1016136907` | base shield lifetime operand |
+| 2 | `398047946` | target HP-ratio threshold |
+| 3 | `1935511666` | `MDF_ShieldValue` -> `InitShield.ShieldValue` |
+| 4 | `-1672381420` | HP-gated `MDF_AggroUp` -> `AggroAddedRatio` |
 
-| Dynamic hash | Raw binding |
-|---:|---|
-| `-1091495116` | `SkillParam(Skill02, index=0)` |
-| `-1016136907` | `SkillParam(Skill02, index=1)` |
-| `398047946` | `SkillParam(Skill02, index=2)` |
-| `1935511666` | `SkillParam(Skill02, index=3)` |
-| `-1672381420` | `SkillParam(Skill02, index=4)` |
+The selected target contract is `FriendSelect`, and the Ability applies the modifier to `AbilityTargetEntity`.
 
-The same character config binds Trace/Rank parameters separately. Skill parameters, traces and eidolons must therefore not be flattened into one anonymous parameter array.
+The HP comparison is `GreaterEqual`: when target HP ratio is `>= SkillParam[2]`, `SkillParam[4]` is injected as the aggro operand; otherwise the same shield is applied with aggro input forced to `0`.
 
-## Confirmed ordinary execution semantics
+## Parameter-family authority
 
-Manual inspection of the Skill02 Ability shows the following sequence/branches:
+The first parallel audit closes the following producer/index distinction for the inspected ordinary samples:
 
-1. Reads the caster's `Defence` property into a dynamic working value.
-2. Checks trace/eidolon conditions that can alter lifetime/healing/dispelling behavior.
-3. A trace hook can remove one negative effect from the target.
-4. Compares target HP ratio against the Skill02 index-2 dynamic parameter.
-5. Both branches apply `MAvatar_March7th_00_BPSkill_Shield`.
-6. The branch satisfying the HP threshold injects the Skill02 index-4 value as `MDF_AggroUp`; the other branch injects `0` for aggro increase.
-7. The modifier receives shield, heal, duration and aggro parameters through DynamicValues rather than embedding one self-contained literal formula in the AddModifier node.
+- `SkillParam` -> `AvatarSkillConfig[SkillID, Level].ParamList[index]`
+- `SkillTreeParam` -> `AvatarSkillTreeConfig[PointID / PointTriggerKey].ParamList[index]`
+- `SkillRank` -> `AvatarRankConfig[RankID / rank trigger].Param[index]`
+- `SkillAddLevelList` is a separate skill-level increment mechanism, not another anonymous ParamList.
 
-The heal-related working hashes observed around modifier application, including `-889193254` / `-1361024633`, are not replacements for the five raw Skill02 `SkillParam` hashes above. They belong to the surrounding heal/working-value chain and must be traced separately.
+Dan Heng provides an unrelated ordinary-character cross-check: ordinary `SkillID=100202` has per-level `AvatarSkillConfig.ParamList`, its ConfigCharacter maps `SkillParam(Skill02,index=0)` to a dynamic hash, and the pinned Ability consumes that hash as a Skill02 damage-percentage input.
 
-## Consumer meaning of Skill02 parameters
+This is sufficient to close March's W02 producer gap and to establish a reusable ordinary producer/binding pattern. It is not a claim that every character/source family has already been exhaustively enumerated.
 
-These meanings come from the actual consumers, not from parameter-order guesses:
+## Trace and rank branches
 
-| Skill02 parameter | Confirmed consumer role |
-|---|---|
-| index 0 | injected as `MDF_ShieldPercentage` |
-| index 1 | base modifier lifetime/duration input |
-| index 2 | target HP-ratio threshold controlling the aggro branch |
-| index 3 | injected as `MDF_ShieldValue` |
-| index 4 | injected as `MDF_AggroUp` when the HP condition passes |
+Pinned ordinary data confirms:
 
-The shield modifier also receives heal-related values from eidolon/rank logic and a caster DEF-derived working value.
+- **PointB1:** `DispelStatus` on `AbilityTargetEntity`, `Numbers=1`, `Order="LastAdded"`.
+- **PointB2:** `AvatarSkillTreeConfig` point `1001102` supplies `ParamList=[1]`; Skill02 writes this to `_Tree02_LifeTimeAdd`, otherwise it writes `0`.
+- **Rank06:** `AvatarRankConfig[100106]` has `Param=[0.04,106]`; the Skill02 path injects Rank06 heal operands when the rank is active and zeros otherwise.
 
-## Formal shield modifier located
+Trace/rank parameters are therefore separate producer spaces from the five ordinary Skill02 parameters.
 
-The same pinned ordinary file:
+## Lifetime expression
 
-`Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json`
+The Skill02 lifetime expression is source-backed as:
 
-contains the formal definition of:
+`base SkillParam[1] + _Tree02_LifeTimeAdd`
 
-```text
-MAvatar_March7th_00_BPSkill_Shield
-```
+The encoded postfix operator family was cross-validated on independent pinned behavior samples rather than decoded from naming intuition:
 
-The definition explicitly carries:
+- operator byte `0x02` behaves as addition in counter-increment samples;
+- `0x03` behaves as subtraction in decrement/removal samples;
+- `0x04` behaves as multiplication in Gepard split-hit arithmetic.
 
-- `BehaviorFlagList` containing `Shield`;
-- `UseSnapshotEntity = true`;
-- callback/configuration structure attached to the modifier.
+For March Skill02 the relevant expression combines `SkillParam[1]` and `_Tree02_LifeTimeAdd` with the confirmed addition operator. With ordinary rows whose index 1 is `3`, the lifetime input is `3` without PointB2 and `4` with PointB2.
 
-This closes the earlier archaeology gap about where the formal shield modifier is defined. It does **not** close the final arithmetic. The modifier and surrounding AddModifier nodes use encoded postfix expressions/DynamicValues. Until those opcodes, operands, snapshot semantics and stack/refresh behavior are traced far enough to prove the equation, the ledger must not turn observed parameter names into an assumed formula.
+## Formal shield modifier lifecycle
 
-## Rejected same-ID candidate: `ILBattleAvatarSkill[100102]`
+`MAvatar_March7th_00_BPSkill_Shield` in the exact pinned ordinary Ability file confirms:
 
-Mechanical search of the pinned ExcelOutput family finds this row in:
+- `BehaviorFlagList` contains `Shield`;
+- `UseSnapshotEntity=true`;
+- `Stacking="Replace"`;
+- `OnCreate` performs resilience/effect setup, **not** shield initialization;
+- `OnStack` performs `InitShield` on `ModifierOwnerEntity` with:
+  - `FormulaType="ShieldByCasterDefence"`
+  - injected `ShieldPercentage`
+  - injected `ShieldValue`
+  - and stacks the injected `AggroAddedRatio`;
+- `OnDestroy` performs explicit `RemoveShield` and resilience cleanup;
+- `OnPhase1` contains the Rank06 heal branch when the injected heal percentage is positive.
 
-`ExcelOutput/ILBattleAvatarSkill.json`
+This closes the character-local application/reapplication/removal hooks. It does **not** expose the generic GameCore implementation body of `ShieldByCasterDefence`, `UseSnapshotEntity`, or `Stacking="Replace"`.
 
-with:
+## Separate Rank02 shield: useful arithmetic corroboration, not ordinary Skill02 authority
 
-- `ID = 100102`
-- `InitialCD.Value = 6`
-- `CoolDown.Value = 12`
-- `ParamList = [6, 0.3, 6, 1, 6]`
-- `MaxLevel = 10`
+`AvatarRankConfig[RankID=100102]` is March's Rank 2 producer, not ordinary SkillID 100102. It has:
 
-The ID match is **not** sufficient to use those numbers for ordinary March 7th.
+`Param=[0.24,3,320]`
 
-Manual inspection of the parent family in:
+and a separate Rank02 shield expression whose pinned postfix operations resolve to:
 
-`ExcelOutput/ILBattleAvatar.json`
+`0.24 * CasterDefence + 320`
 
-shows `ID = 1001` pointing to:
+with lifetime `3`.
 
-`Config/Activity/RtBattle/ConfigCharacter/Avatar/IL_Launch_00_Config.json`
+This is useful arithmetic-language corroboration and a strong numeric-collision example. It must not be substituted for the ordinary Skill02 parameter rows above.
 
-and carrying event-character metadata including:
+## Rejected same-ID candidate: RtBattle `100102`
 
-- `AvatarBaseType = Hunt`
-- `Rarity = CombatPowerAvatarRarityType5`
+`ExcelOutput/ILBattleAvatarSkill.json` also contains ID `100102`, including a `ParamList=[6,0.3,6,1,6]` row. Manual parent-family tracing ties it to `Config/Activity/RtBattle/**`, not the ordinary Preservation March chain.
 
-Those properties do not describe the ordinary Preservation March 7th chain above. The `ILBattleAvatar*` family is an event/RtBattle family under the current scope, so this same-ID candidate is `deferred` and its `[6, 0.3, 6, 1, 6]` values are explicitly rejected as evidence for the ordinary Skill02 shield.
+Therefore those values remain explicitly rejected for ordinary Skill02.
 
-This is an important negative-evidence case: exact numeric ID collisions across source families make script-only matching unsafe.
+## Battle/presentation filtering
 
-## `AvatarSkillConfigLD.json` is not the missing `100102` row
+The same Ability file mixes battle and presentation operations. Retained battle evidence includes DEF/property reads, predicates, dispel, HP comparison, DynamicValue injection, modifier application, shield/heal/aggro consumers and modifier callbacks. Camera operations, animation waits, VFX and choreography are presentation unless an independent battle-state consumer proves otherwise.
 
-The pinned `ExcelOutput/AvatarSkillConfigLD.json` was also manually inspected. It contains battle-facing skill fields in its actual rows, including skill IDs, target/effect/AI-related fields and parameter lists, so it must **not** be blanket-labelled a pure presentation table.
+Animation time is not action/timeline authority.
 
-However, an exact search of this pinned file found no `SkillID = 100102`. Therefore it is not the direct ordinary March Skill02 numeric source at this revision.
+## Negative knowledge / false friends
 
-A previously mentioned `AvatarSkillConfigLDPath.json` path has not been re-established in the pinned tree and must not be used as evidence until existence is confirmed.
+- Exact-ID search absence in a very large pinned blob is not omission proof. The earlier `100102` false negative is now a durable tool/search hazard.
+- `ILBattleAvatarSkill[100102]` is an unrelated RtBattle collision.
+- `AvatarSkillConfigLD.json` is not needed to close ordinary March Skill02 just because its name resembles the ordinary producer family.
+- `SkillParam index=N` has no globally reusable semantic meaning across different skills; consumer tracing is required.
+- `FormulaType="ShieldByCasterDefence"` identifies a generic formula family but does not by itself reveal the unexported engine arithmetic.
+- `UseSnapshotEntity=true` proves snapshot behavior is requested, not the exact capture object/time/field set.
+- `Stacking="Replace"` proves replacement mode, not the precise old-instance `OnDestroy` versus new-instance `OnStack` dispatcher order.
+- raw fields containing `SP` must not be renamed to user-facing Skill Points without consumer/context tracing.
 
-## Why this matters for lowering
+## Remaining engine/export boundaries
 
-A naive crawler can fail in two opposite directions:
+The character-local W02/W05 chain is no longer blocked on numeric discovery. Remaining open questions are generic runtime semantics:
 
-1. find `AddModifier(MAvatar_March7th_00_BPSkill_Shield)` and miss battle control flow around it — HP threshold, aggro branching, trace-gated dispel, eidolon healing, duration changes and DEF capture;
-2. find a numerically matching `100102` in an unrelated event family and silently import the wrong parameters.
+1. implementation arithmetic for `InitShield.FormulaType="ShieldByCasterDefence"`;
+2. exact `UseSnapshotEntity` capture scope and timing;
+3. exact callback ordering during `Stacking="Replace"`;
+4. generic lifetime decrement and shield-depletion -> modifier-destroy behavior;
+5. shield dispellability;
+6. phase-exact ordering of `OnStack`, `OnDestroy` and `OnPhase1` where it matters.
 
-For this ordinary skill the battle rule currently spans at least:
-
-```text
-ordinary avatar/skill metadata
-  + ConfigCharacter DynamicValue definitions
-  + ordinary Ability control flow
-  + Modifier implementation
-  + Trace/Rank parameter sources
-  + still-unresolved ordinary numeric SkillParam source
-```
-
-## Raw-field naming hazard: `SP`
-
-`AvatarConfig[1001].SPNeed = 120` corresponds to the character's ultimate-energy requirement in this data schema, while skill-level fields such as `SPBase` are used elsewhere for resource/energy-generation semantics.
-
-Therefore raw names containing `SP` cannot be mechanically interpreted as player skill points. Semantic names require consumer/context tracing.
-
-## Internal targeting hazard
-
-Other abilities on this character show that a user-facing AoE skill can contain internal retarget/random-target operations as part of hit/effect execution. Internal Ability target operations therefore must not automatically define the external action-selection contract. External selectable target shape and internal execution target traversal are separate concepts.
-
-## False friends / hazards
-
-- `ILBattleAvatarSkill[100102]` is a confirmed same-ID false positive from deferred `Config/Activity/RtBattle/**` content.
-- `AvatarSkillConfigLD.json` contains genuine battle-facing fields in some rows, but has no pinned `100102`; it is neither the missing March row nor safely classifiable by the `LD` name alone.
-- camera abilities, animation state waits/triggers, radial blur and look-at operations are presentation/control artifacts unless a separate battle consequence is demonstrated.
-- modifier name alone is not enough to reconstruct a skill.
-- locating the modifier definition does not decode postfix arithmetic, snapshot behavior or stack/refresh semantics.
-- `SkillParam index=N` has no globally reusable meaning across skills.
-- public tooltip formulas must not substitute for the missing pinned ordinary numeric definition.
-- `SPNeed` / `SPBase` cannot be classified from their names alone.
-
-## External corroboration status
-
-Current public live-game references are consistent with the structural findings: March 7th's Preservation skill shields an ally based on DEF for a duration and conditionally increases their chance to be attacked; trace/eidolon behavior includes debuff removal, duration extension and healing-related effects.
-
-This corroborates semantic roles only. Current live values are not being used to fill the unresolved pinned ordinary numeric row or encoded arithmetic, and version drift must remain explicit.
-
-## Unresolved follow-ups
-
-1. Locate the exact pinned ordinary-combat TBGD row(s), if present, that supply the five `SkillParam(Skill02,index=0..4)` numeric values for the `Avatar_Mar_7th_00` chain; if the pinned export omits them, record that omission explicitly rather than substituting event/live data.
-2. Decode/validate the formal shield modifier's postfix arithmetic, operand identity, snapshot behavior and stacking/refresh semantics.
-3. Trace the exact Trace/Rank numeric sources feeding lifetime extension and healing.
-4. Close Skill02 resource accounting through the shared action/resource runtime rather than interpreting local resource operations in isolation.
-5. Add version-matched external numeric corroboration only after the pinned ordinary numeric chain is complete or the pinned omission has been proven.
+These should remain `not_proven` / engine-authority gaps if the pinned release-data corpus does not export the relevant GameCore consumer. They must not be filled from tooltip formulas.
