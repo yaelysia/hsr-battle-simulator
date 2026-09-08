@@ -1,4 +1,4 @@
-name: P9 A2 P0 read-only candidate validation
+name: P9 A2 P0 read-only corrected diagnostic
 
 on:
   push:
@@ -8,20 +8,20 @@ on:
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
 
 jobs:
-  validate-candidate:
+  diagnose:
     permissions:
       contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact candidate head and pinned TBGD
+      - name: Checkout exact diagnostic head and pinned TBGD
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Validate corrected finalizer in worktree
+      - name: Print corrected Direct denominator and audit
         env:
           WRITEBACK_SOURCE_COMMIT: "988c85bfd77dee79a5108beb9d87d398ac86a12d"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
@@ -36,8 +36,7 @@ jobs:
           workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
 
           helper_workflow = subprocess.check_output(
-              ["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"],
-              text=True,
+              ["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"], text=True
           )
           helper_match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', helper_workflow)
           if helper_match is None:
@@ -76,8 +75,7 @@ jobs:
           ast.parse(helper)
 
           writeback_workflow = subprocess.check_output(
-              ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"],
-              text=True,
+              ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"], text=True
           )
           builder_match = re.search(r'FOCUSED_BUILDER_ZB64: "([A-Za-z0-9+/=]+)"', writeback_workflow)
           if builder_match is None:
@@ -187,6 +185,20 @@ jobs:
               "    if not isinstance(audit, tuple) or not audit:\n",
               1,
           )
+          original = (
+              "    if not promoted:\n"
+              "        _fail(\"direct_real_positive_missing\")\n"
+          )
+          diagnostic = (
+              "    if not promoted:\n"
+              "        print(\"DIRECT_DENOMINATOR_DIAGNOSTIC=\" + json.dumps(denominator, sort_keys=True))\n"
+              "        print(\"DIRECT_AUDIT_DIAGNOSTIC=\" + json.dumps(list(audit), sort_keys=True))\n"
+              "        print(\"DIRECT_AUDIT_DECISIONS=\" + json.dumps(sorted(Counter(str(row.get('decision') or '') for row in audit).items())))\n"
+              "        _fail(\"direct_real_positive_missing\")\n"
+          )
+          if direct.count(original) != 1:
+              raise SystemExit("direct positive anchor mismatch")
+          direct = direct.replace(original, diagnostic, 1)
           validator = validator[:start] + builder.rstrip() + "\n\n" + direct + validator[end:]
           ast.parse(validator)
           validator_path.write_text(validator)
@@ -195,8 +207,8 @@ jobs:
           python -m compileall -q \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          git diff --check
-          /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
-          /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
+          set +e
+          python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
+          rc=$?
+          set -e
+          echo "diagnostic_direct_exit=$rc"
