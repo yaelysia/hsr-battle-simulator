@@ -811,24 +811,12 @@ def _build_runtime_direct_rulebook() -> tuple[
         owned.action_definitions,
         key=lambda item: (item.action_id, item.level, item.definition_id),
     ):
-        key = (definition.action_id, definition.level)
-        action_event = action_events_by_key.get(key)
         character_action_sources = tuple(
             source
             for source in source_graph.action_sources
             if source.action_id == definition.action_id
         )
-        if (
-            action_event is None
-            or action_event.target_mode == "bounce"
-            or len(character_action_sources) != 1
-            or not admissions_by_key.get(key)
-            or not any(
-                step.kind == "trigger_window"
-                and step.canonical_window == "after_attack"
-                for step in action_event.phase_steps
-            )
-        ):
+        if len(character_action_sources) != 1:
             continue
         try:
             candidate_ir = lowerer.build_character_action_ability_slice(
