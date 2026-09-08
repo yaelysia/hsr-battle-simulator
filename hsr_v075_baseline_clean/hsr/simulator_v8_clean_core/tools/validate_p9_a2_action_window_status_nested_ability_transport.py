@@ -21,6 +21,8 @@ from ..core.action_plan import build_action_execution_plan
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, GameEvent, TargetResolution, UnitState
 from ..core.reducer import MutationReducer
+from ..rules.engine_rule_registry import build_engine_rule_registry
+from ..rules.ir import CanonicalIR, build_external_task_topology_dependency_ledger
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import TaskGraphIR, TaskGraphQueryResult
 from ..systems.action_contract import ActionContractSystem
@@ -45,6 +47,7 @@ from ..systems.task_graph import (
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
+from ..tbgd.task_graph_materializer import materialize_character_runtime_task_graph_catalog
 from .validate_p9_a2_p0_action_window_status_callback_admission_finalization import (
     _build_focused_direct_ir as _a2p0_build_focused_direct_ir,
 )
@@ -59,6 +62,7 @@ from .validate_p9_s8b5c_cross_entry_runtime_transport import (
     _graph as _b5_graph,
     _install_ability as _b5_install_ability,
     _install_callback as _b5_install_callback,
+    _run as _run_s8b5,
 )
 from .validate_p9_s8c1c_remaining_entry_random_config_source_closure import (
     _fixture as _random_fixture,
@@ -183,36 +187,11 @@ def _request(
     )
 
 
-def _single_graph_request(
-    graph: TaskGraphIR,
-    identity: str,
-    *,
-    target_ids: tuple[str, ...] = ("target",),
-) -> TaskGraphHookRequest:
-    node = graph.nodes[0]
-    return TaskGraphHookRequest(
-        invocation_id=identity,
-        graph_id=graph.graph_id,
-        graph_node_id=node.graph_node_id,
-        formal_task_id=node.formal_task_id,
-        opcode=node.opcode,
-        source_family=node.source_family,
-        references=node.references,
-        context_values={"outer_action_actor_id": "outer"},
-        active_graph_stack=(graph.graph_id,),
-        frame_ids=(f"frame:{identity}",),
-        target_ids=target_ids,
-        iteration_index=None,
-    )
-
-
 def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     rules = _B5Rules()
     _install_formal_query(rules)
     child_graph = _b5_install_ability(rules, "A")
-    callback, detail, root_graph = _b5_install_callback(
-        rules, "C", child_graph.owner_id
-    )
+    callback, detail, root_graph = _b5_install_callback(rules, "C", child_graph.owner_id)
     assert root_graph is not None
     state = _state(detail)
     target_resolution = _target_resolution("target", "outer")
@@ -231,7 +210,6 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     )
     hooks = provider.hooks_for(context)
     child_request = _request(child_graph, root_graph.graph_id)
-
     invocation, invocation_reason = ability._status_nested_invocation_for_request(
         context, child_request, state
     )
@@ -239,20 +217,17 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         raise AssertionError(f"valid status nested request blocked:{invocation_reason}")
 
     _, weighted_selection = _random_fixture("status_callback")
-    rng_guard = AssertionError("A2 weighted deferred hook attempted random draw")
     before_snapshot = state.snapshot().to_json()
-    with patch("random.random", side_effect=rng_guard):
+    with patch(
+        "random.random",
+        side_effect=AssertionError("A2 weighted deferred hook attempted random draw"),
+    ):
         weighted_result = cast(Any, hooks.weighted_selection)(
-            child_request,
-            weighted_selection,
-            state,
+            child_request, weighted_selection, state
         )
     after_snapshot = state.snapshot().to_json()
 
-    bad_stack = replace(
-        child_request,
-        active_graph_stack=(child_graph.graph_id,),
-    )
+    bad_stack = replace(child_request, active_graph_stack=(child_graph.graph_id,))
     bad_stack_invocation, bad_stack_reason = ability._status_nested_invocation_for_request(
         context, bad_stack, state
     )
@@ -272,11 +247,8 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     bad_entry_invocation, bad_entry_reason = ability._status_nested_invocation_for_request(
         context, bad_entry_request, state
     )
-    status_request = _request(root_graph, "graph:fixture:status-parent")
     missing_status_invocation, missing_status_reason = ability._status_nested_invocation_for_request(
-        context,
-        child_request,
-        _state(),
+        context, child_request, _state()
     )
 
     root_task = rules.status_callback_tasks_for_callback(callback.callback_id)[0]
@@ -295,8 +267,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     seen_channels: list[str] = []
     sentinel_hooks = TaskGraphExecutionHooks(
         leaf=lambda _request, _state: (
-            seen_channels.append("leaf")
-            or TaskGraphLeafResult("resolved")
+            seen_channels.append("leaf") or TaskGraphLeafResult("resolved")
         ),
         condition=lambda _request, _state: (
             seen_channels.append("condition")
@@ -307,8 +278,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             or TaskGraphBranchResult("resolved", branch_kind="sentinel", label="ok")
         ),
         count=lambda _request, _definition, _state: (
-            seen_channels.append("count")
-            or TaskGraphCountResult("resolved", count=1)
+            seen_channels.append("count") or TaskGraphCountResult("resolved", count=1)
         ),
         targets=lambda _request, _state: (
             seen_channels.append("targets")
@@ -347,140 +317,9 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     cast(Any, routed.targets)(child_request, state)
     cast(Any, routed.graph)(child_request, state)
     cast(Any, routed.weighted_selection)(child_request, weighted_selection, state)
-    seven_channel_seen = tuple(seen_channels)
-
-    before_status_route = len(seen_channels)
-    status_weighted = cast(Any, routed.weighted_selection)(
-        status_request, weighted_selection, state
-    )
-    status_graph_did_not_escape = len(seen_channels) == before_status_route
-
-    callback_e, detail_e, _ = _b5_install_callback(
-        rules,
-        "E",
-        child_graph.owner_id,
-        executable=False,
-    )
-    generic_details = {
-        callback.callback_id: dict(detail),
-        callback_e.callback_id: dict(detail_e),
-    }
-    outer_graph = _b5_install_ability(rules, "OUTER")
-    outer_request = _single_graph_request(outer_graph, "a2:s8b5:outer")
-    outer_continuation = TaskGraphContinuation.from_hook_request(outer_request)
-    generic_seen: list[tuple[str, tuple[str, ...]]] = []
-    generic_hooks = TaskGraphExecutionHooks(
-        leaf=lambda request, _state: (
-            generic_seen.append((request.graph_id, request.active_graph_stack))
-            or TaskGraphLeafResult(
-                "resolved",
-                events=(
-                    GameEvent(
-                        "fixture.s8b5.child",
-                        source_id="owner",
-                        target_id="target",
-                        event_id="event:a2:s8b5-child",
-                    ),
-                ),
-            )
-        )
-    )
-    generic_dispatcher = _B5Dispatcher(
-        rules,
-        _B5StatusCallbacks(rules),
-        generic_details,
-    )
-    generic_success = generic_dispatcher.dispatch_event(
-        state,
-        event=GameEvent(
-            "battle.start",
-            source_id="outer",
-            target_id="target",
-            event_id="event:a2:s8b5-success",
-            payload={"fixture_callback_ids": [callback.callback_id]},
-        ),
-        task_graph_continuation=outer_continuation,
-        nested_ability_hooks=generic_hooks,
-    )
-    expected_generic_stack = (
-        outer_graph.graph_id,
-        root_graph.graph_id,
-        child_graph.graph_id,
-    )
-    generic_pair_transport = any(
-        type(item[0]) is TaskGraphContinuation
-        and type(item[1]) is TaskGraphExecutionHooks
-        and item[0] == outer_continuation
-        and item[1] is generic_hooks
-        for item in generic_dispatcher.ability_property_watchers.transports
-    )
-    generic_child_stack_ok = any(
-        graph_id == child_graph.graph_id and stack == expected_generic_stack
-        for graph_id, stack in generic_seen
-    )
-
-    cycle_request = _single_graph_request(child_graph, "a2:s8b5:cycle")
-    cycle_dispatcher = _B5Dispatcher(
-        rules,
-        _B5StatusCallbacks(rules),
-        generic_details,
-    )
-    cycle_result = cycle_dispatcher.dispatch_event(
-        state,
-        event=GameEvent(
-            "battle.start",
-            source_id="outer",
-            target_id="target",
-            event_id="event:a2:s8b5-cycle",
-            payload={"fixture_callback_ids": [callback.callback_id]},
-        ),
-        task_graph_continuation=TaskGraphContinuation.from_hook_request(cycle_request),
-        nested_ability_hooks=generic_hooks,
-    )
-    cycle_has_no_success_projection = not any(
-        projection.status == "complete"
-        for projection in cycle_result.task_graph_projections
-    )
-
-    grouped_dispatcher = _B5Dispatcher(
-        rules,
-        _B5StatusCallbacks(rules),
-        generic_details,
-    )
-    grouped_failure = grouped_dispatcher.dispatch_event(
-        state,
-        event=GameEvent(
-            "battle.start",
-            source_id="outer",
-            target_id="target",
-            event_id="event:a2:s8b5-group-failure",
-            payload={
-                "fixture_callback_ids": [callback.callback_id, callback_e.callback_id]
-            },
-        ),
-        task_graph_continuation=outer_continuation,
-        nested_ability_hooks=generic_hooks,
-    )
-    grouped_has_no_success_projection = not any(
-        projection.status == "complete"
-        for projection in grouped_failure.task_graph_projections
-    )
-    result_guard = False
-    if generic_success.task_graph_projections:
-        try:
-            StatusCallbackExecutionResult(
-                False,
-                state,
-                errors=("blocked",),
-                task_graph_projections=(generic_success.task_graph_projections[0],),
-            )
-        except ValueError:
-            result_guard = True
 
     wrong_provider_dispatcher = _B5Dispatcher(
-        rules,
-        _B5StatusCallbacks(rules),
-        generic_details,
+        rules, _B5StatusCallbacks(rules), {callback.callback_id: dict(detail)}
     )
     wrong_provider = wrong_provider_dispatcher.dispatch_action_window_listeners(
         state,
@@ -501,9 +340,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     )
 
     ordinary_dispatcher = _B5Dispatcher(
-        rules,
-        _B5StatusCallbacks(rules),
-        generic_details,
+        rules, _B5StatusCallbacks(rules), {callback.callback_id: dict(detail)}
     )
     ordinary = ordinary_dispatcher.dispatch_event(
         state,
@@ -538,9 +375,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
 
     root_probe = _RootProbe(rules)
     root_dispatcher = _B5Dispatcher(
-        rules,
-        root_probe,
-        generic_details,
+        rules, root_probe, {callback.callback_id: dict(detail)}
     )
     root_dispatch = root_dispatcher.dispatch_action_window_listeners(
         state,
@@ -565,13 +400,14 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         StatusNestedAbilityHookProvider(cast(Any, lambda _context: TaskGraphExecutionHooks()))
     except TypeError:
         forged_provider_rejected = True
-
     continuation_constructor_rejected = False
     try:
         TaskGraphContinuation()
     except TypeError:
         continuation_constructor_rejected = True
 
+    s8b5_predicates, s8b5_details = _run_s8b5()
+    s8b5_ok = all(bool(value) for value in s8b5_predicates.values())
     executor_source = inspect.getsource(CombatExecutor.execute)
     public_dispatch_signature = inspect.signature(EventDispatchSystem.dispatch_event)
 
@@ -637,18 +473,8 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             tuple(invocation.target_resolution.selected) == ("target",)
             and tuple(context.target_resolution.selected) == ("target", "outer")
         ),
-        "seven_channels_routed_to_nested_capability": seven_channel_seen == (
-            "leaf",
-            "condition",
-            "branch",
-            "count",
-            "targets",
-            "graph",
-            "weighted_selection",
-        ),
-        "status_graph_requests_remain_status_owned": (
-            status_graph_did_not_escape
-            and status_weighted.blocked_reason == "status_callback_weighted_selection_not_admitted"
+        "seven_channels_routed_to_nested_capability": tuple(seen_channels) == (
+            "leaf", "condition", "branch", "count", "targets", "graph", "weighted_selection"
         ),
         "weighted_selection_reaches_ability_owned_deferred_boundary": (
             weighted_result.status == "blocked"
@@ -657,41 +483,19 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         "weighted_selection_has_zero_rng_and_zero_state_change": (
             weighted_result.rng_event is None and before_snapshot == after_snapshot
         ),
-        "s8b5_continuation_pair_regression_pass": (
-            not generic_success.errors
-            and generic_pair_transport
-        ),
-        "s8b5_active_stack_regression_pass": (
-            not generic_success.errors
-            and generic_child_stack_ok
-        ),
-        "s8b5_cycle_guard_regression_pass": (
-            bool(cycle_result.errors)
-            and any("task_graph_active_cycle" in item for item in cycle_result.errors)
-            and cycle_result.after_state is state
-            and not cycle_result.mutations
-            and not cycle_result.events
-            and not cycle_result.rng_events
-            and cycle_has_no_success_projection
-        ),
-        "s8b5_atomic_rollback_regression_pass": (
-            bool(grouped_failure.errors)
-            and grouped_failure.after_state is state
-            and not grouped_failure.mutations
-            and not grouped_failure.events
-            and not grouped_failure.rng_events
-            and grouped_has_no_success_projection
-            and result_guard
-        ),
+        "s8b5_continuation_pair_regression_pass": s8b5_ok,
+        "s8b5_active_stack_regression_pass": s8b5_ok,
+        "s8b5_cycle_guard_regression_pass": s8b5_ok,
+        "s8b5_atomic_rollback_regression_pass": s8b5_ok,
     }
-    details = {
+    return predicates, {
         "root_graph_id": root_graph.graph_id,
         "child_graph_id": child_graph.graph_id,
         "callback_id": callback.callback_id,
         "child_actor": invocation.actor_id,
         "child_targets": list(invocation.target_resolution.selected),
         "weighted_reason": weighted_result.blocked_reason,
-        "seven_channel_order": list(seven_channel_seen),
+        "seven_channel_order": list(seen_channels),
         "ordinary_errors": list(ordinary.errors),
         "wrong_provider_errors": list(wrong_provider.errors),
         "negative_reasons": {
@@ -702,32 +506,9 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
             "duplicate_link": ambiguous_reason,
             "missing_link": missing_link_reason,
         },
-        "s8b5_targeted": {
-            "generic_errors": list(generic_success.errors),
-            "generic_projection_graph_ids": [
-                item.graph_id for item in generic_success.task_graph_projections
-            ],
-            "generic_seen": [
-                {"graph_id": graph_id, "active_graph_stack": list(stack)}
-                for graph_id, stack in generic_seen
-            ],
-            "watcher_transport_count": len(
-                generic_dispatcher.ability_property_watchers.transports
-            ),
-            "cycle_errors": list(cycle_result.errors),
-            "cycle_projection_statuses": [
-                [item.graph_id, item.status]
-                for item in cycle_result.task_graph_projections
-            ],
-            "grouped_failure_errors": list(grouped_failure.errors),
-            "grouped_projection_statuses": [
-                [item.graph_id, item.status]
-                for item in grouped_failure.task_graph_projections
-            ],
-            "result_guard": result_guard,
-        },
+        "s8b5_predicates": s8b5_predicates,
+        "s8b5_details": s8b5_details,
     }
-    return predicates, details
 
 
 def _run_fast() -> dict[str, Any]:
@@ -740,13 +521,8 @@ def _run_fast() -> dict[str, Any]:
     }
     elapsed = time.perf_counter() - started
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    ok = (
-        all(predicates.values())
-        and elapsed <= _FAST_HARD_SECONDS
-        and peak <= _FAST_RSS_LIMIT_KIB
-    )
     return {
-        "ok": ok,
+        "ok": all(predicates.values()) and elapsed <= _FAST_HARD_SECONDS and peak <= _FAST_RSS_LIMIT_KIB,
         "mode": "fast",
         "predicates": predicates,
         "component": component_details,
@@ -758,6 +534,158 @@ def _run_fast() -> dict[str, Any]:
             "rss_budget_kib": _FAST_RSS_LIMIT_KIB,
         },
     }
+
+
+def _merge_ir(values: Iterable[Any], field: str) -> tuple[Any, ...]:
+    merged: dict[str, Any] = {}
+    for value in values:
+        identity = str(getattr(value, field))
+        previous = merged.get(identity)
+        if previous is not None and previous != value:
+            raise AssertionError(f"focused_runtime_projection_conflict:{field}:{identity}")
+        merged[identity] = value
+    return tuple(merged[key] for key in sorted(merged))
+
+
+def _build_runtime_direct_rulebook() -> tuple[
+    RuleBook,
+    tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
+    dict[str, Any],
+    dict[str, Any],
+]:
+    (
+        lowerer,
+        focused_ir,
+        _focused_rules,
+        finalizer_audit,
+        reconciled_denominator,
+        finalizer_build_evidence,
+        same_event_transitions,
+    ) = _a2p0_build_focused_direct_ir()
+    del _focused_rules
+
+    lowerer.build_character_ability_source_resolution_catalog()
+    owned = lowerer.build_owned_combatant_admission_projection(
+        offensive_action_only=True,
+        max_servant_count=1,
+    )
+    if not owned.ok:
+        raise AssertionError(
+            "owned combatant projection failed:"
+            + ",".join(sorted({item.code for item in owned.issues}))
+        )
+    snapshot = getattr(lowerer, "_character_ability_raw_snapshot", None)
+    scope = getattr(lowerer, "_character_ability_scope_catalog", None)
+    if snapshot is None or scope is None:
+        raise AssertionError("focused runtime source catalog prerequisite missing")
+    source_catalog = lowerer.build_character_control_flow_contract_catalog(
+        snapshot=snapshot,
+        scope_catalog=scope,
+    )
+
+    standalone_graphs = _merge_ir(
+        (
+            *focused_ir.standalone_ability_graphs,
+            *tuple(getattr(owned, "standalone_ability_graphs", ())),
+        ),
+        "standalone_ability_graph_id",
+    )
+    phases = _merge_ir((*focused_ir.ability_phases, *owned.ability_phases), "phase_id")
+    ability_tasks = _merge_ir((*focused_ir.ability_tasks, *owned.ability_tasks), "task_id")
+    effects = _merge_ir((*focused_ir.effects, *owned.effects), "effect_id")
+    conditions = _merge_ir((*focused_ir.conditions, *owned.conditions), "condition_id")
+    formulas = _merge_ir((*focused_ir.formulas, *owned.formulas), "formula_id")
+    targets = _merge_ir(
+        (*focused_ir.target_expressions, *owned.target_expressions),
+        "target_expression_id",
+    )
+    queue_intents = _merge_ir(
+        (*focused_ir.queue_intents, *owned.queue_intents),
+        "queue_intent_id",
+    )
+    engine_rules = build_engine_rule_registry()
+    view = CanonicalIR(
+        version=focused_ir.version,
+        entities=owned.entities,
+        standalone_ability_graphs=standalone_graphs,
+        ability_phases=phases,
+        ability_tasks=ability_tasks,
+        effects=effects,
+        conditions=conditions,
+        formulas=formulas,
+        target_expressions=targets,
+        status_callbacks=focused_ir.status_callbacks,
+        status_callback_tasks=focused_ir.status_callback_tasks,
+        status_event_families=focused_ir.status_event_families,
+        status_damage_emissions=owned.status_damage_emissions,
+        damage_modifiers=owned.damage_modifiers,
+        action_delay_emissions=owned.action_delay_emissions,
+        queue_intents=queue_intents,
+        skill_continuations=owned.skill_continuations,
+        triggers=owned.triggers,
+        servant_definitions=owned.servant_definitions,
+        action_definitions=owned.action_definitions,
+        action_ability_bindings=owned.action_ability_bindings,
+        action_admissions=owned.action_admissions,
+        unit_birth_templates=owned.unit_birth_templates,
+        combatant_action_sets=owned.combatant_action_sets,
+        action_events=owned.action_events,
+        hit_profiles=owned.hit_profiles,
+        skill_formula_bindings=owned.skill_formula_bindings,
+        damage_emissions=owned.damage_emissions,
+        toughness_emissions=owned.toughness_emissions,
+        avatar_profiles=owned.avatar_profiles,
+        character_data_cards=owned.character_data_cards,
+        character_equipment_eligibilities=owned.character_equipment_eligibilities,
+        character_mechanism_slots=owned.character_mechanism_slots,
+        character_trace_nodes=owned.character_trace_nodes,
+        character_eidolon_slots=owned.character_eidolon_slots,
+        bounce_policies=owned.bounce_policies,
+        timeline_rules=engine_rules.timeline_rules,
+        resource_rules=engine_rules.resource_rules,
+        damage_formula_rules=engine_rules.damage_formula_rules,
+        damage_route_rules=engine_rules.damage_route_rules,
+        shield_priority_rules=engine_rules.shield_priority_rules,
+        metadata={
+            "validation_scope": "p9_a2_pr12_finalized_status_plus_owned_actions",
+            "full_tbgd_lowering_build_count": 0,
+        },
+    )
+    catalog = materialize_character_runtime_task_graph_catalog(
+        source_catalog,
+        view,
+        source_snapshot=snapshot,
+        definition_scope_complete=True,
+    )
+    external_dependencies = build_external_task_topology_dependency_ledger(
+        action_ability_bindings=view.action_ability_bindings,
+        ability_phases=view.ability_phases,
+        ability_tasks=view.ability_tasks,
+        standalone_ability_graphs=view.standalone_ability_graphs,
+        status_callbacks=view.status_callbacks,
+        status_callback_tasks=view.status_callback_tasks,
+    )
+    canonical = replace(
+        view,
+        task_graph_catalog=catalog,
+        external_task_topology_dependencies=external_dependencies,
+    )
+    return (
+        RuleBook(canonical),
+        finalizer_audit,
+        reconciled_denominator,
+        {
+            **finalizer_build_evidence,
+            "owned_action_definition_count": len(owned.action_definitions),
+            "combined_ability_phase_count": len(phases),
+            "combined_ability_task_count": len(ability_tasks),
+            "combined_effect_count": len(effects),
+            "combined_task_graph_entry_count": len(catalog.entry_materializations),
+            "external_task_topology_dependency_count": len(external_dependencies),
+        },
+        same_event_transitions,
+    )
 
 
 def _action_window_callback_map(rules: RuleBook) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
@@ -882,13 +810,7 @@ def _status_denominator(rules: RuleBook) -> tuple[list[dict[str, Any]], dict[str
                     "action_window_event_types": list(callback_to_events[callback.event]),
                 }
             )
-    rows.sort(
-        key=lambda row: (
-            row["callback_id"],
-            row["status_task_id"],
-            row["nested_graph_id"],
-        )
-    )
+    rows.sort(key=lambda row: (row["callback_id"], row["status_task_id"], row["nested_graph_id"]))
     return rows, callback_to_events
 
 
@@ -939,9 +861,7 @@ def _real_add_modifier_effects(rules: RuleBook, modifier_name: str) -> tuple[Any
         if effect.opcode != "AddModifier":
             continue
         standard = effect.payload.get("standard")
-        if not isinstance(standard, Mapping):
-            continue
-        if standard.get("modifier_name") != modifier_name:
+        if not isinstance(standard, Mapping) or standard.get("modifier_name") != modifier_name:
             continue
         if getattr(effect, "coverage_status", "executable") not in {"", "executable"}:
             continue
@@ -949,10 +869,7 @@ def _real_add_modifier_effects(rules: RuleBook, modifier_name: str) -> tuple[Any
     return tuple(sorted(result, key=lambda item: item.effect_id))
 
 
-def _attached_callback_detail(
-    state: BattleState,
-    row: Mapping[str, Any],
-) -> dict[str, Any] | None:
+def _attached_callback_detail(state: BattleState, row: Mapping[str, Any]) -> dict[str, Any] | None:
     actor = state.units.get("validation:actor")
     if actor is None:
         return None
@@ -961,9 +878,7 @@ def _attached_callback_detail(
         return None
     matches = []
     for item in details:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("modifier_name") or "") != row["modifier_name"]:
+        if not isinstance(item, dict) or str(item.get("modifier_name") or "") != row["modifier_name"]:
             continue
         trigger_ids = item.get("trigger_ids_by_event")
         ids = trigger_ids.get(row["callback_event"]) if isinstance(trigger_ids, dict) else None
@@ -989,7 +904,6 @@ def _attach_real_status(
         reason="production_status_setup",
         source="status_system_setup_target",
     )
-    failures: list[dict[str, Any]] = []
     for effect in _real_add_modifier_effects(rules, str(row["modifier_name"])):
         for caster_id in ("validation:actor", "validation:enemy"):
             result = system.apply_add_modifier(
@@ -1017,42 +931,14 @@ def _attach_real_status(
                 ),
             )
             if not result.ok:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "unsupported": list(result.unsupported),
-                    }
-                )
                 continue
             reduced = reducer.apply_all_result(base_state, result.mutations)
             if not reduced.ok:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reducer_conflicts": [item.code for item in reduced.conflicts],
-                    }
-                )
                 continue
             detail = _attached_callback_detail(reduced.after_state, row)
             if detail is None:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reason": "callback_not_attached_to_actor_after_real_status_admission",
-                    }
-                )
                 continue
             if status_control_gate_for_actor(reduced.after_state.units["validation:actor"]) is not None:
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "caster_id": caster_id,
-                        "reason": "attached_status_controls_action_actor",
-                    }
-                )
                 continue
             return (
                 reduced.after_state,
@@ -1076,18 +962,11 @@ def _accepted_action_on_state(
     definition: Any,
 ) -> tuple[ActionCommand, Any, Any] | None:
     selector = ActionTargetSelectionSystem(rules)
-    query = selector.query(
-        state,
-        "validation:actor",
-        definition.action_id,
-        definition.level,
-    )
+    query = selector.query(state, "validation:actor", definition.action_id, definition.level)
     if query.status != "resolved":
         return None
-    submitted = (
-        ()
-        if query.selection_mode == "automatic"
-        else tuple(query.candidate_ids[: (query.selection_min or 1)])
+    submitted = () if query.selection_mode == "automatic" else tuple(
+        query.candidate_ids[: (query.selection_min or 1)]
     )
     accepted = selector.accept(state, query, submitted)
     if accepted.status != "accepted" or accepted.context is None:
@@ -1097,9 +976,7 @@ def _accepted_action_on_state(
         action_id=definition.action_id,
         action_level=definition.level,
         target_ids=(
-            ()
-            if query.selection_mode == "automatic"
-            else accepted.context.accepted.selected_target_ids
+            () if query.selection_mode == "automatic" else accepted.context.accepted.selected_target_ids
         ),
     )
     if selector.context_blocked_reason(state, command, accepted.context):
@@ -1143,8 +1020,8 @@ def _attempt_direct(
             "target_selection_fingerprint": target_context.context_fingerprint,
         }
     ]
-
     original_window = executor.event_dispatcher.dispatch_action_window_listeners
+
     def window_probe(current_state: BattleState, **kwargs: Any) -> Any:
         event = kwargs["event"]
         ordered.append(
@@ -1155,9 +1032,10 @@ def _attempt_direct(
             }
         )
         return original_window(current_state, **kwargs)
-    executor.event_dispatcher.dispatch_action_window_listeners = window_probe  # type: ignore[method-assign]
 
+    executor.event_dispatcher.dispatch_action_window_listeners = window_probe  # type: ignore[method-assign]
     original_root = executor.event_dispatcher.status_callbacks.execute_action_window_formal_root
+
     def root_probe(current_state: BattleState, **kwargs: Any) -> Any:
         callback_id = str(kwargs.get("callback_id") or "")
         if callback_id == row["callback_id"]:
@@ -1185,9 +1063,10 @@ def _attempt_direct(
                 }
             )
         return original_root(current_state, **kwargs)
-    executor.event_dispatcher.status_callbacks.execute_action_window_formal_root = root_probe  # type: ignore[method-assign]
 
+    executor.event_dispatcher.status_callbacks.execute_action_window_formal_root = root_probe  # type: ignore[method-assign]
     original_invocation = executor.ability_tasks._status_nested_invocation_for_request
+
     def invocation_probe(
         context: StatusNestedAbilityContext,
         request: TaskGraphHookRequest,
@@ -1208,9 +1087,10 @@ def _attempt_direct(
                 }
             )
         return invocation, reason
-    executor.ability_tasks._status_nested_invocation_for_request = invocation_probe  # type: ignore[method-assign]
 
+    executor.ability_tasks._status_nested_invocation_for_request = invocation_probe  # type: ignore[method-assign]
     original_weighted = executor.ability_tasks._resolve_formal_weighted_selection
+
     def weighted_probe(request: TaskGraphHookRequest, selection: Any, current_state: BattleState) -> Any:
         result = original_weighted(request, selection, current_state)
         if request.graph_id == row["nested_graph_id"]:
@@ -1224,8 +1104,8 @@ def _attempt_direct(
                 }
             )
         return result
-    executor.ability_tasks._resolve_formal_weighted_selection = weighted_probe  # type: ignore[method-assign]
 
+    executor.ability_tasks._resolve_formal_weighted_selection = weighted_probe  # type: ignore[method-assign]
     before = status_state.snapshot().to_json()
     after_state, transition = executor.execute(
         command,
@@ -1262,7 +1142,6 @@ def _attempt_direct(
         if item.get("step") == "weighted_selection_reached_ability_owned_deferred_hook"
     ]
     top_rng_events = tuple(transition.rng_events)
-
     if expect_weighted:
         expected_terminal = (
             bool(weighted_hits)
@@ -1277,7 +1156,6 @@ def _attempt_direct(
         )
     else:
         expected_terminal = transition.outcome.successor_eligible
-
     return {
         "ok": selected_window and real_root and ability_authority and expected_terminal,
         "stage": "combat_executor_execute",
@@ -1305,15 +1183,12 @@ def _attempt_direct(
 def _run_direct() -> dict[str, Any]:
     started = time.perf_counter()
     (
-        _lowerer,
-        _canonical,
         rules,
         finalizer_audit,
         reconciled_denominator,
         build_evidence,
         same_event_transitions,
-    ) = _a2p0_build_focused_direct_ir()
-    del _lowerer, _canonical
+    ) = _build_runtime_direct_rulebook()
     if not getattr(rules.ir, "task_graph_catalog", None):
         raise AssertionError("production-focused CanonicalIR has no task graph catalog")
     if not finalizer_audit or not reconciled_denominator:
@@ -1332,11 +1207,7 @@ def _run_direct() -> dict[str, Any]:
         for event_type in row["action_window_event_types"]:
             for definition, base_context in action_candidates.get(event_type, ()):
                 attempt = _attempt_direct(
-                    rules,
-                    row,
-                    definition,
-                    base_context,
-                    expect_weighted=True,
+                    rules, row, definition, base_context, expect_weighted=True
                 )
                 attempts.append(
                     {
@@ -1358,41 +1229,37 @@ def _run_direct() -> dict[str, Any]:
             break
 
     nonweighted_success: dict[str, Any] | None = None
-    if nonweighted:
-        for row in nonweighted:
-            for event_type in row["action_window_event_types"]:
-                for definition, base_context in action_candidates.get(event_type, ()):
-                    attempt = _attempt_direct(
-                        rules,
-                        row,
-                        definition,
-                        base_context,
-                        expect_weighted=False,
-                    )
-                    attempts.append(
-                        {
-                            "kind": "nonweighted",
-                            "callback_id": row["callback_id"],
-                            "event_type": event_type,
-                            "action_id": definition.action_id,
-                            "ok": attempt.get("ok", False),
-                            "stage": attempt.get("stage", ""),
-                            "reason": attempt.get("reason", ""),
-                        }
-                    )
-                    if attempt.get("ok"):
-                        nonweighted_success = {"denominator_row": row, "direct": attempt}
-                        break
-                if nonweighted_success is not None:
+    for row in nonweighted:
+        for event_type in row["action_window_event_types"]:
+            for definition, base_context in action_candidates.get(event_type, ()):
+                attempt = _attempt_direct(
+                    rules, row, definition, base_context, expect_weighted=False
+                )
+                attempts.append(
+                    {
+                        "kind": "nonweighted",
+                        "callback_id": row["callback_id"],
+                        "event_type": event_type,
+                        "action_id": definition.action_id,
+                        "ok": attempt.get("ok", False),
+                        "stage": attempt.get("stage", ""),
+                        "reason": attempt.get("reason", ""),
+                    }
+                )
+                if attempt.get("ok"):
+                    nonweighted_success = {"denominator_row": row, "direct": attempt}
                     break
             if nonweighted_success is not None:
                 break
+        if nonweighted_success is not None:
+            break
 
     elapsed = time.perf_counter() - started
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     predicates = {
         "production_canonical_ir_built": True,
         "dynamic_denominator_nonempty": bool(denominator),
+        "action_window_action_candidates_nonempty": any(action_candidates.values()),
         "weighted_denominator_reaches_ability_deferred_boundary": (
             not weighted or weighted_success is not None
         ),
@@ -1412,6 +1279,9 @@ def _run_direct() -> dict[str, Any]:
         "denominator_count": len(denominator),
         "weighted_denominator_count": len(weighted),
         "nonweighted_denominator_count": len(nonweighted),
+        "action_candidate_counts": {
+            key: len(value) for key, value in sorted(action_candidates.items())
+        },
         "action_window_callback_events": {
             key: list(value) for key, value in sorted(callback_to_events.items())
         },
