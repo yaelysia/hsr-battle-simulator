@@ -2,7 +2,7 @@
 
 ## Record metadata
 
-- Concept: ordinary-combat servant/memosprite creation, numeric construction inputs, independent scheduling evidence, recast behavior and death-rattle lifecycle
+- Concept: ordinary-combat servant/memosprite creation, numeric construction inputs, independent scheduling evidence, recast behavior, natural pre-death/death-rattle/post-death surfaces, and muted forced cleanup
 - Owner context: Aglaea (`AvatarID=1402` from the ordinary avatar chain; owner identity is not asserted from the servant row itself)
 - Servant: Garmentmaker (`ServantID=11402`)
 - TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`
@@ -75,15 +75,19 @@ The literal generic parser implementation for the `"#N"` token is not exported. 
 `Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json` confirms:
 
 - `$type = ServantConfig`
-- `AvatarServantType = Memosprite`
 - Thunder damage type
 - independent AI/skill/passive wiring
 - Skill01 as a selectable servant action with `SPBase=10`
+- `SkillP01 -> Servant_AglaeaServant_00_Passive`
+- `SkillP03 -> Servant_AglaeaServant_00_BattleCry`
+- `SkillP04 -> Servant_AglaeaServant_00_DeathRattle`
 - JoinSkill entries
-- passive/death-rattle ability wiring
+- shared `Avatar_Common_PassiveSkill` / `Servant_Common_PassiveSkill` wiring
 - property-inherit configuration.
 
-`PropertyInheritConfig.SyncPropertyExceptList` explicitly excludes the speed family, including `Speed`, `SpeedBase`, `SpeedDelta`, `SpeedAddedRatio`, `SpeedPercent` and `SpeedConvertedRatio`.
+The exact config declares the passive entry abilities, but the generic GameCore rule that automatically activates/registers passive entries during `CreateServant` is not exported in this release-data corpus. Treat passive auto-entry timing as `engine_consumer_unavailable`, not as an inferred creation-time guarantee.
+
+`SyncPropertyExceptList` explicitly excludes the speed family, including `Speed`, `BaseSpeed`, `SpeedDelta`, `SpeedAddedRatio`, `SpeedConvert` and `SpeedOverride` in the pinned config.
 
 Therefore generic property synchronization is not authority for servant Speed. The exact creation-time versus continuous/event-driven synchronization rules for HP and other inherited properties remain unresolved.
 
@@ -127,7 +131,7 @@ This is direct numeric evidence that the servant owns/mutates its own scheduling
 
 ### DeathRattle
 
-`MServant_AglaeaServant_00_DeathRattle` is a formal `Deathrattle` modifier and its `OnDeathrattle` callback performs:
+`MServant_AglaeaServant_00_DeathRattle` is a formal modifier with `BehaviorFlagList=["Deathrattle"]`. Its `OnDeathrattle` callback performs:
 
 `ModifySPNew(Target=CasterSummoner, AddValue=SkillP04[0])`
 
@@ -166,29 +170,71 @@ The explicit `SetActionDelay(0)` belongs to Aglaea/current-action scheduling con
 
 Seele and Jingliu independently show a reusable W07 distinction: ordinary current-action delay adjustment uses `ModifyCurrentSkillDelayCost`, while insert-action cases route equivalent changes through actor `ActionDelay` depending on turn ownership. The generic scheduler implementation remains outside the pinned release-data dump.
 
-## Natural death-rattle versus forced cleanup
+## Natural pre-death, death-rattle and post-death surfaces
 
-The raw corpus distinguishes at least two paths:
+The exact pinned servant passive supplies a stronger lifecycle decomposition than the earlier generic “death-rattle versus cleanup” note.
 
-### Natural death-rattle path
+### `OnBeforeDying` — pre-death cleanup/state transfer
 
-- formal `OnDeathrattle` callback exists;
-- some servant modifiers carry `KeepOnDeathrattle` / `KeepAllModifierOnDeathRattle`;
-- later cleanup surfaces include `OnDestroy` and `RemoveWhenCasterDead`.
+`MServant_AglaeaServant_Passive` registers `OnBeforeDying`. The inspected callback can:
 
-This proves at least some state survives through the death-rattle interval and is destroyed later. It is negative evidence against a blanket “cleanup everything before death-rattle” model.
+- when the summoner's PointB2 is active and the servant carries its speed-stack modifier, read that modifier layer and transfer a keep-speed modifier to `CasterSummoner`;
+- remove summoner-side battle modifiers including `MAvatar_Aglaea_00_Skill02_ChangeSkill`, `MAvatar_Aglaea_Rank06_Effect2` and `MAvatar_Aglaea_Rank06_Listen`;
+- if `BattleEventCountDown` is still alive, `ForceKill` that BattleEvent with `MuteHpChange=true` and `MuteAllTriggerDeath=true`.
 
-### Forced cleanup path
+This establishes a **pre-death cleanup/state-transfer surface**. It does not by itself state what generic engine event runs immediately next.
 
-Aglaea/common servant cleanup paths use `ForceKill` with flags including:
+### `OnDeathrattle` — trigger-enabled death-rattle work
 
-- `MuteAllTriggerDeath=true`
-- `MuteHpChange=true` in inspected common cleanup
-- `AbortUnusedInsertAbility=true`
+The formal DeathRattle modifier executes its `OnDeathrattle` callback and restores the raw `+20` value to `CasterSummoner` via `ModifySPNew`.
 
-and Aglaea's dedicated forced-cleanup insertion can continue with `SetDieImmediately` and explicit modifier removals.
+A separate servant modifier carries both `KeepOnDeathrattle` and `RemoveWhenCasterDead`, proving selected state can survive the death-rattle interval and be removed only once caster-death state is reached. This is strong negative evidence against “destroy every modifier before death-rattle”.
 
-This is a death-trigger-suppressed cleanup path. It must not be used to infer ordinary natural-death callback order.
+### `OnListenCharacterDie` — owner post-death listener
+
+Aglaea's owner passive `MAvatar_Aglaea_Passive` listens for `OnListenCharacterDie`. If the dead `ParamEntity` intersects `CasterServant` with `FirstTargetAliveOnly=false`, it sets the owner's internal `_Energy` working value to `0`.
+
+This gives a pinned owner-side **character-death listener surface** after the servant is recognized as dead. The generic dispatcher body that orders this listener relative to all death-rattle/destruction callbacks is not exported.
+
+### What is and is not closed
+
+The pin therefore exposes distinct lifecycle stages/surfaces:
+
+```text
+servant passive OnBeforeDying
+  -> death-rattle-capable state / OnDeathrattle
+  -> character-death listeners such as owner OnListenCharacterDie
+  -> later RemoveWhenCasterDead / OnDestroy / entity removal surfaces
+```
+
+The arrows above describe the semantic lifecycle progression evidenced by the event names/state predicates and retention flags, not a claimed universal callback queue implementation. Exact same-priority/cross-event arbitration and the final destruction/removal total order remain `engine_consumer_unavailable`.
+
+## BattleEvent-driven muted forced cleanup
+
+Aglaea also owns a separate BattleEvent-phase cleanup route that must not be merged into natural death.
+
+Pinned chain:
+
+```text
+MAvatar_Aglaea_00_PassiveSkill01_BattleEvent.OnPhase1
+  -> Retarget(AllLightTeam entities containing MServant_AglaeaServant_Passive)
+  -> TurnInsertAbility(
+       Servant_Aglaea_00_PassiveSkill01_ForceKill_Insert,
+       InsertAbilityPriority=AvatarBuffOthers,
+       target=that servant,
+       OwnerAliveState=Anyone,
+       TargetAliveState=Mask_AliveOrLimbo)
+  -> forced cleanup ability
+       ForceKill(Caster, MuteHpChange=true, MuteAllTriggerDeath=true)
+       SetDieImmediately(Caster)
+       remove owner/servant-linked battle modifiers
+```
+
+The BattleEvent modifier also force-kills its own owner with death triggers muted after scheduling the servant cleanup.
+
+This closes a real **priority-tiered, trigger-suppressed forced cleanup branch**. The configured insert priority is source authority for that branch; the hidden global queue implementation/tie-break remains outside the pin.
+
+Presentation waits/effects inside `ForceKill_Insert` are not promoted into logical death timing.
 
 ## BattleEvent namespace hazard
 
@@ -207,21 +253,23 @@ Do not generalize this one negative example into a blanket exclusion of all `Con
 1. Aglaea ordinary battle graph can create `ServantID=11402`.
 2. `AvatarServantConfig[11402]` supplies battle config/AI/skill IDs, HP/Speed construction references and aggro.
 3. `#N` construction inputs resolve through corresponding `SpeedSkill/HPSkill` -> `AvatarSkillConfig.ParamList` 1-based slots.
-4. The servant is a distinct `Memosprite` entity with its own AI/skills/property wiring.
+4. The servant is a distinct battle entity with its own AI/skills/property wiring.
 5. Generic property sync excludes the speed family; servant/summoner Speed are separately read.
 6. Servant `SkillP03` numerically closes to self `ModifyActionDelay(-1 normalized)`.
 7. Servant `SkillP04` numerically closes to `OnDeathrattle -> CasterSummoner ModifySPNew(+20)`.
 8. Ordinary Aglaea recast is create-if-absent / maintain-existing, not replacement-on-recast.
-9. Natural death-rattle and muted forced cleanup are distinct lifecycle branches.
-10. The nearby Aglaea `ConfigSummonUnit` is not battle-servant authority.
+9. Natural lifecycle data exposes separate `OnBeforeDying`, `OnDeathrattle` and owner `OnListenCharacterDie` surfaces, plus later death-dependent destruction/removal surfaces.
+10. Aglaea BattleEvent `OnPhase1` can schedule `ForceKill_Insert` at `AvatarBuffOthers` priority; that branch explicitly mutes death triggers, force-kills the servant and sets it dead immediately.
+11. Natural death-rattle and muted forced cleanup are distinct lifecycle branches.
+12. The nearby Aglaea `ConfigSummonUnit` is not battle-servant authority.
 
 ## Remaining boundaries
 
-- generic passive-entry activation/registration timing during `CreateServant`;
+- generic passive-entry activation/registration timing during `CreateServant` (`engine_consumer_unavailable` at this pin);
 - exact initial servant queue position and equal-delay ordering;
 - hidden SPD→AV conversion, clamp/round/requeue/tie-break rules;
 - creation-time versus continuous/event-driven HP/property synchronization;
-- exact natural-death order across `OnBeforeDying`, `OnDeathrattle`, `OnListenCharacterDie`, `OnDestroy` and final entity removal;
+- exact universal total order/tie-break across `OnBeforeDying`, `OnDeathrattle`, `OnListenCharacterDie`, `OnDestroy` and final entity removal (`engine_consumer_unavailable`); 
 - exact generic shared-resource semantics/caps for `ModifySPNew`;
 - `JoinSkillList` coordinated owner-servant action semantics;
 - generic `#N` parser implementation (the practical data mapping itself is closed).
