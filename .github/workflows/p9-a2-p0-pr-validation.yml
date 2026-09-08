@@ -1,4 +1,4 @@
-name: P9 A2 P0 read-only final candidate validation
+name: P9 A2 P0 read-only root-ledger validation
 
 on:
   push:
@@ -39,11 +39,6 @@ jobs:
 
           workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
           lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
-          validator_path = Path(
-              "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/"
-              "validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
-          )
-
           source = subprocess.check_output(
               ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"],
               text=True,
@@ -60,159 +55,57 @@ jobs:
           exec(candidate_script, {"__name__": "__candidate__"})
 
           lowering = lowering_path.read_text(encoding="utf-8")
-          old_closure = '''        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))
-        callback_task_ids = tuple(callback.task_ids)
-        closure_ok = (
-            len(callback_task_ids) == len(set(callback_task_ids))
-            and set(callback_task_ids) == {task.task_id for task in owned_tasks}
-            and all(
-                task.event == callback.event
-                and task.source.source_path == callback.source.source_path
-                and (
-                    task.task_id in candidate_ids
-                    or (
-                        task.coverage_status == "executable"
-                        and not task.blocked_reason
-                    )
-                )
-                for task in owned_tasks
-            )
-        )
-'''
-          new_closure = '''        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))
-        callback_task_ids = tuple(callback.task_ids)
-        owned_root_task_ids = tuple(
-            task.task_id
-            for task in owned_tasks
-            if not getattr(task, "parent_task_id", "")
-        )
-        closure_ok = (
-            len(callback_task_ids) == len(set(callback_task_ids))
-            and len(owned_root_task_ids) == len(set(owned_root_task_ids))
-            and set(callback_task_ids) == set(owned_root_task_ids)
-            and all(
-                task.event == callback.event
-                and task.source.source_path == callback.source.source_path
-                and (
-                    task.task_id in candidate_ids
-                    or (
-                        task.coverage_status == "executable"
-                        and not task.blocked_reason
-                    )
-                )
-                for task in owned_tasks
-            )
-        )
-'''
+          old_closure = (
+              "        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))\n"
+              "        callback_task_ids = tuple(callback.task_ids)\n"
+              "        closure_ok = (\n"
+              "            len(callback_task_ids) == len(set(callback_task_ids))\n"
+              "            and set(callback_task_ids) == {task.task_id for task in owned_tasks}\n"
+              "            and all(\n"
+              "                task.event == callback.event\n"
+              "                and task.source.source_path == callback.source.source_path\n"
+              "                and (\n"
+              "                    task.task_id in candidate_ids\n"
+              "                    or (\n"
+              "                        task.coverage_status == \"executable\"\n"
+              "                        and not task.blocked_reason\n"
+              "                    )\n"
+              "                )\n"
+              "                for task in owned_tasks\n"
+              "            )\n"
+              "        )\n"
+          )
+          new_closure = (
+              "        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))\n"
+              "        callback_task_ids = tuple(callback.task_ids)\n"
+              "        owned_root_task_ids = tuple(\n"
+              "            task.task_id\n"
+              "            for task in owned_tasks\n"
+              "            if not getattr(task, \"parent_task_id\", \"\")\n"
+              "        )\n"
+              "        closure_ok = (\n"
+              "            len(callback_task_ids) == len(set(callback_task_ids))\n"
+              "            and len(owned_root_task_ids) == len(set(owned_root_task_ids))\n"
+              "            and set(callback_task_ids) == set(owned_root_task_ids)\n"
+              "            and all(\n"
+              "                task.event == callback.event\n"
+              "                and task.source.source_path == callback.source.source_path\n"
+              "                and (\n"
+              "                    task.task_id in candidate_ids\n"
+              "                    or (\n"
+              "                        task.coverage_status == \"executable\"\n"
+              "                        and not task.blocked_reason\n"
+              "                    )\n"
+              "                )\n"
+              "                for task in owned_tasks\n"
+              "            )\n"
+              "        )\n"
+          )
           if lowering.count(old_closure) != 1:
               raise SystemExit("candidate closure anchor mismatch")
           lowering_path.write_text(
               lowering.replace(old_closure, new_closure, 1), encoding="utf-8"
           )
-
-          validator = validator_path.read_text(encoding="utf-8")
-          task_fields_anchor = '''    linked_standalone_graph_id: str = ""
-    linked_ability_phase_id: str = ""
-'''
-          task_fields_replacement = '''    linked_standalone_graph_id: str = ""
-    linked_ability_phase_id: str = ""
-    parent_task_id: str = ""
-'''
-          if validator.count(task_fields_anchor) != 1:
-              raise SystemExit("validator task topology anchor mismatch")
-          validator = validator.replace(
-              task_fields_anchor, task_fields_replacement, 1
-          )
-
-          positive_anchor = '''    if not any(row["decision"] == "promoted" for row in audit):
-        _fail("positive_audit_missing")
-
-'''
-          nested_positive = '''    if not any(row["decision"] == "promoted" for row in audit):
-        _fail("positive_audit_missing")
-
-    nested_fixture = _fixture(callback_reason="")
-    callbacks0, tasks0, families, effects, graphs, phases, formal = nested_fixture
-    nested_candidate = replace(
-        tasks0[0],
-        task_id="task:nested-trigger",
-        parent_task_id="task:root-retarget",
-    )
-    root_task = replace(
-        tasks0[0],
-        task_id="task:root-retarget",
-        opcode="Retarget",
-        effect_id="",
-        coverage_status="executable",
-        blocked_reason="",
-        linked_standalone_graph_id="",
-        linked_ability_phase_id="",
-        parent_task_id="",
-    )
-    callbacks0[0] = replace(
-        callbacks0[0],
-        task_ids=(root_task.task_id,),
-        coverage_status="executable",
-        blocked_reason="",
-        admission_status="executable",
-        blocking_dependency="",
-    )
-    callbacks, tasks, audit = _run_finalizer(
-        (
-            callbacks0,
-            [root_task, nested_candidate],
-            families,
-            effects,
-            graphs,
-            phases,
-            formal,
-        )
-    )
-    nested_by_id = {task.task_id: task for task in tasks}
-    if (
-        nested_by_id[nested_candidate.task_id].coverage_status != "executable"
-        or nested_by_id[root_task.task_id].coverage_status != "executable"
-        or callbacks[0].task_ids != (root_task.task_id,)
-    ):
-        _fail("nested_formal_child_finalization_did_not_promote")
-    if not any(
-        row["task_id"] == nested_candidate.task_id and row["decision"] == "promoted"
-        for row in audit
-    ):
-        _fail("nested_formal_child_audit_missing")
-
-'''
-          if validator.count(positive_anchor) != 1:
-              raise SystemExit("validator positive anchor mismatch")
-          validator = validator.replace(positive_anchor, nested_positive, 1)
-
-          before_identity_anchor = '''        before_task[0].linked_standalone_graph_id,
-        before_task[0].linked_ability_phase_id,
-    )
-'''
-          before_identity_replacement = '''        before_task[0].linked_standalone_graph_id,
-        before_task[0].linked_ability_phase_id,
-        before_task[0].parent_task_id,
-    )
-'''
-          after_identity_anchor = '''        tasks[0].linked_standalone_graph_id,
-        tasks[0].linked_ability_phase_id,
-    )
-'''
-          after_identity_replacement = '''        tasks[0].linked_standalone_graph_id,
-        tasks[0].linked_ability_phase_id,
-        tasks[0].parent_task_id,
-    )
-'''
-          if validator.count(before_identity_anchor) != 1 or validator.count(after_identity_anchor) != 1:
-              raise SystemExit("validator topology identity anchor mismatch")
-          validator = validator.replace(
-              before_identity_anchor, before_identity_replacement, 1
-          ).replace(
-              after_identity_anchor, after_identity_replacement, 1
-          )
-          compile(validator, str(validator_path), "exec")
-          validator_path.write_text(validator, encoding="utf-8")
           PY
 
           python -m compileall -q \
