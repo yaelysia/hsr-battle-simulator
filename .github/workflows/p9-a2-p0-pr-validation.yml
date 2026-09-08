@@ -43,31 +43,33 @@ jobs:
           if helper_match is None:
               raise SystemExit("pinned helper payload missing")
           helper = base64.b64decode(helper_match.group(1)).decode()
-          old_callback_gate = '''        if not decision and (
-            owner.coverage_status != "blocked"
-            or owner.admission_status != "blocked"
-            or owner.blocked_reason != stale_reason
-            or owner.blocking_dependency != stale_reason
-        ):
-            decision = "callback_not_exact_stale_blocker"
-'''
-          new_callback_gate = '''        callback_is_stale = (
-            owner.coverage_status == "blocked"
-            and owner.admission_status == "blocked"
-            and owner.blocked_reason == stale_reason
-            and owner.blocking_dependency == stale_reason
-        )
-        callback_is_already_executable = (
-            owner.coverage_status == "executable"
-            and owner.admission_status == "executable"
-            and not owner.blocked_reason
-            and not owner.blocking_dependency
-        )
-        if not decision and not (
-            callback_is_stale or callback_is_already_executable
-        ):
-            decision = "callback_not_exact_stale_blocker"
-'''
+          old_callback_gate = (
+              "        if not decision and (\n"
+              "            owner.coverage_status != \"blocked\"\n"
+              "            or owner.admission_status != \"blocked\"\n"
+              "            or owner.blocked_reason != stale_reason\n"
+              "            or owner.blocking_dependency != stale_reason\n"
+              "        ):\n"
+              "            decision = \"callback_not_exact_stale_blocker\"\n"
+          )
+          new_callback_gate = (
+              "        callback_is_stale = (\n"
+              "            owner.coverage_status == \"blocked\"\n"
+              "            and owner.admission_status == \"blocked\"\n"
+              "            and owner.blocked_reason == stale_reason\n"
+              "            and owner.blocking_dependency == stale_reason\n"
+              "        )\n"
+              "        callback_is_already_executable = (\n"
+              "            owner.coverage_status == \"executable\"\n"
+              "            and owner.admission_status == \"executable\"\n"
+              "            and not owner.blocked_reason\n"
+              "            and not owner.blocking_dependency\n"
+              "        )\n"
+              "        if not decision and not (\n"
+              "            callback_is_stale or callback_is_already_executable\n"
+              "        ):\n"
+              "            decision = \"callback_not_exact_stale_blocker\"\n"
+          )
           if helper.count(old_callback_gate) != 1:
               raise SystemExit("helper callback gate anchor mismatch")
           helper = helper.replace(old_callback_gate, new_callback_gate, 1)
