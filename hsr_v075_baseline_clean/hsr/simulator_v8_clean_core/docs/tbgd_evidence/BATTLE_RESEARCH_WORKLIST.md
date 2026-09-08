@@ -141,17 +141,17 @@ A percentage may be used only after the source-family inventory and mechanism ta
 | W04 | Damage resolution | P0 | `active` | raw multiplier plus shared DamageBehavior/Super-Break producer candidates | 2026-09-08 | close generic damage operands and composition/precedence |
 | W05 | Healing and shielding | P0 | `active` | March Skill02 numerics, Replace lifecycle hooks and Shield operands confirmed | 2026-09-08 | close generic ShieldByCasterDefence/snapshot/depletion semantics and one independent healing chain |
 | W06 | Weakness, toughness and Weakness Break | P0 | `active` | shared break-state/elemental template chains manually confirmed | 2026-09-08 | close stance/toughness mutation and break state transition chain |
-| W07 | SPD, action value, turn/timeline and advance/delay | P0 | `active` | operation-level scheduling semantics confirmed; generic scheduler formula is `blocked_evidence` | 2026-09-08 | close exported operation/lifecycle edges; do not re-search missing SPD→AV engine consumer without a new source family |
+| W07 | SPD, action value, turn/timeline and advance/delay | P0 | `active` | operation-level scheduling semantics confirmed; generic scheduler implementation is `blocked_evidence` | 2026-09-09 | continue exported operation/lifecycle edges only; reopen generic scheduler only with a new authoritative engine source |
 | W08 | Energy, Skill Points and actor-specific resources | P1 | `active` | shared resource mutation producers identified | 2026-09-08 | close one full generation/consumption/callback chain for each shared resource |
 | W09 | Buff/debuff/modifier/control semantics | P0 | `active` | formal Shield plus multiple ordinary shared property/modifier samples | 2026-09-08 | build lifetime/stack/refresh/dispel/immunity semantic rules |
-| W10 | Trigger, callback and event ordering | P0 | `active` | priority domains, causal multi-callback chain, death-rattle and revive continuations confirmed | 2026-09-08 | close one ordinary non-muted death total order and equal-priority/cross-event dispatcher semantics |
+| W10 | Trigger, callback and event ordering | P0 | `active` | priority domains plus Aglaea natural pre-death/death-rattle/death-listener and muted forced-cleanup surfaces confirmed | 2026-09-09 | expand source-facing event/lifecycle chains; generic tie-break/cross-event dispatcher is `blocked_evidence` |
 | W11 | Targeting, adjacency, aggro, retargeting and internal traversal | P1 | `active` | friend/enemy target, aggro and Asta random-target sample confirmed | 2026-09-08 | distinguish legal external target contract from internal execution traversal generically |
-| W12 | RNG and random-choice authority | P0 | `active` | RandomConfig, random target and SetDynamicValueByRandom ordinary chains confirmed; algorithm/stream engine gaps remain | 2026-09-08 | obtain engine consumer contracts for odds/range/application RNG or freeze those as engine-authority gaps |
-| W13 | Summons, servants/memosprites and special battle entities | P0 | `active` | Aglaea `#N` producer mapping, independent scheduling mutation and death-rattle numeric chain confirmed | 2026-09-08 | close creation/passive activation timing and natural-death/cleanup ordering |
-| W14 | Monster final stats and difficulty scaling | P0 | `active` | ordinary `HardLevelGroup` five-stat inputs + stage/elite/phase topology confirmed | 2026-09-08 | recover final-stat operator/precedence; keep `IL*` as explicit false friend |
+| W12 | RNG and random-choice authority | P0 | `active` | RandomConfig, random target and SetDynamicValueByRandom ordinary chains confirmed; generic algorithm/stream is `blocked_evidence` | 2026-09-09 | continue primitive census only when high-signal; reopen generic RNG contracts only with a new engine source |
+| W13 | Summons, servants/memosprites and special battle entities | P0 | `active` | Aglaea construction numerics, self scheduling, natural lifecycle surfaces and priority-tiered muted forced cleanup confirmed | 2026-09-09 | close source-facing property sync/resource/JoinSkill semantics; passive auto-entry and universal death order remain blocked |
+| W14 | Monster final stats and difficulty scaling | P0 | `active` | ordinary HardLevelGroup five-stat inputs + typed HardLevel property read + stage/elite/phase topology confirmed | 2026-09-09 | pursue source-facing Stance/explicit MonsterUnique cases; final configured-spawn operator is `blocked_evidence` |
 | W15 | Enemy AI and decision authority | P1 | `active` | AI reference/random-source edges confirmed; final selection semantics unresolved | 2026-09-08 | close skill selection, target choice, priority/weights and randomness |
 | W16 | Encounter/wave/spawn/phase/stage-ability construction | P1 | `active` | wave, pre/post-spawn StageAbility binding and phase-property inputs confirmed | 2026-09-08 | close remaining spawn/transition/reinforcement and battle-end semantics |
-| W17 | Global/shared battle producers | P0 | `active` | broad reverse scan found ordinary global modifiers/tasks/BattleEvents and explicit export gaps | 2026-09-08 | resolve/freeze remaining high-risk unowned shared infrastructure rather than broad-rescan proven families |
+| W17 | Global/shared battle producers | P0 | `active` | broad reverse scan complete; AssistantTrigger/CommonSkillPool/loader tails frozen as ownership/export gaps | 2026-09-09 | inspect only new high-signal shared definitions with a concrete ordinary consumer; do not repeat broad scan |
 | W18 | Equipment/build effects and Technique-to-battle boundary | P1 | `active` | one Light Cone effect chain exists | 2026-09-08 | close relic/set/rank semantics and battle-entry Technique effects |
 
 ## Detailed checklist
@@ -251,17 +251,17 @@ Goal: reconstruct the full stance/toughness state machine and break consequences
 
 Goal: identify the authority that determines when every battle entity acts.
 
-- [ ] Prove SPD-to-action-value conversion from raw/runtime semantics. **Blocked evidence:** pinned TBGD exports data-facing constants/opcodes but no identifiable GameCore scheduler consumer.
+- [ ] Prove SPD-to-action-value conversion from raw/runtime semantics. **Blocked evidence:** pinned TBGD exports data-facing constants/opcodes but no GameCore scheduler implementation source.
 - [ ] Identify initial AV/turn-queue initialization and equal-delay tie break. **Blocked by the same exported-engine boundary.**
 - [x] Confirm `ModifyActionDelay`, `ModifyCurrentSkillDelayCost`, `SetActionDelay` and `TurnInsertAbility` are distinct scheduling surfaces, with source-backed context-dependent routing on Seele/Jingliu.
-- [ ] Close action advance/delay clamp/rounding and normal requeue semantics; engine consumer unavailable in the pin.
-- [ ] Determine round/cycle boundary semantics used by ordinary combat.
+- [ ] Close action advance/delay clamp/rounding and normal requeue semantics. **Blocked evidence:** generic scheduler consumer unavailable.
+- [ ] Determine round/cycle boundary semantics used by ordinary combat from exported source-facing rules.
 - [ ] Determine how SPD changes affect already-scheduled action value; Hanya confirms the property write but the reschedule consumer is not exported.
 - [x] Confirm Servant 11402 has its own speed/action-delay state and a servant-owned `ModifyActionDelay(-1 normalized)` passive, establishing independent schedulability at the data level.
 - [x] Separate logical scheduling operations from animation/presentation/preshow waits in inspected ordinary graphs.
 - [ ] Close exact `OneMore` queue/status-tick semantics; source confirms it is distinct from delay mutation/insert action but not its scheduler implementation.
 
-**Next closure:** exported operation/lifecycle edges only; the generic SPD→AV/queue/requeue formula remains a named `blocked_evidence` subproblem until a new authoritative engine source appears.
+**Next closure:** exported operation/lifecycle edges only; generic SPD→AV/queue/requeue/rescale/tie-break remains `blocked_evidence` until a new authoritative engine source appears.
 
 ### W08 — Energy, Skill Points and actor-specific resources
 
@@ -300,15 +300,17 @@ Goal: establish deterministic ordering for event-driven battle behavior.
 - [x] Confirm an ordinary servant death-rattle/death-event subgraph exists.
 - [ ] Inventory ordinary event/trigger names and registration mechanisms exhaustively.
 - [ ] Trace on-attack/on-hit/on-damage distinctions generically.
-- [x] Confirm priority domains are first-class pinned inputs and that lower numeric values are earlier/higher priority within the inspected domains; equal-priority/cross-domain arbitration remains unresolved.
+- [x] Confirm priority domains are first-class pinned inputs and that lower numeric values are earlier/higher priority within the inspected domains.
 - [x] Validate one multi-trigger ordinary interaction with source-backed causal order (Aglaea Rank02 listener -> OnStack initialization -> later OnBeforeHitAll consumer).
 - [x] Confirm ordinary death-rattle can continue through priority-tiered `TurnInsertAbility`, and muted `ForceKill(...MuteAllTriggerDeath=true)` is a distinct cleanup path.
 - [x] Confirm ordinary Bailu revival uses distinct `OnBeingLimbo -> OnLimboWaitHeal -> inserted revive ability` stages rather than an immediate pre-death rollback.
-- [ ] Close a full non-muted ordinary death total order across OnBeforeDying/death-rattle/OnTriggerDeath/listeners/destruction.
-- [ ] Determine same-priority tie-break and universal cross-event dispatcher semantics.
-- [ ] Determine cleanup timing generically across entity/modifier classes.
+- [x] Confirm Aglaea Servant 11402 exposes separate natural `OnBeforeDying`, formal `OnDeathrattle`, owner `OnListenCharacterDie`, and later death-dependent removal surfaces.
+- [x] Confirm Aglaea BattleEvent `OnPhase1` can priority-insert a dedicated servant forced-cleanup ability at `AvatarBuffOthers`, which then uses `ForceKill(...MuteAllTriggerDeath=true)` + `SetDieImmediately`.
+- [ ] Close a universal full non-muted death total order across the exported surfaces. **Blocked evidence:** generic cross-event/destruction dispatcher implementation is not in the pinned release-data corpus.
+- [ ] Determine same-priority tie-break and universal cross-event dispatcher semantics. **Blocked evidence:** `PriorityConfig` exports priority tables but not the dispatcher body.
+- [ ] Determine cleanup timing generically across entity/modifier classes where individual source-facing lifecycle rules remain available.
 
-**Next closure:** one non-revived, non-muted ordinary death total order plus dispatcher tie-break semantics.
+**Next closure:** continue source-facing event/lifecycle classification and local causal chains; reopen universal tie-break/cross-event ordering only if a new authoritative engine source appears.
 
 ### W11 — Targeting, adjacency, aggro, retargeting and internal traversal
 
@@ -333,14 +335,15 @@ Goal: make random behavior deterministic/replayable by identifying every authori
 - [x] Close one ordinary `RandomConfig` producer/consumer chain using Silver Wolf's Bug selection.
 - [x] Close one ordinary random-target selection chain using Asta bounce (`ByRandom=true`, `MaxNumber=1`).
 - [x] Confirm `SetDynamicValueByRandom` is a separate ordinary random-value primitive using Aventurine's coin modifier.
-- [ ] Close final probability arithmetic for a status/effect application; `AddModifier.Chance` inputs are traced but the StatusProbability/Resistance evaluator is outside exported TBGD.
-- [ ] Determine random draw ordering/stream advancement relative to callbacks and nested actions.
-- [ ] Determine whether AI, presentation and execution randomness share or separate RNG state/stream authority.
+- [ ] Close final probability arithmetic for a status/effect application. **Blocked evidence:** `AddModifier.Chance` inputs are traced but the StatusProbability/Resistance evaluator implementation is outside exported TBGD.
+- [ ] Determine random draw ordering/stream advancement relative to callbacks and nested actions. **Blocked evidence:** RNG-state owner/advance implementation unavailable.
+- [ ] Determine whether AI, presentation and execution randomness share or separate RNG state/stream authority. **Blocked evidence:** no shared stream owner is exported.
 - [x] Record negative evidence that `RandomConfig.OddsList` is not final normalized probability authority: ordinary examples sum to `0.6`, `1.0` and `1.1`.
 - [x] Record a presentation-risk `RandomConfig` false friend (Jing Yuan hit-effect branch) to prevent blanket promotion of every occurrence.
-- [ ] Determine `RandomConfig` selection algorithm and `SetDynamicValueByRandom` endpoint/distribution semantics; current evidence classifies these as engine-authority gaps.
+- [x] Confirm the exact pinned repository is release-data/configuration rather than a GameCore implementation source tree; the missing generic RNG contracts cannot be recovered by repeating character-level searches in the same artifact.
+- [ ] Determine `RandomConfig` selection algorithm and `SetDynamicValueByRandom` endpoint/distribution semantics. **Blocked evidence:** generic implementation unavailable at this pin.
 
-**Next closure:** engine consumer/stream authority, not another character sample; if unavailable, preserve raw draw sites/weights/ranges without inventing final probabilities.
+**Next closure:** continue the ordinary primitive census only when it improves coverage; generic selection/probability/stream semantics are frozen `blocked_evidence` until a new authoritative engine source appears.
 
 ### W13 — Summons, servants/memosprites and special battle entities
 
@@ -348,7 +351,7 @@ Goal: fully model battle-owned secondary entities and their relationship to the 
 
 - [x] Confirm Aglaea ordinary ability can `CreateServant(11402)`.
 - [x] Confirm `AvatarServantConfig[11402]` config/AI/skill/HP/speed/agro fields.
-- [x] Confirm servant ConfigCharacter identifies a `Memosprite` with battle skill/AI/property-inherit wiring.
+- [x] Confirm servant ConfigCharacter identifies a battle servant with battle skill/AI/property-inherit wiring.
 - [x] Confirm speed-family properties are excluded from the inspected generic property-sync path.
 - [x] Confirm separate `CasterSummoner.Speed` and `Caster.Speed` reads in the servant ability graph.
 - [x] Reject the inspected Aglaea `ConfigSummonUnit` as the Garmentmaker battle authority.
@@ -356,19 +359,22 @@ Goal: fully model battle-owned secondary entities and their relationship to the 
 - [x] Confirm ordinary Aglaea recast is create-if-absent / maintain-or-heal-existing, not replacement-on-recast.
 - [x] Confirm servant data-level timeline ownership through own Speed/action-delay state and `SkillP03 -> BattleCry -> self ModifyActionDelay(-1 normalized)`.
 - [x] Close `SkillP04 -> DeathRattle -> ModifySPNew(CasterSummoner,+20)` target/raw numeric chain; shared resource labeling/caps remain W08.
-- [ ] Determine creation-time versus continuous/event-driven property synchronization and passive-entry activation timing.
-- [ ] Determine exact initial queue position / scheduler arithmetic for the created servant.
+- [x] Confirm natural servant lifecycle exposes `OnBeforeDying` pre-death cleanup/state transfer, `OnDeathrattle`, owner `OnListenCharacterDie`, and later death-dependent removal surfaces.
+- [x] Confirm Aglaea BattleEvent `OnPhase1` selects the servant and priority-inserts `Servant_Aglaea_00_PassiveSkill01_ForceKill_Insert`, whose `ForceKill(...MuteAllTriggerDeath=true)` + `SetDieImmediately` path is distinct from natural death-rattle.
+- [ ] Determine creation-time versus continuous/event-driven property synchronization.
+- [ ] Determine generic passive-entry activation timing during `CreateServant`. **Blocked evidence:** entry wiring is exported; GameCore autoactivation implementation is not.
+- [ ] Determine exact initial queue position / scheduler arithmetic for the created servant. **Blocked by W07 engine boundary.**
 - [ ] Determine resource ownership and servant skill `SPBase` meaning generically.
-- [ ] Close natural death/death-rattle/OnDestroy/entity-removal ordering; forced muted cleanup is proven distinct but not a substitute.
+- [ ] Close the universal natural death/death-rattle/OnDestroy/entity-removal total order. **Blocked evidence:** local surfaces are closed but generic dispatcher/removal arbitration is unavailable.
 - [ ] Close JoinSkill/owner-servant coordinated action semantics where present.
 
 **Correction retained:** Aglaea Skill02's explicit `SetActionDelay(0)` targets `Caster` (Aglaea), not `CasterServant`; the exact pinned ability does not contain a literal `ActivityOnCreate` field.
 
-**Next closure:** creation/passive activation timing and natural lifecycle/cleanup ordering; do not reopen `#N` producer discovery.
+**Next closure:** source-facing property synchronization, resource ownership and JoinSkill semantics; do not reopen `#N`, passive autoactivation or universal dispatcher gaps without a new authoritative source.
 
 ### W14 — Monster final stats and difficulty scaling
 
-Goal: derive the exact final ordinary-enemy property construction formula.
+Goal: derive the exact final ordinary-enemy property construction formula where the authoritative consumer is available, while preserving explicit engine gaps where it is not.
 
 - [x] Confirm MonsterConfig/template/character/ability chain for representative Monster 1002011 and correct the template identity to `MonsterTemplateConfig[1002011]`.
 - [x] Confirm Stage supplies independent `Level`, `HardLevelGroup` and encounter context in representative ordinary encounters.
@@ -377,15 +383,16 @@ Goal: derive the exact final ordinary-enemy property construction formula.
 - [x] Cross-check `HardLevelGroup` inputs across multiple levels/groups, including a real SPD-ratio change after level 65.
 - [x] Confirm Stage EliteGroup and concrete MonsterConfig EliteGroup can coexist as separate context inputs.
 - [x] Confirm non-zero concrete/template flat SPD/Stance modification inputs exist and must not be silently discarded.
-- [ ] Prove final HP composition and precedence.
-- [ ] Prove final ATK composition and precedence.
-- [ ] Prove final DEF composition and precedence.
-- [ ] Prove final SPD composition, flat-value placement and difficulty scaling operator.
-- [ ] Prove final Stance/Toughness composition and any display-unit conversion.
-- [ ] Resolve effective Stage/Monster hard-level and EliteGroup precedence when inputs overlap.
+- [x] Confirm an exact pinned ordinary `SetDynamicValueByHardLevelProperty(Property=HPRatio)` consumer surface, proving HardLevel properties are typed battle-language inputs rather than dead Excel metadata.
+- [ ] Prove final HP composition and precedence. **Blocked evidence:** generic configured-spawn constructor implementation unavailable.
+- [ ] Prove final ATK composition and precedence. **Blocked evidence:** same engine boundary.
+- [ ] Prove final DEF composition and precedence. **Blocked evidence:** same engine boundary.
+- [ ] Prove final SPD composition, flat-value placement and difficulty scaling operator. **Blocked evidence:** same engine boundary.
+- [ ] Prove final Stance composition and any player-facing Toughness conversion; continue only if a source-facing conversion consumer is found.
+- [ ] Resolve effective Stage/Monster hard-level and EliteGroup precedence when inputs overlap. **Blocked evidence:** generic configured-spawn context resolver unavailable.
 - [ ] Resolve MonsterUnique only for families that explicitly reference it; do not insert it universally.
 
-**Next closure:** recover the final-stat consumer/operator body for configured spawn properties and precedence; input tables are no longer the main ambiguity.
+**Next closure:** source-facing Stance/Toughness conversion or an explicit MonsterUnique consumer; generic configured-spawn composition/precedence is frozen until a new authoritative engine source appears.
 
 ### W15 — Enemy AI and decision authority
 
@@ -415,10 +422,10 @@ Goal: reproduce ordinary encounter composition and transitions.
 - [ ] Determine slot/order/formation semantics.
 - [ ] Determine wave completion and next-wave transition timing generically.
 - [ ] Determine reinforcements/summoned enemy spawn semantics.
-- [ ] Resolve phase-property application operator/order and `ApplyOverrideConfig` defaults.
+- [ ] Resolve phase-property application operator/order and `ApplyOverrideConfig` defaults where source-facing rules are exported.
 - [ ] Close ordinary win/lose/battle termination inputs owned by the encounter.
 
-**Next closure:** remaining spawn/transition/reinforcement/battle-end rules plus phase-property operator semantics.
+**Next closure:** remaining spawn/transition/reinforcement/battle-end rules plus any source-facing phase-property semantics.
 
 ### W17 — Global/shared battle producers
 
@@ -431,10 +438,10 @@ Goal: detect battle-state producers missed by actor-centric forward traversal.
 - [x] Reverse-scan known battle properties/statuses/opcodes for producers missed by actor-centric traversal, including shared common-passive and stage-global producers outside `ConfigGlobalModifier/**`.
 - [x] Preserve shared-vs-mode distinctions at owner/primitive level rather than deferring an entire family from mode-only sightings.
 - [x] Preserve explicit negative evidence for camera/RT/GM/WhiteBox/empty-system and definition-only candidates where ordinary reachability is absent.
-- [ ] Resolve or freeze `GlobalModifier_Avatar_AssistantTrigger` ordinary ownership; battle-capable does not yet mean ordinary-reachable.
+- [x] Re-read exact pinned `GlobalModifier_Avatar_AssistantTrigger`: battle listeners and `TurnInsertAssistantAbility` are real, but ordinary owner and dynamic `AssistantAbilityID` producer are unresolved; freeze as definition-present ownership/export gap rather than non-battle or an endless scan target.
 - [ ] Classify remaining high-risk unowned shared definitions only where new ordinary-consumer evidence appears; avoid exhaustive sibling proof with no navigation signal.
 
-**Next closure:** narrow remaining owner/export gaps (AssistantTrigger, opaque CommonSkillPool consumer identity, skill-tree loader) rather than repeating the broad reverse scan.
+**Next closure:** new high-signal shared definitions with concrete ordinary consumers only. AssistantTrigger/CommonSkillPool/generic loader tails are durably frozen until new source appears.
 
 ### W18 — Equipment/build effects and Technique-to-battle boundary
 
@@ -493,10 +500,10 @@ This is a cross-cutting deliverable rather than an additional fixed work-package
 ### L05 — Event/scheduling language
 
 - [ ] trigger registration.
-- [ ] callback dispatch.
+- [ ] callback dispatch; configured priorities/local causal chains are known, generic dispatcher/tie-break is `blocked_evidence`.
 - [ ] nested ability invocation.
 - [ ] turn/round/cycle boundaries.
-- [ ] death/cleanup ordering.
+- [ ] death/cleanup ordering; natural and muted branches are distinguished, universal cross-event destruction order is `blocked_evidence`.
 
 ### L06 — Modifier lifecycle language
 
@@ -509,10 +516,10 @@ This is a cross-cutting deliverable rather than an additional fixed work-package
 ### L07 — Randomness language
 
 - [x] Representative random-choice primitives: `RandomConfig`, `Retarget(ByRandom=true)` and `SetDynamicValueByRandom` are distinct source surfaces.
-- [ ] weighted-selection algorithm (`RandomConfig.OddsList` is raw odds/weights input, not final normalized probability).
-- [ ] generic random target traversal/cardinality/replacement semantics.
-- [ ] generic status/effect probability evaluator.
-- [ ] draw ordering/state/stream authority across execution, AI and presentation.
+- [ ] weighted-selection algorithm (`RandomConfig.OddsList` is raw odds/weights input, not final normalized probability) — `blocked_evidence` at generic engine layer.
+- [ ] generic random target traversal/cardinality/replacement semantics where source-facing selectors remain available.
+- [ ] generic status/effect probability evaluator — `blocked_evidence` at engine layer.
+- [ ] draw ordering/state/stream authority across execution, AI and presentation — `blocked_evidence` at engine layer.
 
 ### L08 — Scope and authority language
 
@@ -520,6 +527,7 @@ This is a cross-cutting deliverable rather than an additional fixed work-package
 - [x] Filename/directory prefix is not sufficient battle-scope proof.
 - [x] Deferred special-mode use does not automatically defer a primitive independently reachable from ordinary combat.
 - [x] A missing exported definition does not prove a mechanic is absent when an ordinary pinned consumer/key exists; record an export gap instead.
+- [x] A typed `RPG.GameCore.*` opcode or raw constant proves a data-facing contract surface, not that its generic engine implementation body is present in the pinned release-data repository.
 - [ ] Build enough repeated examples to turn these guardrails into reusable source-family classification rules without replacing manual review.
 
 ## Discovery inbox
@@ -528,7 +536,7 @@ Use this section for newly encountered mechanisms that may require a new work pa
 
 Current inbox:
 
-- [ ] No untriaged mechanism recorded by the first five-lane integration checkpoint. Parallel W17 found no battle-state consequence requiring W19+; add future discoveries here rather than forcing them into an unsuitable package.
+- [ ] No untriaged mechanism recorded by the first five-lane integration or second boundary pass. W17 found no battle-state consequence requiring W19+; add future discoveries here rather than forcing them into an unsuitable package.
 
 ## Deferred-by-scope register
 
@@ -558,17 +566,18 @@ Retirement requires a durable negative-evidence note. “We did not find a consu
 | --- | --- | --- |
 | 2026-09-08 | Created living worklist with initial `W01..W18` decomposition and cross-cutting battle-language dictionary. | PR #8 had accumulated representative evidence but lacked a maintainable mechanism-level completion ledger. The worklist intentionally treats its denominator as mutable and preserves manual semantic review as the promotion authority. |
 | 2026-09-08 | Integrated first five-lane parallel archaeology checkpoint. | Corrected W02 producer false-negative and W14 `IL*` false-friend, promoted closed W05/W10/W12/W13/W16/W17 leaves, recorded W07/RNG engine-export boundaries, and retained all packages as `active` where mechanism-level obligations remain. |
+| 2026-09-09 | Integrated second boundary-focused archaeology pass. | Closed Aglaea natural pre-death/death-rattle/death-listener surfaces plus priority-tiered muted forced cleanup; proved HardLevel typed property access while freezing the generic spawn-stat constructor; froze W10/W12 dispatcher/RNG implementation gaps and W17 AssistantTrigger ownership/ID producer at the exact pinned release-data boundary. |
 
 ## Current P0 closure queue
 
 This queue is intentionally short and should be reordered when evidence changes.
 
-1. **W14 — monster final-stat operators:** recover configured-stat getter/operator bodies, flat-value placement and Stage/Monster HardLevel/Elite precedence.
-2. **W04/W05/W09 — core numerical/lifecycle language:** generic Damage plus Shield/Modifier arithmetic/lifecycle; March-local Shield numerics are no longer the blocker.
-3. **W10 — callback/death ordering:** complete one non-muted ordinary death total order and equal-priority/cross-event dispatcher semantics.
-4. **W12 — RNG engine boundary:** obtain/freeze RandomConfig, SetDynamicValueByRandom, AddModifier.Chance and RNG-stream consumer authority rather than adding more character samples.
-5. **W07 — timeline operation semantics:** continue exported operation/lifecycle evidence while generic SPD→AV/queue/requeue remains `blocked_evidence` by the pinned artifact boundary.
-6. **W17 — reverse-scan tail:** resolve/freeze AssistantTrigger/CommonSkillPool/skill-tree-loader ownership/export gaps; broad first-pass reverse scan is complete enough to stop repeating it.
-7. **W06/W13 — shared break/special-entity lifecycle:** leverage newly found global break/BattleEvent/servant chains to close lifecycle and ordering dependencies.
+1. **W04/W05/W09 — core numerical/lifecycle language:** generic Damage plus Shield/Modifier arithmetic/lifecycle; use source-facing operands and multiple ordinary consumers.
+2. **W06 — toughness/break state machine:** close one full hit -> stance mutation -> break -> element-specific consequence -> recovery chain where source-facing rules are exported.
+3. **W03 — execution language:** broaden reusable battle-mutating opcode/dispatch mapping and preserve presentation/mixed filtering.
+4. **W02 — producer model finishing pass:** one further unrelated ordinary-character cross-check plus version-drift discipline; do not reopen March producer discovery.
+5. **W13 — special-entity source-facing semantics:** property synchronization, resource ownership and JoinSkill. Passive autoactivation, initial scheduler math and universal death dispatcher are frozen engine gaps.
+6. **W10/W12/W14/W07 — blocked generic engine contracts:** do not repeatedly search the same release-data dump for dispatcher/RNG/final-spawn-stat/SPD→AV implementation bodies. Reopen only with a new authoritative engine/source family; continue only their independent source-facing leaves.
+7. **W17 — reverse-scan maintenance:** broad pass and high-risk tails are complete/frozen enough for this checkpoint; inspect new shared definitions only when a concrete ordinary consumer or new source signal appears.
 
-W02 ordinary March SkillParam producer discovery is removed from the P0 queue because the exact pinned producer is now confirmed. This queue is operational guidance, not a frozen priority contract. Update it whenever a newly discovered mechanism poses a larger completeness or correctness risk.
+W02 ordinary March SkillParam producer discovery remains removed from the P0 queue because the exact pinned producer is confirmed. No package-level completion percentage is authoritative while the taxonomy/denominator remains mutable.
