@@ -58,7 +58,10 @@ jobs:
               "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/"
               "validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
           )
-          namespace = {"__name__": "candidate_validator"}
+          namespace = {
+              "__name__": "candidate_validator",
+              "__file__": str(validator),
+          }
           code = compile(validator.read_text(encoding="utf-8"), str(validator), "exec")
           exec(code, namespace)
           lowerer, ir, rulebook, audit, focused_denominator = namespace[
@@ -72,16 +75,9 @@ jobs:
           ]
           print("FOCUSED_DENOMINATOR=" + str(focused_denominator))
           print("ACTION_WINDOW_AUDIT=" + json.dumps(denominator, sort_keys=True))
-          print(
-              "ACTION_WINDOW_DECISIONS="
-              + json.dumps(
-                  sorted(
-                      {
-                          str(row.get("decision") or ""):
-                          sum(1 for x in denominator if x.get("decision") == row.get("decision"))
-                          for row in denominator
-                      }.items()
-                  )
-              )
-          )
+          decisions = {}
+          for row in denominator:
+              key = str(row.get("decision") or "")
+              decisions[key] = decisions.get(key, 0) + 1
+          print("ACTION_WINDOW_DECISIONS=" + json.dumps(sorted(decisions.items())))
           PY
