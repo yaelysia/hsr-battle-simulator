@@ -47,6 +47,7 @@ from ..systems.task_graph import (
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
+from ..tbgd.action_target_contracts import build_action_target_contract_catalog
 from ..tbgd.task_graph_materializer import (
     build_complete_task_graph_catalog,
     materialize_ability_phase_task_graph,
@@ -813,6 +814,16 @@ def _build_runtime_direct_rulebook() -> tuple[
         conditions=conditions,
         formulas=formulas,
         target_expressions=targets,
+        action_target_contract_catalog=build_action_target_contract_catalog(
+            TBGD_ROOT,
+            definitions=owned.action_definitions,
+            snapshot=snapshot,
+            source_graph_catalog=lowerer.build_character_ability_source_graph_catalog(
+                snapshot=snapshot,
+                scope_catalog=scope,
+            ),
+            definition_scope_complete=False,
+        ),
         status_callbacks=focused_ir.status_callbacks,
         status_callback_tasks=focused_ir.status_callback_tasks,
         status_event_families=focused_ir.status_event_families,
