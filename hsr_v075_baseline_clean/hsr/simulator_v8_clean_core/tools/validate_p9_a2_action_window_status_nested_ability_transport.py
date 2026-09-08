@@ -1007,30 +1007,35 @@ def _status_denominator(rules: RuleBook) -> tuple[list[dict[str, Any]], dict[str
                 linked_id = task.linked_standalone_graph_id
             else:
                 continue
-            child_candidates: list[tuple[Any, TaskGraphIR]] = []
+            child_candidates: list[tuple[Any, TaskGraphIR, str]] = []
             for phase_id in phase_ids:
                 phase = rules.ability_phase(phase_id)
                 if phase is None or phase.invocation_role != "nested_only":
                     continue
-                child_tasks = tuple(
-                    candidate
-                    for candidate in rules.ability_tasks_for_phase(phase_id)
-                    if candidate.callback_kind == task.callback_kind
+                phase_tasks = tuple(rules.ability_tasks_for_phase(phase_id))
+                callback_kinds = tuple(
+                    sorted({candidate.callback_kind for candidate in phase_tasks})
                 )
-                if not child_tasks:
-                    continue
-                child_query = rules.query_formal_task_graph(
-                    "ability_phase_callback",
-                    phase_id,
-                    task.callback_kind,
-                    (candidate.task_id for candidate in child_tasks),
-                )
-                child_graph = child_query.value
-                if child_query.status == "resolved" and type(child_graph) is TaskGraphIR:
-                    child_candidates.append((phase, child_graph))
+                for callback_kind in callback_kinds:
+                    child_tasks = tuple(
+                        candidate
+                        for candidate in phase_tasks
+                        if candidate.callback_kind == callback_kind
+                    )
+                    if not child_tasks:
+                        continue
+                    child_query = rules.query_formal_task_graph(
+                        "ability_phase_callback",
+                        phase_id,
+                        callback_kind,
+                        (candidate.task_id for candidate in child_tasks),
+                    )
+                    child_graph = child_query.value
+                    if child_query.status == "resolved" and type(child_graph) is TaskGraphIR:
+                        child_candidates.append((phase, child_graph, callback_kind))
             if len(child_candidates) != 1:
                 continue
-            phase, child_graph = child_candidates[0]
+            phase, child_graph, nested_callback_kind = child_candidates[0]
             rows.append(
                 {
                     "callback_id": callback.callback_id,
@@ -1043,7 +1048,7 @@ def _status_denominator(rules: RuleBook) -> tuple[list[dict[str, Any]], dict[str
                     "linked_id": linked_id,
                     "nested_phase_id": phase.phase_id,
                     "nested_phase_level": phase.level,
-                    "nested_callback_kind": task.callback_kind,
+                    "nested_callback_kind": nested_callback_kind,
                     "nested_graph_id": child_graph.graph_id,
                     "nested_task_ids": list(child_graph.root_formal_task_ids),
                     "weighted_selection_ids": [
