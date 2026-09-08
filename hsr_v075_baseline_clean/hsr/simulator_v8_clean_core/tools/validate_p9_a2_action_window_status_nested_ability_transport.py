@@ -47,7 +47,12 @@ from ..systems.task_graph import (
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
-from ..tbgd.task_graph_materializer import materialize_character_runtime_task_graph_catalog
+from ..tbgd.task_graph_materializer import (
+    build_complete_task_graph_catalog,
+    materialize_ability_phase_task_graph,
+    materialize_status_callback_task_graph,
+    merge_task_graph_slices,
+)
 from .validate_p9_a2_p0_action_window_status_callback_admission_finalization import (
     _build_focused_direct_ir as _a2p0_build_focused_direct_ir,
 )
@@ -845,12 +850,54 @@ def _build_runtime_direct_rulebook() -> tuple[
             "full_tbgd_lowering_build_count": 0,
         },
     )
-    catalog = materialize_character_runtime_task_graph_catalog(
-        source_catalog,
-        view,
-        source_snapshot=snapshot,
-        definition_scope_complete=True,
-    )
+
+    complete_catalog = build_complete_task_graph_catalog(source_catalog, snapshot)
+    formal_slices = []
+    formal_roles = {"action_root", "nested_only", "standalone_root"}
+    ability_slice_keys: list[tuple[str, str]] = []
+    for phase in phases:
+        if phase.invocation_role not in formal_roles:
+            continue
+        phase_tasks = tuple(
+            task for task in ability_tasks if task.phase_id == phase.phase_id
+        )
+        callback_kinds = tuple(dict.fromkeys(task.callback_kind for task in phase_tasks))
+        if not callback_kinds:
+            raise AssertionError(
+                f"focused_runtime_formal_phase_task_denominator_empty:{phase.phase_id}"
+            )
+        for callback_kind in callback_kinds:
+            formal_slices.append(
+                materialize_ability_phase_task_graph(
+                    source_catalog,
+                    view,
+                    phase_id=phase.phase_id,
+                    callback_kind=callback_kind,
+                    source_snapshot=snapshot,
+                )
+            )
+            ability_slice_keys.append((phase.phase_id, callback_kind))
+
+    status_slice_ids: list[str] = []
+    for callback in focused_ir.status_callbacks:
+        if not any(
+            task.callback_id == callback.callback_id
+            for task in focused_ir.status_callback_tasks
+        ):
+            continue
+        formal_slices.append(
+            materialize_status_callback_task_graph(
+                source_catalog,
+                view,
+                callback_id=callback.callback_id,
+                source_snapshot=snapshot,
+            )
+        )
+        status_slice_ids.append(callback.callback_id)
+
+    if not formal_slices or not ability_slice_keys or not status_slice_ids:
+        raise AssertionError("focused runtime formal slice denominator is empty")
+    catalog = merge_task_graph_slices(complete_catalog, formal_slices)
     external_dependencies = build_external_task_topology_dependency_ledger(
         action_ability_bindings=view.action_ability_bindings,
         ability_phases=view.ability_phases,
@@ -874,6 +921,8 @@ def _build_runtime_direct_rulebook() -> tuple[
             "combined_ability_phase_count": len(phases),
             "combined_ability_task_count": len(ability_tasks),
             "combined_effect_count": len(effects),
+            "ability_formal_slice_count": len(ability_slice_keys),
+            "status_formal_slice_count": len(status_slice_ids),
             "combined_task_graph_entry_count": len(catalog.entry_materializations),
             "external_task_topology_dependency_count": len(external_dependencies),
         },
