@@ -23,8 +23,81 @@ jobs:
 
       - name: Apply authorized scoped patch, validate, and restore read-only workflow
         env:
-          EXPECTED_PARENT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
+          EXPECTED_PARENT: "84528eb0e85ab8fc457723a713beb3bc52ce70f7"
           EXPECTED_BRANCH: "plan/p9-a2-p0-action-window-status-admission"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
           FINAL_WORKFLOW_SOURCE_COMMIT: "bc3d745c9e96d1c44c01fed1a7b26a365ab0719d"
-          VALIDATOR_DIRECT_B64: "ZGVmIF9idWlsZF9mb2N1c2VkX2RpcmVjdF9pcigpIC0+IHR1cGxlWwogICAgVEJHRExvd2VyaW5nLAogICAgQ2Fub25pY2FsSVIsCiAgICBSdWxlQm9vaywKICAgIHR1cGxlW2RpY3Rbc3RyLCBBbnldLCAuLi5dLAogICAgZGljdFtzdHIsIEFueV0sCl06CiAgICBsb3dlcmVyID0gVEJHRExvd2VyaW5nKFRCR0RfUk9PVCkKICAgIHNvdXJjZV9ncmFwaF9jYXRhbG9nID0gbG93ZXJlci5idWlsZF9jaGFyYWN0ZXJfYWJpbGl0eV9zb3VyY2VfZ3JhcGhfY2F0YWxvZygpCiAgICBzbmFwc2hvdCA9IGdldGF0dHIobG93ZXJlciwgIl9jaGFyYWN0ZXJfYWJpbGl0eV9yYXdfc25hcHNob3QiLCBOb25lKQogICAgc2NvcGVfY2F0YWxvZyA9IGdldGF0dHIobG93ZXJlciwgIl9jaGFyYWN0ZXJfYWJpbGl0eV9zY29wZV9jYXRhbG9nIiwgTm9uZSkKICAgIGlmIHNuYXBzaG90IGlzIE5vbmUgb3Igc2NvcGVfY2F0YWxvZyBpcyBOb25lOgogICAgICAgIF9mYWlsKCJmb2N1c2VkX3NvdXJjZV9jYXRhbG9nX3ByZXJlcXVpc2l0ZV9taXNzaW5nIikKCiAgICBmb3JtYWxfY29udGV4dCA9IGxvd2VyZXIuX2NoYXJhY3Rlcl9mb3JtYWxfdGFza19zb3VyY2VfY29udGV4dCgpCiAgICBmb3JtYWxfc291cmNlX3BhdGhzID0gewogICAgICAgIGl0ZW0uc291cmNlLnNvdXJjZV9wYXRoIGZvciBpdGVtIGluIHNuYXBzaG90LnNvdXJjZXMKICAgIH0KICAgIGlmIG5vdCBmb3JtYWxfc291cmNlX3BhdGhzOgogICAgICAgIF9mYWlsKCJmb2N1c2VkX2Zvcm1hbF9zb3VyY2VfZGVub21pbmF0b3JfZW1wdHkiKQoKICAgIHF1ZXVlX3ByaW9yaXRpZXMgPSBsb3dlcmVyLl9sb3dlcl9xdWV1ZV9wcmlvcml0aWVzKCkKICAgIHF1ZXVlX3ByaW9yaXR5X2xvb2t1cCA9IHsKICAgICAgICAocHJpb3JpdHkucHJpb3JpdHlfdGFibGUsIHByaW9yaXR5LnByaW9yaXR5X2tleSk6IHByaW9yaXR5CiAgICAgICAgZm9yIHByaW9yaXR5IGluIHF1ZXVlX3ByaW9yaXRpZXMKICAgICAgICBpZiBwcmlvcml0eS5jb3ZlcmFnZV9zdGF0dXMgPT0gImV4ZWN1dGFibGUiCiAgICB9CgogICAgc2VsZWN0ZWRfZmlsZXM6IGxpc3RbUGF0aF0gPSBbXQogICAgc3RhdHVzX2NhbGxiYWNrcyA9IFtdCiAgICBzdGF0dXNfY2FsbGJhY2tfdGFza3MgPSBbXQogICAgZWZmZWN0cyA9IFtdCiAgICBjb25kaXRpb25zID0gW10KICAgIGZvcm11bGFzID0gW10KICAgIHRhcmdldF9leHByZXNzaW9ucyA9IFtdCgogICAgYWJpbGl0eV9maWxlcyA9IGxvd2VyZXIuX2FiaWxpdHlfZmlsZXMoKQogICAgZm9yIGFiaWxpdHlfZmlsZV9vcmRlciwgcGF0aCBpbiBlbnVtZXJhdGUoYWJpbGl0eV9maWxlcyk6CiAgICAgICAgcmVsYXRpdmUgPSBwYXRoLnJlbGF0aXZlX3RvKFRC with TBGD root??"
+          VALIDATOR_DIRECT_ZB64: "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"
+        run: |
+          set -euo pipefail
+          current_head="$(git rev-parse HEAD)"
+          parent_head="$(git rev-parse HEAD^)"
+          test "$current_head" = "$GITHUB_SHA"
+          test "$parent_head" = "$EXPECTED_PARENT"
+          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
+          test "$remote_head" = "$current_head"
+
+          python - <<'PY'
+          import ast, base64, os, re, subprocess, zlib
+          from pathlib import Path
+          lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
+          validator_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py")
+          workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
+
+          pinned = subprocess.check_output(["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"], text=True)
+          match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', pinned)
+          if match is None:
+              raise SystemExit("pinned validated helper missing")
+          helper = base64.b64decode(match.group(1)).decode()
+          ast.parse(helper)
+
+          lowering = lowering_path.read_text()
+          helper_anchor = "    return linked\n\n\ndef _link_status_effect_runtime_fields(\n"
+          call_anchor = "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          if "_finalize_action_window_status_callback_admission(" in lowering or lowering.count(helper_anchor) != 1 or lowering.count(call_anchor) != 1:
+              raise SystemExit("lowering anchor/state mismatch")
+          lowering = lowering.replace(helper_anchor, "    return linked\n" + helper + "\n\ndef _link_status_effect_runtime_fields(\n", 1)
+          call_replacement = "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n        (\n            status_callbacks,\n            status_callback_tasks,\n            status_callback_finalization_audit,\n        ) = _finalize_action_window_status_callback_admission(\n            status_callbacks,\n            status_callback_tasks,\n            status_event_families,\n            effects,\n            standalone_ability_graphs,\n            ability_phases,\n            formal_status_root_paths,\n        )\n        self._action_window_status_callback_finalization_audit = (\n            status_callback_finalization_audit\n        )\n        status_event_families = _lower_status_event_families(\n            status_callbacks, status_callback_tasks\n        )\n        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          lowering_path.write_text(lowering.replace(call_anchor, call_replacement, 1))
+
+          validator = validator_path.read_text()
+          old_imports = "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\nfrom hsr.simulator_v8_clean_core.tbgd.lowering import (\n    TBGDLowering,\n    _finalize_action_window_status_callback_admission,\n)\n"
+          new_imports = "from hsr.simulator_v8_clean_core import BASELINE_VERSION\nfrom hsr.simulator_v8_clean_core.rules.ir import CanonicalIR\nfrom hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\nfrom hsr.simulator_v8_clean_core.tbgd.lowering import (\n    TBGDLowering,\n    _assign_character_ability_invocation_roles,\n    _block_status_callbacks_by_event_family,\n    _block_status_callback_tasks_by_callback,\n    _dedupe_target_expressions,\n    _finalize_action_window_status_callback_admission,\n    _link_status_trigger_ability_graphs,\n    _link_trigger_ability_graphs,\n    _lower_status_event_families,\n    _status_event_blocked_reasons,\n)\nfrom hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_character_runtime_task_graph_catalog,\n)\n"
+          if validator.count(old_imports) != 1:
+              raise SystemExit("validator import anchor mismatch")
+          validator = validator.replace(old_imports, new_imports, 1)
+          validator = validator.replace('_git("diff", "--name-only", BASE_SHA, "HEAD")', '_git("diff", "--name-only", BASE_SHA)', 1)
+          validator = validator.replace('_git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING_PATH)', '_git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)', 1)
+          direct = zlib.decompress(base64.b64decode(os.environ["VALIDATOR_DIRECT_ZB64"])).decode()
+          ast.parse(direct)
+          start = validator.index("def run_direct() -> None:\n")
+          end = validator.index("\n\ndef main() -> int:\n", start)
+          validator = validator[:start] + direct.rstrip() + validator[end:]
+          ast.parse(validator)
+          validator_path.write_text(validator)
+
+          final_workflow = subprocess.check_output(["git", "show", f"{os.environ['FINAL_WORKFLOW_SOURCE_COMMIT']}:{workflow_path}"])
+          workflow_path.write_bytes(final_workflow)
+          changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())
+          expected = {str(lowering_path), str(validator_path), str(workflow_path)}
+          if changed != expected:
+              raise SystemExit("unexpected writeback paths:" + ",".join(sorted(changed ^ expected)))
+          PY
+
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
+          git diff --check
+          /usr/bin/time -v python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
+          /usr/bin/time -v python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
+
+          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
+          test "$remote_head" = "$current_head"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
+            .github/workflows/p9-a2-p0-pr-validation.yml
+          git diff --cached --check
+          git commit -m "Implement A2-P0 status callback admission finalizer"
+          git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
