@@ -2,223 +2,228 @@
 
 ## Record metadata
 
-- Concept: normal-combat servant / memosprite creation, identity, skill wiring, property relationship and death-path evidence
-- Owner character context: Aglaea (`AvatarID = 1402` is established by the ordinary avatar chain, not by the `AvatarServantConfig[11402]` row)
-- Servant: Garmentmaker (`ServantID = 11402`)
+- Concept: ordinary-combat servant/memosprite creation, numeric construction inputs, independent scheduling evidence, recast behavior and death-rattle lifecycle
+- Owner context: Aglaea (`AvatarID=1402` from the ordinary avatar chain; owner identity is not asserted from the servant row itself)
+- Servant: Garmentmaker (`ServantID=11402`)
 - TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`
-- Evidence maturity: `manually_confirmed`
+- Evidence maturity: `manually_confirmed`; `#N` construction rule cross-sampled on another servant
 - Battle-scope verdict: `include`
-- Confidence: high for the structural edges and exact raw fields listed below; inheritance arithmetic, synchronization timing, lifecycle ordering and turn ownership remain unresolved
-- Tracking issue: #7
+- Runtime production code changed: no
 
-## Why this chain matters
+## Correction history
 
-A battle servant is not safely recoverable from names such as `SummonUnit`. The pinned corpus contains an Aglaea `ConfigSummonUnit` file that is scene/maze-side, while the actual battle entity is created through the `Servant` data family. This record therefore captures both the positive battle chain and a concrete false friend.
+Two earlier statements are explicitly superseded:
 
-This record also preserves a correction made during manual re-audit: an earlier draft accidentally attributed an `AvatarID` field, the wrong AI path and the wrong four-skill list to `AvatarServantConfig[11402]`. The exact pinned row does not contain `AvatarID`; its AI and skill IDs are listed below.
+1. In Aglaea Skill02's servant-creation branch, the pinned `SetActionDelay(Value=0)` targets **`Caster` (Aglaea)**, not `CasterServant`. It is not servant queue initialization evidence.
+2. The exact pinned Aglaea Ability file does **not** contain a literal `ActivityOnCreate` field on the inspected creation operation. Do not report `ActivityOnCreate=false` as observed raw evidence unless a separate pinned schema/default producer is found.
 
-## Confirmed battle chain
+The independent-schedulability conclusion for Servant 11402 remains supported by separate servant-owned Speed/action-delay operations described below.
+
+## Confirmed battle identity chain
 
 ```text
 Config/ConfigAbility/Avatar/Avatar_Aglaea_00_Ability.json
-  CreateServant
-    ServantID = 11402
-    ActivityOnCreate = false
-        |
-        v
-ExcelOutput/AvatarServantConfig.json
-  ServantID = 11402
-  Config -> Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json
-  AIPath -> Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json
-  SkillIDList -> [1140201, 1140203, 1140205, 1140206]
-        |
-        v
-Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json
-  ServantConfig / Memosprite
-  skill, target, AI and property-inherit wiring
-        |
-        v
-Config/ConfigAbility/Servant/Servant_AglaeaServant_00_Ability.json
-  distinct servant/summoner property reads and death-event graph
+  -> CreateServant(ServantID=11402)
+  -> ExcelOutput/AvatarServantConfig.json[11402]
+       Config = Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json
+       AIPath = Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json
+       SkillIDList = [1140201,1140203,1140205,1140206]
+       SpeedInherit = "#4" ; SpeedSkill = 140204
+       HPInherit = "#5" ; HPBase = "#6" ; HPSkill = 140204
+       Aggro = 125
+  -> ServantConfig / Memosprite
+  -> Config/ConfigAbility/Servant/Servant_AglaeaServant_00_Ability.json
 ```
 
-These edges were manually inspected in the pinned raw files. They are not inferred from current-game descriptions or from filename matching.
+The servant row does not carry a fixed owner AvatarID. The owner relation is established by Aglaea's ordinary `CreateServant(11402)` edge and the runtime aliases such as `CasterSummoner`.
 
-## 1. Creation edge
+## `#N` construction parameter rule
 
-Path:
+The earlier `#4/#5/#6 unknown` state is closed at the practical producer level.
 
-`Config/ConfigAbility/Avatar/Avatar_Aglaea_00_Ability.json`
+For Servant 11402:
 
-A manually inspected operation uses:
+- `SpeedSkill=140204`, `SpeedInherit="#4"`
+- `HPSkill=140204`, `HPInherit="#5"`, `HPBase="#6"`
 
-- `$type = CreateServant`
-- `ServantID = 11402`
-- `ActivityOnCreate = false`
+Exact pinned `ExcelOutput/AvatarSkillConfig.json` blob:
 
-This establishes a battle-side creation edge from Aglaea's avatar ability graph to the servant identity in `AvatarServantConfig.json`.
+`a5416ced941c247d475b2aaa83277b9cdf474dd9`
 
-The same large ability file contains `ForceKill` operations elsewhere. Their presence is **not** sufficient to claim the servant's exact replacement, cleanup or despawn rule. The owning ability context and event ordering still need to be traced before a lifecycle statement is promoted.
+contains `SkillID=140204` level-dependent `ParamList` rows. Manually inspected examples:
 
-Classification: `mixed_requires_filter`.
+- Lv1: `[0.12, 0, 0, 0.35, 0.44, 180]`
+- Lv6: `[0.21, 0, 0, 0.35, 0.572, 504]`
 
-## 2. Servant identity and combat metadata
+Therefore the servant row resolves as:
 
-Path:
+| Level sample | `#4` SpeedInherit | `#5` HPInherit | `#6` HPBase |
+|---|---:|---:|---:|
+| Lv1 | `0.35` | `0.44` | `180` |
+| Lv6 | `0.35` | `0.572` | `504` |
 
-`ExcelOutput/AvatarServantConfig.json`
+Servant 11413 with `SpeedSkill/HPSkill=141304` independently follows the same positional pattern.
 
-The exact inspected row with `ServantID = 11402` contains:
+The supported reusable rule is:
 
-- `ServantID = 11402`
-- `Config = "Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json"`
-- `AIPath = "Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json"`
-- `SkillIDList = [1140201, 1140203, 1140205, 1140206]`
-- `HPBase = "#6"`
-- `HPInherit = "#5"`
-- `HPSkill = 140204`
-- `SpeedBase = "0"`
-- `SpeedInherit = "#4"`
-- `SpeedSkill = 140204`
-- `Aggro.Value = 125`
+> the corresponding `SpeedSkill` or `HPSkill` selects an `AvatarSkillConfig.SkillID` ParamList, and `#N` selects the **1-based** slot from that ParamList.
 
-The row also contains presentation-facing fields such as icon paths, so the table remains `mixed` rather than safe for wholesale lowering.
+The literal generic parser implementation for the `"#N"` token is not exported. That missing parser body does not reopen the already closed producer -> SkillID -> positional-slot mapping.
 
-### Negative knowledge about owner identity
+## Servant character configuration
 
-The inspected `ServantID=11402` row does **not** contain an `AvatarID=1402` field. Owner identity must therefore not be asserted from this row. The Aglaea-to-servant relationship is instead proven here by the normal Aglaea ability graph's `CreateServant(11402)` edge together with the servant row/config identity.
+`Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json` confirms:
 
-The strings `#4`, `#5` and `#6` are preserved exactly as raw evidence. This record does **not** assign formulas, units or inheritance percentages to those tokens until their source is located and manually read.
+- `$type = ServantConfig`
+- `AvatarServantType = Memosprite`
+- Thunder damage type
+- independent AI/skill/passive wiring
+- Skill01 as a selectable servant action with `SPBase=10`
+- JoinSkill entries
+- passive/death-rattle ability wiring
+- property-inherit configuration.
 
-Classification: `mixed_requires_filter`.
+`PropertyInheritConfig.SyncPropertyExceptList` explicitly excludes the speed family, including `Speed`, `SpeedBase`, `SpeedDelta`, `SpeedAddedRatio`, `SpeedPercent` and `SpeedConvertedRatio`.
 
-## 3. Servant character definition
+Therefore generic property synchronization is not authority for servant Speed. The exact creation-time versus continuous/event-driven synchronization rules for HP and other inherited properties remain unresolved.
 
-Path:
+## Distinct servant and summoner Speed/state
 
-`Config/ConfigCharacter/Servant/Servant_AglaeaServant_00_Config.json`
+The servant Ability graph separately reads:
 
-Confirmed structure includes:
+- `CasterSummoner.Speed`
+- servant/self `Caster.Speed`
 
-- `$type = "ServantConfig"`
-- `AvatarServantType = "Memosprite"`
-- `DamageType = "Thunder"`
-- `ControlImmunity = true`
-- `DefaultAIPath = "Config/ConfigAI/Avatar_ComplexSkilll_AutoFight_AI.json"`
-- combat skill definitions and target configuration
-- passive/special ability references
-- property inheritance configuration
+and contains servant-side speed/action-delay machinery. This proves summoner Speed and servant Speed are distinct runtime values and prevents flattening Garmentmaker into a live mirror of all summoner properties.
 
-For the inspected Skill01 definition:
+## Servant-owned scheduling mutation
 
-- `SkillType = Servant`
-- `UseType = SelectEntity`
-- `SPBase = 10`
-- target configuration selects an enemy and includes adjacent-target behavior
-- `EntryAbility = Servant_AglaeaServant_00_Skill01_Part01`
-- AI type is `ComplexSkillAI`
-- `SkillFirstPriority = true`
+The servant ConfigCharacter declares:
 
-The config also contains:
+- `SkillP03` -> `Servant_AglaeaServant_00_BattleCry`
+- `SkillP04` -> `Servant_AglaeaServant_00_DeathRattle`
 
-- a `ServantPassiveSkillConfig` with `Key = DeathRattle` and `SkillType = DeathRattle`;
-- special-AI ability references including `Servant_AglaeaServant_00_Ability_BPSkill01`, `...BPSkill02` and `...PassiveSkill01`;
-- `JoinSkillList`, including `Servant_AglaeaServant_00_Ability_BPSkill01`;
-- a buff-resistance blacklist.
+with DynamicValue bindings:
 
-Their exact runtime semantics remain operation-level work rather than conclusions inferred from field names.
+- hash `1311494286` -> `SkillParam(SkillP03,index=0)`
+- hash `-2017292130` -> `SkillParam(SkillP04,index=0)`
 
-### Speed is explicitly outside generic property sync
+Exact pinned `ExcelOutput/AvatarServantSkillConfig.json` closes the numeric producers:
 
-`PropertyInheritConfig.SyncPropertyExceptList` includes the speed-family properties:
+- `SkillID=1140205`, `SkillTriggerKey=SkillP03`, inspected `ParamList[0]=1`
+- `SkillID=1140206`, `SkillTriggerKey=SkillP04`, inspected `ParamList[0]=20`
 
-- `SpeedPercent`
-- `SpeedAddedRatio`
-- `Speed`
-- `SpeedDelta`
-- `SpeedBase`
-- `SpeedConvertedRatio`
+### BattleCry
 
-Therefore the pinned config proves a narrow but important fact: these speed-family properties are explicitly excluded from whatever generic property synchronization path this configuration supplies. It does **not** by itself prove whether other properties are snapshotted, continuously synchronized, or refreshed on particular events.
+`Servant_AglaeaServant_00_BattleCry` adds its modifier to the servant. OnStack it performs:
 
-Classification: `mixed_requires_filter`.
+`ModifyActionDelay(Target=ModifierOwnerEntity, AddNormalizedValue = 0 - SkillP03[0])`
 
-## 4. Servant ability graph and summoner relationship
+With `SkillP03[0]=1`, this is:
 
-Path:
+`ModifyActionDelay(servant, -1 normalized)`
 
-`Config/ConfigAbility/Servant/Servant_AglaeaServant_00_Ability.json`
+This is direct numeric evidence that the servant owns/mutates its own scheduling state. It does **not** establish the hidden SPD→AV formula or the exact time at which passive entry abilities activate during servant creation.
 
-Manual inspection confirms the ability graph reads `Speed` from two distinct entity selectors:
+### DeathRattle
 
-- `CasterSummoner`
-- `Caster`
+`MServant_AglaeaServant_00_DeathRattle` is a formal `Deathrattle` modifier and its `OnDeathrattle` callback performs:
 
-This is enough to establish that the raw battle graph distinguishes summoner and servant entities and applies special speed handling somewhere outside the generic synchronized-property path. It is **not** enough to assign an inheritance percentage, to prove snapshot versus continuous synchronization, or to prove independent timeline ownership.
+`ModifySPNew(Target=CasterSummoner, AddValue=SkillP04[0])`
 
-An earlier draft also listed several exact speed working/modifier names. Those names have been removed from the confirmed set here because they were not re-verified in the latest pinned-file audit. They may be promoted again only if their exact occurrences and consumers are manually re-established.
+With `SkillP04[0]=20`, the raw chain closes as:
 
-The same ability file contains the formal modifier:
+`OnDeathrattle -> ModifySPNew(CasterSummoner,+20)`
 
-`MAvatar_AglaeaServant_00_PassiveSkill01_DeathRattle`
+The exact player-facing meaning/cap model of internal `SP` remains W08/shared-resource work. This record preserves only the raw target and amount.
 
-The inspected modifier has:
+## Aglaea Skill02 create/recast behavior
 
-- `LifeTime = -1`
-- `UseSnapshotEntity = false`
-- callback-registration/configuration structure
+The pinned ordinary Skill02 path distinguishes absence and presence of a living `CasterServant`:
 
-Death-related ability identities are also present, including `Servant_AglaeaServant_00_Ability_OnDeath_RestoreEnergy`. This establishes a real death/death-rattle subgraph. It does not yet establish exact callback ordering, cleanup point, energy recipient/value or equivalence across forced-kill and ordinary-death paths.
+- **no living servant:** `CreateServant(11402)` and perform the surrounding Aglaea/current-skill scheduling/state setup;
+- **servant already present:** the changed Skill21 path operates on the existing servant with maintenance/healing behavior rather than issuing another `CreateServant`.
 
-Classification: `mixed_requires_filter`.
+Therefore the inspected ordinary recast semantics are:
 
-## 5. Negative knowledge — `ConfigSummonUnit` is a false friend here
+**create-if-absent / maintain-or-heal-existing**
 
-Path:
+not replacement-on-recast.
 
-`Config/ConfigSummonUnit/SummonUnit_Aglaea_00_Config.json`
+### Important action-delay correction in the creation branch
 
-Despite the directory and filename, the manually inspected file is not the Garmentmaker battle-servant definition. Its observed structure is scene/maze/Technique-side and includes:
+The exact pinned sequence includes:
 
-- `$type = ConfigSummonUnit`
-- `GroupConfig = "FollowField"`
-- collision / near-target triggers
-- prop/NPC hit handling
-- VFX and scene callbacks
-- `AddMazeBuff`
-- `AddAdventureModifier`
-- scene-side summon removal behavior
+```text
+CreateServant(11402)
+-> SetEntityPosition(Target=CasterServant, PosTarget=Caster)
+-> SetActionDelay(Target=Caster, Value=0)
+-> ModifyCurrentSkillDelayCost(NormalizedValue=-1)
+-> ...
+```
 
-For normal-combat archaeology this Aglaea file is therefore **not** the battle servant authority. It is retained as negative knowledge because a filename-driven crawler would otherwise be likely to classify it incorrectly.
+The explicit `SetActionDelay(0)` belongs to Aglaea/current-action scheduling context, not the new servant's initial queue position.
 
-This does not justify blanket-excluding `ConfigSummonUnit/**`. Other records remain `unresolved` until manually inspected or made reachable from an ordinary-combat chain.
+Seele and Jingliu independently show a reusable W07 distinction: ordinary current-action delay adjustment uses `ModifyCurrentSkillDelayCost`, while insert-action cases route equivalent changes through actor `ActionDelay` depending on turn ownership. The generic scheduler implementation remains outside the pinned release-data dump.
 
-## Battle semantics established by this record
+## Natural death-rattle versus forced cleanup
 
-The pinned raw corpus currently supports these structural claims:
+The raw corpus distinguishes at least two paths:
 
-1. Aglaea's ordinary battle ability graph can execute `CreateServant` for `ServantID 11402`.
-2. `AvatarServantConfig[11402]` provides the servant config path, complex-skill auto-fight AI path, four exact skill IDs, HP/speed construction tokens and aggro value.
-3. The servant character config explicitly types the entity as a `Memosprite` and gives it battle skill/target/AI/property-inherit wiring.
-4. Generic property synchronization explicitly excludes speed-family properties.
-5. The servant ability graph separately reads `CasterSummoner.Speed` and `Caster.Speed`.
-6. A formal DeathRattle modifier/death-event subgraph exists.
-7. `ConfigSummonUnit/SummonUnit_Aglaea_00_Config.json` is not a substitute for the battle servant chain.
+### Natural death-rattle path
 
-These facts justify representing the servant/memosprite as a distinct battle entity relationship. They are **not** enough to reproduce all numeric or temporal servant semantics.
+- formal `OnDeathrattle` callback exists;
+- some servant modifiers carry `KeepOnDeathrattle` / `KeepAllModifierOnDeathRattle`;
+- later cleanup surfaces include `OnDestroy` and `RemoveWhenCasterDead`.
 
-## Unresolved before stronger promotion
+This proves at least some state survives through the death-rattle interval and is destroyed later. It is negative evidence against a blanket “cleanup everything before death-rattle” model.
 
-- Locate and decode the pinned source behind `HPBase = #6`, `HPInherit = #5` and `SpeedInherit = #4`.
-- Determine exact owner/servant property synchronization timing: creation snapshot, continuous sync, event refresh, or another mechanism.
-- Trace the exact owning ability/event around every ordinary `CreateServant` path.
-- Trace lifetime, countdown, replacement, `ForceKill`, death and final cleanup/despawn ordering.
-- Prove action-value / turn-queue ownership from raw scheduling operations rather than inferring it from separate speed state or live behavior.
-- Determine servant resource ownership and the semantic meaning of `SPBase = 10` in the servant skill context.
-- Resolve DeathRattle callback order, energy restoration destination/value and interaction with forced death/removal.
-- Trace `JoinSkillList` semantics and any owner-servant joint-action path.
-- Manually audit the referenced `Avatar_ComplexSkilll_AutoFight_AI.json` consumer path before promoting AI decision semantics.
+### Forced cleanup path
 
-## External corroboration
+Aglaea/common servant cleanup paths use `ForceKill` with flags including:
 
-Current live-game descriptions and independent mechanics references can corroborate that Garmentmaker is a memosprite with owner-linked stats and dedicated action/death behavior. Those sources are secondary only: they must not fill the unresolved `#4/#5/#6`, synchronization, cleanup, ordering or scheduling gaps at the pinned TBGD revision.
+- `MuteAllTriggerDeath=true`
+- `MuteHpChange=true` in inspected common cleanup
+- `AbortUnusedInsertAbility=true`
+
+and Aglaea's dedicated forced-cleanup insertion can continue with `SetDieImmediately` and explicit modifier removals.
+
+This is a death-trigger-suppressed cleanup path. It must not be used to infer ordinary natural-death callback order.
+
+## BattleEvent namespace hazard
+
+Aglaea also creates a BattleEvent with numeric ID `11402`. That BattleEvent is a separate battle object/namespace from ServantID `11402`. Numeric equality does not imply one entity or one timeline.
+
+This is another concrete reason to track owner/type/reference edges rather than IDs alone.
+
+## Negative knowledge — `ConfigSummonUnit` is not Garmentmaker battle authority
+
+`Config/ConfigSummonUnit/SummonUnit_Aglaea_00_Config.json` is scene/maze/Technique-side in the inspected chain, with follow-field/collision/prop/VFX/MazeBuff/AdventureModifier behavior. It is not the ordinary Garmentmaker battle-servant definition.
+
+Do not generalize this one negative example into a blanket exclusion of all `ConfigSummonUnit/**` records.
+
+## Current closed claims
+
+1. Aglaea ordinary battle graph can create `ServantID=11402`.
+2. `AvatarServantConfig[11402]` supplies battle config/AI/skill IDs, HP/Speed construction references and aggro.
+3. `#N` construction inputs resolve through corresponding `SpeedSkill/HPSkill` -> `AvatarSkillConfig.ParamList` 1-based slots.
+4. The servant is a distinct `Memosprite` entity with its own AI/skills/property wiring.
+5. Generic property sync excludes the speed family; servant/summoner Speed are separately read.
+6. Servant `SkillP03` numerically closes to self `ModifyActionDelay(-1 normalized)`.
+7. Servant `SkillP04` numerically closes to `OnDeathrattle -> CasterSummoner ModifySPNew(+20)`.
+8. Ordinary Aglaea recast is create-if-absent / maintain-existing, not replacement-on-recast.
+9. Natural death-rattle and muted forced cleanup are distinct lifecycle branches.
+10. The nearby Aglaea `ConfigSummonUnit` is not battle-servant authority.
+
+## Remaining boundaries
+
+- generic passive-entry activation/registration timing during `CreateServant`;
+- exact initial servant queue position and equal-delay ordering;
+- hidden SPD→AV conversion, clamp/round/requeue/tie-break rules;
+- creation-time versus continuous/event-driven HP/property synchronization;
+- exact natural-death order across `OnBeforeDying`, `OnDeathrattle`, `OnListenCharacterDie`, `OnDestroy` and final entity removal;
+- exact generic shared-resource semantics/caps for `ModifySPNew`;
+- `JoinSkillList` coordinated owner-servant action semantics;
+- generic `#N` parser implementation (the practical data mapping itself is closed).
+
+If the pinned release-data corpus does not export these engine/dispatcher consumers, preserve them as explicit `blocked_evidence` / `not_proven` boundaries rather than filling them from live-game descriptions.
