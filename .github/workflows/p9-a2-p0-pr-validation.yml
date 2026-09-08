@@ -1,4 +1,4 @@
-name: P9 A2 P0 authorized one-off writeback
+name: P9 A2 P0 authorized production-only writeback
 
 on:
   push:
@@ -21,10 +21,11 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Apply validated candidate, restore read-only workflow, and push
+      - name: Validate candidate and push production files only
         env:
-          EXPECTED_PARENT: "07b090f3d306665f8c732014e6073ec2879d6570"
+          EXPECTED_PARENT: "272d31641875c1e35c2bb3f718d86efca08937d1"
           EXPECTED_BRANCH: "plan/p9-a2-p0-action-window-status-admission"
+          VALIDATED_WRITEBACK_SOURCE_COMMIT: "272d31641875c1e35c2bb3f718d86efca08937d1"
           WRITEBACK_SOURCE_COMMIT: "874e9f9231e786f6474569ac891bd14f87227a71"
           BASE_SHA: "bd1a4ac94ca394d2ea563d086eaf56e9ed45b285"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
@@ -47,18 +48,12 @@ jobs:
           from pathlib import Path
 
           workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
-          lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
-          validator_path = Path(
-              "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/"
-              "validate_p9_a2_p0_action_window_status_callback_admission_finalization.py"
-          )
-          card_path = Path(
-              "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/"
-              "P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION.md"
-          )
-
           source = subprocess.check_output(
-              ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"],
+              [
+                  "git",
+                  "show",
+                  f"{os.environ['VALIDATED_WRITEBACK_SOURCE_COMMIT']}:{workflow_path}",
+              ],
               text=True,
           )
           match = re.search(
@@ -67,103 +62,10 @@ jobs:
               re.S,
           )
           if match is None:
-              raise SystemExit("validated writeback candidate python block missing")
-          candidate_script = textwrap.dedent(match.group(1))
-          compile(candidate_script, "<validated-writeback-candidate>", "exec")
-          exec(candidate_script, {"__name__": "__candidate__"})
-
-          lowering = lowering_path.read_text(encoding="utf-8")
-          old_closure = (
-              "        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))\n"
-              "        callback_task_ids = tuple(callback.task_ids)\n"
-              "        closure_ok = (\n"
-              "            len(callback_task_ids) == len(set(callback_task_ids))\n"
-              "            and set(callback_task_ids) == {task.task_id for task in owned_tasks}\n"
-              "            and all(\n"
-              "                task.event == callback.event\n"
-              "                and task.source.source_path == callback.source.source_path\n"
-              "                and (\n"
-              "                    task.task_id in candidate_ids\n"
-              "                    or (\n"
-              "                        task.coverage_status == \"executable\"\n"
-              "                        and not task.blocked_reason\n"
-              "                    )\n"
-              "                )\n"
-              "                for task in owned_tasks\n"
-              "            )\n"
-              "        )\n"
-          )
-          new_closure = (
-              "        owned_tasks = tuple(tasks_by_callback.get(callback.callback_id, ()))\n"
-              "        callback_task_ids = tuple(callback.task_ids)\n"
-              "        owned_task_ids = {task.task_id for task in owned_tasks}\n"
-              "        callback_root_ids = set(callback_task_ids)\n"
-              "        closure_ok = (\n"
-              "            bool(callback_task_ids)\n"
-              "            and len(callback_task_ids) == len(callback_root_ids)\n"
-              "            and callback_root_ids.issubset(owned_task_ids)\n"
-              "            and all(\n"
-              "                task.event == callback.event\n"
-              "                and task.source.source_path == callback.source.source_path\n"
-              "                and (\n"
-              "                    task.task_id in callback_root_ids\n"
-              "                    or \".formal_branch[\" in getattr(task, \"task_path\", \"\")\n"
-              "                )\n"
-              "                and (\n"
-              "                    task.task_id in candidate_ids\n"
-              "                    or (\n"
-              "                        task.coverage_status == \"executable\"\n"
-              "                        and not task.blocked_reason\n"
-              "                    )\n"
-              "                )\n"
-              "                for task in owned_tasks\n"
-              "            )\n"
-              "        )\n"
-          )
-          if lowering.count(old_closure) != 1:
-              raise SystemExit("validated formal-provenance closure anchor mismatch")
-          lowering_path.write_text(
-              lowering.replace(old_closure, new_closure, 1),
-              encoding="utf-8",
-          )
-
-          final_workflow = subprocess.check_output(
-              [
-                  "git",
-                  "show",
-                  f"{os.environ['FINAL_WORKFLOW_SOURCE_COMMIT']}:{workflow_path}",
-              ]
-          )
-          if workflow_path.read_bytes() != final_workflow:
-              raise SystemExit("final read-only workflow restoration mismatch")
-          final_text = final_workflow.decode("utf-8")
-          if "contents: write" in final_text or "P9 A2 P0 PR validation" not in final_text:
-              raise SystemExit("final workflow is not the pinned read-only validator")
-
-          changed_from_base = set(
-              subprocess.check_output(
-                  ["git", "diff", "--name-only", os.environ["BASE_SHA"]],
-                  text=True,
-              ).splitlines()
-          )
-          allowed = {
-              workflow_path.as_posix(),
-              card_path.as_posix(),
-              lowering_path.as_posix(),
-              validator_path.as_posix(),
-          }
-          extra = changed_from_base - allowed
-          if extra:
-              raise SystemExit("fixed-base scope leak:" + ",".join(sorted(extra)))
-          required = {
-              workflow_path.as_posix(),
-              card_path.as_posix(),
-              lowering_path.as_posix(),
-              validator_path.as_posix(),
-          }
-          missing = required - changed_from_base
-          if missing:
-              raise SystemExit("expected fixed-base paths missing:" + ",".join(sorted(missing)))
+              raise SystemExit("validated writeback python block missing")
+          script = textwrap.dedent(match.group(1))
+          compile(script, "<validated-writeback>", "exec")
+          exec(script, {"__name__": "__validated_writeback__"})
           PY
 
           python -m compileall -q \
@@ -176,6 +78,17 @@ jobs:
           /usr/bin/time -v python \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
 
+          # The validated worktree restored the pinned read-only workflow. Do not
+          # include any workflow change in the Actions-token push: GitHub rejects
+          # workflow-file pushes without the separate workflows permission.
+          git checkout -- .github/workflows/p9-a2-p0-pr-validation.yml
+
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n%s\n' \
+            'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py' \
+            'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py' | sort)"
+          test "$changed" = "$expected"
+
           remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
           test "$remote_head" = "$current_head"
 
@@ -183,8 +96,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
-            .github/workflows/p9-a2-p0-pr-validation.yml
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
           git diff --cached --check
+          cached="$(git diff --cached --name-only | sort)"
+          test "$cached" = "$expected"
           git commit -m "Implement A2-P0 status callback admission finalizer"
           git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
