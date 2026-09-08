@@ -1,4 +1,4 @@
-name: P9 A2 P0 one-time authorized writeback
+name: P9 A2 P0 read-only direct diagnostic
 
 on:
   push:
@@ -8,109 +8,182 @@ on:
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
 
 jobs:
-  apply:
+  diagnose:
     permissions:
-      contents: write
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact triggering head and pinned TBGD
+      - name: Checkout exact diagnostic head and pinned TBGD
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Apply authorized scoped patch, validate, and restore read-only workflow
+      - name: Rebuild candidate worktree and print Direct denominator
         env:
-          EXPECTED_PARENT: "61938fdf06d1c926cf8eb1eeb7855b2aca013734"
-          EXPECTED_BRANCH: "plan/p9-a2-p0-action-window-status-admission"
+          WRITEBACK_SOURCE_COMMIT: "988c85bfd77dee79a5108beb9d87d398ac86a12d"
           HELPER_SOURCE_COMMIT: "23443928ec00bfbeabe30fe2b9c569b03b795858"
-          FINAL_WORKFLOW_SOURCE_COMMIT: "bc3d745c9e96d1c44c01fed1a7b26a365ab0719d"
-          FOCUSED_BUILDER_ZB64: "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"
         run: |
           set -euo pipefail
-          current_head="$(git rev-parse HEAD)"
-          parent_head="$(git rev-parse HEAD^)"
-          test "$current_head" = "$GITHUB_SHA"
-          test "$parent_head" = "$EXPECTED_PARENT"
-          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
-          test "$remote_head" = "$current_head"
-
           python - <<'PY'
           import ast, base64, os, re, subprocess, zlib
           from pathlib import Path
+
           lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
           validator_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py")
           workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
 
-          pinned = subprocess.check_output(["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"], text=True)
-          match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', pinned)
-          if match is None:
-              raise SystemExit("pinned validated helper missing")
-          helper = base64.b64decode(match.group(1)).decode()
+          helper_workflow = subprocess.check_output(
+              ["git", "show", f"{os.environ['HELPER_SOURCE_COMMIT']}:{workflow_path}"],
+              text=True,
+          )
+          helper_match = re.search(r'HELPER_B64: "([A-Za-z0-9+/=]+)"', helper_workflow)
+          if helper_match is None:
+              raise SystemExit("pinned helper payload missing")
+          helper = base64.b64decode(helper_match.group(1)).decode()
           ast.parse(helper)
+
+          writeback_workflow = subprocess.check_output(
+              ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"],
+              text=True,
+          )
+          builder_match = re.search(r'FOCUSED_BUILDER_ZB64: "([A-Za-z0-9+/=]+)"', writeback_workflow)
+          if builder_match is None:
+              raise SystemExit("pinned focused builder payload missing")
+          builder = zlib.decompress(base64.b64decode(builder_match.group(1))).decode()
+          ast.parse(builder)
 
           lowering = lowering_path.read_text()
           helper_anchor = "    return linked\n\n\ndef _link_status_effect_runtime_fields(\n"
-          call_anchor = "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
-          if "_finalize_action_window_status_callback_admission(" in lowering or lowering.count(helper_anchor) != 1 or lowering.count(call_anchor) != 1:
-              raise SystemExit("lowering anchor/state mismatch")
-          lowering = lowering.replace(helper_anchor, "    return linked\n" + helper + "\n\ndef _link_status_effect_runtime_fields(\n", 1)
-          call_replacement = "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n        (\n            status_callbacks,\n            status_callback_tasks,\n            status_callback_finalization_audit,\n        ) = _finalize_action_window_status_callback_admission(\n            status_callbacks,\n            status_callback_tasks,\n            status_event_families,\n            effects,\n            standalone_ability_graphs,\n            ability_phases,\n            formal_status_root_paths,\n        )\n        self._action_window_status_callback_finalization_audit = (\n            status_callback_finalization_audit\n        )\n        status_event_families = _lower_status_event_families(\n            status_callbacks, status_callback_tasks\n        )\n        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          call_anchor = (
+              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
+              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          )
+          if lowering.count(helper_anchor) != 1 or lowering.count(call_anchor) != 1:
+              raise SystemExit("lowering anchor mismatch")
+          lowering = lowering.replace(
+              helper_anchor,
+              "    return linked\n" + helper + "\n\ndef _link_status_effect_runtime_fields(\n",
+              1,
+          )
+          call_replacement = (
+              "        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)\n"
+              "        (\n"
+              "            status_callbacks,\n"
+              "            status_callback_tasks,\n"
+              "            status_callback_finalization_audit,\n"
+              "        ) = _finalize_action_window_status_callback_admission(\n"
+              "            status_callbacks,\n"
+              "            status_callback_tasks,\n"
+              "            status_event_families,\n"
+              "            effects,\n"
+              "            standalone_ability_graphs,\n"
+              "            ability_phases,\n"
+              "            formal_status_root_paths,\n"
+              "        )\n"
+              "        self._action_window_status_callback_finalization_audit = (\n"
+              "            status_callback_finalization_audit\n"
+              "        )\n"
+              "        status_event_families = _lower_status_event_families(\n"
+              "            status_callbacks, status_callback_tasks\n"
+              "        )\n"
+              "        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)\n"
+          )
           lowering_path.write_text(lowering.replace(call_anchor, call_replacement, 1))
 
           validator = validator_path.read_text()
-          old_imports = "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\nfrom hsr.simulator_v8_clean_core.tbgd.lowering import (\n    TBGDLowering,\n    _finalize_action_window_status_callback_admission,\n)\n"
-          new_imports = "from hsr.simulator_v8_clean_core import BASELINE_VERSION\nfrom hsr.simulator_v8_clean_core.rules.ir import CanonicalIR\nfrom hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\nfrom hsr.simulator_v8_clean_core.tbgd.lowering import (\n    TBGDLowering,\n    _assign_character_ability_invocation_roles,\n    _block_status_callbacks_by_event_family,\n    _block_status_callback_tasks_by_callback,\n    _dedupe_target_expressions,\n    _finalize_action_window_status_callback_admission,\n    _link_status_trigger_ability_graphs,\n    _link_trigger_ability_graphs,\n    _lower_status_event_families,\n    _status_event_blocked_reasons,\n)\nfrom hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_character_runtime_task_graph_catalog,\n)\n"
+          old_imports = (
+              "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\n"
+              "from hsr.simulator_v8_clean_core.tbgd.lowering import (\n"
+              "    TBGDLowering,\n"
+              "    _finalize_action_window_status_callback_admission,\n"
+              ")\n"
+          )
+          new_imports = (
+              "from hsr.simulator_v8_clean_core import BASELINE_VERSION\n"
+              "from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR\n"
+              "from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook\n"
+              "from hsr.simulator_v8_clean_core.tbgd.lowering import (\n"
+              "    TBGDLowering,\n"
+              "    _assign_character_ability_invocation_roles,\n"
+              "    _block_status_callbacks_by_event_family,\n"
+              "    _block_status_callback_tasks_by_callback,\n"
+              "    _dedupe_target_expressions,\n"
+              "    _finalize_action_window_status_callback_admission,\n"
+              "    _link_status_trigger_ability_graphs,\n"
+              "    _link_trigger_ability_graphs,\n"
+              "    _lower_status_event_families,\n"
+              "    _status_event_blocked_reasons,\n"
+              ")\n"
+              "from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n"
+              "    materialize_character_runtime_task_graph_catalog,\n"
+              ")\n"
+          )
           if validator.count(old_imports) != 1:
               raise SystemExit("validator import anchor mismatch")
           validator = validator.replace(old_imports, new_imports, 1)
-          validator = validator.replace('_git("diff", "--name-only", BASE_SHA, "HEAD")', '_git("diff", "--name-only", BASE_SHA)', 1)
-          validator = validator.replace('_git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING_PATH)', '_git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)', 1)
-          builder = zlib.decompress(base64.b64decode(os.environ["FOCUSED_BUILDER_ZB64"])).decode()
-          ast.parse(builder)
+          validator = validator.replace(
+              '_git("diff", "--name-only", BASE_SHA, "HEAD")',
+              '_git("diff", "--name-only", BASE_SHA)',
+              1,
+          )
+          validator = validator.replace(
+              '_git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING_PATH)',
+              '_git("diff", "--unified=0", BASE_SHA, "--", LOWERING_PATH)',
+              1,
+          )
+
           start = validator.index("def run_direct() -> None:\n")
           end = validator.index("\n\ndef main() -> int:\n", start)
           direct = validator[start:end]
-          old_build = "    lowerer = TBGDLowering(TBGD_ROOT)\n    ir = lowerer.build()\n    rulebook = RuleBook(ir)\n"
-          new_build = "    lowerer, ir, rulebook, audit, focused_denominator = _build_focused_direct_ir()\n"
-          old_audit = "    audit = getattr(lowerer, \"_action_window_status_callback_finalization_audit\", None)\n    if not isinstance(audit, tuple) or not audit:\n"
+          old_build = (
+              "    lowerer = TBGDLowering(TBGD_ROOT)\n"
+              "    ir = lowerer.build()\n"
+              "    rulebook = RuleBook(ir)\n"
+          )
+          new_build = (
+              "    lowerer, ir, rulebook, audit, focused_denominator = "
+              "_build_focused_direct_ir()\n"
+          )
+          old_audit = (
+              "    audit = getattr(lowerer, \"_action_window_status_callback_finalization_audit\", None)\n"
+              "    if not isinstance(audit, tuple) or not audit:\n"
+          )
           if direct.count(old_build) != 1 or direct.count(old_audit) != 1:
-              raise SystemExit("validator direct build anchors mismatch")
-          direct = direct.replace(old_build, new_build, 1).replace(old_audit, "    if not isinstance(audit, tuple) or not audit:\n", 1)
-          direct = direct.replace('        "mode": "direct",\n', '        "mode": "direct",\n        "builder": "focused_formal_character_source_denominator",\n        "focused_denominator": focused_denominator,\n', 1)
-          nested_check = "        target_phase_ids = tuple(graph.phase_ids) if graph_id else (phase_id,)\n        if not target_phase_ids or any(\n            phases.get(target_phase_id) is None\n            or phases[target_phase_id].invocation_role != \"nested_only\"\n            for target_phase_id in target_phase_ids\n        ):\n            _fail(\"promoted_nested_target_role_not_resolved\")\n\n"
-          if direct.count("        entries = [\n") != 1:
-              raise SystemExit("validator formal root anchor mismatch")
-          direct = direct.replace("        entries = [\n", nested_check + "        entries = [\n", 1)
-          direct = direct.replace('        if task is not None and task.coverage_status == "executable":\n', '        if (\n            task is not None\n            and row.get("old_task_coverage_status") == "blocked"\n            and task.coverage_status == "executable"\n        ):\n', 1)
+              raise SystemExit("validator direct anchors mismatch")
+          direct = direct.replace(old_build, new_build, 1)
+          direct = direct.replace(
+              old_audit,
+              "    if not isinstance(audit, tuple) or not audit:\n",
+              1,
+          )
+          diagnostic = (
+              "    if not promoted:\n"
+              "        print(\"DIRECT_DENOMINATOR_DIAGNOSTIC=\" + json.dumps(denominator, sort_keys=True))\n"
+              "        print(\"DIRECT_AUDIT_DECISIONS=\" + json.dumps(sorted(Counter(str(row.get('decision') or '') for row in audit).items())))\n"
+              "        _fail(\"direct_real_positive_missing\")\n"
+          )
+          original = (
+              "    if not promoted:\n"
+              "        _fail(\"direct_real_positive_missing\")\n"
+          )
+          if direct.count(original) != 1:
+              raise SystemExit("direct positive anchor mismatch")
+          direct = direct.replace(original, diagnostic, 1)
           validator = validator[:start] + builder.rstrip() + "\n\n" + direct + validator[end:]
           ast.parse(validator)
           validator_path.write_text(validator)
-
-          final_workflow = subprocess.check_output(["git", "show", f"{os.environ['FINAL_WORKFLOW_SOURCE_COMMIT']}:{workflow_path}"])
-          workflow_path.write_bytes(final_workflow)
-          changed = set(subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines())
-          expected = {str(lowering_path), str(validator_path), str(workflow_path)}
-          if changed != expected:
-              raise SystemExit("unexpected writeback paths:" + ",".join(sorted(changed ^ expected)))
           PY
 
           python -m compileall -q \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          git diff --check
-          /usr/bin/time -v python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
-          /usr/bin/time -v python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
-
-          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | cut -f1)"
-          test "$remote_head" = "$current_head"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+          set +e
+          python \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py \
-            .github/workflows/p9-a2-p0-pr-validation.yml
-          git diff --cached --check
-          git commit -m "Implement A2-P0 status callback admission finalizer"
-          git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
+            --direct
+          rc=$?
+          set -e
+          echo "diagnostic_direct_exit=$rc"
