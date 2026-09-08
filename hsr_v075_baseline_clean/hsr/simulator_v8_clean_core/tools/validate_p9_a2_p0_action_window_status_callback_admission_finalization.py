@@ -47,6 +47,7 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import (
 )
 from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
     build_complete_task_graph_catalog,
+    materialize_ability_phase_task_graph,
     materialize_status_callback_task_graph,
     merge_task_graph_slices,
 )
@@ -1124,6 +1125,18 @@ def _build_focused_direct_ir() -> tuple[
     graphs_by_id = {
         graph.standalone_ability_graph_id: graph for graph in standalone_graphs
     }
+    graph_by_phase_id: dict[str, Any] = {}
+    for graph in standalone_graphs:
+        for phase_id in graph.phase_ids:
+            existing = graph_by_phase_id.get(phase_id)
+            if (
+                existing is not None
+                and existing.standalone_ability_graph_id
+                != graph.standalone_ability_graph_id
+            ):
+                _fail(f"focused_phase_owner_graph_ambiguous:{phase_id}")
+            graph_by_phase_id[phase_id] = graph
+
     queue_root_graph_ids = set(queue_evidence["executable_queue_root_graph_ids"])
     queue_root_phase_ids: set[str] = set()
     for graph_id in queue_root_graph_ids:
@@ -1137,6 +1150,9 @@ def _build_focused_direct_ir() -> tuple[
         if phase.invocation_role == "standalone_root" and phase.phase_id not in queue_root_phase_ids:
             _fail(f"standalone_root_without_queue_resolution:{phase.phase_id}")
 
+    candidate_callback_ids = sorted(
+        {str(row.get("callback_id") or "") for row in reconciled}
+    )
     promoted_callback_ids = sorted(
         {
             str(row.get("callback_id") or "")
@@ -1144,32 +1160,168 @@ def _build_focused_direct_ir() -> tuple[
             if row.get("decision") == "promoted"
         }
     )
+    if not candidate_callback_ids or any(not item for item in candidate_callback_ids):
+        _fail("focused_status_candidate_callback_denominator_empty")
     if not promoted_callback_ids or any(not item for item in promoted_callback_ids):
         _fail("focused_status_materialization_callback_denominator_empty")
+    if not set(promoted_callback_ids).issubset(candidate_callback_ids):
+        _fail("promoted_callback_outside_independent_denominator")
+
+    candidate_callback_id_set = set(candidate_callback_ids)
+    focused_status_callbacks = [
+        callback
+        for callback in status_callbacks
+        if callback.callback_id in candidate_callback_id_set
+    ]
+    if {callback.callback_id for callback in focused_status_callbacks} != candidate_callback_id_set:
+        _fail("focused_status_callback_identity_set_incomplete")
+    focused_status_tasks = [
+        task
+        for task in status_callback_tasks
+        if task.callback_id in candidate_callback_id_set
+    ]
+    if any(
+        not any(task.callback_id == callback_id for task in focused_status_tasks)
+        for callback_id in candidate_callback_ids
+    ):
+        _fail("focused_status_callback_task_denominator_incomplete")
+
+    selected_graph_ids: set[str] = set()
+    for task in focused_status_tasks:
+        if task.linked_standalone_graph_id:
+            selected_graph_ids.add(task.linked_standalone_graph_id)
+        elif task.linked_ability_phase_id:
+            owner_graph = graph_by_phase_id.get(task.linked_ability_phase_id)
+            if owner_graph is None:
+                _fail(
+                    "focused_status_linked_phase_owner_missing:"
+                    + task.linked_ability_phase_id
+                )
+            selected_graph_ids.add(owner_graph.standalone_ability_graph_id)
+    if not selected_graph_ids:
+        _fail("focused_status_typed_target_graph_denominator_empty")
+
+    tasks_by_phase: dict[str, list[Any]] = {}
+    for task in standalone_tasks:
+        tasks_by_phase.setdefault(task.phase_id, []).append(task)
+    pending_graph_ids = list(selected_graph_ids)
+    while pending_graph_ids:
+        graph_id = pending_graph_ids.pop()
+        graph = graphs_by_id.get(graph_id)
+        if graph is None:
+            _fail(f"focused_ability_closure_graph_missing:{graph_id}")
+        for phase_id in graph.phase_ids:
+            for task in tasks_by_phase.get(phase_id, ()):
+                linked_graph_id = str(task.linked_standalone_graph_id or "")
+                if linked_graph_id:
+                    if linked_graph_id not in graphs_by_id:
+                        _fail(
+                            f"focused_ability_closure_linked_graph_missing:{linked_graph_id}"
+                        )
+                    if linked_graph_id not in selected_graph_ids:
+                        selected_graph_ids.add(linked_graph_id)
+                        pending_graph_ids.append(linked_graph_id)
+                linked_phase_id = str(task.linked_ability_phase_id or "")
+                if linked_phase_id:
+                    owner_graph = graph_by_phase_id.get(linked_phase_id)
+                    if owner_graph is None:
+                        _fail(
+                            f"focused_ability_closure_linked_phase_owner_missing:{linked_phase_id}"
+                        )
+                    owner_graph_id = owner_graph.standalone_ability_graph_id
+                    if owner_graph_id not in selected_graph_ids:
+                        selected_graph_ids.add(owner_graph_id)
+                        pending_graph_ids.append(owner_graph_id)
+
+    selected_phase_ids = {
+        phase_id
+        for graph_id in selected_graph_ids
+        for phase_id in graphs_by_id[graph_id].phase_ids
+    }
+    focused_phases = [
+        assigned_by_id[phase_id]
+        for phase_id in sorted(selected_phase_ids)
+        if phase_id in assigned_by_id
+    ]
+    if {phase.phase_id for phase in focused_phases} != selected_phase_ids:
+        _fail("focused_queue_aware_phase_closure_incomplete")
+    focused_graphs = [
+        graphs_by_id[graph_id] for graph_id in sorted(selected_graph_ids)
+    ]
+    focused_ability_tasks = [
+        task for task in standalone_tasks if task.phase_id in selected_phase_ids
+    ]
+    focused_status_event_families = _lower_status_event_families(
+        focused_status_callbacks, focused_status_tasks
+    )
 
     control_flow_catalog = lowerer.build_character_control_flow_contract_catalog(
         snapshot=snapshot, scope_catalog=scope_catalog
     )
     task_graph_view = CanonicalIR(
         version=BASELINE_VERSION,
-        ability_phases=tuple(assigned_phases),
-        ability_tasks=tuple(standalone_tasks),
-        standalone_ability_graphs=tuple(standalone_graphs),
+        ability_phases=tuple(focused_phases),
+        ability_tasks=tuple(focused_ability_tasks),
+        standalone_ability_graphs=tuple(focused_graphs),
         effects=tuple(effects),
         conditions=tuple(conditions),
         formulas=tuple(formulas),
         target_expressions=tuple(
             _dedupe_target_expressions(target_expressions).values()
         ),
-        status_callbacks=tuple(status_callbacks),
-        status_callback_tasks=tuple(status_callback_tasks),
-        status_event_families=tuple(status_event_families),
+        status_callbacks=tuple(focused_status_callbacks),
+        status_callback_tasks=tuple(focused_status_tasks),
+        status_event_families=tuple(focused_status_event_families),
     )
     complete_task_graph_catalog = build_complete_task_graph_catalog(
         control_flow_catalog, snapshot
     )
+
+    formal_roles = {"action_root", "nested_only", "standalone_root"}
+    ability_slices = []
+    for phase in focused_phases:
+        if phase.invocation_role not in formal_roles:
+            continue
+        callback_kinds = sorted(
+            {
+                task.callback_kind
+                for task in focused_ability_tasks
+                if task.phase_id == phase.phase_id
+            }
+        )
+        if not callback_kinds:
+            _fail(f"focused_formal_phase_task_denominator_empty:{phase.phase_id}")
+        for callback_kind in callback_kinds:
+            ability_slice = materialize_ability_phase_task_graph(
+                control_flow_catalog,
+                task_graph_view,
+                phase_id=phase.phase_id,
+                callback_kind=callback_kind,
+                source_snapshot=snapshot,
+            )
+            entries = tuple(
+                item
+                for item in ability_slice.entry_materializations
+                if item.entry_kind == "ability_phase_callback"
+                and item.owner_id == phase.phase_id
+                and item.callback_kind == callback_kind
+            )
+            if (
+                len(entries) != 1
+                or entries[0].status != "materialized"
+                or not entries[0].graph_id
+                or len(ability_slice.graphs) != 1
+                or ability_slice.graphs[0].graph_id != entries[0].graph_id
+            ):
+                _fail(
+                    "focused_formal_ability_slice_not_materialized:"
+                    f"{phase.phase_id}:{callback_kind}"
+                )
+            ability_slices.append(ability_slice)
+
     status_slices = []
-    for callback_id in promoted_callback_ids:
+    promoted_callback_id_set = set(promoted_callback_ids)
+    for callback_id in candidate_callback_ids:
         status_slice = materialize_status_callback_task_graph(
             control_flow_catalog,
             task_graph_view,
@@ -1181,23 +1333,28 @@ def _build_focused_direct_ir() -> tuple[
             for item in status_slice.entry_materializations
             if item.entry_kind == "status_callback" and item.owner_id == callback_id
         )
-        if (
-            len(entries) != 1
-            or entries[0].status != "materialized"
+        if len(entries) != 1:
+            _fail(f"focused_status_formal_slice_entry_missing:{callback_id}")
+        if callback_id in promoted_callback_id_set and (
+            entries[0].status != "materialized"
             or not entries[0].graph_id
             or len(status_slice.graphs) != 1
             or status_slice.graphs[0].graph_id != entries[0].graph_id
         ):
             _fail(f"promoted_status_formal_slice_not_materialized:{callback_id}")
         status_slices.append(status_slice)
+
     task_graph_catalog = merge_task_graph_slices(
-        complete_task_graph_catalog, status_slices
+        complete_task_graph_catalog, [*ability_slices, *status_slices]
     )
     ir = replace(task_graph_view, task_graph_catalog=task_graph_catalog)
     rulebook = RuleBook(ir)
 
     role_histogram = dict(
         sorted(Counter(phase.invocation_role for phase in assigned_phases).items())
+    )
+    focused_role_histogram = dict(
+        sorted(Counter(phase.invocation_role for phase in focused_phases).items())
     )
     denominator_meta = {
         "snapshot_source_count": len(snapshot.sources),
@@ -1209,9 +1366,14 @@ def _build_focused_direct_ir() -> tuple[
         "queue_intent_count": len(queue_intents),
         "queue_resolution": queue_evidence,
         "queue_aware_invocation_role_histogram": role_histogram,
-        "status_materializer_scope": "production status_callback formal slices with queue-aware ability definitions retained",
-        "status_materializer_callback_ids": promoted_callback_ids,
-        "status_materializer_slice_count": len(status_slices),
+        "focused_queue_aware_invocation_role_histogram": focused_role_histogram,
+        "formal_slice_scope": "independent action-window candidates plus queue-aware typed-target ability closure",
+        "formal_slice_candidate_callback_ids": candidate_callback_ids,
+        "formal_slice_promoted_callback_ids": promoted_callback_ids,
+        "formal_slice_graph_ids": sorted(selected_graph_ids),
+        "formal_slice_phase_ids": sorted(selected_phase_ids),
+        "formal_ability_slice_count": len(ability_slices),
+        "formal_status_slice_count": len(status_slices),
         "task_graph_materialization_count": len(task_graph_catalog.entry_materializations),
     }
     return (
