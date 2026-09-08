@@ -1086,14 +1086,82 @@ def _action_candidates_by_window(rules: RuleBook) -> dict[str, list[tuple[Any, A
         rules.ir.action_definitions,
         key=lambda item: (item.action_id, item.level, item.definition_id),
     ):
-        context = _a1_accepted_context(rules, definition, ())
-        if context is None:
-            continue
-        _state_before, _command, _target_context, _admission, mode, decision = context
-        if mode != "external_turn" or not decision.ok:
-            continue
         event = rules.action_event(definition.action_id, definition.level)
         if event is None or event.target_mode == "bounce":
+            continue
+        admissions = tuple(
+            sorted(
+                (
+                    admission
+                    for admission in rules.ir.action_admissions
+                    if admission.action_id == definition.action_id
+                    and admission.action_level == definition.level
+                    and admission.coverage_status == "executable"
+                    and not admission.blocked_reason
+                    and "external_turn" in admission.submission_modes
+                ),
+                key=lambda admission: admission.admission_id,
+            )
+        )
+        context = None
+        for admission in admissions:
+            state = BattleState(
+                units={
+                    "validation:actor": UnitState(
+                        unit_id="validation:actor",
+                        side="ally",
+                        template_id=admission.owner_entity_ref,
+                        max_hp=100000.0,
+                        hp=100000.0,
+                        energy=100000.0,
+                        max_energy=100000.0,
+                        flags={"position": 0},
+                        resources={
+                            "special_energy": 100000.0,
+                            "special_resource": 100000.0,
+                            "charge": 100000.0,
+                        },
+                    ),
+                    "validation:enemy": UnitState(
+                        unit_id="validation:enemy",
+                        side="enemy",
+                        template_id="validation:enemy_template",
+                        max_hp=100000.0,
+                        hp=100000.0,
+                        flags={"position": 1},
+                    ),
+                },
+                skill_points=99,
+                max_skill_points=99,
+                global_flags={
+                    "turn_owner_id": "validation:actor",
+                    "current_window": (
+                        admission.allowed_windows[0]
+                        if admission.allowed_windows
+                        else "idle"
+                    ),
+                    "phase": "combat",
+                },
+            )
+            accepted = _accepted_action_on_state(rules, state, definition)
+            if accepted is None:
+                continue
+            command, target_context, decision = accepted
+            if (
+                decision.admission is None
+                or decision.admission.admission_id != admission.admission_id
+            ):
+                continue
+            context = (
+                state,
+                command,
+                target_context,
+                admission,
+                "external_turn",
+                decision,
+            )
+            break
+        if context is None:
             continue
         for event_type in _action_windows(rules, definition):
             bucket = result.setdefault(event_type, [])
