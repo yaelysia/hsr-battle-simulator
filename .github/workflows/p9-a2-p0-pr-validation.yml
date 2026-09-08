@@ -1,4 +1,4 @@
-name: P9 A2 P0 read-only root-ledger validation
+name: P9 A2 P0 read-only root-ledger audit
 
 on:
   push:
@@ -8,20 +8,20 @@ on:
       - ".github/workflows/p9-a2-p0-pr-validation.yml"
 
 jobs:
-  validate:
+  audit:
     permissions:
       contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout exact candidate head and pinned TBGD
+      - name: Checkout exact diagnostic head and pinned TBGD
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Replay candidate, fix formal root closure, and validate
+      - name: Replay root-ledger candidate and print real audit
         env:
           WRITEBACK_SOURCE_COMMIT: "874e9f9231e786f6474569ac891bd14f87227a71"
           BASE_SHA: "bd1a4ac94ca394d2ea563d086eaf56e9ed45b285"
@@ -31,23 +31,23 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import importlib.util
+          import json
           import os
           import re
           import subprocess
+          import sys
           import textwrap
           from pathlib import Path
 
           workflow_path = Path(".github/workflows/p9-a2-p0-pr-validation.yml")
           lowering_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py")
+          validator_path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py")
           source = subprocess.check_output(
               ["git", "show", f"{os.environ['WRITEBACK_SOURCE_COMMIT']}:{workflow_path}"],
               text=True,
           )
-          match = re.search(
-              r"          python - <<'PY'\n(.*?)\n          PY\n",
-              source,
-              re.S,
-          )
+          match = re.search(r"          python - <<'PY'\n(.*?)\n          PY\n", source, re.S)
           if match is None:
               raise SystemExit("writeback candidate python block missing")
           candidate_script = textwrap.dedent(match.group(1))
@@ -103,16 +103,41 @@ jobs:
           )
           if lowering.count(old_closure) != 1:
               raise SystemExit("candidate closure anchor mismatch")
-          lowering_path.write_text(
-              lowering.replace(old_closure, new_closure, 1), encoding="utf-8"
-          )
-          PY
+          lowering_path.write_text(lowering.replace(old_closure, new_closure, 1), encoding="utf-8")
 
-          python -m compileall -q \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py
-          git diff --check
-          /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --fast
-          /usr/bin/time -v python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p0_action_window_status_callback_admission_finalization.py --direct
+          spec = importlib.util.spec_from_file_location("candidate_validator", validator_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("validator import spec unavailable")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          lowerer, ir, rulebook, audit, focused_denominator = module._build_focused_direct_ir()
+          rows = [
+              row for row in audit
+              if row.get("source_mode") == "mainline_avatar_ability"
+              and row.get("action_window_runtime_source")
+          ]
+          callbacks = {item.callback_id: item for item in ir.status_callbacks}
+          tasks_by_callback = {}
+          for task in ir.status_callback_tasks:
+              tasks_by_callback.setdefault(task.callback_id, []).append(task)
+          print("FOCUSED_DENOMINATOR=" + str(focused_denominator))
+          print("ACTION_WINDOW_AUDIT=" + json.dumps(rows, sort_keys=True))
+          for row in rows:
+              callback_id = str(row["callback_id"])
+              callback = callbacks[callback_id]
+              closure = {
+                  "callback_task_ids": list(callback.task_ids),
+                  "owned_tasks": [
+                      {
+                          "task_id": task.task_id,
+                          "parent_task_id": task.parent_task_id,
+                          "opcode": task.opcode,
+                          "coverage_status": task.coverage_status,
+                          "blocked_reason": task.blocked_reason,
+                      }
+                      for task in sorted(tasks_by_callback.get(callback_id, ()), key=lambda item: item.task_id)
+                  ],
+              }
+              print("CALLBACK_CLOSURE=" + json.dumps(closure, sort_keys=True))
+          PY
