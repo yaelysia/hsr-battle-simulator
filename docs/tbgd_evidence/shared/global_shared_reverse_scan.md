@@ -3,30 +3,24 @@
 ## Record metadata
 
 - TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`
-- Evidence maturity: `manually_confirmed` for representative ordinary owner/consumer chains; unresolved/export-gap for named residual families
-- Scope: W17 reverse scan for ordinary battle producers missed by actor-centric forward traversal
+- Evidence maturity: `manually_confirmed` for representative ordinary owner/consumer chains; explicit export/ownership gaps for named residuals
+- Scope: W17 anti-miss reverse scan for ordinary battle producers missed by actor-centric traversal
+- Lane status: **broad reverse scan complete**
+- Package status: keep W17 as an `active` sentinel for future high-signal discoveries; do not mark the universe of global/shared mechanics permanently closed
+- New mechanism candidate: none
 - Runtime production code changed: no
 
-## Core semantic rule
+## Core rule
 
 `global/shared` is an ownership/storage property, not a scope verdict.
 
-A source can be ordinary battle authority when it is:
+A source becomes ordinary battle authority only through a real owner/reference/consumer chain. Conversely, battle-capable definitions without an ordinary owner are not automatically non-battle; they remain unresolved/export gaps.
 
-- a shared modifier referenced by an ordinary actor;
-- a global task template invoked by ordinary actor/stage logic;
-- a stage-common producer maintaining state consumed later by an actor;
-- a BattleEvent entity created/activated by an ordinary character or stage bootstrap;
-- a global prototype copied into a local modifier;
-- an opaque shared-pool consumer whose executable definition is missing from the pin.
+Classification therefore happens at modifier/template/owner/reference-edge level, not by filename, directory or numeric ID.
 
-Conversely, a battle-capable definition is not ordinary-reachable until an owner/invocation edge is established.
+## Broad families scanned
 
-Classification therefore happens at modifier/template/owner/reference-edge level, not by filename or directory.
-
-## Reverse-scanned families
-
-The first broad pass manually inspected/reverse-scanned high-value surfaces including:
+The completed W17 pass covered the high-value surfaces:
 
 - `Config/ConfigGlobalModifier/**`
 - `Config/ConfigGlobalTaskListTemplate/**`
@@ -34,286 +28,202 @@ The first broad pass manually inspected/reverse-scanned high-value surfaces incl
 - `Config/ConfigCommonSkillPool/**`
 - `Config/GlobalConfig/GameCoreConstValue.json`
 - `Config/GlobalConfig/DamageBehaviorTemplateListConfig.json`
-- common avatar/monster Ability producers outside the global-modifier directory
-- known battle properties/statuses/opcodes such as Speed, StanceBreakState, SetHP, ModifyActionDelay, StackProperty, WaveMonster, CreateBattleEvent and TurnInsertAbility.
+- common Avatar/Monster ability producers outside the global-modifier directory
+- reverse scans for known battle properties/statuses/opcodes such as Speed, StanceBreakState, SetHP, ModifyActionDelay, StackProperty, WaveMonster, CreateBattleEvent, TurnInsertAbility and shared resource/damage surfaces.
 
-Default/current search was navigation only; promoted claims were returned to pinned raw chains.
+Default/current search was navigation only; promoted claims were returned to the pinned revision.
 
-## Ordinary shared Weakness-Break / action-delay chain
+## Shared Weakness-Break / action-delay authority
 
-Representative ordinary monster chain:
+Ordinary monster chains reach shared `StanceBreakState` in `GlobalModifier_Common_Specific.json`.
 
-```text
-normal monster ConfigCharacter
-  -> Monster_Common_PassiveSkill_StanceBreak_Action
-  -> Monster_Common_Ability OnBeingBreak
-  -> AddModifier(StanceBreakState)
-  -> ConfigGlobalModifier/GlobalModifier_Common_Specific.json
-```
+Pinned behavior includes:
 
-Pinned `StanceBreakState` performs battle-state work including:
-
-- adds break-state effect;
-- `ModifyActionDelay` on the modifier owner with normalized `+0.25`;
+- break-state effect;
+- `ModifyActionDelay` on modifier owner with normalized `+0.25`;
 - `TriggerBreak`;
-- on lifecycle exit/reset, restores stance/state and common damage-reduction state.
+- lifecycle/reset work restoring stance/state;
+- common monster damage-reduction state.
 
-`MonsterAllDamageReduce` stacks `AllDamageReduce=0.1` for monsters wired to that common passive.
+Elemental break templates also route ordinary combat to shared Fire/Ice/Wind/Thunder/Imaginary/Quantum status/damage/delay paths.
 
-This is ordinary shared authority relevant to W06/W07/W09/W10, not a deferred-mode primitive merely because it lives in a global modifier file.
-
-## Shared elemental break templates
-
-Ordinary common passive/break routing reaches shared `StanceBreak_*` templates. Confirmed element-specific paths apply shared statuses/damage behavior such as:
-
-- Fire -> `MCommon_Element_Burn`
-- Ice -> `MCommon_Element_Frozen`
-- Wind -> `MCommon_Element_Poison`
-- Thunder -> `MCommon_Element_Electric`
-
-Imaginary/Quantum templates also inject raw action-delay values into their shared status paths.
-
-Downstream global modifier definitions confirm real battle behavior such as snapshot DOT/control state, break-damage callbacks and delay mutation. Exact generic break arithmetic/ordering remains W06/W04/W10 work.
+These are ordinary shared battle primitives, not deferred-mode content merely because they are global.
 
 ## Stage-global Super Break producer
 
-Actor-centric traversal can miss target-side state maintained globally.
-
-Closed ordinary chain:
+Closed ordinary topology:
 
 ```text
 StageCommonTemplate
-  -> StageAbility_BattleCommonRule
-  -> MStageAbility_BattleCommonRule_SuperBreak
-       accumulates target-side stance-damage state
-  -> ordinary Sam passive
-  -> IncludeTaskListTemplate(DealSuperBreakDamage)
-  -> DamageByAttackProperty with break/pure-damage formula tags
+-> StageAbility_BattleCommonRule
+-> target-side SuperBreak state
+-> ordinary Sam passive
+-> IncludeTaskListTemplate(DealSuperBreakDamage)
+-> DamageByAttackProperty / break-pure-damage path
 ```
 
-The actor owns the final trigger, but the target-side accumulated state is stage/global-owned. This is a representative reason W17 reverse scanning is required even after character forward traversal.
+This is a concrete producer family that actor-centric traversal alone can miss.
 
 ## Global task templates are mixed executable authority
 
-### Monster phase template
+Confirmed ordinary examples include:
 
-A normal monster Ability reaches:
+- `Monster_ChangePhase` — real same-entity HP/Stance/state work;
+- `Wave_CommonPreProcess` / `Wave_CommonProcess` — ordinary wave lifecycle;
+- delayed `WaveMonster` path;
+- `DealSuperBreakDamage`;
+- elemental `StanceBreak_*` task families.
 
-`IncludeTaskListTemplate("Monster_ChangePhase")`
+Other global task templates are presentation/RT/GM/tooling-oriented. The directory remains mixed and template-specific.
 
-The shared template performs real state work such as SetHP/reset stance/modifier add-remove/custom events. It is not merely phase presentation.
+## BattleEvent is ordinary-capable
 
-### Stage wave template
+The logical BattleEvent family is distributed at this pin rather than represented by one directory.
 
-`StageCommonTemplate -> IncludeTaskListTemplate("Wave_CommonProcess")`
+Ordinary examples include:
 
-participates in wave completion / next-wave progression. The stage bootstrap also coordinates `WaveMonster`, passive activation, StageAbility binding, delayed monster creation and BattleEvent preload/start behavior.
+- Lingsha `PreloadBattleEventByID/CreateBattleEvent(11222)`;
+- YaoGuang/Elation ordinary activation path to BattleEvent `70001` and inserted/auto-use behavior;
+- Aglaea's separate BattleEvent namespace, which also demonstrates why numeric ID equality across entity types is unsafe.
 
-### Negative mixed examples
-
-Other global task files/templates inspected are camera/UI/GM/tooling-oriented. The directory must therefore stay `mixed`; shared task authority is template-specific.
-
-## BattleEvent is an ordinary-capable special battle entity family
-
-The logical family is distributed at this pin rather than backed by one `ConfigBattleEvent/**` directory.
-
-### Lingsha example
-
-Ordinary Lingsha Ability:
-
-`PreloadBattleEventByID(11222)` / `CreateBattleEvent(11222)`
-
-joins to pinned BattleEvent data and a real `RPG.GameCore.BattleEventConfig`. Its passive/action graph can schedule inserted abilities.
-
-### Elation / YaoGuang example
-
-The first reverse pass also closed an ordinary activation chain for BattleEvent `70001`:
-
-```text
-StageCommonTemplate
-  -> StageAbility_Elation preload/common state
-  -> released ordinary YaoGuang Elation skill
-  -> IncludeTaskListTemplate(Elation_StartElationTime)
-  -> find-or-create BattleEvent 70001
-  -> BattleEvent_Elation_Config AutoUse skills / inserted action
-```
-
-Therefore BattleEvent is not inherently event-mode/deferred infrastructure. Individual BattleEvents still require owner classification.
+Individual BattleEvents still require owner classification.
 
 ## Shared property/modifier primitives with ordinary owners
 
-Representative confirmed ordinary chains include:
+Representative confirmed chains include:
 
-### `MReference_DefenceRatioDown`
+- `MReference_DefenceRatioDown` -> ordinary Anaxa Rank01 reference-prototype chain;
+- `MCommon_DefenceRatioDown` -> Svarog;
+- `MCommon_StatusResistanceDown` -> ordinary Mecha;
+- `MCommon_FatigueRatio` -> ordinary Mecha;
+- `MCommon_SpeedUp` -> ordinary Sam/minion chain;
+- `M_SkillTree_AggroUp` -> Gepard skill-tree path;
+- `M_Ultra_ExtraSP` -> Sampo ordinary skill-tree path;
+- `M_SkillTree_HealRatioUp` -> Natasha ordinary skill-tree path.
 
-Global reference prototype -> local Anaxa Rank01 modifier via `ReferenceModifierName` -> ordinary damage-preparation callback -> defence property mutation.
+Positive owner-backed samples prove the family is real shared battle authority. They do not bulk-promote unowned siblings.
 
-This proves `MReference_*` is a real shared combat prototype family; siblings still need their own consumer evidence.
+## AvatarSkillTreeConfig correction
 
-### `MCommon_DefenceRatioDown`
+A stale earlier inventory phrase treated `AvatarSkillTreeConfig.json` as potentially empty/missing for the generic skill-tree path.
 
-Global common-property modifier -> normal Svarog Skill05 consumer -> target defence-ratio property mutation.
+That premise is superseded. Exact pinned concrete table -> ability -> shared-modifier chains were closed for examples including Gepard/Welt/Sampo/Natasha.
 
-### `MCommon_StatusResistanceDown`
+What can remain unexported is the **generic GameCore ability-attachment/loading implementation**, not the existence/population of the pinned table itself.
 
-Global common-property modifier -> normal Mecha01_02 battle ability -> target `StatusResistanceBase` mutation.
+Do not describe `AvatarSkillTreeConfig.json` as empty/missing at this pin.
 
-### `MCommon_FatigueRatio`
+## Shared common-passive producers outside ConfigGlobalModifier
 
-Global common-property modifier -> normal Mecha01_00 Skill01 path -> `FatigueRatio` mutation.
+`Avatar_Common_PassiveSkill` provides ordinary shared behavior outside the global-modifier directory, including a confirmed `OnTriggerDeath -> ModifySPNew` path.
 
-### `MCommon_SpeedUp`
+The same area contains a real break route with a `_Test` suffix, providing explicit negative evidence against suffix-based tooling classification.
 
-Global common-property modifier -> normal Sam_01 skill graph -> summoned-minion Speed property mutation.
+## DamageBehavior selector/template — ordinary Sam chain closed
 
-No SPD→AV formula is inferred from this property write.
+Pinned enum/template data maps shared `DamageBehaviorTemplate` values including `TrueDamage`, `DirectlyLoseHp`, and `DirectlyLoseHpHit`.
 
-### `M_SkillTree_AggroUp`
+A corrected W17 continuation closed an ordinary released/Mainline Sam chain through populated pinned Stage/Monster/Skill/normal ConfigCharacter/Ability data to a real `DamageBehavior=1 -> DirectlyLoseHp` selector/template mapping.
 
-Global avatar modifier -> released Gepard skill-tree ability -> `AggroAddedRatio` mutation. Parameter role is wired through `SkillTreeParam(PointB1,index=0)`; generic skill-tree loader transport remains an export gap.
+Therefore the previous caveat that the ordinary Sam stage-instance edge “may be export-blocked” is superseded for this representative chain.
 
-### `M_Ultra_ExtraSP`
-
-Global avatar modifier -> ordinary/released avatar skill-tree consumer (Sampo representative) -> `OnAfterSkillUse` + Ultra predicate -> `ModifySPNew` with injected value.
-
-### `M_SkillTree_HealRatioUp`
-
-Global avatar modifier -> ordinary/released Natasha skill-tree consumer -> `HealRatioBase` mutation.
-
-These examples establish shared ordinary reachability without bulk-promoting every sibling in the same files.
-
-## Shared ordinary common-passive producers outside ConfigGlobalModifier
-
-`Avatar_Common_PassiveSkill` supplies ordinary shared behavior not discoverable by scanning only `ConfigGlobalModifier/**`.
-
-Representative producer:
-
-`Local_SPAdd -> OnTriggerDeath -> ModifySPNew(+10 raw injected value)`
-
-The user-facing resource meaning/caps remain W08 work.
-
-The same ordinary common-passive area also includes `TriggerStanceCountDown_Test`, which routes real break logic. This is a concrete counterexample to suffix-based filtering: `_Test` is not sufficient to classify a symbol as tooling-only.
-
-## DamageBehavior shared selector/template
-
-Pinned enum data maps `DamageBehaviorTemplate` values such as:
-
-- `TrueDamage`
-- `DirectlyLoseHp`
-- `DirectlyLoseHpHit`
-
-and `DamageBehaviorTemplateListConfig.json` supplies shared behavior flags.
-
-A normal Sam Ability contains a real `DamageBehavior` selector that resolves through the enum to `DirectlyLoseHp`, establishing a data-side consumer for the shared template.
-
-The inspected normal battle ConfigCharacter/Ability owner is confirmed; a final stage-instance creation edge for the sampled Sam ID remains export-blocked in the inspected pin sources. Do not infer engine behavior beyond explicit template flags.
+This closes the data-side ordinary reachability of the shared DamageBehavior selector/template. It still does not expose hidden engine arithmetic beyond explicit template/behavior flags.
 
 ## ConfigCommonSkillPool — consumer present, executable definition absent
 
-Exact pinned `Config/ConfigCommonSkillPool/` contains only the empty Painter layout payload, with no executable pool JSON.
-
-However, pinned ordinary Painter Ability contains an `OnCreate` callback with an obfuscated operation and exact pool key:
+Pinned ordinary Painter battle ability contains the exact pool key:
 
 `CommomSkill_W5_Painter_00`
 
-The corresponding ordinary monster ConfigCharacter is a real battle config.
+but exact pinned `Config/ConfigCommonSkillPool/**` lacks the executable pool JSON payload.
 
-Therefore the correct classification is:
+Correct classification:
 
-**pinned ordinary combat consumer/key present; executable CommonSkillPool definition absent**
+**ordinary consumer/key present; executable pinned definition absent = export gap**.
 
-not `non-battle`.
+Current/default pool payloads may corroborate family existence but must not fill the pin.
 
-Current/default executable pool files can corroborate that the family exists, but cannot fill the pinned semantics. The obfuscated opcode must remain opaque until independently identified.
+## GameCoreConstValue — raw values, generic engine consumers unavailable
 
-## GameCoreConstValue — raw authority / engine consumer unavailable
-
-Pinned `GameCoreConstValue.json` contains real raw values including representative:
+Pinned raw contains battle-facing constants such as:
 
 - `SpeedToDelayDistance=1000`
 - `DamageRandomMin=1`, `DamageRandomMax=1`
-- `DamageTakenRatioMax=3.5`
-- resistance bounds
-- defence-related constants
-- BP/SP-related constants.
+- resistance/defence bounds
+- BP/SP-related constants
+- servant property-sync list.
 
-Repeated reverse searches did not expose their generic ordinary GameCore formula consumers in the release-data dump.
+These are raw inputs. Generic formulas/consumers are not exported in this release-data corpus.
 
-Classification:
+Do not infer SPD→AV, defence/resistance formulas, BP initialization or RNG algorithms from names.
 
-**raw global value authority; exported engine consumer unavailable**
+## Assistant infrastructure — final W17 boundary
 
-Do not infer SPD→AV, defence/resistance, BP initialization, clamping or RNG formulas from the field names.
+The final W17 pass re-read exact pinned:
 
-## AssistantTrigger — battle-capable definition, ordinary owner/parameter producer unresolved
+- `Config/ConfigGlobalModifier/GlobalModifier_Avatar_AssistantTrigger.json`
+- `Config/GlobalConfig/TargetAliasConfig.json`
+- `Config/ConfigAbility/Avatar/Assistant/**`
+- representative executable `Avatar_Asta_00_Assistant.json`.
 
-The W17 tail re-read exact pinned:
+### Scheduler/trigger side
 
-`Config/ConfigGlobalModifier/GlobalModifier_Avatar_AssistantTrigger.json`
+`GlobalModifier_Avatar_AssistantTrigger.json` contains real listeners for speed-down, Burn, break/weakness, team HP-loss and enter-battle/post-maze-skill surfaces, with `RPG.GameCore.TurnInsertAssistantAbility`.
 
-blob:
+The local `AssistantAbilityID` comes from dynamic hash `640129697` with `ReadInfo.Type=None`; this file does not provide the authoritative typed ID producer.
 
-`9abe696bd09b44457a60f29ed2083eda56f200a4`
+### Formal assistant entity model
 
-The file contains real battle listeners and inserted-assistant operations. Representative definitions include:
+Pinned `TargetAliasConfig.json` defines:
 
-- `MAssistant_Trigger_EnemyDelayChange`: `OnListenModifierAdd`, checks enemy `STAT_SpeedDown`, then `TurnInsertAssistantAbility`;
-- `MAssistant_Trigger_EnemyStatusChangeToBurn`: reacts to `STAT_DOT_Burn` and inserts assistant ability;
-- `MAssistant_Trigger_AllEnemyBeingHitByFire`: `OnListenBreak` plus random retarget, then assistant insertion on its failure branch;
-- `MAssistant_Trigger_AvatarHPLoss` + helper: `OnBeforeAttack` / `OnAfterBeingHitAll` path to assistant insertion;
-- `MAssistant_Trigger_OnAfterMazeSkill`: `OnEnterBattle` with priority `-55`, then assistant insertion.
+`AssistantAvatar -> RPG.GameCore.TargetFetchAvatarAssistant`.
 
-The inserted operation is:
+This proves assistant-avatar is a formal battle target/entity concept. Target access still does not prove creation/ordinary ownership.
 
-`RPG.GameCore.TurnInsertAssistantAbility`
+### Executable assistant payloads
 
-and its `AssistantAbilityID` comes from a dynamic hash (`640129697`) whose local `ReadInfo.Type` is `None` in these modifiers.
+Pinned `Config/ConfigAbility/Avatar/Assistant/` contains executable assistant files for multiple avatars.
 
-What the pin does **not** close:
+Representative pinned Asta assistant performs real battle-state operations including:
 
-- an ordinary avatar/monster/stage owner that installs these trigger modifiers;
-- the authoritative producer/binding for `AssistantAbilityID`;
-- a generic engine-owned injection path that would establish ordinary reachability independently of an explicit config owner.
+- `ModifyActionDelay(AllTeamMember, AddNormalizedValue=-0.35)`;
+- `ModifySPNew(Caster, AddRatio=1)`;
+- ability chaining, mixed with presentation operations.
 
-Pinned/default-branch searches were used only as navigation and did not surface another owner/ID producer. Absence of a search hit is not retirement proof, so the family remains battle-capable/unresolved rather than `non-battle`.
+Final classification:
 
-Durable classification:
+> formal assistant target/entity model + executable assistant battle payloads + global assistant insertion scheduler are present; ordinary owner/creator and authoritative `AssistantAbilityID` transport are source-unavailable in the inspected pin.
 
-**definition present; ordinary owner and assistant-ID producer unresolved/export-gap**
+Freeze as a battle-real ownership/export gap. Do not classify it non-battle, and do not promote it to ordinary reachability without an owner/ID transport edge.
 
-This tail is now frozen for the current pin. Reopen only if a new authoritative source family or explicit ordinary owner appears; do not repeat broad searches of the same dump each checkpoint.
+## Other residuals
 
-## Residual unresolved shared infrastructure
-
-### `MGM_Endurance_00`
-
-Real behavior definition exists, but reverse search found no ordinary consumer. Keep unresolved.
-
-### Definition-only/mode-only `MCommon_*` siblings
-
-Several siblings remain candidate/unresolved or mode-specific because the first pass did not find an ordinary owner. They are not `non-battle`; they simply lack the required ordinary reachability evidence.
+- `MGM_Endurance_00`: real behavior definition, no ordinary owner recovered; keep unresolved.
+- definition-only/mode-only `MCommon_*` siblings: retain candidate/unresolved until a concrete ordinary consumer appears.
+- generic skill-tree attachment/loading body: data tables and concrete chains exist; generic engine loader may remain unexported.
 
 ## Negative evidence / false friends
 
 - `GlobalModifier_System.json` is structurally empty at the pin.
 - inspected RT/camera global task templates are presentation-only.
-- GM/test definitions can contain battle-real opcodes without ordinary reachability.
-- WhiteBox definitions can contain damage producers without an ordinary consumer.
-- broad callback/event names whose bodies only DebugLog are not state authority.
-- `SummonUnitGlobalConfig` is dominated by scene placement/navigation/interaction behavior and is not servant battle authority without a battle consumer.
-- `_Test`, `Global`, `Reference`, `GM`, `IL` and similar naming tokens are navigation hints, never sufficient scope classification.
-- an entity target lookup is not creation/config-selection authority.
-- battle-capable AssistantTrigger definitions are not automatically ordinary-reachable without an owner/injection source.
+- GM/test/WhiteBox definitions can contain real battle opcodes without ordinary reachability.
+- broad event names with only DebugLog bodies are not state authority.
+- `SummonUnitGlobalConfig` is scene/navigation-heavy and is not servant battle authority without a battle consumer.
+- `_Test`, `Global`, `Reference`, `GM`, `IL` and similar naming tokens are navigation hints, not scope verdicts.
+- target/entity lookup proves access semantics, not creation/ownership.
+- obfuscated operation identities remain opaque until independently identified.
+- large pinned JSON must be re-read exactly before declaring it empty/missing.
 
-## W17 conclusion after tail pass
+## W17 lane closure
 
-The broad reverse scan found multiple important ordinary producers missed by actor-centric forward traversal, but no battle-state consequence requiring a new W19+ work package.
+The assigned anti-miss broad reverse scan is **complete** for this pin and scope.
 
-The remaining high-risk tails now have durable outcomes:
+No new W19+ mechanism package is justified by this lane. Remaining unknowns are classified source/export/ownership/engine boundaries rather than unscanned ordinary producers.
 
-1. `AssistantTrigger`: battle-capable definitions confirmed; ordinary owner/assistant-ID producer unresolved and frozen as an export/ownership gap;
-2. `ConfigCommonSkillPool`: ordinary consumer/key confirmed; executable pin payload absent = export gap;
-3. generic skill-tree loader: consumer/producer spaces exist, generic loader body absent = export gap unless a new source appears;
-4. `GameCoreConstValue`: raw values present, generic formula consumers absent = engine-consumer gap.
+Future W17 work should be event-driven only by:
 
-Accordingly, W17 should no longer perform repeated broad sibling scans or repeat these same missing-owner searches without new navigation signal. New shared definitions remain reviewable when a concrete ordinary consumer/reference edge appears.
+- a newly discovered ordinary consumer;
+- a genuinely new source family;
+- a changed pinned revision.
+
+Do not repeat whole-tree/global-family scans on the same pin as routine progress.
