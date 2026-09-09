@@ -1,0 +1,53 @@
+name: P9 A2 P1 PR validation
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p1_formal_process_only_source_identity.py"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY_execution_report.md"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY.md"
+      - ".github/workflows/p9-a2-p1-pr-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout committed head and pinned TBGD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Show committed head and source pin
+        run: |
+          git rev-parse HEAD
+          git submodule status turnbasedgamedata-main
+
+      - name: Compile
+        run: |
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p1_formal_process_only_source_identity.py
+
+      - name: Fast
+        run: |
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p1_formal_process_only_source_identity.py \
+            --fast
+
+      - name: Direct
+        run: |
+          /usr/bin/time -v python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p1_formal_process_only_source_identity.py \
+            --direct
+
+      - name: Fixed-base diff check
+        run: |
+          git diff --check 770a0649926932794585fcd30589c6776892bc3b HEAD
