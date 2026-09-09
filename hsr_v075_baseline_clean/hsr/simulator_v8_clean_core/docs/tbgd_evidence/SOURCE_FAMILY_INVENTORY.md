@@ -40,7 +40,7 @@ This inventory is triage, not a filename- or ID-based authority map.
 | `ExcelOutput/AvatarConfig.json` | `mixed` | March, Sampo, Natasha, Gepard, YaoGuang and other ordinary identity/config references | Playable identity and joins coexist with display/non-combat metadata; filter fields. |
 | `ExcelOutput/AvatarSkillConfig.json` | `include` / mixed | exact pinned blob `a5416ced...`; March `100102`; Aglaea construction `140204`; Dan Heng cross-check | Ordinary per-level `SkillParam` producer. Earlier “100102/140204 absent” claim was a large-file/search false negative and is superseded. |
 | `ExcelOutput/AvatarSkillConfigLD.json` | `mixed` | battle-facing rows inspected; no longer needed for March producer closure | Contains battle-facing skill data for some rows but is not ordinary March `100102` authority. Audit only when a chain points here. |
-| `ExcelOutput/AvatarSkillTreeConfig.json` | `mixed` / pin-dependent export gaps | March PointB2 producer confirmed; other lane reads encountered empty/missing population for some generic loader questions | Trace concrete point rows when present; do not infer generic ability attachment/unlock transport from naming if the relevant exported edge is absent. |
+| `ExcelOutput/AvatarSkillTreeConfig.json` | `mixed/include` | March PointB2 plus concrete Gepard/Welt/Sampo/Natasha table -> ability -> shared-modifier chains | The pinned table is populated and can be ordinary battle authority. What may remain unexported is generic GameCore ability attachment/loading, not table existence/population. Do not reintroduce empty/missing claims. |
 | `ExcelOutput/AvatarRankConfig.json` | `mixed/include` | March Rank02/Rank06; Anaxa Rank01 | Rank parameter arrays and rank-ability joins can be ordinary battle authority; acquisition/progression neighbors remain out of scope. |
 | `Config/ConfigCharacter/Avatar/**` | `mixed` | March, Dan Heng, Aglaea, Asta, Silver Wolf, etc. | Skill/target/entry ability and DynamicValue binding coexist with presentation/config metadata. |
 | `Config/ConfigAbility/Avatar/**` | `mixed` | March, Aglaea, Silver Wolf, Asta, Bailu, Aventurine, etc. | Battle execution/modifiers/triggers and presentation operations coexist; operation-level review mandatory. |
@@ -95,14 +95,14 @@ The generic parser body for `#N` is not exported, but the practical producer/slo
 
 ## Global/shared battle producers
 
-The first W17 broad reverse scan is complete enough to replace the previous all-`unresolved` family placeholders with representative owner-backed classifications.
+The W17 broad reverse scan is complete enough to replace the previous all-`unresolved` family placeholders with representative owner-backed classifications. W17 remains an event-driven sentinel for new ordinary consumers/source families rather than a standing whole-tree rescan.
 
 | Family / path | Status | Confirmed ordinary anchors / residual gap |
 | --- | --- | --- |
-| `Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json` | `mixed/include` | ordinary `StanceBreakState`, elemental break statuses, monster common damage-reduction lifecycle. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json` | `mixed/include` | ordinary `StanceBreakState`, elemental break statuses, monster common damage-reduction lifecycle, plus source-facing `OneMore` / `OneMorePerTurn` marker-controller protocol with ordinary Gepard and W4 Claymore consumers. |
 | `Config/ConfigGlobalModifier/GlobalModifier_Common_Property.json` | `mixed/include` | ordinary Svarog defence down; Mecha status-resistance down/fatigue; Sam_01 speed up. Do not bulk-promote siblings without owners. |
 | `Config/ConfigGlobalModifier/GlobalModifier_Reference.json` | `mixed/include` | Anaxa Rank01 -> `MReference_DefenceRatioDown` closes a real ordinary reference-prototype chain. |
-| `Config/ConfigGlobalModifier/GlobalModifier_Avatar.json` | `mixed/include` | Sampo `M_Ultra_ExtraSP`, Natasha heal-ratio, Gepard skill-tree aggro. Generic skill-tree loader may be export-blocked. |
+| `Config/ConfigGlobalModifier/GlobalModifier_Avatar.json` | `mixed/include` | Sampo `M_Ultra_ExtraSP`, Natasha heal-ratio, Gepard skill-tree aggro. Generic skill-tree attachment/loading implementation may remain unexported. |
 | `Config/ConfigGlobalModifier/GlobalModifier_Avatar_AssistantTrigger.json` | `unresolved` ordinary ownership | Real battle callbacks/assistant insertion exist, but no ordinary owner/assistant-ID authority was closed. |
 | `Config/ConfigGlobalModifier/GlobalModifier_System.json` | `exclude` at pin | empty `ModifierMap` in inspected pinned file. |
 | `Config/ConfigGlobalModifier/GlobalModifier.json` | `mixed/unresolved` | some definitions/listeners are battle-capable; representative unowned/debug-only entries retained as unresolved/negative evidence. |
@@ -110,7 +110,7 @@ The first W17 broad reverse scan is complete enough to replace the previous all-
 | logical BattleEvent family | `mixed/include` | Lingsha and YaoGuang/Elation ordinary chains; special modes/events coexist. |
 | `Config/GlobalConfig/GameCoreConstValue.json` | `engine_consumer_unavailable` | raw constants such as SpeedToDelayDistance, BP/SP, resistance and damage-random bounds exist; generic formula consumers not exported. |
 | `Config/GlobalConfig/PriorityConfig.json` | `include` shared ordering input | separate event/insert priority domains; lower number earlier within inspected domains; equal-priority/cross-domain arbitration unresolved. |
-| `Config/GlobalConfig/DamageBehaviorTemplateListConfig.json` | `mixed/include` data-side semantics | enum/template mapping has normal Sam battle-data consumer; final engine behavior limited to explicit flags and stage-instance edge may be export-blocked. |
+| `Config/GlobalConfig/DamageBehaviorTemplateListConfig.json` | `mixed/include` data-side semantics | enum/template mapping has a closed representative ordinary released/Mainline Sam Stage -> Monster -> Skill -> ConfigCharacter/Ability chain to `DamageBehavior=1 -> DirectlyLoseHp`; hidden engine arithmetic remains outside explicit template/behavior flags. |
 | shared common Avatar/Monster Ability producers | `mixed/include` | `Avatar_Common_PassiveSkill -> Local_SPAdd`, `TriggerStanceCountDown_Test`, common monster break passive | Important producer family outside global-modifier directories. `_Test` suffix is not an exclusion rule. |
 
 ## RNG / callback cross-cutting sources
@@ -127,7 +127,7 @@ The first W17 broad reverse scan is complete enough to replace the previous all-
 ## Techniques / maze-to-battle boundary
 
 | Family / path | Status | Current interpretation / next closure |
-| --- | --- | --- |
+| --- | --- | --- | --- |
 | `Config/ConfigMazeBuff/**` | `unresolved` | Include only proven ordinary battle-entry consequences. |
 | `Config/ConfigAdventureAbility/**` | `unresolved` | Often scene/Technique-side; trace only actual battle initialization effects. |
 | `Config/ConfigAdventureModifier/**` | `unresolved` | Same boundary rule. |
@@ -166,14 +166,14 @@ These are `deferred`, not `non_battle`. Shared lower-level primitives independen
 
 ## Current checkpoint gaps
 
-After the first five-lane parallel integration, the highest-value unresolved source-family boundaries are:
+After the 2026-09-09 post-integration compaction, the highest-value unresolved source-family boundaries are:
 
-1. **Monster final-stat engine/operator:** ordinary `HardLevelGroup` inputs and join topology are known; final arithmetic/precedence/flat placement/phase application remain unclosed.
-2. **Generic Shield/Modifier engine semantics:** March-local numerics/application/replacement hooks are closed; generic ShieldByCasterDefence, snapshot capture, lifetime/depletion and replacement callback order remain.
-3. **Timeline scheduler engine boundary:** Speed/action-delay opcodes and servant scheduling are source-backed, but SPD→AV/queue/requeue/tie-break implementation is not exported.
+1. **Monster final-stat engine/operator:** ordinary `HardLevelGroup` inputs and join topology are known; final arithmetic/precedence/flat placement/phase application remain unclosed and should not be re-searched without a new engine source.
+2. **Generic Shield/Modifier engine semantics:** March-local numerics/application/replacement hooks, main-shield `CanDispel=true` and snapshot-routing inputs are closed; generic ShieldByCasterDefence arithmetic, snapshot capture, lifetime/depletion and replacement callback order remain engine-bound.
+3. **Timeline scheduler engine boundary:** Speed/action-delay opcodes, servant scheduling and the data-facing `OneMore` / `OneMorePerTurn` protocol are source-backed; SPD→AV/queue/requeue/tie-break and exact runnable OneMore ordering are not exported.
 4. **RNG/application engine boundary:** RandomConfig algorithm, SetDynamicValueByRandom range semantics, AddModifier.Chance final equation and RNG stream owner remain outside located TBGD consumer data.
 5. **Death/callback dispatcher:** priorities and several causal/revive/death-rattle chains are closed, but universal non-muted death total order and equal-priority/cross-domain arbitration remain.
-6. **W17 residual owners/export gaps:** AssistantTrigger ordinary owner, opaque CommonSkillPool operation identity, generic skill-tree loader where required.
-7. **Uncovered major work packages:** W01 avatar stat construction, W04 full damage formula, W08 resource system, W09 generic modifier lifecycle, W15 AI decision authority, W18 relic/set/Technique boundary still need dedicated closure.
+6. **W17 residual owners/export gaps:** AssistantTrigger ordinary owner, opaque CommonSkillPool operation identity and generic skill-tree attachment/loading implementation where required. Broad reverse scan itself is complete and event-driven only.
+7. **Major source-facing work still needing dedicated vertical closure:** W03 battle execution language, W04 full damage, W06 full toughness/break, W08 resource system, W09 generic modifier lifecycle, W11/W15 targeting+AI, W16 encounter termination, and W01/W18 battle-start build/equipment construction.
 
-No new W19+ mechanism was justified by the first broad W17 pass; the current taxonomy remains mutable if later evidence reveals an unrepresented battle-state consequence.
+No new W19+ mechanism was justified by the completed broad W17 pass; the current taxonomy remains mutable if later evidence reveals an unrepresented battle-state consequence.
