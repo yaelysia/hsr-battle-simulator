@@ -34,11 +34,19 @@ if os.environ.get("P9_A2_P1_EXTERNAL_BASELINE") != "1":
     sys.path.insert(0, str(BASELINE_ROOT))
 
 from hsr.simulator_v8_clean_core.ir_types import IRSource
+from hsr.simulator_v8_clean_core.rules.evaluator import RuleEvaluator
+from hsr.simulator_v8_clean_core.rules.ir import AbilityTaskIR, EffectIR
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.systems.ability_task_contract import ability_task_runtime_blocked_reason
 from hsr.simulator_v8_clean_core.systems.action_contract import _formal_action_task_graph_projection
 from hsr.simulator_v8_clean_core.systems.task_graph import TaskGraphExecutor
-from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering, build_character_action_definition_ir
+from hsr.simulator_v8_clean_core.tbgd.lowering import (
+    TBGDLowering,
+    _AbilityFormalTaskSourceContext,
+    _LoweredAbility,
+    _mark_client_only_trigger_ability_tasks,
+    build_character_action_definition_ir,
+)
 from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import materialize_ability_task_graph_catalog
 from hsr.simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority import (
     _accepted_context,
@@ -195,24 +203,367 @@ def fast_contract() -> dict[str, str]:
         fail(f"fast_contract_regression:{valid}:{mismatch}:{missing}")
     return {"valid": valid, "mismatch": mismatch, "missing": missing}
 
+def _task_identity(task: AbilityTaskIR) -> tuple[Any, ...]:
+    return (
+        task.task_id, task.phase_id, task.action_id, task.level, task.ability_name,
+        task.callback_kind, task.task_index, task.task_path, task.branch, task.opcode,
+        task.effect_id, task.condition_id, task.parent_task_id, tuple(task.child_task_ids),
+        tuple(task.success_task_ids), tuple(task.failed_task_ids), task.repeat_count,
+    )
+
+def _effect_identity(effect: EffectIR) -> tuple[str, str]:
+    return effect.effect_id, effect.opcode
+
+def _formal_context(
+    raw_task: dict[str, Any],
+    *,
+    source_path: str = "fixture/formal.json",
+    with_fingerprint: bool = True,
+) -> _AbilityFormalTaskSourceContext:
+    return _AbilityFormalTaskSourceContext(
+        catalog_id="fixture:formal-context",
+        control_by_location={},
+        template_by_id={},
+        references_by_node={},
+        documents={source_path: {"AbilityList": [{"OnStart": [raw_task]}]}},
+        content_sha256_by_path={source_path: "a" * 64} if with_fingerprint else {},
+    )
+
+def _formal_args(
+    raw_task: dict[str, Any],
+    *,
+    source_path: str = "fixture/formal.json",
+    json_path: str = "$.AbilityList[0].OnStart[0]",
+) -> dict[str, Any]:
+    return {
+        "task": raw_task,
+        "definition": SimpleNamespace(action_id="fixture:action", level=1),
+        "phase_id": "fixture:phase",
+        "ability_name": "FixtureAbility",
+        "ability_path": source_path,
+        "ability_index": 0,
+        "callback_kind": "OnStart",
+        "task_index": 0,
+        "task_path": "OnStart[0]",
+        "branch": "root",
+        "source_context": {"fixture": True},
+        "target_alias_registry": {},
+        "source_json_path": json_path,
+        "template_stack": (),
+    }
+
+def _preformal_lower(
+    lowerer: TBGDLowering,
+    raw_task: dict[str, Any],
+    *,
+    source_path: str = "fixture/formal.json",
+) -> _LoweredAbility:
+    args = _formal_args(raw_task, source_path=source_path)
+    task = args.pop("task")
+    return lowerer._lower_ability_task_tree(
+        task,
+        parent_task_id="",
+        formal_source_context=None,
+        lower_children=False,
+        **args,
+    )
+
+def _expect_value_error(label: str, callback: Any, expected: str) -> str:
+    try:
+        callback()
+    except ValueError as exc:
+        message = str(exc)
+        if expected not in message:
+            fail(f"{label}_wrong_error:{message}")
+        return message
+    fail(f"{label}_did_not_fail_closed")
+
+def _formal_lowering_fast_cases() -> dict[str, Any]:
+    lowerer = TBGDLowering(TBGD_ROOT)
+    raw = {"$type": "RPG.GameCore.LookAt"}
+    context = _formal_context(raw)
+    before = _preformal_lower(lowerer, raw)
+    after = lowerer._lower_formal_ability_task_tree(
+        formal_source_context=context,
+        **_formal_args(raw),
+    )
+    if len(before.ability_tasks) != 1 or len(before.effects) != 1:
+        fail("formal_positive_pre_lower_not_singular")
+    if len(after.ability_tasks) != 1 or len(after.effects) != 1:
+        fail("formal_positive_post_lower_not_singular")
+    before_task, before_effect = before.ability_tasks[0], before.effects[0]
+    after_task, after_effect = after.ability_tasks[0], after.effects[0]
+    expected_source = IRSource(
+        before_task.source.source_path,
+        before_task.source.raw_type,
+        before_task.source.raw_id,
+        {key: value for key, value in dict(before_task.source.evidence).items() if key not in TOPOLOGY_EVIDENCE},
+    )
+    if before_task.execution_mode != "process_only":
+        fail("formal_positive_not_process_only")
+    if before_task.source != before_effect.source:
+        fail("formal_positive_initial_source_not_equal")
+    if after_task.source != after_effect.source or after_task.source != expected_source:
+        fail("formal_positive_canonical_source_not_synchronized")
+    if before_task.source == after_task.source:
+        fail("formal_positive_source_not_canonicalized")
+    if _task_identity(before_task) != _task_identity(after_task):
+        fail("formal_positive_task_identity_changed")
+    if _effect_identity(before_effect) != _effect_identity(after_effect):
+        fail("formal_positive_effect_identity_changed")
+    if before_effect.payload != after_effect.payload or before_effect.coverage_status != after_effect.coverage_status:
+        fail("formal_positive_effect_non_source_fields_changed")
+
+    runtime_raw = {"$type": "RPG.GameCore.TriggerAbility", "AbilityName": "FixtureNestedAbility"}
+    runtime_context = _formal_context(runtime_raw, source_path="fixture/runtime.json")
+    runtime_before = _preformal_lower(lowerer, runtime_raw, source_path="fixture/runtime.json")
+    runtime_after = lowerer._lower_formal_ability_task_tree(
+        formal_source_context=runtime_context,
+        **_formal_args(runtime_raw, source_path="fixture/runtime.json"),
+    )
+    runtime_before_task, runtime_before_effect = runtime_before.ability_tasks[0], runtime_before.effects[0]
+    runtime_after_task, runtime_after_effect = runtime_after.ability_tasks[0], runtime_after.effects[0]
+    if runtime_before_task.execution_mode != "runtime_effect":
+        fail("formal_non_process_fixture_not_runtime_effect")
+    if runtime_after_effect.source != runtime_before_effect.source:
+        fail("formal_non_process_effect_source_rewritten")
+    if runtime_after_task.source == runtime_before_task.source:
+        fail("formal_non_process_task_source_not_canonicalized")
+    if _task_identity(runtime_before_task) != _task_identity(runtime_after_task):
+        fail("formal_non_process_task_identity_changed")
+    if _effect_identity(runtime_before_effect) != _effect_identity(runtime_after_effect):
+        fail("formal_non_process_effect_identity_changed")
+
+    foreign_source = IRSource(
+        "fixture/foreign.json",
+        before_effect.source.raw_type,
+        before_effect.source.raw_id,
+        dict(before_effect.source.evidence),
+    )
+    disagreement = _LoweredAbility(
+        ability_tasks=[before_task],
+        effects=[replace(before_effect, source=foreign_source)],
+    )
+    with patch.object(lowerer, "_lower_ability_task_tree", return_value=disagreement):
+        disagreement_after = lowerer._lower_formal_ability_task_tree(
+            formal_source_context=context,
+            **_formal_args(raw),
+        )
+    if disagreement_after.effects[0].source != foreign_source:
+        fail("formal_source_disagreement_was_rewritten")
+
+    ambiguous = _LoweredAbility(
+        ability_tasks=[before_task],
+        effects=[before_effect, replace(before_effect)],
+    )
+    with patch.object(lowerer, "_lower_ability_task_tree", return_value=ambiguous):
+        ambiguous_after = lowerer._lower_formal_ability_task_tree(
+            formal_source_context=context,
+            **_formal_args(raw),
+        )
+    if [effect.source for effect in ambiguous_after.effects] != [before_effect.source, before_effect.source]:
+        fail("formal_ambiguous_effects_were_rewritten")
+
+    path_error = _expect_value_error(
+        "formal_source_path_conflict",
+        lambda: lowerer._lower_formal_ability_task_tree(
+            formal_source_context=context,
+            **_formal_args(raw, source_path="fixture/missing.json"),
+        ),
+        "source document is missing",
+    )
+    json_error = _expect_value_error(
+        "formal_json_path_conflict",
+        lambda: lowerer._lower_formal_ability_task_tree(
+            formal_source_context=context,
+            **_formal_args(raw, json_path="$.AbilityList[0].OnStart[1]"),
+        ),
+        "payload does not match its source",
+    )
+    fingerprint_error = _expect_value_error(
+        "formal_fingerprint_conflict",
+        lambda: lowerer._lower_formal_ability_task_tree(
+            formal_source_context=_formal_context(raw, with_fingerprint=False),
+            **_formal_args(raw),
+        ),
+        "source fingerprint is missing",
+    )
+    return {
+        "process_only_positive": {
+            "initial_source_equal": before_task.source == before_effect.source,
+            "canonical_source_equal": after_task.source == after_effect.source,
+            "task_identity_preserved": _task_identity(before_task) == _task_identity(after_task),
+            "effect_identity_preserved": _effect_identity(before_effect) == _effect_identity(after_effect),
+        },
+        "non_process_only": {
+            "effect_source_preserved": runtime_after_effect.source == runtime_before_effect.source,
+            "task_identity_preserved": _task_identity(runtime_before_task) == _task_identity(runtime_after_task),
+            "effect_identity_preserved": _effect_identity(runtime_before_effect) == _effect_identity(runtime_after_effect),
+        },
+        "fail_closed": {
+            "source_path": path_error,
+            "json_path": json_error,
+            "fingerprint": fingerprint_error,
+            "source_disagreement_no_rewrite": disagreement_after.effects[0].source == foreign_source,
+            "ambiguity_no_rewrite": [effect.source for effect in ambiguous_after.effects] == [before_effect.source, before_effect.source],
+        },
+    }
+
+def _client_source(name: str, *, parent: bool) -> IRSource:
+    evidence: dict[str, Any] = {
+        "json_path": f"$.AbilityList[0].OnStart[{name}]",
+        "source_opcode": "TriggerAbility",
+        "fixture_occurrence": name,
+    }
+    if parent:
+        evidence["parent_task_id"] = ""
+    return IRSource(f"fixture/client-{name}.json", "AbilityTask", "FixtureAbility", evidence)
+
+def _client_task(name: str, effect_id: str, source: IRSource, *, task_id: str | None = None) -> AbilityTaskIR:
+    return AbilityTaskIR(
+        task_id=task_id or f"fixture:task:{name}",
+        phase_id="fixture:phase",
+        action_id="fixture:action",
+        level=1,
+        ability_name="FixtureAbility",
+        callback_kind="OnStart",
+        task_index=0,
+        task_path=f"OnStart[{name}]",
+        branch="root",
+        opcode="TriggerAbility",
+        source=source,
+        effect_id=effect_id,
+        execution_mode="runtime_effect",
+        coverage_status="executable",
+        blocked_reason="",
+    )
+
+def _client_effect(effect_id: str, source: IRSource, *, ability_name: str = "CameraAbility") -> EffectIR:
+    return EffectIR(
+        effect_id=effect_id,
+        opcode="TriggerAbility",
+        payload={"standard": {"ability_name": ability_name}},
+        source=source,
+        coverage_status="executable",
+    )
+
+def _client_only_fast_cases() -> dict[str, Any]:
+    task_a = _client_task("a", "fixture:effect:a", _client_source("a", parent=False))
+    task_b = _client_task("b", "fixture:effect:b", _client_source("b", parent=False))
+    effect_a = _client_effect("fixture:effect:a", _client_source("a", parent=True))
+    effect_b = _client_effect("fixture:effect:b", _client_source("b", parent=True))
+    task_identity_before = [_task_identity(task_a), _task_identity(task_b)]
+    effect_identity_before = [_effect_identity(effect_a), _effect_identity(effect_b)]
+    lowered = _LoweredAbility(ability_tasks=[task_a, task_b], effects=[effect_a, effect_b])
+    _mark_client_only_trigger_ability_tasks(
+        lowered,
+        client_only_ability_names=frozenset({"CameraAbility"}),
+        client_only_ability_path="fixture/camera.json",
+    )
+    if [task.execution_mode for task in lowered.ability_tasks] != ["process_only", "process_only"]:
+        fail("client_only_positive_tasks_not_process_only")
+    if [effect.source for effect in lowered.effects] != [task.source for task in lowered.ability_tasks]:
+        fail("client_only_positive_effect_sources_not_synchronized")
+    if [_task_identity(task) for task in lowered.ability_tasks] != task_identity_before:
+        fail("client_only_positive_task_identity_changed")
+    if [_effect_identity(effect) for effect in lowered.effects] != effect_identity_before:
+        fail("client_only_positive_effect_identity_changed")
+    if lowered.effects[0].source == lowered.effects[1].source:
+        fail("client_only_distinct_raw_occurrences_merged")
+
+    non_task = _client_task("non", "fixture:effect:non", _client_source("non", parent=False))
+    non_effect = _client_effect("fixture:effect:non", _client_source("non", parent=True), ability_name="GameplayAbility")
+    non_candidate = _LoweredAbility(ability_tasks=[non_task], effects=[non_effect])
+    _mark_client_only_trigger_ability_tasks(
+        non_candidate,
+        client_only_ability_names=frozenset({"CameraAbility"}),
+        client_only_ability_path="fixture/camera.json",
+    )
+    if non_candidate.ability_tasks[0] != non_task or non_candidate.effects[0] != non_effect:
+        fail("client_only_non_candidate_rewritten")
+
+    amb_source = _client_source("amb-a", parent=True)
+    amb_task_a = _client_task("amb-a", "fixture:effect:amb", _client_source("amb-a", parent=False))
+    amb_task_b = _client_task("amb-b", "fixture:effect:amb", _client_source("amb-b", parent=False), task_id="fixture:task:amb-b")
+    amb_effect = _client_effect("fixture:effect:amb", amb_source)
+    ambiguous = _LoweredAbility(ability_tasks=[amb_task_a, amb_task_b], effects=[amb_effect])
+    _mark_client_only_trigger_ability_tasks(
+        ambiguous,
+        client_only_ability_names=frozenset({"CameraAbility"}),
+        client_only_ability_path="fixture/camera.json",
+    )
+    if ambiguous.effects[0].source != amb_source:
+        fail("client_only_ambiguity_rewritten")
+
+    disagreement_task = _client_task("disagree", "fixture:effect:disagree", _client_source("disagree", parent=False))
+    disagreement_source = _client_source("foreign", parent=True)
+    disagreement_effect = _client_effect("fixture:effect:disagree", disagreement_source)
+    disagreement = _LoweredAbility(ability_tasks=[disagreement_task], effects=[disagreement_effect])
+    _mark_client_only_trigger_ability_tasks(
+        disagreement,
+        client_only_ability_names=frozenset({"CameraAbility"}),
+        client_only_ability_path="fixture/camera.json",
+    )
+    if disagreement.effects[0].source != disagreement_source:
+        fail("client_only_source_disagreement_rewritten")
+
+    return {
+        "positive_pair_count": len(lowered.effects),
+        "distinct_raw_occurrence_sources": [source_json(effect.source) for effect in lowered.effects],
+        "task_identity_preserved": [_task_identity(task) for task in lowered.ability_tasks] == task_identity_before,
+        "effect_identity_preserved": [_effect_identity(effect) for effect in lowered.effects] == effect_identity_before,
+        "non_candidate_no_rewrite": non_candidate.ability_tasks[0] == non_task and non_candidate.effects[0] == non_effect,
+        "ambiguity_no_rewrite": ambiguous.effects[0].source == amb_source,
+        "source_disagreement_no_rewrite": disagreement.effects[0].source == disagreement_source,
+    }
+
 def run_fast() -> dict[str, Any]:
     started = time.perf_counter()
     gov = governance()
-    forbidden = AssertionError("fast attempted runtime execution or RNG")
-    with patch.object(TaskGraphExecutor, "execute", side_effect=forbidden), patch.object(random, "random", side_effect=forbidden):
-        cases = fast_contract()
+    forbidden = AssertionError("fast attempted runtime task-graph execution, condition evaluation, or RNG")
+    with (
+        patch.object(TaskGraphExecutor, "execute", side_effect=forbidden),
+        patch.object(RuleEvaluator, "evaluate_condition_result", side_effect=forbidden),
+        patch.object(random, "random", side_effect=forbidden),
+    ):
+        formal_cases = _formal_lowering_fast_cases()
+        client_cases = _client_only_fast_cases()
+        contract_cases = fast_contract()
         a1 = _run_a1_fast()
     if not a1.get("ok"):
         fail("a1_fast_regression")
     predicates = {
-        "exact_match_guard_present": True,
-        "source_mismatch_still_fail_closed": cases["mismatch"] == MISMATCH,
-        "missing_effect_still_fail_closed": cases["missing"] == "process_only_task_effect_missing",
-        "a1_fast_regression_pass": True,
-        "no_state_mutation_rng_or_event_execution": True,
+        "formal_process_only_source_sync_executed": formal_cases["process_only_positive"]["canonical_source_equal"],
+        "formal_non_process_only_effect_source_preserved": formal_cases["non_process_only"]["effect_source_preserved"],
+        "distinct_raw_occurrences_not_merged": len({json.dumps(row, sort_keys=True) for row in client_cases["distinct_raw_occurrence_sources"]}) == client_cases["positive_pair_count"],
+        "source_path_conflict_fail_closed": "source document is missing" in formal_cases["fail_closed"]["source_path"],
+        "json_path_conflict_fail_closed": "payload does not match its source" in formal_cases["fail_closed"]["json_path"],
+        "fingerprint_conflict_fail_closed": "source fingerprint is missing" in formal_cases["fail_closed"]["fingerprint"],
+        "formal_ambiguity_no_rewrite": formal_cases["fail_closed"]["ambiguity_no_rewrite"],
+        "formal_source_disagreement_no_rewrite": formal_cases["fail_closed"]["source_disagreement_no_rewrite"],
+        "client_only_source_sync_executed": client_cases["positive_pair_count"] == 2,
+        "client_only_non_candidate_no_rewrite": client_cases["non_candidate_no_rewrite"],
+        "client_only_ambiguity_no_rewrite": client_cases["ambiguity_no_rewrite"],
+        "client_only_source_disagreement_no_rewrite": client_cases["source_disagreement_no_rewrite"],
+        "task_identity_preserved": formal_cases["process_only_positive"]["task_identity_preserved"] and formal_cases["non_process_only"]["task_identity_preserved"] and client_cases["task_identity_preserved"],
+        "effect_identity_preserved": formal_cases["process_only_positive"]["effect_identity_preserved"] and formal_cases["non_process_only"]["effect_identity_preserved"] and client_cases["effect_identity_preserved"],
+        "consumer_valid_pair_admitted": contract_cases["valid"] == "",
+        "consumer_source_mismatch_fail_closed": contract_cases["mismatch"] == MISMATCH,
+        "consumer_missing_effect_fail_closed": contract_cases["missing"] == "process_only_task_effect_missing",
+        "a1_fast_regression_pass": bool(a1.get("ok")),
+        "runtime_execution_condition_rng_guards_not_hit": True,
     }
-    return {"ok": all(predicates.values()), "mode": "fast", "predicates": predicates, "governance": gov, "a1_predicates": a1.get("predicates"), "resource": {"wall_seconds": round(time.perf_counter() - started, 6)}}
-
+    return {
+        "ok": all(predicates.values()),
+        "mode": "fast",
+        "predicates": predicates,
+        "formal_lowering_cases": formal_cases,
+        "client_only_cases": client_cases,
+        "contract_cases": contract_cases,
+        "governance": gov,
+        "a1_predicates": a1.get("predicates"),
+        "resource": {"wall_seconds": round(time.perf_counter() - started, 6)},
+    }
 def build_context(root: Path) -> tuple[Any, Any, Any, Any]:
     lowerer = TBGDLowering(root)
     source_graph = lowerer.build_character_ability_source_graph_catalog()
