@@ -240,18 +240,21 @@ def collect_denominator(lowerer: TBGDLowering, snapshot: Any) -> dict[str, Any]:
             independent_process.append({"task_id": task.task_id, "effect_id": task.effect_id, "task_source": ts, "effect_source": es, "content_sha256": content_sha})
             continue
         raw_opcode = str(te.get("source_opcode") or task.opcode)
-        key = "|".join((path, json_path, raw_opcode, content_sha))
-        pairs.append({"key": key, "task_id": task.task_id, "effect_id": task.effect_id, "opcode": task.opcode, "raw_opcode": raw_opcode, "source_path": path, "json_path": json_path, "content_sha256": content_sha, "task_source_digest": digest(ts), "effect_source_digest": digest(es), "mismatch": task.source != effect.source, "normalization_explains_mismatch": normalized_source(effect.source) == ts})
+        raw_occurrence_key = "|".join((path, json_path, raw_opcode, content_sha))
+        key = "|".join((task.task_id, task.effect_id, raw_occurrence_key))
+        pairs.append({"key": key, "raw_occurrence_key": raw_occurrence_key, "task_id": task.task_id, "effect_id": task.effect_id, "opcode": task.opcode, "raw_opcode": raw_opcode, "source_path": path, "json_path": json_path, "content_sha256": content_sha, "task_source_digest": digest(ts), "effect_source_digest": digest(es), "mismatch": task.source != effect.source, "normalization_explains_mismatch": normalized_source(effect.source) == ts})
     pairs.sort(key=lambda row: row["key"])
-    if not pairs or len({row["key"] for row in pairs}) != len(pairs):
-        fail("formal_process_only_denominator_empty_or_ambiguous")
+    if not pairs:
+        fail("formal_process_only_denominator_empty")
+    if len({row["key"] for row in pairs}) != len(pairs):
+        fail("formal_process_only_pair_identity_ambiguous")
     return {
         "source_fingerprint": snapshot.source_fingerprint,
         "pair_count": len(pairs),
         "mismatch_count": sum(row["mismatch"] for row in pairs),
         "normalization_explained_mismatch_count": sum(row["mismatch"] and row["normalization_explains_mismatch"] for row in pairs),
         "pairs": pairs,
-        "pair_identity_digest": digest([(r["key"], r["task_id"], r["effect_id"], r["raw_opcode"]) for r in pairs]),
+        "pair_identity_digest": digest([(r["key"], r["raw_occurrence_key"], r["task_id"], r["effect_id"], r["raw_opcode"]) for r in pairs]),
         "topology_digest": digest(sorted(topology, key=lambda r: r["task_id"])),
         "non_process_digest": digest(sorted(non_process, key=lambda r: r["task_id"])),
         "non_process_count": len(non_process),
