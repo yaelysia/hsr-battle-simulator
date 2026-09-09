@@ -376,7 +376,7 @@ def _formal_lowering_fast_cases() -> dict[str, Any]:
         "formal_json_path_conflict",
         lambda: lowerer._lower_formal_ability_task_tree(
             formal_source_context=context,
-            **_formal_args(raw, json_path="$.AbilityList[0].OnStart[1]"),
+            **_formal_args(raw, json_path="$.AbilityList[0]"),
         ),
         "payload does not match its source",
     )
