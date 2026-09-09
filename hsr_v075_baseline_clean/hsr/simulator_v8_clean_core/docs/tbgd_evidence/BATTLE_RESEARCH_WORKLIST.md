@@ -137,11 +137,11 @@ A percentage may be used only after the source-family inventory and mechanism ta
 | --- | --- | --- | --- | --- | --- | --- |
 | W01 | Character battle-stat construction | P1 | `active` | candidate / partial wiring known | 2026-09-08 | close final ordinary avatar stat composition at battle start |
 | W02 | Ordinary character skill numeric/value authority | P0 | `active` | March `100102` producer/binding/consumers manually confirmed; Dan Heng cross-check | 2026-09-08 | generalize producer/index model across another unrelated ordinary character and record version-drift behavior |
-| W03 | Skill execution graph and combat operation dispatch | P0 | `active` | manually confirmed March/Aglaea examples | 2026-09-08 | build reusable execution/opcode mapping beyond representative skills |
+| W03 | Skill execution graph and combat operation dispatch | P0 | `active` | ordinary March/Asta/Aglaea/monster chains provide mature parameter, selector, dispatch and mutation anchors | 2026-09-09 | extract Battle Language Core v1 from already-confirmed chains before starting new mechanism-wide scans |
 | W04 | Damage resolution | P0 | `active` | raw multiplier plus shared DamageBehavior/Super-Break producer candidates | 2026-09-08 | close generic damage operands and composition/precedence |
-| W05 | Healing and shielding | P0 | `active` | March Skill02 numerics, Replace lifecycle hooks and Shield operands confirmed | 2026-09-08 | close generic ShieldByCasterDefence/snapshot/depletion semantics and one independent healing chain |
+| W05 | Healing and shielding | P0 | `active` | March Skill02 numerics, Replace lifecycle hooks, snapshot routing and main-shield `CanDispel=true` confirmed | 2026-09-09 | one independent healing chain plus source-facing modifier semantics; generic Shield/snapshot/depletion internals remain engine-bound |
 | W06 | Weakness, toughness and Weakness Break | P0 | `active` | shared break-state/elemental template chains manually confirmed | 2026-09-08 | close stance/toughness mutation and break state transition chain |
-| W07 | SPD, action value, turn/timeline and advance/delay | P0 | `active` | operation-level scheduling semantics confirmed; generic scheduler implementation is `blocked_evidence` | 2026-09-09 | continue exported operation/lifecycle edges only; reopen generic scheduler only with a new authoritative engine source |
+| W07 | SPD, action value, turn/timeline and advance/delay | P0 | `active` | OneMore/OneMorePerTurn protocol and distinct delay/insert surfaces confirmed; generic scheduler implementation is `blocked_evidence` | 2026-09-09 | continue exported operation/lifecycle edges only; reopen generic scheduler only with a new authoritative engine source |
 | W08 | Energy, Skill Points and actor-specific resources | P1 | `active` | shared resource mutation producers identified | 2026-09-08 | close one full generation/consumption/callback chain for each shared resource |
 | W09 | Buff/debuff/modifier/control semantics | P0 | `active` | formal Shield plus multiple ordinary shared property/modifier samples | 2026-09-08 | build lifetime/stack/refresh/dispel/immunity semantic rules |
 | W10 | Trigger, callback and event ordering | P0 | `active` | priority domains plus Aglaea natural pre-death/death-rattle/death-listener and muted forced-cleanup surfaces confirmed | 2026-09-09 | expand source-facing event/lifecycle chains; generic tie-break/cross-event dispatcher is `blocked_evidence` |
@@ -197,7 +197,11 @@ Goal: turn TBGD Ability/ConfigCharacter data into an audited battle-execution la
 - [ ] Establish ownership and parameter environment for nested/sub-ability execution.
 - [ ] Record unknown opcodes as explicit unresolved language entries rather than ignoring them.
 
-**Next closure:** reusable opcode catalog for common ordinary skill execution.
+**Immediate next slice — Battle Language Core v1:** reuse already-closed March shield, Asta bounce, Aglaea/servant and representative ordinary monster chains to extract parameter/binding, entity-selector, nested/parallel/insert dispatch and battle-state-mutation semantics. Do not turn this slice into an exhaustive opcode census or reopen mechanism-specific formulas.
+
+**Exit condition:** later Damage/Break/Modifier/Resource threads can cite the resulting common parameter/selector/dispatch vocabulary instead of re-deriving the execution frame from each actor.
+
+**Next closure:** reusable opcode/selector/dispatch catalog for common ordinary execution.
 
 ### W04 — Damage resolution
 
@@ -224,12 +228,13 @@ Goal: establish healing/shield arithmetic and lifecycle semantics.
 - [x] Resolve March ordinary Skill02 percentage/flat/lifetime/threshold/aggro parameter numerics and consumer mapping.
 - [x] Confirm March shield reapplication is `Stacking="Replace"`, `OnStack -> InitShield`, and `OnDestroy -> RemoveShield` at the character-local graph level.
 - [x] Confirm March Skill02 lifetime input is base `SkillParam[1]` plus PointB2's pinned `+1` increment.
-- [ ] Determine generic `ShieldByCasterDefence` arithmetic and exact scaling-stat snapshot scope/capture point.
-- [ ] Determine generic replacement callback order, depletion/lifetime-to-destroy timing and shield dispellability.
+- [x] Confirm ordinary main March shield dispellability from `AvatarStatusConfig[10010011].CanDispel=true`.
+- [ ] Determine generic `ShieldByCasterDefence` arithmetic and exact scaling-stat snapshot scope/capture point. **Blocked evidence:** generic GameCore shield/snapshot consumer unavailable at the current pin.
+- [ ] Determine generic replacement callback order and depletion/lifetime-to-destroy timing. **Blocked evidence:** generic modifier/shield dispatcher implementation is not exported.
 - [ ] Trace one ordinary healing formula from producer to final HP mutation.
 - [ ] Determine healing modifiers, caps/overheal behavior where represented, and callback timing.
 
-**Next closure:** generic shield engine semantics plus one independent healing chain; do not resume March numeric-source discovery.
+**Next closure:** one independent healing chain plus reusable source-facing modifier semantics; do not resume March numeric or dispellability discovery, and reopen generic Shield/snapshot/depletion internals only with a new authoritative engine source.
 
 ### W06 — Weakness, toughness and Weakness Break
 
@@ -259,9 +264,10 @@ Goal: identify the authority that determines when every battle entity acts.
 - [ ] Determine how SPD changes affect already-scheduled action value; Hanya confirms the property write but the reschedule consumer is not exported.
 - [x] Confirm Servant 11402 has its own speed/action-delay state and a servant-owned `ModifyActionDelay(-1 normalized)` passive, establishing independent schedulability at the data level.
 - [x] Separate logical scheduling operations from animation/presentation/preshow waits in inspected ordinary graphs.
-- [ ] Close exact `OneMore` queue/status-tick semantics; source confirms it is distinct from delay mutation/insert action but not its scheduler implementation.
+- [x] Close the source-facing `OneMore` / `OneMorePerTurn` marker-controller lifecycle and distinguish it from `SetActionDelay(0)` and `TurnInsertAbility` using Gepard plus W4 Claymore cross-validation.
+- [ ] Determine exact runnable ordering of OneMore against other ready/inserted actions. **Blocked evidence:** generic scheduler implementation is not exported.
 
-**Next closure:** exported operation/lifecycle edges only; generic SPD→AV/queue/requeue/rescale/tie-break remains `blocked_evidence` until a new authoritative engine source appears.
+**Next closure:** exported operation/lifecycle edges only; generic SPD→AV/queue/requeue/rescale/tie-break and exact OneMore runnable ordering remain `blocked_evidence` until a new authoritative engine source appears.
 
 ### W08 — Energy, Skill Points and actor-specific resources
 
@@ -567,17 +573,21 @@ Retirement requires a durable negative-evidence note. “We did not find a consu
 | 2026-09-08 | Created living worklist with initial `W01..W18` decomposition and cross-cutting battle-language dictionary. | PR #8 had accumulated representative evidence but lacked a maintainable mechanism-level completion ledger. The worklist intentionally treats its denominator as mutable and preserves manual semantic review as the promotion authority. |
 | 2026-09-08 | Integrated first five-lane parallel archaeology checkpoint. | Corrected W02 producer false-negative and W14 `IL*` false-friend, promoted closed W05/W10/W12/W13/W16/W17 leaves, recorded W07/RNG engine-export boundaries, and retained all packages as `active` where mechanism-level obligations remain. |
 | 2026-09-09 | Integrated second boundary-focused archaeology pass. | Closed Aglaea natural pre-death/death-rattle/death-listener surfaces plus priority-tiered muted forced cleanup; proved HardLevel typed property access while freezing the generic spawn-stat constructor; froze W10/W12 dispatcher/RNG implementation gaps and W17 AssistantTrigger ownership/ID producer at the exact pinned release-data boundary. |
+| 2026-09-09 | Compacted post-integration stale leaves and reset the next research sequence. | Promoted March main-shield `CanDispel=true` and the OneMore/OneMorePerTurn source-facing protocol, preserved their generic engine boundaries, and made W03 Battle Language Core v1 the first single-thread closure before mechanism-specific vertical slices. |
 
-## Current P0 closure queue
+## Current single-thread research sequence
 
-This queue is intentionally short and should be reordered when evidence changes.
+This is a sequencing preference for the next serial archaeology pass, not a new fixed taxonomy or a claim that the listed packages are the only remaining work.
 
-1. **W04/W05/W09 — core numerical/lifecycle language:** generic Damage plus Shield/Modifier arithmetic/lifecycle; use source-facing operands and multiple ordinary consumers.
-2. **W06 — toughness/break state machine:** close one full hit -> stance mutation -> break -> element-specific consequence -> recovery chain where source-facing rules are exported.
-3. **W03 — execution language:** broaden reusable battle-mutating opcode/dispatch mapping and preserve presentation/mixed filtering.
-4. **W02 — producer model finishing pass:** one further unrelated ordinary-character cross-check plus version-drift discipline; do not reopen March producer discovery.
-5. **W13 — special-entity source-facing semantics:** property synchronization, resource ownership and JoinSkill. Passive autoactivation, initial scheduler math and universal death dispatcher are frozen engine gaps.
-6. **W10/W12/W14/W07 — blocked generic engine contracts:** do not repeatedly search the same release-data dump for dispatcher/RNG/final-spawn-stat/SPD→AV implementation bodies. Reopen only with a new authoritative engine/source family; continue only their independent source-facing leaves.
-7. **W17 — reverse-scan maintenance:** broad pass and high-risk tails are complete/frozen enough for this checkpoint; inspect new shared definitions only when a concrete ordinary consumer or new source signal appears.
+1. **W03 + L01/L03/L04/L05 — Battle Language Core v1:** extract reusable parameter/binding, entity-selector, nested/parallel/insert dispatch and battle-state-mutation vocabulary from already-closed March/Asta/Aglaea/monster chains. Do not start an exhaustive opcode census.
+2. **W04 — Damage vertical slice:** close one ordinary direct-hit producer -> execution -> damage-state consequence chain, then cross-sample before generalizing operands/order.
+3. **W06 — Toughness/Break vertical slice:** close hit -> stance mutation -> broken state -> elemental consequence -> recovery using source-facing arithmetic/order where exported.
+4. **W05 + W09 — Healing/Modifier lifecycle:** close one independent healing chain and reusable stack/replace/refresh/extend/dispel/control/DoT semantics; do not reopen March numeric/dispellability discovery.
+5. **W08 — Resource economy:** close Energy and shared Skill Point initialization/gain/cost/caps plus one actor-specific gauge.
+6. **W11 + W15 — Targeting/Enemy AI:** close battle state -> AI decision -> external/internal target selection -> selected skill -> execution, consuming W12 random primitives only where needed.
+7. **W16 — Encounter/Spawn/Phase/Termination:** close wave, reinforcement, phase and battle-end source-facing chains without restarting hidden W14 final-stat arithmetic.
+8. **W01 + W18 — Battle-start build construction:** close avatar base/build/equipment/relic/Technique inputs into battle-start properties.
 
-W02 ordinary March SkillParam producer discovery remains removed from the P0 queue because the exact pinned producer is confirmed. No package-level completion percentage is authoritative while the taxonomy/denominator remains mutable.
+Dependency/sentinel rule: W02, W07, W10, W12, W13, W14 and W17 do not receive standalone generic-engine searches merely because they remain `active`. Reopen only a concrete source-facing residual required by the current vertical slice, or when a genuinely new authoritative source/source family appears.
+
+W02 ordinary March SkillParam producer discovery remains closed. No package-level completion percentage is authoritative while the taxonomy/denominator remains mutable.
