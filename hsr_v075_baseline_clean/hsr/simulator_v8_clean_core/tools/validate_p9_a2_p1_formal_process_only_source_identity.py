@@ -233,7 +233,7 @@ def collect_denominator(lowerer: TBGDLowering, snapshot: Any) -> dict[str, Any]:
         path = str(ts.get("source_path") or "")
         json_path = str(te.get("json_path") or "")
         content_sha = str(digests.get(path) or "")
-        if path not in formal_paths or not json_path.startswith("$") or len(content_sha) != 64:
+        if path not in digests or not json_path.startswith("$") or len(content_sha) != 64:
             fail(f"formal_source_identity_incomplete:{task.task_id}")
         same_occurrence = ts.get("source_path") == es.get("source_path") and ts.get("raw_type") == es.get("raw_type") and ts.get("raw_id") == es.get("raw_id") and te.get("json_path") == ee.get("json_path")
         if not same_occurrence:
