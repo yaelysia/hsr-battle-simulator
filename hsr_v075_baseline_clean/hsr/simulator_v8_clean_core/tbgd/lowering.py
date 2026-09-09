@@ -5774,6 +5774,7 @@ class TBGDLowering:
             else:
                 coverage_status = "executable"
                 blocked_reason = ""
+        pre_canonical_parent_source = parent_source
         parent_source = IRSource(
             parent_source.source_path,
             parent_source.raw_type,
@@ -5784,6 +5785,25 @@ class TBGDLowering:
                 if key not in {"parent_task_id", "child_task_count"}
             },
         )
+        if (
+            parent.execution_mode == "process_only"
+            and parent.effect_id
+            and parent_source != pre_canonical_parent_source
+        ):
+            matching_effects = [
+                (effect_index, effect)
+                for effect_index, effect in enumerate(lowered.effects)
+                if effect.effect_id == parent.effect_id
+            ]
+            if (
+                len(matching_effects) == 1
+                and matching_effects[0][1].source == pre_canonical_parent_source
+            ):
+                effect_index, effect = matching_effects[0]
+                lowered.effects[effect_index] = replace(
+                    effect,
+                    source=parent_source,
+                )
         if topology_blocked_reason:
             coverage_status = "blocked"
             blocked_reason = topology_blocked_reason
@@ -8768,6 +8788,32 @@ def _mark_client_only_trigger_ability_tasks(
         else task
         for task in lowered.ability_tasks
     ]
+    for effect_index, effect in enumerate(lowered.effects):
+        if effect.effect_id not in client_only_effect_ids:
+            continue
+        matching_tasks = [
+            task
+            for task in lowered.ability_tasks
+            if task.effect_id == effect.effect_id
+            and task.execution_mode == "process_only"
+        ]
+        if len(matching_tasks) != 1:
+            continue
+        task = matching_tasks[0]
+        pre_canonical_task_source = IRSource(
+            task.source.source_path,
+            task.source.raw_type,
+            task.source.raw_id,
+            {
+                **dict(task.source.evidence),
+                "parent_task_id": "",
+            },
+        )
+        if effect.source == pre_canonical_task_source:
+            lowered.effects[effect_index] = replace(
+                effect,
+                source=task.source,
+            )
 
 
 @dataclass(frozen=True)
