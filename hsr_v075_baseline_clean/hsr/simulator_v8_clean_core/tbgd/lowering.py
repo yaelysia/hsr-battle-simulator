@@ -5774,6 +5774,7 @@ class TBGDLowering:
             else:
                 coverage_status = "executable"
                 blocked_reason = ""
+        pre_canonical_parent_source = parent_source
         parent_source = IRSource(
             parent_source.source_path,
             parent_source.raw_type,
@@ -5784,6 +5785,25 @@ class TBGDLowering:
                 if key not in {"parent_task_id", "child_task_count"}
             },
         )
+        if (
+            parent.execution_mode == "process_only"
+            and parent.effect_id
+            and parent_source != pre_canonical_parent_source
+        ):
+            matching_effects = [
+                (effect_index, effect)
+                for effect_index, effect in enumerate(lowered.effects)
+                if effect.effect_id == parent.effect_id
+            ]
+            if (
+                len(matching_effects) == 1
+                and matching_effects[0][1].source == pre_canonical_parent_source
+            ):
+                effect_index, effect = matching_effects[0]
+                lowered.effects[effect_index] = replace(
+                    effect,
+                    source=parent_source,
+                )
         if topology_blocked_reason:
             coverage_status = "blocked"
             blocked_reason = topology_blocked_reason
