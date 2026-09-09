@@ -30,7 +30,6 @@ TurnBasedGameData -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat 
 - P9-S8C2 已验收：共享 `TaskGraphExecutor` 现在具备 `RandomConfig` / `weighted_single` 专用的类型化 weighted-selection hook/result contract，由 executor 反查 accepted IR 校验 selection/choice/ordinal/branch identity，只执行被选 branch，并将恰一个合法 `RNGEvent` 纳入既有 task-graph result、duplicate identity 与原子 rollback 空间。执行 head `5e14526f4046626528aee4a594a8e7eb8a9ef14a` 的 PR #5 CI run `34080289369` 已通过独立核验。该检查点不计算动态权重、不接真实 ability/status RNG ledger caller，也不代表 projectile、barrier、parallel、sequence-select 或整个 S8C 已闭合。
 - Route A 前置 A1 `P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY` 已通过独立 REVIEW：正式 action admission 现在从与 `AbilityTaskSystem` 一致的 `action_root` 图闭包做静态支持投影，只通过真实 `TriggerAbility` 链接纳入 `nested_only`，排除闭包外 bound phase/task，同时保留 reachable blocker、process-only 区分、external-legacy 与上游准入门。REVIEW 返修补齐了跨图路径敏感 active-cycle fail-closed；实现 head `84ee94b4d1bf25221d783f8a84d7b79f8e46f896` 的 hosted CI run `34122026242` 已通过。该检查点不包含 A2，也不代表 PR #9 caller/RNG-ledger 已完成。
 - Route A 的 A2 独立 L0 前置 `P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION` 已通过独立 REVIEW：`tbgd/lowering.py` 在既有 status event producer 与 typed `TriggerAbility` link 事实形成后增加单一 post-link admission finalization，只移除来源可证明为过早冻结的精确 `status_callback_event_not_admitted:<event>` blocker。STRICT Direct 在 lowering 之前从 formal raw/source graph 动态枚举 action-window `TriggerAbility` occurrence，并与 pre-finalizer IR、typed target/final graph、production audit 双向 exact 对账；当前来源只有 1 条真实正例发生 blocked→executable transition，其余同 action-window event 独立 blocker 均保持。真实 queue resolution 驱动 invocation role，A1 admission regression 保持；生产实现 commit `a73576c6d5d751f6c5d14713e5ed49883fc82b2f`，PR #12 最终执行证据 run `34193467352` 全绿且 workflow 权限为只读。该检查点只闭合 A2 的 merged-master L0 admission prerequisite，不代表 PR #11 的 action-window status→nested formal ability runtime transport/routing 已完成，也不替代其真实 `CombatExecutor.execute(ActionCommand)` Direct。
-- Route A 的 A2-P1 前置 `P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY` 已通过独立 REVIEW：formal lowering 现在只在同一 `process_only` task 的 own `EffectIR` 唯一且旧 source 与 canonicalization 前 task source exact-equal 时同步 canonical `IRSource`；既有 client-only `TriggerAbility` post-conversion 路径也只在唯一 exact pair 下同步，ambiguity/source disagreement 均保持 no-rewrite/fail-closed。STRICT Direct 从 pinned TBGD/current formal lowering 动态重建完整分母，`5073` 条 baseline mismatch 全部由 topology-evidence normalization 唯一解释并在当前生产 lowering 中降为 `0`，`8120` 条 non-process-only pair 与独立来源保持不变；same-owner 正式 action 只移除 `process_only_task_effect_source_mismatch`，`ability_task_graph_nested_identity_mismatch`、S8C/S11 等后续 blocker 继续 fail-closed。生产修复 commit `d163e0d3225a8e31bfd4af602541049332614e59`；REVIEW 返修后 final EXEC head `4cca72510761331c9fb721999d436bf6f0861e66` 的 P1 run `34330329036` 与 P0 regression `34330328967` 全绿，workflow 权限保持只读。该检查点只闭合 formal process-only task/effect source identity，不代表后续 same-owner formal blocker、PR #11 A2 runtime transport 或 PR #9 caller/RNG-ledger 已完成。
 - P9-S5D2 的随机目标基础和弹射目标消费已完成，但其完整动作 transaction/replay 正例明确等待 S8
   随机控制流闭合后回验，因此该聚合项仍未勾选。
 
@@ -47,14 +46,14 @@ simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
 当前检查点停在：
 
 ```text
-P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY — accepted (Route A predecessor)
+P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION — accepted (Route A / A2 L0 prerequisite)
 ```
 
-下一步必须由 PLAN 从包含 A2-P1 的最新 merged master 重新运行 same-owner outer-action formal blocker attribution。若仍暴露独立、source-backed、早于 A2 transport 的下一单一 authority blocker，只为该最早 blocker 新建一张 Route-A predecessor；不得把 S8C/S11 或多个责任域打包。若该前置链已经清空，则恢复既有 PR #11 / A2：保留其现有实现，更新到新的 merged master，并原样重跑其既有 Fast 与真实 `CombatExecutor.execute(ActionCommand)` Direct。PR #9 继续保持暂停，只有 PR #11 的 A2 独立验收并合并后，才允许在原 PR 上恢复 RandomConfig caller/RNG-ledger 工作。
+当前没有需要新建的下一张 P9 执行卡。下一步必须恢复既有 PR #11 / A2：保留其现有实现，在 PR #12 的检查点进入 merged master 后更新到新的 master，并原样重跑其既有 Fast 与真实 `CombatExecutor.execute(ActionCommand)` Direct。A2-P0 的 L0 Direct 不能替代 PR #11 的 runtime Direct；若 PR #11 更新后暴露新的独立 source-backed、且早于 A2 transport 的 blocker，按其既有卡返回 PLAN 重核前置。PR #9 继续保持暂停，只有 PR #11 的 A2 也独立验收并合并后，才允许在原 PR 上恢复 RandomConfig caller/RNG-ledger 工作。
 
 ## 仍未完成
 
-- Route A 前置 A2 runtime：action-window status callback -> nested formal ability continuation/hook transport/routing；其 A2-P0 与 A2-P1 前置已验收，但 P1 merge 后仍需由 PLAN 重新归因剩余 same-owner outer-action formal blockers，再决定下一 predecessor 或恢复 PR #11。
+- Route A 前置 A2 runtime：action-window status callback -> nested formal ability continuation/hook transport/routing；其 L0 admission prerequisite A2-P0 已验收，但 PR #11 原 runtime Direct 仍必须完成。
 - P9-S8C 剩余真实 RandomConfig caller/RNG-ledger integration、projectile、多 hit identity、barrier、parallel、sequence-select/timeline-wait，以及后续角色共享控制流、事件、状态、伤害、资源、队列、死亡、击破、形态和独立行动实体。
 - P9-S5D2 的完整动作 transaction/replay 回验，仍等待 S8 随机控制流闭合。
 - P9 完成后的全角色目录回验，以及记忆、欢愉专属内容增量。
@@ -87,7 +86,6 @@ P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY — accepted (Route A predecessor)
 - P9-S8C2 执行证据：PR #5 正式 `[HANDOFF:REVIEW]` 评论 `5564689207`、执行 head `5e14526f4046626528aee4a594a8e7eb8a9ef14a` 与 CI run `34080289369`；独立 REVIEW 已核对生产 diff、聚焦测试和 Actions 日志。该证据只接受共享 weighted-selection executor contract，不接受真实 caller 或 S8C 聚合。
 - Route A A1 执行与 REVIEW 证据：`live_validation_reports/P9_FORMAL_ACTION_GRAPH_ADMISSION_AUTHORITY_execution_report.md`、PR #10 `[RETURN_FOR_FIX]` 评论 `5570308533`、修复后实现 head `84ee94b4d1bf25221d783f8a84d7b79f8e46f896` 与 CI run `34122026242`。该证据只接受 formal action graph admission authority；A2 与 PR #9 caller/RNG-ledger 仍未验收。
 - Route A A2-P0 执行与 REVIEW 证据：`live_validation_reports/P9-A2-P0_ACTION_WINDOW_STATUS_CALLBACK_ADMISSION_FINALIZATION_execution_report.md`、PR #12 REVIEW 返修评论 `5578826676` / `5579864543`、生产实现 commit `a73576c6d5d751f6c5d14713e5ed49883fc82b2f` 与最终执行 CI run `34193467352`。该证据只接受 merged-master L0 action-window status callback/task admission finalization prerequisite；PR #11 的 A2 runtime transport/routing 与真实 `CombatExecutor.execute(ActionCommand)` Direct 仍未验收，PR #9 caller/RNG-ledger 继续暂停。
-- Route A A2-P1 执行与 REVIEW 证据：`live_validation_reports/P9-A2-P1_FORMAL_PROCESS_ONLY_SOURCE_IDENTITY_execution_report.md`、PR #13 REVIEW 返修评论 `5597805187`、生产修复 commit `d163e0d3225a8e31bfd4af602541049332614e59`、final EXEC head `4cca72510761331c9fb721999d436bf6f0861e66` 与 P1 CI run `34330329036`。该证据只接受 formal process-only task/own-effect canonical source identity closure；后续 same-owner formal blockers、PR #11 runtime transport 与 PR #9 caller/RNG-ledger 仍未验收。
 - P9 阶段状态只认总计划 checklist 和已验收 Git 检查点；`ready_for_review` 报告不是最终验收。
 - 文档归属与归档：`simulator_v8_clean_core/DOCUMENTATION_INDEX.md`。
 - 瘦身前交接全文：`simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-07-24.md`。
