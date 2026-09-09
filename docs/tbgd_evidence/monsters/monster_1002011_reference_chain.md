@@ -4,102 +4,74 @@
 
 - TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`
 - Maturity: `manually_confirmed`
-- Scope: representative ordinary monster identity/template/skill chain plus corrected ordinary hard-level scaling inputs, exported HardLevel property-access surface, and final-stat evidence boundary
+- Scope: representative ordinary monster identity/template/skill chain, corrected HardLevel scaling inputs, Stage/Elite/phase topology, typed HardLevel-property access, and explicit final-stat engine boundary
 - Runtime production code changed: no
 
-This record intentionally does **not** assign a localized/public display name to MonsterID `1002011` yet. The config path strongly associates it with the Cocolia P1 weapon family, but the pinned TextMap/display-name chain is not closed here.
+This record intentionally does not assign a localized/public display name to MonsterID `1002011`; the pinned TextMap/display-name chain is not closed here.
 
 ## Critical W14 correction
 
-The earlier version of this record treated `ExcelOutput/ILHardLevelGroup.json` as part of the ordinary monster scaling chain. That classification is **superseded**.
+Earlier archaeology treated `ExcelOutput/ILHardLevelGroup.json` as ordinary monster scaling authority. That classification is superseded.
 
-The parallel W14/W16 audit re-read the ordinary and `IL*` families and established:
-
-- ordinary five-stat `(HardLevelGroup,Level)` inputs are in `ExcelOutput/HardLevelGroup.json`;
-- `ILHardLevelGroup` / `ILBattleMonster` belong to a separate RtBattle/IL family for the inspected numeric collision and are not ordinary W14 authority.
-
-The previously recorded `ILHardLevelGroup` values (`700.23926`, `69.67834`, `619.263`) remain real raw values in that other family, but must not be used to construct this ordinary monster's stats.
+The ordinary five-stat `(HardLevelGroup,Level)` family is `ExcelOutput/HardLevelGroup.json`. `ILHardLevelGroup` / `ILBattleMonster` are a separate RtBattle/IL family for the inspected collision and must not be used for ordinary W14.
 
 ## Authority classification
 
 | Source | Role | Classification |
 |---|---|---|
-| `ExcelOutput/MonsterConfig.json` | concrete monster identity, weaknesses/resists/skills/instance modifications | `battle_authoritative` / mixed |
-| `ExcelOutput/MonsterTemplateConfig.json` | base ATK/DEF/HP/SPD/Stance and config/AI path | `battle_authoritative` |
-| `ExcelOutput/HardLevelGroup.json` | ordinary `(HardLevelGroup,Level)` ATK/DEF/HP/SPD/Stance scaling inputs | `battle_authoritative` input family; final operator unavailable |
-| `ExcelOutput/ILHardLevelGroup.json` | RtBattle/IL scaling family | `false_positive` for this ordinary W14 chain |
-| `ExcelOutput/MonsterUniqueConfig.json` | conditional candidate override family | record-level participation must be explicitly referenced; not universal |
-| `ExcelOutput/MonsterSkillConfig.json` | skill metadata and numeric parameters | `battle_authoritative` |
-| `Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json` | ordinary skill entry wiring / DynamicHash bindings | `battle_authoritative` |
-| `Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json` | executable battle graph | `battle_authoritative` |
-| `Config/ConfigAI/Monster_Common_SequenceThree_AI.json` | sequenced-skill AI data | `battle_supporting` / AI authority for the inspected control surface |
-| `RPG.GameCore.SetDynamicValueByHardLevelProperty` occurrences | exported HardLevel property-read operation | `battle_authoritative` operation surface; generic lookup/composition implementation not exported |
+| `ExcelOutput/MonsterConfig.json` | concrete monster identity, skills, resistances, instance modification inputs | battle-authoritative / mixed |
+| `ExcelOutput/MonsterTemplateConfig.json` | base ATK/DEF/HP/SPD/Stance, config/AI path | battle-authoritative |
+| `ExcelOutput/HardLevelGroup.json` | ordinary level/group ATK/DEF/HP/SPD/Stance inputs | battle-authoritative input family; final operator unavailable |
+| `ExcelOutput/EliteGroup.json` | additional encounter/monster difficulty context | ordinary input family; precedence unresolved |
+| `ExcelOutput/ILHardLevelGroup.json` | RtBattle/IL scaling | false positive for ordinary W14 |
+| `ExcelOutput/MonsterUniqueConfig.json` | conditional family | include only with explicit chain |
+| `ExcelOutput/MonsterSkillConfig.json` | skill numeric producer | battle-authoritative when consumer traced |
+| ConfigCharacter / ConfigAbility monster files | execution wiring/semantics | battle-authoritative at operation level |
+| `SetDynamicValueByHardLevelProperty` | typed HardLevel-property read surface | battle-authoritative operation surface; generic implementation unavailable |
 
-## Raw identity / skill chain
+## Raw identity and skill chain
 
 ```text
-MonsterConfig[MonsterID=1002011]
-  -> MonsterTemplateID = 1002011
+MonsterConfig[1002011]
+  -> MonsterTemplateID=1002011
   -> MonsterTemplateConfig[1002011]
-       JsonConfig = Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json
-       AIPath = Config/ConfigAI/Monster_Common_SequenceThree_AI.json
        base ATK/DEF/HP/SPD/Stance
+       JsonConfig=Monster_W1_CocoliaP1_01_Config.json
+       AIPath=Monster_Common_SequenceThree_AI.json
 
-MonsterConfig[1002011].SkillList = [100201101]
+MonsterConfig[1002011].SkillList=[100201101]
   -> MonsterSkillConfig[100201101]
-       SkillTriggerKey = Skill04
-       ParamList[0] = 2
+       SkillTriggerKey=Skill04
+       ParamList[0]=2
   -> ConfigCharacter DynamicHash(-190305622)
        SkillParam(Skill04,index=0)
-  -> ConfigAbility Skill04 damage consumer
-       DamageByAttackProperty
-       Target = AllEnemy
-       DamageType = Ice
-       DamagePercentage = DynamicHash(-190305622)
+  -> ConfigAbility DamageByAttackProperty
+       DamagePercentage=DynamicHash(-190305622)
 ```
 
-## Confirmed concrete instance facts
+The specific damage-percentage input `2` is therefore source-closed for this formal AoE Ice operation.
 
-The inspected ordinary `MonsterConfig[1002011]` establishes:
+## Representative concrete/template facts
 
-- `MonsterTemplateID=1002011`;
-- weaknesses: Fire and Thunder;
-- 20% resistance to Physical, Ice, Wind, Quantum and Imaginary;
-- Freeze control resistance `1`;
-- formal skill list `[100201101]` for the inspected instance;
-- no promoted instance-local summon/custom/dynamic/AI-sequence override in this row.
-
-These are instance-level battle facts and should not be inferred from the template.
-
-## Confirmed template facts
-
-Exact pinned `MonsterTemplateConfig[1002011]` supplies:
+`MonsterConfig[1002011]` establishes the concrete identity, weaknesses/resists and skill list. `MonsterTemplateConfig[1002011]` supplies:
 
 - ATK base `18`
 - DEF base `210`
 - HP base `69.75`
 - SPD base `100`
 - Stance base `60`
-- stance type Ice
 - status resistance base `0.2`
-- character config path `Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json`
-- AI path `Config/ConfigAI/Monster_Common_SequenceThree_AI.json`
-
-This resolves the older `1002010`/`1002011` template ambiguity: the referenced template is `1002011` at the pin.
+- ordinary ConfigCharacter and AI paths.
 
 Template bases are not final encounter properties.
 
-## Correct ordinary hard-level input family
+## Correct ordinary HardLevel input family
 
-Exact pinned ordinary source:
-
-`ExcelOutput/HardLevelGroup.json`
-
-blob:
+Exact pinned `ExcelOutput/HardLevelGroup.json` blob:
 
 `9ee36b767b010d2c85aa7169e86e9f0a4220a935`
 
-Rows are keyed by `(HardLevelGroup, Level)` and expose:
+Rows expose:
 
 - `AttackRatio`
 - `DefenceRatio`
@@ -107,150 +79,162 @@ Rows are keyed by `(HardLevelGroup, Level)` and expose:
 - `SpeedRatio`
 - `StanceRatio`
 
-Cross-checked examples include:
+Representative cross-checks:
 
-| HardLevelGroup | Level | ATK | DEF | HP | SPD | Stance |
+| Group | Level | ATK | DEF | HP | SPD | Stance |
 |---:|---:|---:|---:|---:|---:|---:|
 | 1 | 29 | `5.19238` | `2.333333` | `5.020885` | `1` | `1` |
 | 1 | 40 | `8.634539` | `2.857143` | `9.524581` | `1` | `1` |
 | 2 | 29 | `6.127009` | `2.333333` | `13.429104` | `1` | `1` |
 
-The first parallel audit also confirmed that group 1 `SpeedRatio` changes from `1` at level 65 to `1.1` at level 66. Therefore SPD scaling is a real ordinary data input, not an assumed constant.
+Group 1 `SpeedRatio` changes from `1` at level 65 to `1.1` at level 66, so SPD scaling is a real ordinary input.
 
-These fields remain **inputs**. Their `Ratio` names do not prove the final multiply/add/replace/clamp operator.
+`Ratio` names do not prove the final operator.
 
-## Exported HardLevel property-access operation
+## Typed HardLevel-property access is real
 
-The second integration pass found an exact pinned ordinary farm-stage configuration using:
-
-`RPG.GameCore.SetDynamicValueByHardLevelProperty`
-
-in:
-
-`Config/ConfigAbility/Level/Level_FarmStage_Ability.json`
-
-exact blob:
+Pinned `Config/ConfigAbility/Level/Level_FarmStage_Ability.json` blob:
 
 `16dd1882925e66eb9d7b11c7d1d5b98c9938ed67`
 
-Representative `FarmRelicAbility_104307` behavior:
+contains `RPG.GameCore.SetDynamicValueByHardLevelProperty(Property=HPRatio)` in an ordinary farm-stage ability.
+
+This proves HardLevel properties are engine-readable battle inputs. It does not reveal the ordinary monster spawn-stat constructor or its precedence rules.
+
+## Static final-stat topology and hard engine boundary
+
+Current evidence supports a layered model:
 
 ```text
-OnStack
-  -> SetDynamicValueByHardLevelProperty(
-       Target=ModifierOwnerEntity,
-       Property=HPRatio,
-       DynamicKey=Hardlevel_HP)
-  -> SetDynamicValueByProperty(BaseAttack -> TempAttack)
-  -> StackProperty(AttackDelta, encoded expression using the working values)
-```
-
-This proves that HardLevel fields are not merely dead Excel metadata: the exported battle language contains a typed operation that requests a HardLevel property for a battle entity.
-
-It does **not** reveal the generic implementation that chooses the effective `(HardLevelGroup,Level)` context, reads the row, constructs a spawned monster's base/final properties, or orders hard-level ratios against flat/template/elite/phase overrides. The sampled farm-stage ability performs its own later modifier arithmetic and is not the ordinary monster spawn constructor.
-
-## Final-stat construction model: confirmed topology, blocked final operator
-
-The current evidence supports a layered ordinary construction model rather than a single complete row:
-
-```text
-wave / encounter occurrence
+wave/occurrence MonsterID
   -> concrete MonsterConfig
-       + MonsterTemplateConfig base inputs
-       + effective HardLevelGroup + Level inputs
-       + concrete MonsterConfig EliteGroup / flat modifications where present
-       + encounter Stage/Elite context where present
+  -> MonsterTemplateConfig base inputs
+  + effective Level/HardLevelGroup
+  + MonsterConfig flat/ratio inputs
+  + Monster/Stage Elite context
   -> configured spawn-property domain
-  -> optional same-entity phase-property overrides
-  -> live StageAbility / Ability / Modifier overlays
+  -> same-entity phase property layer where applicable
+  -> StageAbility / Ability / Modifier live overlays
   -> current battle properties
 ```
 
-The pinned repository root contains release data/configuration (`Config`, `ExcelOutput`, `Stages`, `Story`, `TextMap`) rather than the GameCore implementation source that owns the generic configured-spawn property constructor. The final getter/operator bodies therefore remain unavailable in this artifact.
+The exact repository pin is a release-data/config corpus; it does not export the GameCore implementation bodies for the generic configured-spawn getter/constructor.
 
-The following W14 subclaims are now explicitly `engine_consumer_unavailable` / `blocked_evidence` at this pin unless a new authoritative source family appears:
+The following therefore remain `engine_consumer_unavailable` unless a new authoritative source appears:
 
-- exact base/ratio/flat composition for HP/ATK/DEF/SPD/Stance;
+- final ATK/DEF/HP/SPD/Stance arithmetic;
 - flat `*ModifyValue` placement;
-- clamp/rounding behavior;
-- Stage versus Monster effective HardLevelGroup/Level precedence when they conflict;
-- Stage EliteGroup versus MonsterConfig EliteGroup composition/precedence;
-- generic phase override application/default handling when not spelled out by an individual Ability.
+- clamp/rounding;
+- effective Stage-vs-Monster HardLevelGroup/Level precedence;
+- Stage-vs-Monster Elite composition/order;
+- generic phase override application/default handling.
 
-This boundary does not make the known raw inputs optional. It prevents the ledger from converting plausible field names into an invented final formula.
+## Flat-value hazards
 
-### Concrete hazards discovered beyond this sample
+Pinned data contains non-zero flat speed modifications, e.g. concrete rows on template `1002020` with `SpeedModifyValue=20` and `33`, and template-level flat speed/stance fields also exist.
 
-Pinned ordinary data includes non-zero flat speed modifications in concrete monster rows, for example:
+These must not be silently dropped or placed by community-formula intuition.
 
-- Monster `100202014`, template `1002020`, `SpeedModifyValue=33`
-- Monster `100202010`, template `1002020`, `SpeedModifyValue=20`
+## Stage / Monster Elite coexistence
 
-and template-level flat speed/stance modification fields also exist.
+Pinned Stage `301001` supplies Stage-level Elite context while its concrete monsters carry their own EliteGroup values. This proves both layers can coexist.
 
-These are high-value discriminating inputs for any future operator recovery. They must not be silently dropped or placed by community-formula intuition.
+A public runtime layout corroboration pass found multiple `EliteGroupRow*` slots in `MonsterRowData`, but no available method body maps those slots to Stage-vs-Monster provenance or proves stack order.
 
-### Stage/Monster Elite coexistence
+Safe conclusion: multiple elite inputs are structurally supported.
 
-Representative Stage data shows Stage-level EliteGroup and concrete MonsterConfig EliteGroup can coexist (for example Stage `301001` uses a different EliteGroup from inspected concrete monsters). This proves two context layers can be simultaneously present; it does not prove whether runtime replaces, composes or otherwise orders them.
+Unsafe conclusion: any specific replace/multiply/order rule.
 
-### MonsterUnique is conditional, not universal
+## HardLevel conflict coverage: negative evidence, not precedence proof
 
-The parallel audit did not find a matching `MonsterUniqueConfig` row for several representative ordinary IDs, including `1002011`. Therefore `MonsterUniqueConfig` must only enter a final formula when an explicit reference/consumer chain proves it for that family. Family existence alone is not enough.
+The lane audited thousands of `MonsterConfig.HardLevelGroup` occurrences by broad sampling; ordinary inspected rows were dominated by group `1`, and inspected ordinary Mainline stages also used group `1`.
 
-## StageAbility and phase are later layers, not static hard-level coefficients
+Therefore the current ordinary samples do **not** supply a clean Stage.HardLevelGroup != MonsterConfig.HardLevelGroup discriminator.
 
-W16 found two relevant distinctions:
+This weak conflict coverage is negative evidence against pretending precedence is empirically closed. It does not prove every MonsterConfig row is group 1.
 
-1. Stage bootstrap has explicit pre-/post-monster-birth StageAbility binding phases around `WaveMonster`.
-2. StageAbility can mutate live properties after creation (for example a representative stage applies a `SpeedAddedRatio` mutation under a condition).
+## MonsterUnique is conditional
 
-Those live overlays must not be folded into static `HardLevelGroup` coefficients.
+No matching `MonsterUniqueConfig` row was found for representative ordinary IDs including `1002011`, `1022020`, and `1023010`.
 
-The parallel audit also closed a representative Yanqing phase-property producer chain showing that phase can supply HP/Stance ratio inputs to the **existing monster entity**. Common phase transition logic does not imply wave respawn, but exact phase override arithmetic/order remains an engine/operator question.
+Family existence is not a universal override rule. Include MonsterUnique only where an explicit ordinary reference/consumer chain proves participation.
 
-## Closed numeric proof: Skill 100201101 damage multiplier
+## StageAbility is a later live layer
 
-The original skill-param proof remains valid and is independent of the W14 scaling correction:
+Stage bootstrap exposes before-/after-character-born StageAbility binding around `WaveMonster`.
 
-1. `MonsterSkillConfig[100201101]` has `SkillTriggerKey=Skill04`, `ParamList[0]=2`.
-2. ConfigCharacter maps DynamicHash `-190305622` to `SkillParam(Skill04,index=0)`.
-3. The ordinary Skill04 Ability uses that hash as `DamagePercentage` in an AoE Ice `DamageByAttackProperty` consumer.
+Representative StageAbility behavior can mutate live properties after creation, e.g. a conditional `SpeedAddedRatio=-0.3` overlay.
 
-Therefore the pinned raw value `2` is the 2.0 damage-percentage input for that specific formal operation.
+These must remain separate from static HardLevel coefficients.
 
-This is an example of why ParamList positions require consumer tracing.
+## Phase-property path is distinct from wave respawn
 
-## AI semantics
+Pinned ordinary phase archaeology supports a same-entity live phase-property subsystem.
 
-The template points to `Monster_Common_SequenceThree_AI.json`, whose inspected surface uses sequenced-skill behavior. Instance-level `OverrideAIPath` / sequence fields, where present on other monsters, must take precedence according to their own consumer rules and must not be ignored simply because a template AI exists.
+### Yanqing concrete producer chain
 
-## False friends / hazards
+Shared Yanqing phase wiring binds phase MaxHP/Stance inputs to `SkillP01` indices. Concrete variants provide different `MonsterSkillConfig.ParamList` values, proving phase property inputs can vary by concrete monster while using the same ConfigCharacter phase wiring.
 
-- `ILHardLevelGroup` / `ILBattleMonster` are explicit wrong-family examples for ordinary W14 despite plausible names and matching numeric keys.
-- Template base values are not final encounter stats.
-- Stage rows are not complete monster-state rows.
-- `Ratio` field names are not arithmetic authority.
-- `SetDynamicValueByHardLevelProperty` proves a typed hard-level read surface, not the hidden spawn-stat formula.
-- `MonsterUniqueConfig` is not a universal override layer.
-- live StageAbility property mutations are separate from static spawn-stat construction.
-- phase count/labels are not equivalent to respawn, and same-entity phase transitions do not imply phase-property overrides never exist.
-- public/player-facing Toughness units must not be substituted for internal Stance without a conversion consumer.
-- target/look-up references to a MonsterID do not prove the missing creation/config-selection authority for that instance.
+These are confirmed producer inputs, not a multiplication formula.
+
+### CharacterPhaseOverrideConfig is not Excel MonsterConfig
+
+A corroborating type-layout pass shows `CharacterPhaseOverrideConfig.MonsterConfig` is the JSON `RPG.GameCore.MonsterConfig` type carrying runtime/config fields such as creation timing, initial HP ratio/value, multi-hit normalization, UI/model/location behavior and body-part inheritance flags.
+
+It is not `ExcelOutput/MonsterConfig.json` / `MonsterRow` and must not be cited as evidence that a phase change reselects the static Excel row.
+
+### Huanlong cross-check
+
+Pinned Huanlong phases show:
+
+- phase-specific `OverrideConfig` blocks;
+- a phase with dynamic `PhaseMaxHPRatio` and a sibling OverrideConfig;
+- authored `SetMonsterPhase(... ApplyOverrideConfig=false)` in the Ability graph.
+
+Therefore `ApplyOverrideConfig` cannot be equated with the existence/application of phase HP/Stance ratio inputs. Static phase-property data and JSON override config are sibling subpaths.
+
+Exact default/application semantics still require the unexported phase runner.
+
+### Common phase transition is not respawn
+
+Pinned `Monster_ChangePhase` operates on the existing caster: reads current state, resets HP/Stance-related state, refreshes UI, emits events and continues the same entity.
+
+No `WaveMonster`/`SummonMonster` or visible Stage/HardLevel row reselection appears in this common path.
+
+## AI note
+
+`MonsterTemplateConfig[1002011]` references sequenced AI. Instance AI/sequence overrides on other monsters remain separate per-instance inputs and must be traced when used.
+
+## False friends / guardrails
+
+- `ILHardLevelGroup` / `ILBattleMonster` are wrong-family examples for ordinary W14.
+- GridFight/AetherDivide/other mode difficulty rows need their own mode chain.
+- template base values are not final encounter stats.
+- Stage rows are not complete monster state.
+- `Ratio` fields are not arithmetic authority.
+- typed HardLevel reads do not expose the spawn-stat formula.
+- `MonsterUniqueConfig` is not universal.
+- StageAbility live mutation is not static difficulty scaling.
+- phase transition is not wave respawn by default.
+- `CharacterPhaseOverrideConfig.MonsterConfig` is not Excel MonsterConfig.
+- multiple EliteGroup slots prove capacity, not provenance/order.
+- absence of a HardLevel conflict sample is not precedence proof.
+- player-facing Toughness units must not replace internal Stance without a conversion consumer.
 
 ## Remaining W14/W16 boundaries
 
-Source-available work still worth pursuing:
+Source-facing work still worth pursuing:
 
-1. Resolve internal Stance versus player-facing Toughness conversion only if an exported consumer is found.
-2. Bring `MonsterUniqueConfig` into a chain only where explicitly referenced.
-3. Continue concrete W16 spawn/transition/reinforcement/battle-end archaeology where configuration data is exported.
+1. internal Stance/Toughness conversion only if an exported consumer appears;
+2. explicit MonsterUnique participation in families that actually reference it;
+3. W16 spawn/transition/reinforcement/termination data where source is exported;
+4. phase-property application details only where an individual Ability/config explicitly exposes them.
 
-Frozen until a new authoritative engine/source family appears:
+Frozen until a new engine/source family appears:
 
 - final configured-spawn ATK/DEF/HP/SPD/Stance operator;
-- flat-value placement and clamp/rounding;
+- flat-value placement, clamp and rounding;
 - Stage/Monster HardLevel and Elite precedence;
-- generic phase override default/application ordering.
+- generic phase override default/application order.
 
-W14 remains `active` because source-facing classification and cross-family coverage obligations remain, but the final generic formula is a named `blocked_evidence` subproblem rather than a reason to repeatedly search the same release-data dump.
+W14 remains active for source-family completeness, but the generic final-stat formula is a named blocked-evidence subproblem rather than a reason to repeat the same searches.
