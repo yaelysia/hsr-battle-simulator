@@ -76,6 +76,32 @@ EXPECTED_LOWERING_ADDED = (
     "                    effect,",
     "                    source=parent_source,",
     "                )",
+    "    for effect_index, effect in enumerate(lowered.effects):",
+    "        if effect.effect_id not in client_only_effect_ids:",
+    "            continue",
+    "        matching_tasks = [",
+    "            task",
+    "            for task in lowered.ability_tasks",
+    "            if task.effect_id == effect.effect_id",
+    '            and task.execution_mode == "process_only"',
+    "        ]",
+    "        if len(matching_tasks) != 1:",
+    "            continue",
+    "        task = matching_tasks[0]",
+    "        pre_canonical_task_source = IRSource(",
+    "            task.source.source_path,",
+    "            task.source.raw_type,",
+    "            task.source.raw_id,",
+    "            {",
+    "                **dict(task.source.evidence),",
+    '                "parent_task_id": "",',
+    "            },",
+    "        )",
+    "        if effect.source == pre_canonical_task_source:",
+    "            lowered.effects[effect_index] = replace(",
+    "                effect,",
+    "                source=task.source,",
+    "            )",
 )
 
 def fail(message: str) -> None:
@@ -137,6 +163,8 @@ def governance() -> dict[str, Any]:
         fail("unexpected_lowering_authority_change:_lower_ability_task_tree")
     if fn_ast(cur, "_lower_formal_ability_task_tree") == fn_ast(base, "_lower_formal_ability_task_tree"):
         fail("formal_lowering_ast_unchanged")
+    if fn_ast(cur, "_mark_client_only_trigger_ability_tasks") == fn_ast(base, "_mark_client_only_trigger_ability_tasks"):
+        fail("client_only_process_only_source_sync_ast_unchanged")
     return {
         "fixed_base": BASE_SHA,
         "changed_paths": list(changed),
