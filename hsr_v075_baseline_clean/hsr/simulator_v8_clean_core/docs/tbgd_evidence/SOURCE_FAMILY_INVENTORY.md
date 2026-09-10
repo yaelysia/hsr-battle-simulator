@@ -111,7 +111,7 @@ The W17 broad reverse scan is complete enough to replace the previous all-`unres
 | `Config/GlobalConfig/GameCoreConstValue.json` | `engine_consumer_unavailable` | raw constants such as SpeedToDelayDistance, BP/SP, resistance and damage-random bounds exist; generic formula consumers not exported. |
 | `Config/GlobalConfig/PriorityConfig.json` | `include` shared ordering input | separate event/insert priority domains; lower number earlier within inspected domains; equal-priority/cross-domain arbitration unresolved. |
 | `Config/GlobalConfig/DamageBehaviorTemplateListConfig.json` | `mixed/include` data-side semantics | enum/template mapping has a closed representative ordinary released/Mainline Sam Stage -> Monster -> Skill -> ConfigCharacter/Ability chain to `DamageBehavior=1 -> DirectlyLoseHp`; hidden engine arithmetic remains outside explicit template/behavior flags. |
-| shared common Avatar/Monster Ability producers | `mixed/include` | `Avatar_Common_PassiveSkill -> Local_SPAdd`, `TriggerStanceCountDown_Test`, common monster break passive | Important producer family outside global-modifier directories. `_Test` suffix is not an exclusion rule. |
+| shared common Avatar/Monster Ability producers | `mixed/include` | `Avatar_Common_PassiveSkill -> Local_SPAdd`, `TriggerStanceCountDown_Test`, common monster break passive. Important producer family outside global-modifier directories; `_Test` suffix is not an exclusion rule. |
 
 ## RNG / callback cross-cutting sources
 
@@ -127,9 +127,10 @@ The W17 broad reverse scan is complete enough to replace the previous all-`unres
 ## Techniques / maze-to-battle boundary
 
 | Family / path | Status | Current interpretation / next closure |
-| --- | --- | --- | --- |
+| --- | --- | --- |
 | `Config/ConfigMazeBuff/**` | `unresolved` | Include only proven ordinary battle-entry consequences. |
-| `Config/ConfigAdventureAbility/**` | `unresolved` | Often scene/Technique-side; trace only actual battle initialization effects. |
+| `Config/ConfigAdventureAbility/**` | `mixed/include` representative | [R5](../../../../../docs/tbgd_evidence/shared/battle_start_build_construction_v1.md): `LocalPlayer_DanHeng_MazeSkill` -> `AddMazeBuff100201` -> ordinary `SkillMaze` battle-entry property; presentation neighbors remain filtered. |
+| `ExcelOutput/AvatarMazeBuff.json` | `mixed/include` representative | R5 row `100201`: `CharacterSkill` / `SkillMaze` / `AddBattleBuff` bridge; metadata is not the numerical producer and the native loader remains separate. |
 | `Config/ConfigAdventureModifier/**` | `unresolved` | Same boundary rule. |
 | `Config/ConfigSummonUnit/**` | `unresolved` | Aglaea sample is a concrete scene/maze false friend; other records need owner tracing. |
 
@@ -138,7 +139,9 @@ The W17 broad reverse scan is complete enough to replace the previous all-`unres
 | Family / path | Status | Anchor | Current interpretation / next closure |
 | --- | --- | --- | --- |
 | Light Cone/equipment identity/effect tables | `mixed/include` representative | Light Cone `20000` closed chain | Battle effect/rank data in scope; acquisition/progression data excluded. Need generic augment/rank semantics and complex effects. |
-| relic / planar stat and set-effect sources | `unresolved` | none yet promoted | Locate battle property contributions and set Ability/Modifier producers. |
+| relic / planar stat and set-effect sources | `mixed/include` representative | [R5](../../../../../docs/tbgd_evidence/shared/battle_start_build_construction_v1.md): six slots, Set102/301 | `RelicConfig`/base type -> main/sub affix -> `RelicSetConfig`/set skill -> `RelicAbility` is closed for the selected build; not corpus-exhaustive or runtime-verified. |
+| `ExcelOutput/RelicMainAffixConfig.json` / `RelicSubAffixConfig.json` | `include` selected rules | main groups 51-56; sub group 5 | Source coefficients and typed local readers; main level and sub count/step operators remain distinct. Finished-piece fields only; acquisition/roll history is excluded. |
+| `Config/ConfigAbility/Equip/RelicAbility.json` | `mixed/include` representative | Ability51021 / Ability53011 | Normal-hit damage-context versus Speed120 conditional attack-property effects; static `PropertyList` must not be counted twice. |
 | equipment augment/superimposition/rank families | `unresolved` generically | one Light Cone sample | Determine generic active battle-value transport. |
 
 ## Presentation-oriented candidates / negative evidence
