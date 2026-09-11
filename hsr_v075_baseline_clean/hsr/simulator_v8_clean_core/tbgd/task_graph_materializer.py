@@ -1405,6 +1405,52 @@ def _is_wait_anim_state_process_only_presentation_shape(
     )
 
 
+def _wait_anim_state_process_only_effect(
+    task: _FormalTask,
+    indexes: _DefinitionIndexes,
+) -> EffectIR:
+    matches = indexes.effects.get(task.effect_id, ())
+    if len(matches) != 1:
+        raise _Blocked(
+            "task_graph_wait_anim_state_process_only_effect_"
+            + ("missing" if not matches else "ambiguous")
+        )
+    effect = matches[0]
+    contract = effect.payload.get("process_only_contract")
+    source_fields = (
+        contract.get("source_fields") if isinstance(contract, Mapping) else None
+    )
+    source_field_types = (
+        contract.get("source_field_types") if isinstance(contract, Mapping) else None
+    )
+    if (
+        effect.opcode != task.opcode
+        or effect.coverage_status != "audit_only"
+        or effect.source != task.source
+        or not isinstance(contract, Mapping)
+        or contract.get("schema_version") != "ability_process_only_source_shape_v1"
+        or contract.get("opcode") != task.opcode
+        or contract.get("source_shape_status") != "admitted"
+        or bool(contract.get("blocked_reason"))
+        or not isinstance(source_fields, (list, tuple))
+        or "$type" not in source_fields
+        or len(source_fields) != len(set(source_fields))
+        or not isinstance(source_field_types, Mapping)
+        or set(source_field_types) != set(source_fields)
+        or not all(
+            isinstance(field_name, str)
+            and field_name
+            and isinstance(field_type, str)
+            and field_type
+            for field_name, field_type in source_field_types.items()
+        )
+    ):
+        raise _Blocked(
+            "task_graph_wait_anim_state_process_only_effect_contract_invalid"
+        )
+    return effect
+
+
 def _references(
     task: _FormalTask,
     control: CharacterControlFlowNodeIR | None,
@@ -1426,13 +1472,10 @@ def _references(
             "ability_graph_resolution",
         ),
     )
-    presentation_only_wait = _is_wait_anim_state_process_only_presentation_shape(
-        control, task
-    )
+    if _is_wait_anim_state_process_only_presentation_shape(control, task):
+        _wait_anim_state_process_only_effect(task, indexes)
     result: list[TaskGraphDefinitionReferenceIR] = []
     for kind, definition_id, values, default_owner in definitions:
-        if presentation_only_wait and kind == "effect":
-            continue
         if not definition_id:
             continue
         matches = values.get(definition_id, ())
@@ -1664,7 +1707,12 @@ def _materialization_dispositions(
                 and node.materialization_status == "materialized"
                 and node.owner_domains == ("task_graph_execution",)
                 and not node.branches
-                and not node.references
+                and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].resolution_status == "deferred"
+                and node.references[0].blocked_reason
+                == "task_graph_definition_not_admitted:effect:audit_only"
+                and node.references[0].source == node.source
                 and node.termination_kind == "not_applicable"
                 and node.termination_status == "not_applicable"
                 for node in linked_nodes
