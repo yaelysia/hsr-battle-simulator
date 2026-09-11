@@ -1,28 +1,25 @@
-name: R6A real-source wave birth reproduction
-
+name: R6A candidate staging and validation
 on:
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/r6a-wave-birth-source-proof.yml'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_wave_birth_source_proof.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py'
-
 permissions:
-  contents: read
-
+  contents: write
 jobs:
-  reproduce:
-    if: github.head_ref == 'fix/r6a-wave-birth-source-proof'
+  validate:
+    if: github.head_ref == 'fix/r6a-wave-birth-source-proof' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
       PYTHONPATH: ${{ github.workspace }}/hsr_v075_baseline_clean/hsr
       PYTHONUNBUFFERED: '1'
+      CORE: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
     steps:
-      - name: Checkout exact business candidate
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -30,8 +27,7 @@ jobs:
           sparse-checkout: |
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
             .github/workflows
-      - name: Checkout exact pinned wave-source family
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: DimbreathBot/TurnBasedGameData
           ref: 14c1d18f91a8101d610e6c523447a7517de3fae1
@@ -51,53 +47,115 @@ jobs:
             /Config/ConfigCharacter/Monster/
             /Config/ConfigAbility/Monster/
             /Config/ConfigAI/
-      - name: Record exact identities and Fast preflight
-        shell: bash
+      - name: Isolated validation tools
+        run: |
+          python -m venv /tmp/r6a-tools
+          /tmp/r6a-tools/bin/python -m pip install --disable-pip-version-check pytest==8.3.5 ruff==0.12.12
+          echo '/tmp/r6a-tools/bin' >> "$GITHUB_PATH"
+      - name: Stage exactly the reviewed producer change
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p = Path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py')
+          original = p.read_bytes()
+          blob = lambda b: hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
+          assert blob(original) == '66903bbbd02cee23aa91ef790a9d2880fa83e36f'
+          Path('/tmp/r6a-before-lowering.py').write_bytes(original)
+          text = original.decode()
+          start = text.index('def _wave_enemy_birth_template(')
+          end = text.index('\ndef _birth_profile_values(', start)
+          old = '\n'.join([
+              '        "monster_rank_source_trace": {',
+              '            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",',
+              '            "raw_type": "MonsterRankScore",',
+              '            "raw_id": monster_rank,',
+              '        },',
+          ])
+          new = '\n'.join([
+              '        "monster_rank_source_trace": IRSource(',
+              '            source_path="Config/GlobalConfig/GameCoreConstValue.json",',
+              '            raw_type="MonsterRankScore",',
+              '            raw_id=monster_rank,',
+              '            evidence={',
+              '                "raw_path": f"MonsterRankScore.{monster_rank}.Value",',
+              '                "rank": monster_rank,',
+              '                "value": monster_rank_score,',
+              '            },',
+              '        ).to_json(),',
+          ])
+          section = text[start:end]
+          assert section.count(old) == 1
+          patched = (text[:start] + section.replace(old,new,1) + text[end:]).encode()
+          assert blob(patched) == '335c6bb78d91ce5a4a19d61377e36a6f18988ca2'
+          p.write_bytes(patched)
+          print('candidate_lowering_blob=' + blob(patched))
+          PY
+          ruff format "$CORE/tests/test_wave_birth_source_proof.py"
+          git diff --check
+      - name: Fast compile import and affected lint
         run: |
           set -euo pipefail
-          python --version
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = 14c1d18f91a8101d610e6c523447a7517de3fae1
           git rev-parse HEAD HEAD^
           git ls-tree HEAD turnbasedgamedata-main
-          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = 14c1d18f91a8101d610e6c523447a7517de3fae1
-          git diff --stat f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
-          git diff --check f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
-          python -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py
-          python -c "import runpy; runpy.run_path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py', run_name='import_smoke')"
-      - name: Export exact source workspace without credentials or Git databases
-        shell: bash
+          python -m compileall -q "$CORE/tbgd/lowering.py" "$CORE/tests/test_wave_birth_source_proof.py"
+          python -c "import runpy; runpy.run_path('$CORE/tests/test_wave_birth_source_proof.py',run_name='import_smoke')"
+          ruff check "$CORE/tests/test_wave_birth_source_proof.py"
+          ruff format --check "$CORE/tests/test_wave_birth_source_proof.py"
+          python - <<'PY'
+          import collections, json, subprocess
+          paths=['/tmp/r6a-before-lowering.py','hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py']
+          results=[]
+          for path in paths:
+              run=subprocess.run(['ruff','check','--output-format=json',path],capture_output=True,text=True)
+              assert run.returncode in (0,1),run.stderr
+              rows=json.loads(run.stdout)
+              results.append(collections.Counter((r['code'],r['message']) for r in rows))
+          print('lowering_ruff_baseline_diagnostics='+str(sum(results[0].values())))
+          print('lowering_ruff_candidate_diagnostics='+str(sum(results[1].values())))
+          assert results[0] == results[1], results[1]-results[0]
+          PY
+      - name: Publish verified blobs only, without ref writes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          mkdir -p /tmp/r6a-transfer
-          git rev-parse HEAD > /tmp/r6a-transfer/business-head.txt
-          git ls-tree -r HEAD > /tmp/r6a-transfer/business-tree.txt
-          git -C turnbasedgamedata-main rev-parse HEAD > /tmp/r6a-transfer/tbgd-head.txt
-          git -C turnbasedgamedata-main ls-tree -r HEAD > /tmp/r6a-transfer/tbgd-tree.txt
-          tar --exclude=.git --exclude=__pycache__ --exclude='*.pyc' \
-            -czf /tmp/r6a-transfer/workspace.tar.gz \
-            AGENTS.md .gitmodules .github/workflows \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core \
-            turnbasedgamedata-main
-          sha256sum /tmp/r6a-transfer/*
-      - name: Execute unchanged production builders and spawn gate
-        shell: bash
+          python - <<'PY'
+          import base64, hashlib, json, os, urllib.request
+          from pathlib import Path
+          result={}
+          for path in ('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py','hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_wave_birth_source_proof.py'):
+              data=Path(path).read_bytes()
+              payload=json.dumps({'encoding':'base64','content':base64.b64encode(data).decode()}).encode()
+              request=urllib.request.Request('https://api.github.com/repos/yaelysia/hsr-battle-simulator/git/blobs',data=payload,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'},method='POST')
+              with urllib.request.urlopen(request,timeout=30) as response:
+                  sha=json.load(response)['sha']
+              assert sha==hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+              result[path]=sha
+          Path('/tmp/r6a-candidate-blobs.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,sort_keys=True))
+          PY
+          git diff --stat
+          git diff > /tmp/r6a-candidate.patch
+      - name: Real Direct and deep Catalog, preserving failure exit
         run: |
           set -uo pipefail
-          /usr/bin/time -v -o /tmp/r6a-time.txt nice -n 10 python \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py \
-            2>&1 | tee /tmp/r6a-reproduction.log
+          /usr/bin/time -v -o /tmp/r6a-tests.time nice -n 10 python -m pytest -q -s --tb=short \
+            "$CORE/tests/test_wave_birth_source_proof.py" 2>&1 | tee /tmp/r6a-tests.log
           code=${PIPESTATUS[0]}
-          cat /tmp/r6a-time.txt
-          echo "probe_exit_code=$code"
+          cat /tmp/r6a-tests.time
+          echo "pytest_exit_code=$code"
           exit "$code"
-      - name: Retain reproduction evidence
+      - name: Retain candidate evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r6a-reproduction-${{ github.event.pull_request.head.sha }}
+          name: r6a-candidate-${{ github.event.pull_request.head.sha }}
           path: |
-            /tmp/r6a-reproduction.log
-            /tmp/r6a-reproduction.json
-            /tmp/r6a-time.txt
-            /tmp/r6a-transfer/
-          if-no-files-found: error
+            /tmp/r6a-tests.log
+            /tmp/r6a-tests.time
+            /tmp/r6a-candidate-blobs.json
+            /tmp/r6a-candidate.patch
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_wave_birth_source_proof.py
+          if-no-files-found: warn
           retention-days: 7
