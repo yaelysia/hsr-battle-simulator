@@ -1374,6 +1374,37 @@ def _raw_source_value(
     return current
 
 
+def _is_wait_anim_state_process_only_presentation_shape(
+    control: CharacterControlFlowNodeIR | None,
+    task: _FormalTask,
+) -> bool:
+    if control is None:
+        return False
+    return (
+        control.family == "WaitAnimState"
+        and control.control_role == "presentation_barrier"
+        and control.coverage_status != "blocked"
+        and task.family == "WaitAnimState"
+        and task.opcode == "WaitAnimState"
+        and task.execution_mode == "process_only"
+        and task.coverage_status == "audit_only"
+        and bool(task.effect_id)
+        and not task.condition_id
+        and not task.target_expression_id
+        and not task.ability_definition_id
+        and not control.branches
+        and not control.template_reference_ids
+        and control.termination.termination_kind == "not_applicable"
+        and control.termination.status == "not_applicable"
+        and control.downstream_stages == ("p9_s8c",)
+        and all(
+            item.responsibility == "presentation_excluded"
+            and item.owner_stage == "excluded"
+            for item in control.field_responsibilities
+        )
+    )
+
+
 def _references(
     task: _FormalTask,
     control: CharacterControlFlowNodeIR | None,
@@ -1395,8 +1426,13 @@ def _references(
             "ability_graph_resolution",
         ),
     )
+    presentation_only_wait = _is_wait_anim_state_process_only_presentation_shape(
+        control, task
+    )
     result: list[TaskGraphDefinitionReferenceIR] = []
     for kind, definition_id, values, default_owner in definitions:
+        if presentation_only_wait and kind == "effect":
+            continue
         if not definition_id:
             continue
         matches = values.get(definition_id, ())
@@ -1475,6 +1511,10 @@ def _node_status(
     task: _FormalTask,
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
+        if task.family == "WaitAnimState" and task.execution_mode == "process_only":
+            raise _Blocked("task_graph_wait_anim_state_source_contract_missing")
+        return "leaf", "materialized", ("task_graph_execution",), ""
+    if _is_wait_anim_state_process_only_presentation_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
