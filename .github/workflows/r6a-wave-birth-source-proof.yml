@@ -1,0 +1,87 @@
+name: R6A real-source wave birth reproduction
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/r6a-wave-birth-source-proof.yml'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py'
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    if: github.head_ref == 'fix/r6a-wave-birth-source-proof'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: ${{ github.workspace }}/hsr_v075_baseline_clean/hsr
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Checkout exact business candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+            .github/workflows
+      - name: Checkout exact pinned wave-source family
+        uses: actions/checkout@v4
+        with:
+          repository: DimbreathBot/TurnBasedGameData
+          ref: 14c1d18f91a8101d610e6c523447a7517de3fae1
+          path: turnbasedgamedata-main
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ExcelOutput/StageConfig.json
+            /ExcelOutput/HardLevelGroup.json
+            /ExcelOutput/MonsterConfig.json
+            /ExcelOutput/MonsterTemplateConfig.json
+            /ExcelOutput/MonsterUniqueConfig.json
+            /ExcelOutput/MonsterTemplateUniqueConfig.json
+            /ExcelOutput/MonsterSkillConfig.json
+            /ExcelOutput/MonsterSkillUniqueConfig.json
+            /Config/GlobalConfig/
+            /Config/ConfigCharacter/Monster/
+            /Config/ConfigAbility/Monster/
+            /Config/ConfigAI/
+      - name: Record exact identities and Fast preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python --version
+          git rev-parse HEAD HEAD^
+          git ls-tree HEAD turnbasedgamedata-main
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = 14c1d18f91a8101d610e6c523447a7517de3fae1
+          git diff --stat f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
+          git diff --check f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
+          python -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py
+          python -c "import runpy; runpy.run_path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py', run_name='import_smoke')"
+      - name: Execute unchanged production builders and spawn gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          /usr/bin/time -v -o /tmp/r6a-time.txt nice -n 10 python \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py \
+            2>&1 | tee /tmp/r6a-reproduction.log
+          code=${PIPESTATUS[0]}
+          cat /tmp/r6a-time.txt
+          echo "probe_exit_code=$code"
+          exit "$code"
+      - name: Retain reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r6a-reproduction-${{ github.event.pull_request.head.sha }}
+          path: |
+            /tmp/r6a-reproduction.log
+            /tmp/r6a-reproduction.json
+            /tmp/r6a-time.txt
+          if-no-files-found: warn
+          retention-days: 7
