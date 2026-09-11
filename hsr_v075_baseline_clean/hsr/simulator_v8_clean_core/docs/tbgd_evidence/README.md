@@ -1,6 +1,6 @@
 # TBGD Battle Evidence Ledger
 
-This directory is the durable evidence store for the manually audited TurnBasedGameData (TBGD) battle-source archaeology tracked by #7.
+This directory is the durable evidence store for the manually audited TurnBasedGameData (TBGD) battle-source archaeology tracked by Issue #7 / PR #8.
 
 ## Authority rule
 
@@ -21,19 +21,22 @@ The existing v8 Combat Core is an important **independent reverse-engineered imp
 
 ## Current navigation / sequencing overlay
 
-The current post-R4 state and recommended research route are in [`POST_R4_RESEARCH_COMPACTION_2026-09-10.md`](POST_R4_RESEARCH_COMPACTION_2026-09-10.md).
+The current post-R5 state and next research card are in [`POST_R5_RESEARCH_COMPACTION_2026-09-11.md`](POST_R5_RESEARCH_COMPACTION_2026-09-11.md).
 
-That document is the current authority for **research sequencing and kernel-cross-check planning**. It preserves `BATTLE_RESEARCH_WORKLIST.md` as the historical living mechanism ledger and supersedes only stale `Next closure` / old R0-R4 sequencing wording.
+That document is the current authority for **research sequencing and kernel-cross-check planning** after the bounded R5 result. [`POST_R4_RESEARCH_COMPACTION_2026-09-10.md`](POST_R4_RESEARCH_COMPACTION_2026-09-10.md) is retained as historical planning context; its statement that R5 is next is superseded.
 
-Current bounded sequence already completed:
+Current bounded sequence completed:
 
 - R0 — Battle Execution Language Core v1;
 - R1 — Ordinary Damage Vertical Slice v1;
 - R2 — Weakness / Toughness / Break Vertical Slice v1;
 - R3 — Healing + Modifier Lifecycle Core v1;
-- R4 — Resource Economy Core v1.
+- R4 — Resource Economy Core v1;
+- R5 — Battle-start Build Construction v1.
 
-The next recommended serial thread is **R5 — W01 + W18 — Battle-start Build Construction v1**. Do not resume W03/W04/W06/W05/W08 merely because their older worklist `Next closure` text predates these bounded records.
+`complete` here means the bounded evidence record met its own exit condition. It does **not** mean the corresponding W-package is globally `mechanism_closed`, and it does not imply runtime verification.
+
+The next serial research thread is **R6 — W16 + source-facing W14 residuals — Encounter / Spawn / Phase / Termination v1**. Do not resume old W01/W18, W03/W04/W05/W06/W08 `Next closure` wording merely because the living worklist predates later bounded records.
 
 ## Battle-semantic scope
 
@@ -41,29 +44,27 @@ The governing scope/completeness contract is [`BATTLE_SCOPE.md`](BATTLE_SCOPE.md
 
 The living corpus triage is [`SOURCE_FAMILY_INVENTORY.md`](SOURCE_FAMILY_INVENTORY.md). It records included, mixed, excluded, deferred, unresolved and export/engine-boundary families.
 
-The mechanism-level queue is [`BATTLE_RESEARCH_WORKLIST.md`](BATTLE_RESEARCH_WORKLIST.md). It is a **living ledger, not a fixed denominator**; W01..W18 must not be converted into a misleading completion percentage. Its historical checklist remains useful even when a later bounded record supersedes an older sequencing suggestion.
+The mechanism-level queue is [`BATTLE_RESEARCH_WORKLIST.md`](BATTLE_RESEARCH_WORKLIST.md). It remains the historical living mechanism ledger, not a fixed denominator and not the current serial scheduler. Later bounded records and compaction overlays may supersede stale per-package `Next closure` wording without declaring the whole package closed.
 
 The reusable exact-pin cache is [`PINNED_SOURCE_INDEX.md`](PINNED_SOURCE_INDEX.md). It records expensive path/blob/ID lookups, false friends and explicit export/engine boundaries. It is navigation evidence, not semantic authority by itself.
 
-[`PARALLEL_INTEGRATION_2026-09-09.md`](PARALLEL_INTEGRATION_2026-09-09.md) remains the historical reconciliation for the earlier parallel lanes. Post-R4 sequencing is now governed by `POST_R4_RESEARCH_COMPACTION_2026-09-10.md` plus the corrected detailed evidence records.
+[`PARALLEL_INTEGRATION_2026-09-09.md`](PARALLEL_INTEGRATION_2026-09-09.md) remains the reconciliation for the earlier parallel lanes.
 
 The work model is hybrid: automation aggressively enumerates/indexes candidates and references; semantic inclusion, exclusion, formula meaning and runtime behavior require manual raw-data review and producer/consumer tracing.
 
-The target is not a representative sample. Archaeology must account for the battle-reachable TBGD corpus at the pinned revision and separate it from progression, UI, camera/animation/presentation and other non-battle data.
-
-The inclusion test is runtime consequence: a fact is battle-relevant when changing it can alter battle initialization, legal actions/targets, timeline, resources, numerical/state outcomes, statuses/triggers, encounter transitions, mode rules or termination.
+The target is not a representative sample. Archaeology must account for the battle-reachable TBGD corpus at the pinned revision and separate it from progression, UI, camera/animation/presentation and other non-battle data within the current-phase scope.
 
 ## Game-mechanics-informed archaeology
 
-Before a mechanism is semantically closed, the researcher must understand enough of the corresponding **actual in-game combat mechanic** to know what the raw chain must explain: observable state changes, owners/targets, branches, timing, lifecycle and important edge cases.
+Before a mechanism is semantically closed, the researcher must understand enough of the corresponding in-game combat mechanic to know what the raw chain must explain: observable state changes, owners/targets, branches, timing, lifecycle and important edge cases.
 
-Gameplay knowledge is a navigation/completeness oracle, not a replacement source. A fully connected reference graph is necessary but not sufficient; if pinned raw interpretation and known gameplay behavior conflict, preserve the discrepancy as unresolved/version drift instead of forcing either side to match.
+Gameplay knowledge is a navigation/completeness oracle, not a replacement source. If pinned raw interpretation and known gameplay behavior conflict, preserve the discrepancy as unresolved/version drift instead of forcing either side to match.
 
 See `BATTLE_SCOPE.md` and `EVIDENCE_RECORD_TEMPLATE.md` for the normative form of this rule.
 
 ## Kernel-first verification rule
 
-Before launching a new search for a generic formula, scheduler rule, RNG rule, resource evaluator, status lifecycle, targeting primitive or spawn formula:
+Before launching a new search for a generic formula, scheduler rule, RNG rule, resource evaluator, status lifecycle, targeting primitive, spawn formula or encounter transition:
 
 1. identify the exact source-facing residual;
 2. inspect the corresponding current v8 L1 consumer / RuleBook / `EngineRuleRegistry` entry;
@@ -95,9 +96,7 @@ Every record carries one of:
 
 No `candidate` record may be consumed as canonical runtime authority.
 
-## Source role / gap classes
-
-Core source roles:
+Core source roles remain:
 
 - `battle_authoritative`
 - `battle_supporting`
@@ -110,30 +109,26 @@ Core source roles:
 
 A source may additionally be marked `export_gap` or `engine_consumer_unavailable` when a real ordinary data-facing edge exists but the pinned release-data dump does not expose the definition/consumer needed for deeper semantics.
 
-These gap labels describe the **upstream pinned corpus**. They no longer imply that the local simulator necessarily lacks an implementation; consult the post-R4 A-E kernel-cross-check classification before planning a repeated generic-engine search.
-
 ## Required record contents
 
-Each evidence record should include:
+Each durable evidence record should include, where relevant:
 
 1. gameplay concept and scope;
 2. pinned TBGD revision;
-3. exact source path/blob where useful;
-4. field/opcode/occurrence identity;
-5. producer/reference/consumer edges;
-6. semantic interpretation and acceptance reason;
-7. authority class/evidence maturity;
-8. battle consequence or exclusion reason;
-9. negative knowledge/false friends;
-10. corroboration/version context where useful;
-11. unresolved questions and confidence;
-12. when relevant, current local-kernel consumer/rule, its source kind, source-alignment result and validation level.
+3. exact source path/blob and occurrence identity;
+4. producer/reference/consumer edges;
+5. semantic interpretation and battle consequence;
+6. authority class/evidence maturity;
+7. negative knowledge/false friends;
+8. corroboration/version context;
+9. unresolved questions and confidence;
+10. current local-kernel consumer/rule, source kind, alignment result and validation level.
 
 ## Version discipline
 
 The pinned upstream revision is the raw-data boundary. Current/default/live sources may be used for navigation/corroboration but must not silently fill pinned gaps. Large-file search/read failures are not omission proof.
 
-Local simulator code must be inspected at the actual business-repository head used by the thread. An old local implementation/report is not evidence that the current head still behaves the same way.
+Local simulator code must be inspected at the actual business-repository head used by the thread. An old implementation/report is not evidence that the current head still behaves the same way.
 
 ## Current pinned TBGD revision
 
@@ -148,35 +143,42 @@ Core governance and ledgers:
 - `BATTLE_RESEARCH_WORKLIST.md`
 - `PINNED_SOURCE_INDEX.md`
 - `EVIDENCE_RECORD_TEMPLATE.md`
-- `PARALLEL_INTEGRATION_2026-09-09.md` — historical parallel reconciliation.
-- `POST_R4_RESEARCH_COMPACTION_2026-09-10.md` — current sequencing and kernel-cross-check overlay.
+- `PARALLEL_INTEGRATION_2026-09-09.md` — historical parallel reconciliation;
+- `POST_R4_RESEARCH_COMPACTION_2026-09-10.md` — historical R0-R4 compaction;
+- `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` — current sequencing and R6 execution contract.
 
-Completed R0-R4 cross-cutting records:
+Completed bounded cross-cutting records:
 
-- repository-level `docs/tbgd_evidence/shared/battle_execution_language_core_v1.md` — reusable P/E/D/O execution vocabulary across Avatar / Servant / Monster anchors.
-- repository-level `docs/tbgd_evidence/shared/ordinary_damage_vertical_slice_v1.md` — bounded source-facing damage slice and modifier/context operands.
-- repository-level `docs/tbgd_evidence/shared/weakness_toughness_break_vertical_slice_v1.md` — bounded weakness/toughness/break slice and named Stance injection export gap.
-- repository-level `docs/tbgd_evidence/shared/healing_modifier_lifecycle_core_v1.md` — independent HealHP chains plus reusable modifier lifecycle surfaces.
-- repository-level `docs/tbgd_evidence/shared/resource_economy_core_v1.md` — raw-SP/raw-BP source topology, operation inputs and native resource boundaries.
+- repository-level `docs/tbgd_evidence/shared/battle_execution_language_core_v1.md` — R0 reusable P/E/D/O execution vocabulary;
+- repository-level `docs/tbgd_evidence/shared/ordinary_damage_vertical_slice_v1.md` — R1 ordinary damage source-facing slice;
+- repository-level `docs/tbgd_evidence/shared/weakness_toughness_break_vertical_slice_v1.md` — R2 weakness/toughness/break slice;
+- repository-level `docs/tbgd_evidence/shared/healing_modifier_lifecycle_core_v1.md` — R3 HealHP plus modifier lifecycle surfaces;
+- repository-level `docs/tbgd_evidence/shared/resource_economy_core_v1.md` — R4 resource-economy topology;
+- repository-level `docs/tbgd_evidence/shared/battle_start_build_construction_v1.md` — R5 selected ordinary build -> battle-start construction slice.
 
 Other representative/cross-cutting evidence:
 
-- repository-level `docs/tbgd_evidence/characters/march_7th_preservation_skill02_shield.md` — ordinary March Skill02 authority, dispellability, snapshot-routing inputs and Shield engine boundaries.
-- repository-level `docs/tbgd_evidence/characters/aglaea_servant_11402_reference_chain.md` — servant construction, property-sync partition, self scheduling, coordinated-action ownership, death/death-rattle and forced cleanup.
-- repository-level `docs/tbgd_evidence/monsters/monster_1002011_reference_chain.md` — representative monster/skill chain, ordinary HardLevel inputs, Stage/Elite/phase topology and final-stat engine boundary.
-- repository-level `docs/tbgd_evidence/shared/timeline_one_more_and_speed_boundary.md` — OneMore/OneMorePerTurn, Gepard/Claymore cross-validation, speed mutation and scheduler boundary.
-- repository-level `docs/tbgd_evidence/shared/ordinary_rng_callback_reference_chains.md` — RandomConfig/random-target/random-value/application-RNG distinctions and callback/death/revive priority examples.
-- repository-level `docs/tbgd_evidence/shared/global_shared_reverse_scan.md` — completed W17 broad reverse scan, owner-backed shared producers, Assistant boundary and export gaps.
+- repository-level `docs/tbgd_evidence/characters/march_7th_preservation_skill02_shield.md`;
+- repository-level `docs/tbgd_evidence/characters/aglaea_servant_11402_reference_chain.md`;
+- repository-level `docs/tbgd_evidence/monsters/monster_1002011_reference_chain.md`;
+- repository-level `docs/tbgd_evidence/stages/stage_config_wave_source.md` — corrected ordinary `HardLevelGroup` / conditional `MonsterUnique` boundary and R6 stage entry evidence;
+- repository-level `docs/tbgd_evidence/shared/timeline_one_more_and_speed_boundary.md`;
+- repository-level `docs/tbgd_evidence/shared/ordinary_rng_callback_reference_chains.md`;
+- repository-level `docs/tbgd_evidence/shared/global_shared_reverse_scan.md`.
 
 ## Current archaeology state
 
-R0-R4 have moved the ordinary execution middle from isolated examples toward reusable source-facing contracts. The central risk has shifted toward:
+R0-R5 have moved the ordinary execution path from isolated examples toward reusable source-facing contracts from selected battle-start inputs through the core execution middle. R5 additionally establishes a concrete selected Avatar/Light Cone/relic/trace/Technique construction slice, but its formal admission and callback execution remain a separate validation residual rather than a reason to restart source discovery.
 
-- battle-start character/build construction;
-- encounter/spawn/phase/termination construction;
-- legal action/target semantics;
-- source alignment of timeline/death/revive/status/RNG residuals with the existing v8 kernel.
+The highest-value next uncertainty is now **encounter construction and control**:
 
-W17 broad reverse scan remains an event-driven sentinel. W02 SkillParam discovery, hidden W07 scheduler body, hidden W10 dispatcher, hidden W12 PRNG implementation, W13 passive/sync internals, W14 configured-spawn native operator and prior R2/R3/R4 native evaluator gaps must not be reopened by default without a concrete new source, consumer or local-kernel mismatch.
+- StageConfig -> ordered waves/slots -> wave definitions;
+- Level / ordinary `HardLevelGroup` / Elite context -> enemy birth inputs;
+- source-bearing birth templates -> `UnitSpawnRequest` -> enemy `UnitState`;
+- StageAbility pre/post-spawn ownership;
+- same-entity phase transition versus spawn/reinforcement;
+- wave clearing, next-wave transition and battle termination.
 
-See `POST_R4_RESEARCH_COMPACTION_2026-09-10.md` for the R5-R10 route and per-thread execution contract.
+W17 broad reverse scan remains an event-driven sentinel. W02 hidden producer searches, hidden W07 scheduler body, hidden W10 universal dispatcher, hidden W12 PRNG implementation, W13 passive/sync internals, W14 native configured-spawn arithmetic, and prior R2/R3/R4 native evaluator gaps must not be reopened by default without a concrete new source, consumer or local-kernel mismatch.
+
+See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the R6 card and stop conditions.
