@@ -1,6 +1,6 @@
 # P9-A2-P3 / S8C FireProjectile sequence admission
 
-> 状态：`planned`
+> 状态：`planned-revised`
 >
 > 父阶段：`P9-A2 Route A predecessor chain`
 >
@@ -9,6 +9,19 @@
 > 风险模式：`STRICT`
 >
 > 本文件是本轮 PR 的唯一执行任务权威。EXEC 不得从旧卡、聚合 S8C 目标或 PR11 原实现自行扩展范围。
+
+## 0. 本次 replan 修订
+
+EXEC 在原卡只读边界内证明了一个更早的生产事实：`FireProjectile` formal parent 的 `AbilityTaskIR.coverage_status` 在 task-graph materialization 之前已经由 `tbgd/lowering.py` 决定。当前 `_lower_ability_task_tree(...)` 因 `FireProjectile` effect 仍是 unsupported 而把 parent task 置为 blocked；后续 `systems/action_contract.py` 会通过 `ability_task_runtime_blocked_reason(...)` 直接拒绝该 blocked task。因此，只修改 control-flow contract 与 task-graph materializer 无法实现本卡既定 real Direct delta。
+
+PLAN 独立复核后接受该 replan，但不接受扩大 runtime/公共语义权限：
+
+- `tbgd/lowering.py` 与 `character_control_flow_contracts.py`、`task_graph_materializer.py` 同属 L0 的 **character source -> canonical formal task -> formal task-graph** 单一 producer authority；本次只补齐该 producer chain 中遗漏的 structural-parent admission，不新增第二个 runtime consumer。
+- 允许 lowering 仅在同一 exact `CharacterControlFlowNodeIR` source identity 已证明为本卡 admitted `FireProjectile/projectile_sequence` shape 时，把对应 formal parent `AbilityTaskIR` 从普通 unsupported-effect leaf 解释为 structural executable task。
+- 不允许把通用 `FireProjectile` `EffectIR`、coverage registry 或 effect runtime 标为 executable；parent effect 仍保存原始 unsupported/audit evidence，materializer 对已证明的 structural parent 不建立 effect-execution reference。
+- `rules/**`、`systems/**`、effect registry、A1/action admission、PR11/A2、PR9 RNG caller 均继续只读。
+
+若实际实现不能在上述单一 L0 producer authority 内完成，则再次 `needs_replan`；不得继续扩大文件集合。
 
 ## 1. 为什么这是当前最早可执行前置
 
@@ -41,7 +54,7 @@ PR14 squash merge `d1c28c0c0e10ed8b268739b71bab1784574a8d93` 到本卡固定基�
 2. `OnProjectileHit` 使用现有 control-flow child identity 和 source order，正式 graph 中每次 hit 只进入该 source-backed child graph；不得另建第二套 graph walker。
 3. `Projectile` 只保留来源身份/审计意义；本卡不模拟坐标、速度、飞行时间、碰撞、动画或客户端 projectile physics。
 4. `TargetType / CustomAnchorTarget` 继续消费既有 `p9_s5b` target authority，不在本卡重定义 target legality。
-5. `FireProjectile` parent 本身不再产生 `effect_coverage_status:unsupported:FireProjectile` 或 `task_graph_definition_not_admitted:effect:unsupported`；真正的 child effect 仍按其自身 authority 独立 admission。
+5. 已证明 structural `FireProjectile` parent task 不再产生 `effect_coverage_status:unsupported:FireProjectile`，且 materializer 不再为该 structural parent产生 `task_graph_definition_not_admitted:effect:unsupported`；原 `EffectIR` 本体仍保持真实 unsupported/audit 状态。
 6. 共享 `TaskGraphExecutor` / ability formal hooks 必须能够消费本卡产生的既有 typed graph contract；不得通过 caller 特判角色/技能绕过 graph。
 7. 任一不能证明的 `FireProjectile` source shape 必须继续 fail-closed，并给精确 blocker；不能为了让代表 action 过门而把整个 `p9_s8c` 标成 closed。
 
@@ -69,35 +82,45 @@ PR14 squash merge `d1c28c0c0e10ed8b268739b71bab1784574a8d93` 到本卡固定基�
 
 ### 3.3 source-shape 而不是固定样例
 
-首个纵切可以从 PR14 命中的真实 `FireProjectile` shape 开始，但完成声明必须覆盖 **当前 formal ability denominator 中所有同形 source occurrences**，按字段形状/语义判定，不得按 `1001`、`100101`、文件名、hash 或角色名白名单 admission。
+首个纵切可以从当前真实 `FireProjectile` shape 开始，但完成声明必须覆盖 **当前 formal ability denominator 中所有同形 source occurrences**，按字段形状/语义判定，不得按 actor/action、角色名、文件名、hash 或观测答案白名单 admission。
 
 不同 source shape 若无法由同一不变量证明，应精确列为 deferred/blocked，而不是扩 scope。
 
 ## 4. 唯一生产权威与正式消费者
 
-### 4.1 producer / lowering authority
+### 4.1 L0 producer / lowering authority
 
-本卡唯一语义 authority 是现有 character control-flow -> formal task-graph projection：
+本卡唯一主要生产权威是现有 character source -> canonical formal task -> formal task-graph projection，由三处同层生产文件共同完成：
 
-- `tbgd/character_control_flow_contracts.py`
-- `tbgd/task_graph_materializer.py`
+1. `tbgd/character_control_flow_contracts.py`
+   - source field responsibility、`projectile_sequence` shape、count termination 与 ordered `OnProjectileHit` branch 的来源权威。
+2. `tbgd/lowering.py`
+   - canonical `AbilityTaskIR` 的 formal source identity 与 coverage producer；仅负责在 exact admitted control node 事实完整时把 `FireProjectile` parent task 标为 structural executable。
+3. `tbgd/task_graph_materializer.py`
+   - 把上述 admitted structural task 投影到既有 typed `loop/count/task_list` task-graph contract，并避免给 structural parent建立错误 effect reference。
+
+这三处必须使用同一 source path/json path/content fingerprint/family/control-node identity；lowering 不能自己重新解释 raw `FireProjectile` 字段形成第二套 shape 判定。
 
 允许的生产改动只用于：
 
 - 给 `FireProjectile` 建立 source-backed count termination；
 - 在不关闭其它 `p9_s8c` role 的前提下，精确 admission 已证明的 `projectile_sequence` shape；
+- 在 formal lowering 中基于同一 exact control node 提升 structural parent task，而不是改变通用 effect coverage；
 - 把 `projectile_hit` source branch 投影到现有 task-graph 可执行的 ordered counted-sequence contract；
 - 对 structural `FireProjectile` parent 不再建立错误的 effect-execution requirement，同时保持 child effect reference 原样。
 
 ### 4.2 正式 consumer（只读）
 
-本卡应优先直接复用，不修改：
+本卡必须直接复用且禁止修改：
 
-- `systems/task_graph.py::TaskGraphExecutor`
-- `systems/ability.py::AbilityTaskSystem` 现有 formal `count / target / leaf` hooks
-- `rules/task_graph.py` 现有 `TaskGraphNodeIR / TaskGraphNumericDefinitionIR / branch / termination` schema
+- `systems/action_contract.py` 的现有 A1 formal projection/admission；
+- `systems/ability_task_contract.py::ability_task_runtime_blocked_reason`；
+- `systems/task_graph.py::TaskGraphExecutor`；
+- `systems/ability.py::AbilityTaskSystem` 现有 formal `count / target / leaf` hooks；
+- `rules/task_graph.py` 现有 `TaskGraphNodeIR / TaskGraphNumericDefinitionIR / branch / termination` schema；
+- effect registry / coverage runtime authority。
 
-如果正确实现必须修改任一上述 consumer/schema，说明当前“只需 producer projection”事实不成立，停止 `needs_replan`；不要在本卡顺手迁移第二个共享 runtime authority。
+如果正确实现必须修改任一上述 consumer/schema/coverage authority，说明当前单一 L0 producer 纵切仍不完整，停止 `needs_replan`；不要顺手迁移第二个共享 authority。
 
 ## 5. 允许写集合
 
@@ -106,19 +129,20 @@ EXEC 只能修改以下路径：
 ### 生产
 
 1. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_control_flow_contracts.py`
-2. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py`
+2. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py`
+3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py`
 
 ### 聚焦测试 / Direct evidence
 
-3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_fire_projectile_sequence_admission.py`
-4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_fire_projectile_sequence_admission.py`
-5. `hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P3_S8C_FIRE_PROJECTILE_SEQUENCE_ADMISSION_execution_report.md`
+4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_fire_projectile_sequence_admission.py`
+5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_fire_projectile_sequence_admission.py`
+6. `hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P3_S8C_FIRE_PROJECTILE_SEQUENCE_ADMISSION_execution_report.md`
 
 本执行卡由 PLAN 提交，EXEC 不得修改本卡。
 
-允许只读：`rules/control_flow_contract.py`、`rules/task_graph.py`、`systems/task_graph.py`、`systems/ability.py`、`systems/ability_task_contract.py`、`tbgd/coverage.py`、P2 validator/report、P9 checklist/aggregate cards、TBGD pinned raw source。
+允许只读：`rules/control_flow_contract.py`、`rules/task_graph.py`、`systems/action_contract.py`、`systems/task_graph.py`、`systems/ability.py`、`systems/ability_task_contract.py`、`tbgd/coverage.py`、P2 validator/report、P9 checklist/aggregate cards、TBGD pinned raw source。
 
-任何新的生产路径被证明必须修改时，先停止并 `needs_replan`；不得自行扩大写集合。
+任何**额外**生产路径被证明必须修改时，先停止并 `needs_replan`；不得自行继续扩大写集合。
 
 ## 6. 生产不变量与最小反例
 
@@ -140,18 +164,29 @@ EXEC 只能修改以下路径：
 
 **反例**：篡改/缺失 child mapping 或 branch identity 时，materialization/runtime 必须 blocked，不能跳过或落到其它 continuation。
 
-### 6.4 parent structural、child semantic
+### 6.4 parent structural、effect evidence 与 child semantic 分离
 
-`FireProjectile` parent 不能再以 unsupported effect leaf admission；但 child damage/status 等 effect 不得因 parent structural admission 被升级为 executable。
+已证明 source shape 的 `FireProjectile` parent 可以成为 structural executable task，但只能因为它将由 task graph 的 counted sequence 解释；不能因为 opcode 名称本身或 effect registry 变化而提升。
 
-**反例**：PR14 同一真实 action 在本卡后仍应保留 S11 的：
+必须同时成立：
+
+- parent `AbilityTaskIR.coverage_status` 的提升可反查到 exact admitted `CharacterControlFlowNodeIR`；
+- parent 对应 `EffectIR` 仍保持原始 unsupported/audit evidence，不得被本卡标成 executable；
+- materializer 不为 structural parent建立 effect reference；
+- child damage/status 等 effect 不得因 parent structural admission 被升级为 executable。
+
+**反例**：相同 opcode 但缺 count、source identity 不一致、非 admitted `WaitProjectileFinish` shape 或没有 exact control node 的 task 必须继续 blocked。
+
+### 6.5 S11 boundary 必须保留
+
+PR14 同一真实 action 在本卡后仍应保留 S11 的：
 
 - `task_graph_definition_not_admitted:effect:audit_only`
 - `task_graph_control_requires_domains:damage_heal_shield`
 
 两者若被本卡消掉，视为越界失败。
 
-### 6.5 fail-closed / zero leakage
+### 6.6 fail-closed / zero leakage
 
 当 projectile parent 已能 materialize、但 child 在 S11 boundary blocked 时，真实 formal task-graph 执行必须保持已有原子语义：blocked result 的 state 不变，不泄漏 mutation/event/RNG/settlement。P3 不得通过 process-only 假成功绕过 child blocker。
 
@@ -161,7 +196,7 @@ EXEC 只能修改以下路径：
 
 ```bash
 python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_fire_projectile_sequence_admission.py -q
-python -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_control_flow_contracts.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_fire_projectile_sequence_admission.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_fire_projectile_sequence_admission.py
+python -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_control_flow_contracts.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_fire_projectile_sequence_admission.py hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_fire_projectile_sequence_admission.py
 git diff --check eedebb406b85ab2611e8345b3fe7a75e9a7c53a0...HEAD
 ```
 
@@ -173,8 +208,9 @@ git diff --check eedebb406b85ab2611e8345b3fe7a75e9a7c53a0...HEAD
 4. child identity/order mismatch negative；
 5. unproven `WaitProjectileFinish` shape fail-closed；
 6. non-FireProjectile S8C role 不被本卡误 admission；
-7. parent structural 后 child audit-only/unsupported 仍按 child authority blocked；
-8. canonical round-trip / source identity 稳定。
+7. exact structural parent 可提升 task coverage，但对应 `EffectIR` 仍非 executable；
+8. parent structural 后 child audit-only/unsupported 仍按 child authority blocked；
+9. canonical round-trip / source identity 稳定。
 
 ## 8. 必须运行的真实 Direct
 
@@ -184,18 +220,18 @@ git diff --check eedebb406b85ab2611e8345b3fe7a75e9a7c53a0...HEAD
 python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_fire_projectile_sequence_admission.py
 ```
 
-该 validator 必须调用现有生产 builders/materializer/RuleBook/正式 action admission 与 task-graph executor，不得自己重写 projectile 或 action 语义。报告至少证明：
+该 validator 必须调用现有生产 builders/lowering/materializer/RuleBook/正式 action admission 与 task-graph executor，不得自己重写 projectile 或 action 语义。报告至少证明：
 
 ### 8.1 source-shape denominator
 
 - 列出当前 formal ability denominator 中 `FireProjectile` occurrence 总数与 shape 分组；
 - admission 的 shape 全部由同一字段/termination/branch 不变量证明；
-- source occurrence -> formal task/node/numeric definition/branch identities 双向闭合；
+- source occurrence -> control node -> formal task/effect -> graph node/numeric definition/branch identities 双向闭合；
 - 未 admission shape 逐个给精确 owner/reason；不能用空集算通过。
 
 ### 8.2 S8C sibling isolation
 
-证明本卡没有把其它 `p9_s8c` projectile/random/barrier/parallel source disposition 误标为 materialized。
+证明本卡没有把其它 `p9_s8c` projectile/random/barrier/parallel source disposition 误标为 materialized，也没有通过 lowering 的 structural-parent逻辑提升其它 family/opcode。
 
 ### 8.3 PR14 真实 blocker delta
 
@@ -211,6 +247,8 @@ python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_
 
 - `task_graph_definition_not_admitted:effect:audit_only`
 - `task_graph_control_requires_domains:damage_heal_shield`
+
+同时必须证明 `FireProjectile` `EffectIR` 本体并未被提升为 executable；消失的是 structural parent task/admission blocker，而不是 effect coverage truth 被改写。
 
 因此 **本卡完成不等于 PR11 可恢复**。真实 outer action 预期仍因 S11 fail-closed。
 
@@ -235,13 +273,15 @@ python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_
 出现任一情况立即 `needs_replan`：
 
 1. `FireProjectile` 正确语义需要修改 `rules/task_graph.py` schema 或 `systems/task_graph.py` executor 才能表达；
-2. 必须修改 `systems/ability.py` / effect / damage / RNG / event caller 才能闭合本卡；
-3. `WaitProjectileFinish` 在真实命中 shape 上需要独立 barrier/parallel/timeline authority；
-4. 当前真实 blocker 实际来自 `RandomConfig`、其它 projectile family 或第二个 S8C authority，而不是本卡 source shape；
-5. 要消掉 P3 blocker 必须同时消掉 S11 audit-only/damage-heal-shield；
-6. 同形 `FireProjectile` denominator 出现互相冲突、无法由同一 source-backed invariant 表达的语义；
-7. 需要 hard-code actor/action/source file/hash 才能让 real Direct 前进；
-8. 首次集中自审发现三个以上新的系统性问题类别。
+2. 必须修改 `systems/action_contract.py`、`systems/ability_task_contract.py`、`systems/ability.py`、effect/damage/RNG/event caller 或 coverage registry 才能闭合本卡；
+3. lowering 无法仅凭 exact source/control-node contract 区分 structural parent，必须按 opcode/角色/文件做全局例外；
+4. `WaitProjectileFinish` 在真实命中 shape 上需要独立 barrier/parallel/timeline authority；
+5. 当前真实 blocker 实际来自 `RandomConfig`、其它 projectile family 或第二个 S8C authority，而不是本卡 source shape；
+6. 要消掉 P3 blocker 必须同时消掉 S11 audit-only/damage-heal-shield；
+7. 同形 `FireProjectile` denominator 出现互相冲突、无法由同一 source-backed invariant 表达的语义；
+8. 需要 hard-code actor/action/source file/hash 才能让 real Direct 前进；
+9. 除本卡三处 L0 生产文件外还需要新的生产写路径；
+10. 首次集中自审发现三个以上新的系统性问题类别。
 
 只有真实 GitHub 权限、缺失 pinned source、不可用环境等外部问题才标 `blocked`。普通代码/测试/CI问题由 EXEC 在本卡范围内自行处理。
 
@@ -267,8 +307,9 @@ execution report 必须给出真实 head、实际 passed/skipped/未运行项和
 
 REVIEW 必须独立核对：
 
-- 生产 diff 只建立 `FireProjectile` projectile-sequence authority，没有把 `p9_s8c` 整域标 closed；
-- source-shape denominator 与 real Direct 都不是固定 March/固定答案夹具；
+- 生产 diff 只建立 `FireProjectile` projectile-sequence L0 producer authority，没有把 `p9_s8c` 整域标 closed；
+- structural parent task 的 coverage 提升严格绑定 exact source/control-node identity，`EffectIR` 本体仍保持真实非 executable evidence；
+- source-shape denominator 与 real Direct 都不是固定角色/固定答案夹具；
 - parent structural admission 有真实 runtime 到 child boundary 的证据，而非只改 coverage 字符串；
 - S11 两个 blocker 仍存在且 state/channel fail-closed；
 - 其它 S8C sibling disposition 未漂移；
