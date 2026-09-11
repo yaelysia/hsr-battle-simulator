@@ -1609,6 +1609,7 @@ def _materialization_dispositions(
         raise ValueError("task graph materialization base already contains formal links")
     graph_by_id = {item.graph_id: item for item in graphs}
     linked_by_materialization: dict[str, set[str]] = {}
+    linked_nodes_by_record: dict[str, list[TaskGraphNodeIR]] = defaultdict(list)
     for entry in entries:
         if entry.status == "blocked":
             linked_by_materialization[entry.materialization_id] = set()
@@ -1621,6 +1622,9 @@ def _materialization_dispositions(
             for node in graph.nodes
             if node.source_contract_node_id
         }
+        for node in graph.nodes:
+            if node.source_contract_node_id:
+                linked_nodes_by_record[node.source_contract_node_id].append(node)
         linked.update(
             reference.definition_id
             for node in graph.nodes
@@ -1648,8 +1652,32 @@ def _materialization_dispositions(
             continue
         if item.disposition == "blocked":
             raise ValueError("blocked task graph source cannot enter a formal graph")
+        linked_nodes = tuple(linked_nodes_by_record.get(item.source_record_id, ()))
+        retire_wait_anim_state_barrier = (
+            item.source_kind == "control_node"
+            and item.family == "WaitAnimState"
+            and bool(linked_nodes)
+            and all(
+                node.source_family == "WaitAnimState"
+                and node.opcode == "WaitAnimState"
+                and node.node_kind == "leaf"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and not node.branches
+                and not node.references
+                and node.termination_kind == "not_applicable"
+                and node.termination_status == "not_applicable"
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
-            domain for domain in item.owner_domains if domain != "task_graph_execution"
+            domain
+            for domain in item.owner_domains
+            if domain != "task_graph_execution"
+            and not (
+                retire_wait_anim_state_barrier
+                and domain == "hit_random_sequence"
+            )
         )
         result.append(replace(
             item,
