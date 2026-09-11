@@ -33,6 +33,7 @@ from simulator_v8_clean_core.systems.unit_spawn import (
     UnitSpawnPlan,
     UnitSpawnRequest,
     UnitSpawnSystem,
+    _required_source_trace_identity,
 )
 from simulator_v8_clean_core.systems.wave import WAVE_RUNTIME_SCHEMA_VERSION, WaveSystem
 from simulator_v8_clean_core.tbgd.lowering import (
@@ -194,6 +195,10 @@ def test_invalid_proof_rejected(wave_sources: WaveSources, field: str) -> None:
         del flags["monster_rank_source_trace"][field]
     else:
         flags["monster_rank_source_trace"][field] = ""
+    proof = flags["monster_rank_source_trace"]
+    assert proof in formal_source_objects(flags)
+    with pytest.raises(ValueError, match=f"catalog_source_{field}_missing"):
+        _required_source_trace_identity(proof, "catalog_source")
     template = replace(original, flag_specs=flags)
     before = deepcopy(template.to_json())
     plan = UnitSpawnSystem().plan(template, request_for(definition, entries[0]))
@@ -313,18 +318,31 @@ def test_real_subsequent_wave(wave_sources: WaveSources) -> None:
     )
 
 
-def source_objects(value: object) -> Iterator[Mapping]:
-    if isinstance(value, Mapping):
+def formal_source_objects(value: object) -> Iterator[Mapping]:
+    """Walk JSON containers, stopping at the formal consumer's identity boundary."""
+    if isinstance(value, dict):
         if {"source_path", "raw_type", "raw_id"} <= value.keys():
             yield value
+            return
         for nested in value.values():
-            yield from source_objects(nested)
-    elif isinstance(value, (list, tuple)):
+            yield from formal_source_objects(nested)
+    elif isinstance(value, list):
         for nested in value:
-            yield from source_objects(nested)
+            yield from formal_source_objects(nested)
 
 
-def test_wave_enemy_source_shape_catalog(wave_sources: WaveSources) -> None:
+def test_catalog_stops_at_identity_not_at_evidence_key() -> None:
+    locator = {"source_path": "fixture.json", "raw_type": "Fixture", "raw_id": "1"}
+    proof = {**locator, "evidence": {"template_source": locator}}
+    # A key named evidence in an ordinary container is not an exclusion rule.
+    payload = {"evidence": [proof], "sibling": {"nested": proof}}
+    sources = list(formal_source_objects(payload))
+    assert sources == [proof, proof]
+    for source in sources:
+        _required_source_trace_identity(source, "catalog_source")
+
+
+def test_wave_enemy_consumer_source_proof_catalog(wave_sources: WaveSources) -> None:
     templates = wave_sources.rules.ir.unit_birth_templates
     assert templates and all(t.spawn_kind == "wave_enemy" for t in templates)
     # Independent raw StageConfig roster denominator, before any runtime admission.
@@ -340,13 +358,17 @@ def test_wave_enemy_source_shape_catalog(wave_sources: WaveSources) -> None:
         "missing": sorted(expected - actual)[:5],
         "unexpected": sorted(actual - expected)[:5],
     }
+    assert len(templates) == len(actual) == len(expected) == 59940
     count = missing = 0
     digest = sha256()
     for template in sorted(templates, key=lambda t: t.birth_template_id):
         payload = template.to_json()
-        for source in source_objects(payload):
+        for source in formal_source_objects(payload):
             count += 1
             missing += not isinstance(source.get("evidence"), Mapping)
+            # Reuse the production identity/evidence validator, including empty
+            # or non-string identity rejection; evidence payload is not recursed.
+            _required_source_trace_identity(source, "catalog_source")
         # Compare actual parent/candidate birth arithmetic and request identities,
         # without copying the large, repetitive audit payload or any formula.
         neutral = {
@@ -365,8 +387,8 @@ def test_wave_enemy_source_shape_catalog(wave_sources: WaveSources) -> None:
         json.dumps(
             {
                 "wave_enemy_template_count": len(templates),
-                "formal_nested_source_identity_count": count,
-                "missing_evidence_count": missing,
+                "formal_consumer_source_identity_count": count,
+                "missing_formal_evidence_count": missing,
                 "behavior_and_identity_sha256": digest.hexdigest(),
             },
             sort_keys=True,

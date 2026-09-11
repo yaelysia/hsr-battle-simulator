@@ -104,7 +104,7 @@ jobs:
           PY
           ruff check /tmp/r6a-proof-format.py
           ruff format --check /tmp/r6a-proof-format.py
-      - name: Real Direct and deep wave-enemy Catalog
+      - name: Real Direct and consumer-aligned wave-enemy Catalog
         shell: bash
         run: |
           set -uo pipefail
