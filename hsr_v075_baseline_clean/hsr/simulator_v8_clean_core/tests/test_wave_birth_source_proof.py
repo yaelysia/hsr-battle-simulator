@@ -22,12 +22,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from simulator_v8_clean_core import BASELINE_VERSION
 from simulator_v8_clean_core.core.model import BattleState, UnitState
 from simulator_v8_clean_core.core.reducer import MutationReducer
-from simulator_v8_clean_core.rules.ir import CanonicalIR, WaveDefinitionIR, WaveMonsterEntryIR
+from simulator_v8_clean_core.rules.ir import (
+    CanonicalIR,
+    WaveDefinitionIR,
+    WaveMonsterEntryIR,
+)
 from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.scenarios.build_state import _wave_unit_spec
-from simulator_v8_clean_core.systems.unit_spawn import UnitSpawnPlan, UnitSpawnRequest, UnitSpawnSystem
+from simulator_v8_clean_core.systems.unit_spawn import (
+    UnitSpawnPlan,
+    UnitSpawnRequest,
+    UnitSpawnSystem,
+)
 from simulator_v8_clean_core.systems.wave import WAVE_RUNTIME_SCHEMA_VERSION, WaveSystem
-from simulator_v8_clean_core.tbgd.lowering import ENTITY_TABLES, TBGDLowering, _lower_unit_birth_templates
+from simulator_v8_clean_core.tbgd.lowering import (
+    ENTITY_TABLES,
+    TBGDLowering,
+    _lower_unit_birth_templates,
+)
 from simulator_v8_clean_core.tbgd.monster_cards import build_monster_card_ir
 
 
@@ -41,7 +53,9 @@ class WaveSources:
 @pytest.fixture(scope="module")
 def wave_sources() -> WaveSources:
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
-    assert (root / "ExcelOutput/StageConfig.json").is_file(), "pinned TBGD checkout required"
+    assert (root / "ExcelOutput/StageConfig.json").is_file(), (
+        "pinned TBGD checkout required"
+    )
     lowerer = TBGDLowering(root)
     # The same family producers used by build(); all original rows are kept so
     # row indices and provenance are not changed by fixture filtering.
@@ -54,56 +68,81 @@ def wave_sources() -> WaveSources:
     waves = lowerer._lower_wave_definitions(entities, profiles, cards)
     timeline = lowerer._lower_timeline_rules()
     templates = _lower_unit_birth_templates(
-        summon_monster_intents=[], servant_definitions=[], wave_definitions=waves,
-        combatant_profiles=profiles, monster_data_cards=cards,
-        timeline_rules=timeline, monster_rank_scores=lowerer._monster_rank_scores(),
+        summon_monster_intents=[],
+        servant_definitions=[],
+        wave_definitions=waves,
+        combatant_profiles=profiles,
+        monster_data_cards=cards,
+        timeline_rules=timeline,
+        monster_rank_scores=lowerer._monster_rank_scores(),
     )
-    rules = RuleBook(CanonicalIR(
-        version=BASELINE_VERSION, entities=tuple(entities),
-        combatant_profiles=tuple(profiles), monster_data_cards=tuple(cards),
-        wave_definitions=tuple(waves), unit_birth_templates=tuple(templates),
-        timeline_rules=tuple(timeline),
-    ))
+    rules = RuleBook(
+        CanonicalIR(
+            version=BASELINE_VERSION,
+            entities=tuple(entities),
+            combatant_profiles=tuple(profiles),
+            monster_data_cards=tuple(cards),
+            wave_definitions=tuple(waves),
+            unit_birth_templates=tuple(templates),
+            timeline_rules=tuple(timeline),
+        )
+    )
     return WaveSources(
         rules,
         json.loads((root / "ExcelOutput/StageConfig.json").read_text()),
-        json.loads((root / "Config/GlobalConfig/GameCoreConstValue.json").read_text())["MonsterRankScore"],
+        json.loads((root / "Config/GlobalConfig/GameCoreConstValue.json").read_text())[
+            "MonsterRankScore"
+        ],
     )
 
 
-def request_for(definition: WaveDefinitionIR, entry: WaveMonsterEntryIR) -> UnitSpawnRequest:
+def request_for(
+    definition: WaveDefinitionIR, entry: WaveMonsterEntryIR
+) -> UnitSpawnRequest:
     return UnitSpawnRequest(
         spawn_kind="wave_enemy",
         unit_id=f"enemy:stage:{definition.stage_id}:wave:{entry.wave_index}:pos:{entry.position}",
-        birth_template_id=entry.birth_template_id, entity_ref=entry.monster_entity_ref,
-        source_id=definition.wave_definition_id, entry_id=entry.entry_id,
-        wave_definition_id=definition.wave_definition_id, stage_id=definition.stage_id,
-        wave_index=entry.wave_index, position=entry.position,
-        source_trace=definition.source.to_json(), entry_source_trace=entry.source.to_json(),
+        birth_template_id=entry.birth_template_id,
+        entity_ref=entry.monster_entity_ref,
+        source_id=definition.wave_definition_id,
+        entry_id=entry.entry_id,
+        wave_definition_id=definition.wave_definition_id,
+        stage_id=definition.stage_id,
+        wave_index=entry.wave_index,
+        position=entry.position,
+        source_trace=definition.source.to_json(),
+        entry_source_trace=entry.source.to_json(),
     )
 
 
 def first_wave(sources: WaveSources):
     definition = sources.rules.wave_definition_for_stage("103201")
     assert definition is not None and definition.coverage_status == "executable"
-    return definition, sources.rules.wave_entries_for_wave(definition.wave_definition_id, 0)
+    return definition, sources.rules.wave_entries_for_wave(
+        definition.wave_definition_id, 0
+    )
 
 
-def materialize(sources: WaveSources, definition: WaveDefinitionIR, entry: WaveMonsterEntryIR):
+def materialize(
+    sources: WaveSources, definition: WaveDefinitionIR, entry: WaveMonsterEntryIR
+):
     template = sources.rules.unit_birth_template(entry.birth_template_id)
     assert template is not None and template.coverage_status == "executable"
     request = request_for(definition, entry)
     before = deepcopy(template.to_json())
     plan = UnitSpawnSystem().plan(template, request)
     assert plan.ok, plan.blocked_reason
-    unit = plan.to_unit(expected_request=request, expected_template=template, owner=None)
+    unit = plan.to_unit(
+        expected_request=request, expected_template=template, owner=None
+    )
     assert template.to_json() == before
     proof = unit.flags["monster_rank_source_trace"]
     rank = proof["raw_id"]
     assert proof["source_path"] == "Config/GlobalConfig/GameCoreConstValue.json"
     assert proof["raw_type"] == "MonsterRankScore"
     assert proof["evidence"] == {
-        "raw_path": f"MonsterRankScore.{rank}.Value", "rank": rank,
+        "raw_path": f"MonsterRankScore.{rank}.Value",
+        "rank": rank,
         "value": sources.rank_table[rank]["Value"],
     }
     assert unit.unit_id == request.unit_id and unit.template_id == request.entity_ref
@@ -111,17 +150,29 @@ def materialize(sources: WaveSources, definition: WaveDefinitionIR, entry: WaveM
         assert unit.flags[key] == getattr(request, key)
     assert unit.flags["wave_entry_id"] == request.entry_id
     assert unit.flags["wave_entry_source_trace"] == entry.source.to_json()
-    print(json.dumps({"stage": definition.stage_id, "entry": entry.entry_id,
-                      "unit": unit.unit_id, "template": template.birth_template_id,
-                      "plan.ok": plan.ok, "plan.blocked_reason": plan.blocked_reason,
-                      "rank_proof": proof}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "stage": definition.stage_id,
+                "entry": entry.entry_id,
+                "unit": unit.unit_id,
+                "template": template.birth_template_id,
+                "plan.ok": plan.ok,
+                "plan.blocked_reason": plan.blocked_reason,
+                "rank_proof": proof,
+            },
+            sort_keys=True,
+        )
+    )
     return unit
 
 
 def test_real_first_wave_and_duplicate_slots(wave_sources: WaveSources) -> None:
     definition, entries = first_wave(wave_sources)
     assert [(e.position, e.monster_raw_id) for e in entries] == [
-        (0, "1022020"), (1, "1023010"), (2, "1022020"),
+        (0, "1022020"),
+        (1, "1023010"),
+        (2, "1022020"),
     ]
     units = [materialize(wave_sources, definition, entry) for entry in entries]
     assert entries[0].birth_template_id == entries[2].birth_template_id
@@ -152,13 +203,19 @@ def test_invalid_proof_rejected(wave_sources: WaveSources, field: str) -> None:
     print("negative=" + plan.blocked_reason)
 
 
-@pytest.mark.parametrize("field", ["stage_id", "wave_definition_id", "entity_ref", "source_trace"])
+@pytest.mark.parametrize(
+    "field", ["stage_id", "wave_definition_id", "entity_ref", "source_trace"]
+)
 def test_request_mismatch_rejected(wave_sources: WaveSources, field: str) -> None:
     definition, entries = first_wave(wave_sources)
     template = wave_sources.rules.unit_birth_template(entries[0].birth_template_id)
     assert template is not None
     request = request_for(definition, entries[0])
-    value = {**request.source_trace, "raw_id": "invalid:stage"} if field == "source_trace" else "invalid:identity"
+    value = (
+        {**request.source_trace, "raw_id": "invalid:stage"}
+        if field == "source_trace"
+        else "invalid:identity"
+    )
     malformed = replace(request, **{field: value})
     plan = UnitSpawnSystem().plan(template, malformed)
     assert not plan.ok and not plan.unit and "mismatch" in plan.blocked_reason
@@ -166,50 +223,94 @@ def test_request_mismatch_rejected(wave_sources: WaveSources, field: str) -> Non
 
 
 def test_real_subsequent_wave(wave_sources: WaveSources) -> None:
-    ordinary = {str(row["StageID"]) for row in wave_sources.raw_stages if row.get("StageType") == "Mainline"}
-    candidates = [w for w in wave_sources.rules.ir.wave_definitions
-                  if w.stage_id in ordinary and w.coverage_status == "executable" and w.wave_count > 1
-                  and not w.stage_ability_refs]
+    ordinary = {
+        str(row["StageID"])
+        for row in wave_sources.raw_stages
+        if row.get("StageType") == "Mainline"
+    }
+    candidates = [
+        w
+        for w in wave_sources.rules.ir.wave_definitions
+        if w.stage_id in ordinary
+        and w.coverage_status == "executable"
+        and w.wave_count > 1
+        and not w.stage_ability_refs
+    ]
     assert candidates, "real ordinary multi-wave denominator must not be empty"
     definition = min(candidates, key=lambda w: (len(w.entries), int(w.stage_id)))
-    initial = [materialize(wave_sources, definition, entry) for entry in definition.entries if entry.wave_index == 0]
+    initial = [
+        materialize(wave_sources, definition, entry)
+        for entry in definition.entries
+        if entry.wave_index == 0
+    ]
     assert initial
     # Explicit cleared-wave boundary fixture, not fabricated TBGD stage content.
-    ally = UnitState(unit_id="fixture:inert_ally", side="ally", template_id="fixture:inert_ally")
-    units = {unit.unit_id: replace(unit, hp=0.0, lifecycle_status="defeated") for unit in initial}
+    ally = UnitState(
+        unit_id="fixture:inert_ally", side="ally", template_id="fixture:inert_ally"
+    )
+    units = {
+        unit.unit_id: replace(unit, hp=0.0, lifecycle_status="defeated")
+        for unit in initial
+    }
     units[ally.unit_id] = ally
-    state = BattleState(units=units, global_flags={"wave_runtime": {
-        "schema_version": WAVE_RUNTIME_SCHEMA_VERSION,
-        "wave_definition_id": definition.wave_definition_id, "stage_id": definition.stage_id,
-        "current_wave_index": 0, "total_waves": definition.wave_count,
-        "current_wave_unit_ids": [unit.unit_id for unit in initial], "status": "active",
-        "started_wave_indices": [0], "cleared_wave_indices": [],
-        "source_trace": definition.source.to_json(),
-    }})
+    state = BattleState(
+        units=units,
+        global_flags={
+            "wave_runtime": {
+                "schema_version": WAVE_RUNTIME_SCHEMA_VERSION,
+                "wave_definition_id": definition.wave_definition_id,
+                "stage_id": definition.stage_id,
+                "current_wave_index": 0,
+                "total_waves": definition.wave_count,
+                "current_wave_unit_ids": [unit.unit_id for unit in initial],
+                "status": "active",
+                "started_wave_indices": [0],
+                "cleared_wave_indices": [],
+                "source_trace": definition.source.to_json(),
+            }
+        },
+    )
     before = state.snapshot().to_json()
     system = WaveSystem(wave_sources.rules)
     plan = system.plan_transition(state)
     assert plan.ok and plan.status == "advance_to_next_wave", plan.blocked_reason
     assert plan.spawn_requests
-    for request, encoded in zip(plan.spawn_requests, plan.spawn_unit_plans, strict=True):
+    for request, encoded in zip(
+        plan.spawn_requests, plan.spawn_unit_plans, strict=True
+    ):
         template = wave_sources.rules.unit_birth_template(request.birth_template_id)
         assert template is not None
-        unit = UnitSpawnPlan.from_json(encoded).to_unit(expected_request=request, expected_template=template, owner=None)
+        unit = UnitSpawnPlan.from_json(encoded).to_unit(
+            expected_request=request, expected_template=template, owner=None
+        )
         assert unit.flags["monster_rank_source_trace"]["evidence"]
     result = system.apply_transition(state, plan)
     assert result.plan.ok and result.mutations, result.plan.blocked_reason
     assert state.snapshot().to_json() == before
     after = MutationReducer().apply_all(state, result.mutations)
     assert after.wave_index == 1
-    assert all(after.units[unit.unit_id].lifecycle_status == "removed" for unit in initial)
+    assert all(
+        after.units[unit.unit_id].lifecycle_status == "removed" for unit in initial
+    )
     for request in plan.spawn_requests:
         assert after.units[request.unit_id].lifecycle_status == "active"
         assert after.units[request.unit_id].flags["wave_entry_id"] == request.entry_id
-    replay = MutationReducer().replay_snapshot(state, result.mutations, after.snapshot().to_json())
+    replay = MutationReducer().replay_snapshot(
+        state, result.mutations, after.snapshot().to_json()
+    )
     assert replay.ok, replay.errors
-    print(json.dumps({"subsequent_stage": definition.stage_id, "wave": 1,
-                      "spawned": [r.unit_id for r in plan.spawn_requests],
-                      "mutation_count": len(result.mutations), "replay_ok": replay.ok}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "subsequent_stage": definition.stage_id,
+                "wave": 1,
+                "spawned": [r.unit_id for r in plan.spawn_requests],
+                "mutation_count": len(result.mutations),
+                "replay_ok": replay.ok,
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def source_objects(value: object) -> Iterator[Mapping]:
@@ -227,9 +328,13 @@ def test_wave_enemy_source_shape_catalog(wave_sources: WaveSources) -> None:
     templates = wave_sources.rules.ir.unit_birth_templates
     assert templates and all(t.spawn_kind == "wave_enemy" for t in templates)
     # Independent raw StageConfig roster denominator, before any runtime admission.
-    expected = {f"unit_birth_template:wave:{row['StageID']}:{monster}"
-                for row in wave_sources.raw_stages for wave in row.get("MonsterList", [])
-                for key, monster in wave.items() if key.startswith("Monster")}
+    expected = {
+        f"unit_birth_template:wave:{row['StageID']}:{monster}"
+        for row in wave_sources.raw_stages
+        for wave in row.get("MonsterList", [])
+        for key, monster in wave.items()
+        if key.startswith("Monster")
+    }
     actual = {t.birth_template_id for t in templates}
     assert expected == actual, {
         "missing": sorted(expected - actual)[:5],
@@ -253,9 +358,18 @@ def test_wave_enemy_source_shape_catalog(wave_sources: WaveSources) -> None:
             "coverage_status": template.coverage_status,
             "blocked_reason": template.blocked_reason,
         }
-        digest.update(json.dumps(neutral, sort_keys=True, separators=(",", ":")).encode())
-    print(json.dumps({"wave_enemy_template_count": len(templates),
-                      "formal_nested_source_identity_count": count,
-                      "missing_evidence_count": missing,
-                      "behavior_and_identity_sha256": digest.hexdigest()}, sort_keys=True))
+        digest.update(
+            json.dumps(neutral, sort_keys=True, separators=(",", ":")).encode()
+        )
+    print(
+        json.dumps(
+            {
+                "wave_enemy_template_count": len(templates),
+                "formal_nested_source_identity_count": count,
+                "missing_evidence_count": missing,
+                "behavior_and_identity_sha256": digest.hexdigest(),
+            },
+            sort_keys=True,
+        )
+    )
     assert count > 0 and missing == 0
