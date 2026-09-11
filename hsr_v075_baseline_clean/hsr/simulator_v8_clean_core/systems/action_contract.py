@@ -484,10 +484,17 @@ def _formal_action_task_graph_projection(
                         source="graph_reference",
                     )
 
-            nested_node = node.node_kind == "ability_call" or task.opcode == "TriggerAbility"
+            process_only = is_process_only_ability_task(task)
+            nested_node = node.node_kind == "ability_call" or (
+                task.opcode == "TriggerAbility" and not process_only
+            )
             if not nested_node:
                 continue
-            if node.node_kind != "ability_call" or task.opcode != "TriggerAbility":
+            if (
+                node.node_kind != "ability_call"
+                or task.opcode != "TriggerAbility"
+                or process_only
+            ):
                 block(
                     "ability_task_graph_nested_identity_mismatch",
                     phase_id=graph.owner_id,
