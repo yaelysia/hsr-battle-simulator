@@ -63,6 +63,21 @@ jobs:
           git diff --check f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
           python -m compileall -q hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py
           python -c "import runpy; runpy.run_path('hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/probe_wave_birth_source_proof.py', run_name='import_smoke')"
+      - name: Export exact source workspace without credentials or Git databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r6a-transfer
+          git rev-parse HEAD > /tmp/r6a-transfer/business-head.txt
+          git ls-tree -r HEAD > /tmp/r6a-transfer/business-tree.txt
+          git -C turnbasedgamedata-main rev-parse HEAD > /tmp/r6a-transfer/tbgd-head.txt
+          git -C turnbasedgamedata-main ls-tree -r HEAD > /tmp/r6a-transfer/tbgd-tree.txt
+          tar --exclude=.git --exclude=__pycache__ --exclude='*.pyc' \
+            -czf /tmp/r6a-transfer/workspace.tar.gz \
+            AGENTS.md .gitmodules .github/workflows \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core \
+            turnbasedgamedata-main
+          sha256sum /tmp/r6a-transfer/*
       - name: Execute unchanged production builders and spawn gate
         shell: bash
         run: |
@@ -83,5 +98,6 @@ jobs:
             /tmp/r6a-reproduction.log
             /tmp/r6a-reproduction.json
             /tmp/r6a-time.txt
-          if-no-files-found: warn
+            /tmp/r6a-transfer/
+          if-no-files-found: error
           retention-days: 7
