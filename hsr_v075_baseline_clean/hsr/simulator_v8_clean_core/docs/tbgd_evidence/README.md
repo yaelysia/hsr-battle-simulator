@@ -36,7 +36,7 @@ Current bounded sequence completed:
 
 `complete` here means the bounded evidence record met its own exit condition. It does **not** mean the corresponding W-package is globally `mechanism_closed`, and it does not imply runtime verification.
 
-The next serial research thread is **R6 — W16 + source-facing W14 residuals — Encounter / Spawn / Phase / Termination v1**. Do not resume old W01/W18, W03/W04/W05/W06/W08 `Next closure` wording merely because the living worklist predates later bounded records.
+The current serial research thread is **R6 — W16 + source-facing W14 residuals — Encounter / Spawn / Phase / Termination v1**. Its 2026-09-11 [partial checkpoint](../../../../../docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md) records the selected Stage/wave/monster/birth inputs, a resolved StageAbility graph, and the inspected phase/termination contracts. It does **not** mark R6 bounded complete: `R6-G01` is a source-proof interface mismatch between the actual wave birth builder and `UnitSpawnPlan.to_unit` (rank trace lacks the required evidence mapping). No runtime tests were run and no E promotion is claimed. Return to integration/planning for a separate repair/validation card; do not automatically start R7. Do not resume old W01/W18, W03/W04/W05/W06/W08 `Next closure` wording merely because the living worklist predates later bounded records.
 
 ## Battle-semantic scope
 
@@ -158,6 +158,7 @@ Completed bounded cross-cutting records:
 
 Other representative/cross-cutting evidence:
 
+- repository-level `docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md` — R6 partial checkpoint, source/kernel alignment and explicit birth materialization blocker; not a completed bounded record;
 - repository-level `docs/tbgd_evidence/characters/march_7th_preservation_skill02_shield.md`;
 - repository-level `docs/tbgd_evidence/characters/aglaea_servant_11402_reference_chain.md`;
 - repository-level `docs/tbgd_evidence/monsters/monster_1002011_reference_chain.md`;
@@ -170,7 +171,7 @@ Other representative/cross-cutting evidence:
 
 R0-R5 have moved the ordinary execution path from isolated examples toward reusable source-facing contracts from selected battle-start inputs through the core execution middle. R5 additionally establishes a concrete selected Avatar/Light Cone/relic/trace/Technique construction slice, but its formal admission and callback execution remain a separate validation residual rather than a reason to restart source discovery.
 
-The highest-value next uncertainty is now **encounter construction and control**:
+The post-R5 **encounter construction and control** topics below have now been traced in the R6 partial record. The immediate residual is the documented birth source-proof mismatch and subsequent validation, not a restart of the already resolved source search:
 
 - StageConfig -> ordered waves/slots -> wave definitions;
 - Level / ordinary `HardLevelGroup` / Elite context -> enemy birth inputs;
