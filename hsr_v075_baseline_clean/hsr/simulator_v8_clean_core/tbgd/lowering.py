@@ -16332,6 +16332,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
         "Iteration": "integer",
         "TargetType": "mapping",
     },
+    "SetEntityVisible": {"TargetType": "mapping", "UniqueKey": "string", "Visible": "bool"},
     "SetTeamFormation": {
         "CustomCenterTargetType": "mapping",
         "CustomFormationIgnoreDying": "bool",
@@ -16486,6 +16487,8 @@ def _process_only_ability_task_source_blocked_reason(
             if set(task).intersection(visual_fields)
             else "radial_blur_visual_payload_missing"
         )
+    if opcode == "SetEntityVisible":
+        return ""
     if opcode == "SetTeamFormation":
         has_formation = bool(task.get("FormationType") or task.get("CustomFormationName"))
         has_scope = bool(
