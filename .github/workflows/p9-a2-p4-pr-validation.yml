@@ -15,11 +15,18 @@ jobs:
   candidate-preflight:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact PR head
+      - name: Checkout exact PR head and pinned TBGD
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          submodules: recursive
+
+      - name: Verify TBGD pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 
       - name: Build and verify minimal SetEntityVisible candidate
         shell: bash
@@ -28,6 +35,8 @@ jobs:
           python - <<'PY'
           from __future__ import annotations
 
+          import collections
+          import json
           import subprocess
           import sys
           from pathlib import Path
@@ -35,6 +44,61 @@ jobs:
           root = Path.cwd()
           coverage = root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
           lowering = root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+          avatar_root = root / "turnbasedgamedata-main/Config/ConfigAbility/Avatar"
+
+          def short_type(value: object) -> str:
+              return value.rsplit(".", 1)[-1] if isinstance(value, str) else ""
+
+          def walk(value: object):
+              if isinstance(value, dict):
+                  if short_type(value.get("$type")) == "SetEntityVisible":
+                      yield value
+                  for child in value.values():
+                      yield from walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from walk(child)
+
+          occurrences: list[dict[str, object]] = []
+          files: set[str] = set()
+          field_sets: collections.Counter[tuple[str, ...]] = collections.Counter()
+          type_sets: collections.Counter[tuple[tuple[str, str], ...]] = collections.Counter()
+          for path in sorted(avatar_root.rglob("*.json")):
+              try:
+                  raw = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              found = list(walk(raw))
+              if not found:
+                  continue
+              files.add(path.relative_to(root / "turnbasedgamedata-main").as_posix())
+              for task in found:
+                  occurrences.append(task)
+                  field_sets[tuple(sorted(task))] += 1
+                  type_sets[
+                      tuple(
+                          sorted(
+                              (key, "bool" if type(value) is bool else "mapping" if isinstance(value, dict) else type(value).__name__)
+                              for key, value in task.items()
+                          )
+                      )
+                  ] += 1
+
+          assert occurrences, "pinned Avatar ConfigAbility SetEntityVisible denominator empty"
+          allowed = {"$type", "TargetType", "Visible"}
+          unknown = sorted({key for task in occurrences for key in task if key not in allowed})
+          assert not unknown, f"unexplained SetEntityVisible fields: {unknown}"
+          for task in occurrences:
+              if "TargetType" in task:
+                  assert isinstance(task["TargetType"], dict), f"TargetType shape drift: {type(task['TargetType']).__name__}"
+              if "Visible" in task:
+                  assert type(task["Visible"]) is bool, f"Visible shape drift: {type(task['Visible']).__name__}"
+          print("RAW_DENOMINATOR", json.dumps({
+              "total": len(occurrences),
+              "files": len(files),
+              "field_sets": {str(key): value for key, value in sorted(field_sets.items())},
+              "type_sets": {str(key): value for key, value in sorted(type_sets.items())},
+          }, sort_keys=True))
 
           coverage_text = coverage.read_text(encoding="utf-8")
           coverage_needle = '        "SetTeamFormation",\n        "SkillExecutionStart",'
@@ -49,13 +113,20 @@ jobs:
           )
 
           lowering_text = lowering.read_text(encoding="utf-8")
-          lowering_needle = '    "SetTeamFormation": {'
-          assert lowering_text.count(lowering_needle) == 1, "lowering schema insertion point drifted"
+          schema_needle = '    "SetTeamFormation": {'
+          assert lowering_text.count(schema_needle) == 1, "lowering schema insertion point drifted"
+          lowering_text = lowering_text.replace(
+              schema_needle,
+              '    "SetEntityVisible": {"TargetType": "mapping", "Visible": "bool"},\n'
+              + schema_needle,
+              1,
+          )
+          guard_needle = '    if opcode == "SetTeamFormation":\n'
+          assert lowering_text.count(guard_needle) == 1, "lowering guard insertion point drifted"
           lowering.write_text(
               lowering_text.replace(
-                  lowering_needle,
-                  '    "SetEntityVisible": {"TargetType": "mapping", "Visible": "bool"},\n'
-                  + lowering_needle,
+                  guard_needle,
+                  '    if opcode == "SetEntityVisible":\n        return ""\n' + guard_needle,
                   1,
               ),
               encoding="utf-8",
@@ -73,20 +144,20 @@ jobs:
 
           assert ability_task_execution_mode("SetEntityVisible") == "process_only"
           assert ability_task_execution_mode("SetEntityForceVisible") == "runtime_effect"
+          for task in occurrences:
+              reason = _process_only_ability_task_source_blocked_reason(task, "SetEntityVisible")
+              assert not reason, reason
+
           valid = {
               "$type": "RPG.GameCore.SetEntityVisible",
               "TargetType": {"$type": "RPG.GameCore.TargetFetchAdvCharacter"},
               "Visible": True,
           }
-          valid_false = {**valid, "Visible": False}
           assert not _process_only_ability_task_source_blocked_reason(valid, "SetEntityVisible")
-          assert not _process_only_ability_task_source_blocked_reason(valid_false, "SetEntityVisible")
-          assert _process_only_ability_task_source_blocked_reason(
-              {**valid, "Unexpected": 1}, "SetEntityVisible"
-          )
-          assert _process_only_ability_task_source_blocked_reason(
-              {**valid, "Visible": 1}, "SetEntityVisible"
-          )
+          assert not _process_only_ability_task_source_blocked_reason({**valid, "Visible": False}, "SetEntityVisible")
+          assert _process_only_ability_task_source_blocked_reason({**valid, "Unexpected": 1}, "SetEntityVisible")
+          assert _process_only_ability_task_source_blocked_reason({**valid, "Visible": 1}, "SetEntityVisible")
+          assert _process_only_ability_task_source_blocked_reason({**valid, "TargetType": "Team"}, "SetEntityVisible")
 
           for path in (coverage, lowering):
               rel = path.relative_to(root).as_posix()
