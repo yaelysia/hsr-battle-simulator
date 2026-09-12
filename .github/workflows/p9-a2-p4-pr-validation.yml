@@ -85,12 +85,14 @@ jobs:
                   ] += 1
 
           assert occurrences, "pinned Avatar ConfigAbility SetEntityVisible denominator empty"
-          allowed = {"$type", "TargetType", "Visible"}
+          allowed = {"$type", "TargetType", "UniqueKey", "Visible"}
           unknown = sorted({key for task in occurrences for key in task if key not in allowed})
           assert not unknown, f"unexplained SetEntityVisible fields: {unknown}"
           for task in occurrences:
               if "TargetType" in task:
                   assert isinstance(task["TargetType"], dict), f"TargetType shape drift: {type(task['TargetType']).__name__}"
+              if "UniqueKey" in task:
+                  assert isinstance(task["UniqueKey"], str), f"UniqueKey shape drift: {type(task['UniqueKey']).__name__}"
               if "Visible" in task:
                   assert type(task["Visible"]) is bool, f"Visible shape drift: {type(task['Visible']).__name__}"
           print("RAW_DENOMINATOR", json.dumps({
@@ -117,7 +119,7 @@ jobs:
           assert lowering_text.count(schema_needle) == 1, "lowering schema insertion point drifted"
           lowering_text = lowering_text.replace(
               schema_needle,
-              '    "SetEntityVisible": {"TargetType": "mapping", "Visible": "bool"},\n'
+              '    "SetEntityVisible": {"TargetType": "mapping", "UniqueKey": "string", "Visible": "bool"},\n'
               + schema_needle,
               1,
           )
@@ -154,8 +156,10 @@ jobs:
               "Visible": True,
           }
           assert not _process_only_ability_task_source_blocked_reason(valid, "SetEntityVisible")
+          assert not _process_only_ability_task_source_blocked_reason({**valid, "UniqueKey": "fixture-visible"}, "SetEntityVisible")
           assert not _process_only_ability_task_source_blocked_reason({**valid, "Visible": False}, "SetEntityVisible")
           assert _process_only_ability_task_source_blocked_reason({**valid, "Unexpected": 1}, "SetEntityVisible")
+          assert _process_only_ability_task_source_blocked_reason({**valid, "UniqueKey": 1}, "SetEntityVisible")
           assert _process_only_ability_task_source_blocked_reason({**valid, "Visible": 1}, "SetEntityVisible")
           assert _process_only_ability_task_source_blocked_reason({**valid, "TargetType": "Team"}, "SetEntityVisible")
 
