@@ -835,3 +835,51 @@ def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
     assert "_lower_standalone_ability_graphs(ability_files)" not in builder_text
     assert "if relative in formal_status_root_paths\n                    else None" not in builder_text
     assert "materialize_character_runtime_task_graph_catalog(" not in builder_text
+
+
+def test_direct_validator_closes_fingerprint_via_production_formal_source() -> None:
+    validator = (
+        Path(__file__).resolve().parents[1]
+        / "tools"
+        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+    )
+    text = validator.read_text(encoding="utf-8")
+    module = ast.parse(text)
+    denominator = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "formal_wait_anim_denominator"
+    )
+    classifier = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_classify_formal_wait_occurrence"
+    )
+    denominator_text = ast.get_source_segment(text, denominator)
+    classifier_text = ast.get_source_segment(text, classifier)
+    assert denominator_text is not None
+    assert classifier_text is not None
+
+    for token in (
+        "task_graph_materializer._formal_source(",
+        "materialization_context.digest_by_path",
+        '"source_fingerprint_closure_sample"',
+    ):
+        assert token in denominator_text
+    for token in (
+        "formal_identity = _source_identity(formal_source)",
+        'formal_fingerprint_scope != "source_file"',
+        "_source_identity(node.source) != formal_identity",
+        "_source_identity(control.source) != formal_identity",
+        "node.references[0].source != formal_source",
+        '"task_source_content_fingerprint_conflict"',
+        '"formal_source_content_fingerprint_mismatch"',
+        '"control_content_sha256"',
+        '"graph_node_content_sha256"',
+        '"audit_reference_content_sha256"',
+    ):
+        assert token in classifier_text
+    assert "task_content_sha != expected_content_sha256" not in classifier_text
+    assert '"task_source_content_fingerprint_mismatch"' not in classifier_text

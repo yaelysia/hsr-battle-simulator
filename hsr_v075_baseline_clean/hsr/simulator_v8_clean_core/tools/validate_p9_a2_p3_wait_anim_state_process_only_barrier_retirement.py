@@ -192,12 +192,20 @@ def _process_contract_ok(effect: Any, task: Any) -> bool:
     )
 
 
-def _source_identity(source: Any) -> tuple[str, str, str]:
+def _source_location(source: Any) -> tuple[str, str]:
     evidence = source.evidence
     return (
         str(source.source_path),
         str(evidence.get("json_path") or ""),
-        str(evidence.get("content_sha256") or ""),
+    )
+
+
+def _source_identity(source: Any) -> tuple[str, str, str]:
+    source_path, json_path = _source_location(source)
+    return (
+        source_path,
+        json_path,
+        str(source.evidence.get("content_sha256") or ""),
     )
 
 
@@ -330,11 +338,17 @@ def _classify_formal_wait_occurrence(
     node: Any | None,
     control: Any | None,
     raw: object,
+    formal_source: Any,
     expected_content_sha256: str,
 ) -> dict[str, Any]:
     reasons: list[str] = []
-    task_identity = _source_identity(task.source)
-    source_path, json_path, task_content_sha = task_identity
+    source_path, json_path = _source_location(task.source)
+    task_content_sha = str(task.source.evidence.get("content_sha256") or "")
+    formal_identity = _source_identity(formal_source)
+    formal_source_path, formal_json_path, formal_content_sha = formal_identity
+    formal_fingerprint_scope = str(
+        formal_source.evidence.get("content_fingerprint_scope") or ""
+    )
 
     source_contract_reason = ""
     if not isinstance(raw, Mapping):
@@ -351,10 +365,16 @@ def _classify_formal_wait_occurrence(
 
     if not source_path or not json_path.startswith("$"):
         reasons.append("task_source_identity_incomplete")
+    if (source_path, json_path) != (formal_source_path, formal_json_path):
+        reasons.append("task_source_location_mismatch")
     if not expected_content_sha256 or len(expected_content_sha256) != 64:
         reasons.append("formal_source_content_fingerprint_missing")
-    elif task_content_sha != expected_content_sha256:
-        reasons.append("task_source_content_fingerprint_mismatch")
+    elif formal_content_sha != expected_content_sha256:
+        reasons.append("formal_source_content_fingerprint_mismatch")
+    if formal_fingerprint_scope != "source_file":
+        reasons.append("formal_source_content_fingerprint_scope_invalid")
+    if task_content_sha and task_content_sha != formal_content_sha:
+        reasons.append("task_source_content_fingerprint_conflict")
 
     if phase is None:
         reasons.append("formal_phase_owner_missing")
@@ -378,8 +398,10 @@ def _classify_formal_wait_occurrence(
     else:
         if not _process_contract_ok(effect, task):
             reasons.append("audit_effect_process_only_contract_invalid")
-        if _source_identity(effect.source) != task_identity:
+        if effect.source != task.source:
             reasons.append("effect_source_identity_mismatch")
+        if _source_location(effect.source) != (formal_source_path, formal_json_path):
+            reasons.append("effect_source_location_mismatch")
 
     if graph is None or node is None:
         reasons.append("formal_task_graph_node_missing_or_ambiguous")
@@ -398,7 +420,7 @@ def _classify_formal_wait_occurrence(
             reasons.append("graph_node_formal_task_identity_mismatch")
         if node.source_family != "WaitAnimState":
             reasons.append("graph_node_family_not_wait_anim_state")
-        if _source_identity(node.source) != task_identity:
+        if _source_identity(node.source) != formal_identity:
             reasons.append("graph_node_source_identity_mismatch")
         if node.node_kind != "leaf":
             reasons.append("graph_node_not_leaf")
@@ -439,7 +461,7 @@ def _classify_formal_wait_occurrence(
             reasons.append("control_role_not_presentation_barrier")
         if control.blocked_reason:
             reasons.append("control_blocked:" + str(control.blocked_reason))
-        if _source_identity(control.source) != task_identity:
+        if _source_identity(control.source) != formal_identity:
             reasons.append("control_source_identity_mismatch")
         if any(
             item.responsibility != "presentation_excluded"
@@ -460,7 +482,7 @@ def _classify_formal_wait_occurrence(
                 "definition_id": item.definition_id,
                 "resolution_status": item.resolution_status,
                 "blocked_reason": item.blocked_reason,
-                "source_matches_task": item.source == task.source,
+                "source_matches_formal": item.source == formal_source,
             }
             for item in node.references
         ]
@@ -470,9 +492,30 @@ def _classify_formal_wait_occurrence(
             or node.references[0].definition_id != task.effect_id
             or node.references[0].resolution_status != "deferred"
             or node.references[0].blocked_reason != AUDIT_EFFECT_BLOCKER
-            or node.references[0].source != task.source
+            or node.references[0].source != formal_source
         ):
             reasons.append("graph_audit_effect_reference_invalid")
+
+    effect_content_sha = (
+        str(effect.source.evidence.get("content_sha256") or "")
+        if effect is not None
+        else ""
+    )
+    control_content_sha = (
+        str(control.source.evidence.get("content_sha256") or "")
+        if control is not None
+        else ""
+    )
+    graph_node_content_sha = (
+        str(node.source.evidence.get("content_sha256") or "")
+        if node is not None
+        else ""
+    )
+    audit_reference_content_sha = (
+        str(node.references[0].source.evidence.get("content_sha256") or "")
+        if node is not None and len(node.references) == 1
+        else ""
+    )
 
     admitted = not reasons
     return {
@@ -485,6 +528,15 @@ def _classify_formal_wait_occurrence(
         "callback_kind": task.callback_kind,
         "source_path": source_path,
         "json_path": json_path,
+        "task_evidence_content_sha256": task_content_sha,
+        "effect_evidence_content_sha256": effect_content_sha,
+        "formal_source_path": formal_source_path,
+        "formal_json_path": formal_json_path,
+        "formal_content_sha256": formal_content_sha,
+        "formal_content_fingerprint_scope": formal_fingerprint_scope,
+        "control_content_sha256": control_content_sha,
+        "graph_node_content_sha256": graph_node_content_sha,
+        "audit_reference_content_sha256": audit_reference_content_sha,
         "content_sha256": expected_content_sha256,
         "raw_family": _raw_family(raw),
         "source_contract_reason": source_contract_reason,
@@ -817,6 +869,10 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
         effect = rules.effect(task.effect_id) if task.effect_id else None
         source_path = task.source.source_path
         json_path = str(task.source.evidence.get("json_path") or "")
+        formal_source = task_graph_materializer._formal_source(
+            task_graph_materializer._ability_task(task),
+            materialization_context.digest_by_path,
+        )
         control = controls_by_location.get(
             (source_path, json_path, _family_for_task(task))
         )
@@ -836,6 +892,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
             node=node,
             control=control,
             raw=raw,
+            formal_source=formal_source,
             expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
         )
         row.update(
@@ -880,6 +937,26 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     blocked_reasons = Counter(
         str(row["reason"]) for row in rows if not row["admitted"]
     )
+    sample_row = next((row for row in rows if row["admitted"]), rows[0])
+    source_fingerprint_closure_sample = {
+        key: sample_row[key]
+        for key in (
+            "task_id",
+            "source_path",
+            "json_path",
+            "task_evidence_content_sha256",
+            "effect_evidence_content_sha256",
+            "formal_content_sha256",
+            "formal_content_fingerprint_scope",
+            "control_content_sha256",
+            "graph_node_content_sha256",
+            "audit_reference_content_sha256",
+            "control_node_id",
+            "graph_node_id",
+            "admitted",
+            "reason",
+        )
+    }
     return {
         "kind": "formal_ability_wait_anim_state_occurrences",
         "formal_ability_entry_count": len(formal_entry_keys),
@@ -889,6 +966,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
         "admitted": admitted,
         "blocked": blocked,
         "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
+        "source_fingerprint_closure_sample": source_fingerprint_closure_sample,
         "rows": rows,
     }
 
