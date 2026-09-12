@@ -46,7 +46,13 @@ if os.environ.get("P9_A2_P3_EXTERNAL_BASELINE") != "1":
     sys.path.insert(0, str(BASELINE))
 
 from hsr.simulator_v8_clean_core.rules.evaluator import RuleEvaluator
-from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
+from hsr.simulator_v8_clean_core.rules.ir import (
+    AbilityPhaseIR,
+    CanonicalIR,
+    ConditionIR,
+    EffectIR,
+    StandaloneAbilityGraphIR,
+)
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.rules.task_graph import (
     TaskGraphCatalogIR,
@@ -758,11 +764,735 @@ def _current_rss_kib() -> int:
     return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
+
+def _slice_materialization_context(
+    base_context: Any,
+    *,
+    conditions: list[Any] | tuple[Any, ...],
+    effects: list[Any] | tuple[Any, ...],
+    phases: list[Any] | tuple[Any, ...],
+    standalone_graphs: list[Any] | tuple[Any, ...],
+) -> Any:
+    """Reuse one source-side context while swapping only typed definition indexes."""
+
+    return replace(
+        base_context,
+        definitions=task_graph_materializer._DefinitionIndexes(
+            task_graph_materializer._definition_multimap(
+                conditions,
+                ConditionIR,
+                "condition_id",
+            ),
+            {},
+            task_graph_materializer._definition_multimap(
+                effects,
+                EffectIR,
+                "effect_id",
+            ),
+            task_graph_materializer._definition_multimap(
+                (*phases, *standalone_graphs),
+                (AbilityPhaseIR, StandaloneAbilityGraphIR),
+                ("phase_id", "standalone_ability_graph_id"),
+            ),
+        ),
+    )
+
+
+def _formal_wait_anim_denominator_streamed(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Close the formal WaitAnim denominator without retaining one whole CanonicalIR."""
+
+    view = _FormalTaskGraphViewBuilder(root)
+    lowerer = view.production_lowerer
+    source_catalog = view.source_catalog
+    formal_context = view.formal_context
+    snapshot = view.snapshot
+    controls_by_location = {
+        (
+            item.source.source_path,
+            str(item.source.evidence.get("json_path") or ""),
+            item.family,
+        ): item
+        for item in source_catalog.nodes
+    }
+    if len(controls_by_location) != len(source_catalog.nodes):
+        fail("formal_wait_anim_control_identity_ambiguous")
+    content_sha_by_path = formal_context.content_sha256_by_path
+    documents = formal_context.documents
+
+    empty_canonical = CanonicalIR(version=lowering_module.BASELINE_VERSION)
+    base_materialization_context = task_graph_materializer._prepare_materialization(
+        source_catalog,
+        empty_canonical,
+        snapshot,
+    )
+    memory_checkpoints: dict[str, int] = {
+        "after_source_context_rss_kib": _current_rss_kib(),
+        "after_source_context_peak_rss_kib": int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ),
+    }
+
+    ability_files = lowerer._ability_files()
+    formal_ability_source_paths = set(formal_context.documents)
+    formal_ability_files = [
+        path
+        for path in ability_files
+        if lowering_module.relative_source_path(root, path)
+        in formal_ability_source_paths
+    ]
+
+    # Pass 1 keeps only standalone graph/phase metadata plus typed call edges.
+    standalone_graphs: list[Any] = []
+    standalone_phases: list[Any] = []
+    standalone_trigger_tasks: list[Any] = []
+    standalone_trigger_effects: list[Any] = []
+    for path in formal_ability_files:
+        (
+            file_graphs,
+            file_phases,
+            file_tasks,
+            file_effects,
+            _file_conditions,
+            _file_formulas,
+            _file_targets,
+            _file_roots,
+        ) = lowerer._lower_standalone_ability_graphs([path])
+        standalone_graphs.extend(file_graphs)
+        standalone_phases.extend(file_phases)
+        trigger_tasks = [task for task in file_tasks if task.opcode == "TriggerAbility"]
+        trigger_effect_ids = {task.effect_id for task in trigger_tasks if task.effect_id}
+        standalone_trigger_tasks.extend(trigger_tasks)
+        standalone_trigger_effects.extend(
+            effect for effect in file_effects if effect.effect_id in trigger_effect_ids
+        )
+    if len({graph.standalone_ability_graph_id for graph in standalone_graphs}) != len(
+        standalone_graphs
+    ):
+        fail("formal_standalone_graph_identity_ambiguous")
+    if len({phase.phase_id for phase in standalone_phases}) != len(standalone_phases):
+        fail("formal_standalone_phase_identity_ambiguous")
+    standalone_graph_by_id = {
+        graph.standalone_ability_graph_id: graph for graph in standalone_graphs
+    }
+    standalone_graph_ids = set(standalone_graph_by_id)
+    standalone_trigger_tasks = [
+        task
+        for task in lowering_module._link_trigger_ability_graphs(
+            standalone_trigger_tasks,
+            standalone_trigger_effects,
+            standalone_graphs,
+            standalone_phases,
+        )
+        if task.linked_ability_phase_id or task.linked_standalone_graph_id
+    ]
+    standalone_trigger_effects.clear()
+    memory_checkpoints["after_standalone_index_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_standalone_index_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    evidence_path = Path(tempfile.gettempdir()) / (
+        f"p9-a2-p3-wait-denominator-{os.getpid()}.jsonl"
+    )
+    evidence_hash = hashlib.sha256()
+    evidence_bytes = 0
+    evidence_count = 0
+    admitted = 0
+    blocked = 0
+    blocked_reasons = Counter()
+    required_seen: set[str] = set()
+    admitted_sample: dict[str, Any] | None = None
+    blocked_samples: dict[str, dict[str, Any]] = {}
+    formal_task_ids: set[str] = set()
+    formal_entry_keys: set[tuple[str, str]] = set()
+    wait_entry_keys: set[tuple[str, str]] = set()
+    action_phase_metadata: list[Any] = []
+    action_link_tasks: list[Any] = []
+    avatar_bindings: list[Any] = []
+    max_action_slice_rss = _current_rss_kib()
+
+    def record_entry(
+        *,
+        phase: Any,
+        callback_kind: str,
+        callback_tasks: tuple[Any, ...],
+        wait_tasks: tuple[Any, ...],
+        context: Any,
+        effects_by_id: Mapping[str, Any],
+        evidence_file: Any,
+    ) -> None:
+        nonlocal evidence_bytes, evidence_count, admitted, blocked
+        nonlocal admitted_sample
+        entry, graph = task_graph_materializer._materialize_entry(
+            context,
+            "ability_phase_callback",
+            phase.phase_id,
+            callback_kind,
+            tuple(task.task_id for task in callback_tasks),
+            tuple(task_graph_materializer._ability_task(task) for task in callback_tasks),
+        )
+        for task in sorted(
+            wait_tasks,
+            key=lambda item: (
+                item.source.source_path,
+                str(item.source.evidence.get("json_path") or ""),
+                item.task_id,
+            ),
+        ):
+            if task.task_id not in entry.formal_task_ids:
+                fail("formal_wait_anim_task_missing_from_entry_slice")
+            node: Any | None = None
+            if entry.status == "materialized":
+                if graph is None:
+                    fail("formal_wait_anim_materialized_entry_graph_missing")
+                matches = tuple(
+                    candidate
+                    for candidate in graph.nodes
+                    if candidate.formal_task_id == task.task_id
+                )
+                if len(matches) == 1:
+                    node = matches[0]
+            elif graph is not None:
+                fail("formal_wait_anim_blocked_entry_published_graph")
+
+            effect = effects_by_id.get(task.effect_id) if task.effect_id else None
+            source_path = task.source.source_path
+            json_path = str(task.source.evidence.get("json_path") or "")
+            formal_source = task_graph_materializer._formal_source(
+                task_graph_materializer._ability_task(task),
+                context.digest_by_path,
+            )
+            control = controls_by_location.get(
+                (source_path, json_path, _family_for_task(task))
+            )
+            raw: object = None
+            document = documents.get(source_path)
+            if document is not None:
+                try:
+                    raw = _value_at_rooted_json_path(document, json_path)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    raw = None
+
+            row = _classify_formal_wait_occurrence(
+                task=task,
+                phase=phase,
+                effect=effect,
+                graph=graph,
+                node=node,
+                control=control,
+                raw=raw,
+                formal_source=formal_source,
+                expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
+            )
+            row.update(
+                {
+                    "entry_id": entry.entry_id,
+                    "entry_status": entry.status,
+                    "entry_blocked_reason": entry.blocked_reason,
+                }
+            )
+            if entry.status != "materialized":
+                blocked_reason = entry.blocked_reason or "formal_entry_graph_missing"
+                row["admitted"] = False
+                row["disposition"] = "blocked"
+                row["reason"] = blocked_reason
+                row["reasons"] = [
+                    "entry_materialization:" + blocked_reason,
+                    *[
+                        reason
+                        for reason in row["reasons"]
+                        if reason != "formal_task_graph_node_missing_or_ambiguous"
+                    ],
+                ]
+            elif graph is None or node is None:
+                row["admitted"] = False
+                row["disposition"] = "blocked"
+                row["reason"] = "formal_task_graph_node_missing_or_ambiguous"
+                if row["reason"] not in row["reasons"]:
+                    row["reasons"].insert(0, row["reason"])
+            if bool(row["admitted"]) != (not row["reasons"]):
+                fail("formal_wait_anim_denominator_disposition_inconsistent")
+
+            line = json.dumps(
+                row,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n"
+            raw_line = line.encode("utf-8")
+            evidence_file.write(line)
+            evidence_hash.update(raw_line)
+            evidence_bytes += len(raw_line)
+            evidence_count += 1
+            if task.task_id in required_task_ids:
+                required_seen.add(task.task_id)
+            if row["admitted"]:
+                admitted += 1
+                if admitted_sample is None:
+                    admitted_sample = row
+            else:
+                blocked += 1
+                reason = str(row["reason"])
+                blocked_reasons[reason] += 1
+                blocked_samples.setdefault(reason, row)
+
+    action_definitions = lowerer._lower_action_definitions()
+    avatar_definitions = [
+        definition
+        for definition in action_definitions
+        if definition.action_id.startswith("avatar_skill:")
+    ]
+    non_avatar_definitions = [
+        definition
+        for definition in action_definitions
+        if not definition.action_id.startswith("avatar_skill:")
+    ]
+
+    with evidence_path.open("w", encoding="utf-8") as evidence_file:
+        # Action phases already carry production action_root/nested_only roles.
+        for definition in avatar_definitions:
+            binding, phases, lowered = lowerer._avatar_action_binding(definition)
+            avatar_bindings.append(binding)
+            linked_tasks = lowering_module._link_trigger_ability_graphs(
+                lowered.ability_tasks,
+                lowered.effects,
+                standalone_graphs,
+                [*phases, *standalone_phases],
+            )
+            action_phase_metadata.extend(phases)
+            action_link_tasks.extend(
+                task
+                for task in linked_tasks
+                if task.linked_ability_phase_id or task.linked_standalone_graph_id
+            )
+            tasks_by_id = {task.task_id: task for task in linked_tasks}
+            if len(tasks_by_id) != len(linked_tasks):
+                fail("formal_action_slice_task_identity_ambiguous")
+            effects_by_id = {effect.effect_id: effect for effect in lowered.effects}
+            if len(effects_by_id) != len(lowered.effects):
+                fail("formal_action_slice_effect_identity_ambiguous")
+            referenced_graph_ids = {
+                task.linked_standalone_graph_id
+                for task in linked_tasks
+                if task.linked_standalone_graph_id
+            }
+            referenced_graphs = [
+                standalone_graph_by_id[graph_id]
+                for graph_id in sorted(referenced_graph_ids)
+                if graph_id in standalone_graph_by_id
+            ]
+            if len(referenced_graphs) != len(referenced_graph_ids):
+                fail("formal_action_slice_linked_graph_missing")
+            context = _slice_materialization_context(
+                base_materialization_context,
+                conditions=lowered.conditions,
+                effects=lowered.effects,
+                phases=phases,
+                standalone_graphs=referenced_graphs,
+            )
+            for phase in phases:
+                if phase.invocation_role not in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES:
+                    continue
+                phase_tasks = tuple(
+                    tasks_by_id[task_id]
+                    for task_id in phase.task_ids
+                    if task_id in tasks_by_id
+                )
+                if (
+                    not phase_tasks
+                    or len(phase_tasks) != len(phase.task_ids)
+                    or any(task.phase_id != phase.phase_id for task in phase_tasks)
+                ):
+                    fail("formal_action_slice_phase_task_ledger_incomplete")
+                for task in phase_tasks:
+                    if task.task_id in formal_task_ids:
+                        fail("formal_ability_task_denominator_identity_ambiguous")
+                    formal_task_ids.add(task.task_id)
+                callback_kinds = tuple(
+                    dict.fromkeys(task.callback_kind for task in phase_tasks)
+                )
+                if not callback_kinds or any(not value for value in callback_kinds):
+                    fail("formal_ability_phase_callback_denominator_invalid")
+                for callback_kind in callback_kinds:
+                    entry_key = (phase.phase_id, callback_kind)
+                    if entry_key in formal_entry_keys:
+                        fail("formal_ability_entry_denominator_identity_ambiguous")
+                    formal_entry_keys.add(entry_key)
+                    callback_tasks = tuple(
+                        task for task in phase_tasks if task.callback_kind == callback_kind
+                    )
+                    waits = tuple(
+                        task
+                        for task in callback_tasks
+                        if _family_for_task(task) == "WaitAnimState"
+                    )
+                    if waits:
+                        wait_entry_keys.add(entry_key)
+                        record_entry(
+                            phase=phase,
+                            callback_kind=callback_kind,
+                            callback_tasks=callback_tasks,
+                            wait_tasks=waits,
+                            context=context,
+                            effects_by_id=effects_by_id,
+                            evidence_file=evidence_file,
+                        )
+            max_action_slice_rss = max(max_action_slice_rss, _current_rss_kib())
+
+        memory_checkpoints["max_action_slice_rss_kib"] = max_action_slice_rss
+        memory_checkpoints["after_action_stream_peak_rss_kib"] = int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        )
+
+        # Complete binding metadata without retaining non-avatar task/effect IR.
+        (
+            other_bindings,
+            _other_phases,
+            _other_tasks,
+            _other_effects,
+            _other_conditions,
+            _other_formulas,
+            _other_targets,
+        ) = lowerer._lower_action_ability_bindings(
+            non_avatar_definitions,
+            retain_lowered_details=False,
+        )
+        action_bindings = [*avatar_bindings, *other_bindings]
+
+        # Status lowering retains only role/queue/link data needed to classify
+        # standalone invocation roots; unrelated status definitions are dropped.
+        status_callbacks: list[Any] = []
+        status_callback_tasks: list[Any] = []
+        queue_intents: list[Any] = []
+        status_effects: list[Any] = []
+        queue_priorities = lowerer._lower_queue_priorities()
+        queue_priority_lookup = {
+            (priority.priority_table, priority.priority_key): priority
+            for priority in queue_priorities
+            if priority.coverage_status == "executable"
+        }
+        formal_status_root_paths = {
+            item.source.source_path for item in snapshot.sources
+        }
+        for ability_file_order, path in enumerate(ability_files):
+            relative = lowering_module.relative_source_path(root, path)
+            if (
+                relative.startswith("Config/ConfigAbility/Equip/")
+                or relative not in formal_status_root_paths
+            ):
+                continue
+            lowered_status = lowerer._lower_ability_file(
+                path,
+                queue_priority_lookup,
+                ability_file_order=ability_file_order,
+                formal_status_source_context=formal_context,
+            )
+            status_callbacks.extend(lowered_status.status_callbacks)
+            status_callback_tasks.extend(lowered_status.status_callback_tasks)
+            queue_intents.extend(lowered_status.queue_intents)
+            needed_effect_ids = {
+                task.effect_id
+                for task in lowered_status.status_callback_tasks
+                if task.effect_id and task.opcode == "TriggerAbility"
+            }
+            status_effects.extend(
+                effect
+                for effect in lowered_status.effects
+                if effect.effect_id in needed_effect_ids
+            )
+
+        status_callback_tasks = lowering_module._link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            status_effects,
+            standalone_graphs,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        all_phase_metadata = [*action_phase_metadata, *standalone_phases]
+        (
+            status_callbacks,
+            status_callback_tasks,
+            _status_callback_finalization_audit,
+        ) = lowering_module._finalize_action_window_status_callback_admission(
+            status_callbacks,
+            status_callback_tasks,
+            status_event_families,
+            status_effects,
+            standalone_graphs,
+            all_phase_metadata,
+            formal_status_root_paths,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        status_event_blocked_reasons = lowering_module._status_event_blocked_reasons(
+            status_event_families
+        )
+        status_callbacks = lowering_module._block_status_callbacks_by_event_family(
+            status_callbacks,
+            status_event_blocked_reasons,
+        )
+        status_callback_blocked_reasons = {
+            callback.callback_id: (
+                status_event_blocked_reasons.get(callback.event)
+                or callback.blocked_reason
+                or callback.blocking_dependency
+            )
+            for callback in status_callbacks
+            if (
+                callback.event in status_event_blocked_reasons
+                or callback.blocked_reason
+                == "equipment_modifier_definition_unreferenced"
+            )
+        }
+        status_callback_tasks = lowering_module._block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = lowering_module._block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+
+        combatant_action_sets = lowerer._lower_combatant_action_sets(action_definitions)
+        queue_resolutions = lowering_module._lower_queue_resolutions(
+            queue_intents=queue_intents,
+            action_bindings=action_bindings,
+            ability_phases=all_phase_metadata,
+            standalone_graphs=standalone_graphs,
+            combatant_action_sets=combatant_action_sets,
+        )
+        assigned_phases = lowering_module._assign_character_ability_invocation_roles(
+            all_phase_metadata,
+            [*action_link_tasks, *standalone_trigger_tasks],
+            standalone_graphs,
+            queue_resolutions,
+            status_callback_tasks=status_callback_tasks,
+            status_callbacks=status_callbacks,
+        )
+        assigned_by_id = {phase.phase_id: phase for phase in assigned_phases}
+        if len(assigned_by_id) != len(assigned_phases):
+            fail("formal_invocation_phase_identity_ambiguous")
+        standalone_phase_ids = {phase.phase_id for phase in standalone_phases}
+        formal_standalone_phase_ids = {
+            phase.phase_id
+            for phase in assigned_phases
+            if phase.phase_id in standalone_phase_ids
+            and phase.invocation_role
+            in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES
+        }
+        memory_checkpoints["after_role_assignment_rss_kib"] = _current_rss_kib()
+        memory_checkpoints["after_role_assignment_peak_rss_kib"] = int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        )
+
+        # Release status-only role evidence before re-lowering only formal
+        # standalone source files for actual task/effect/graph closure.
+        del status_callbacks
+        del status_callback_tasks
+        del status_effects
+        del queue_intents
+        del combatant_action_sets
+        gc.collect()
+
+        formal_phase_ids_by_path: dict[str, list[str]] = {}
+        for phase_id in sorted(formal_standalone_phase_ids):
+            formal_phase_ids_by_path.setdefault(
+                assigned_by_id[phase_id].source.source_path, []
+            ).append(phase_id)
+        formal_paths = sorted(formal_phase_ids_by_path)
+        path_lookup = {
+            lowering_module.relative_source_path(root, path): path
+            for path in formal_ability_files
+        }
+        max_standalone_slice_rss = _current_rss_kib()
+        for source_path in formal_paths:
+            path = path_lookup.get(source_path)
+            if path is None:
+                fail("formal_standalone_source_path_missing")
+            (
+                file_graphs,
+                file_phases,
+                file_tasks,
+                file_effects,
+                file_conditions,
+                _file_formulas,
+                _file_targets,
+                _file_roots,
+            ) = lowerer._lower_standalone_ability_graphs([path])
+            file_phase_by_id = {phase.phase_id: phase for phase in file_phases}
+            if any(
+                graph.standalone_ability_graph_id not in standalone_graph_ids
+                for graph in file_graphs
+            ):
+                fail("formal_standalone_graph_second_pass_identity_changed")
+            linked_file_tasks = lowering_module._link_trigger_ability_graphs(
+                file_tasks,
+                file_effects,
+                standalone_graphs,
+                assigned_phases,
+            )
+            tasks_by_id = {task.task_id: task for task in linked_file_tasks}
+            effects_by_id = {effect.effect_id: effect for effect in file_effects}
+            referenced_graph_ids = {
+                task.linked_standalone_graph_id
+                for task in linked_file_tasks
+                if task.linked_standalone_graph_id
+            }
+            referenced_graphs = [
+                standalone_graph_by_id[graph_id]
+                for graph_id in sorted(referenced_graph_ids)
+                if graph_id in standalone_graph_by_id
+            ]
+            if len(referenced_graphs) != len(referenced_graph_ids):
+                fail("formal_standalone_slice_linked_graph_missing")
+            context = _slice_materialization_context(
+                base_materialization_context,
+                conditions=file_conditions,
+                effects=file_effects,
+                phases=file_phases,
+                standalone_graphs=referenced_graphs,
+            )
+            for phase_id in formal_phase_ids_by_path[source_path]:
+                assigned_phase = assigned_by_id[phase_id]
+                source_phase = file_phase_by_id.get(phase_id)
+                if source_phase is None or source_phase.task_ids != assigned_phase.task_ids:
+                    fail("formal_standalone_phase_second_pass_identity_changed")
+                phase_tasks = tuple(
+                    tasks_by_id[task_id]
+                    for task_id in assigned_phase.task_ids
+                    if task_id in tasks_by_id
+                )
+                if (
+                    not phase_tasks
+                    or len(phase_tasks) != len(assigned_phase.task_ids)
+                    or any(task.phase_id != phase_id for task in phase_tasks)
+                ):
+                    fail("formal_standalone_phase_task_ledger_incomplete")
+                for task in phase_tasks:
+                    if task.task_id in formal_task_ids:
+                        fail("formal_ability_task_denominator_identity_ambiguous")
+                    formal_task_ids.add(task.task_id)
+                callback_kinds = tuple(
+                    dict.fromkeys(task.callback_kind for task in phase_tasks)
+                )
+                if not callback_kinds or any(not value for value in callback_kinds):
+                    fail("formal_ability_phase_callback_denominator_invalid")
+                for callback_kind in callback_kinds:
+                    entry_key = (phase_id, callback_kind)
+                    if entry_key in formal_entry_keys:
+                        fail("formal_ability_entry_denominator_identity_ambiguous")
+                    formal_entry_keys.add(entry_key)
+                    callback_tasks = tuple(
+                        task for task in phase_tasks if task.callback_kind == callback_kind
+                    )
+                    waits = tuple(
+                        task
+                        for task in callback_tasks
+                        if _family_for_task(task) == "WaitAnimState"
+                    )
+                    if waits:
+                        wait_entry_keys.add(entry_key)
+                        record_entry(
+                            phase=assigned_phase,
+                            callback_kind=callback_kind,
+                            callback_tasks=callback_tasks,
+                            wait_tasks=waits,
+                            context=context,
+                            effects_by_id=effects_by_id,
+                            evidence_file=evidence_file,
+                        )
+            max_standalone_slice_rss = max(
+                max_standalone_slice_rss, _current_rss_kib()
+            )
+
+    gc.collect()
+    memory_checkpoints["max_standalone_slice_rss_kib"] = max_standalone_slice_rss
+    memory_checkpoints["final_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["final_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    if evidence_count <= 0:
+        fail("formal_wait_anim_denominator_empty")
+    if evidence_count != admitted + blocked:
+        fail("formal_wait_anim_denominator_count_mismatch")
+    missing_required = sorted(required_task_ids - required_seen)
+    if missing_required:
+        fail("representative_wait_anim_missing_from_formal_denominator")
+
+    blocked_sample_rows = [
+        blocked_samples[reason]
+        for reason in sorted(blocked_samples)[:12]
+    ]
+    sample_row = admitted_sample or (
+        blocked_sample_rows[0] if blocked_sample_rows else None
+    )
+    source_fingerprint_closure_sample = (
+        {
+            key: sample_row[key]
+            for key in (
+                "task_id",
+                "source_path",
+                "json_path",
+                "task_evidence_content_sha256",
+                "effect_evidence_content_sha256",
+                "formal_content_sha256",
+                "formal_content_fingerprint_scope",
+                "control_content_sha256",
+                "graph_node_content_sha256",
+                "audit_reference_content_sha256",
+                "control_node_id",
+                "graph_node_id",
+                "admitted",
+                "reason",
+            )
+        }
+        if sample_row is not None
+        else {}
+    )
+    return {
+        "kind": "formal_ability_wait_anim_state_occurrences",
+        "builder_mode": "streamed_production_slices_v1",
+        "formal_ability_entry_count": len(formal_entry_keys),
+        "formal_ability_task_count": len(formal_task_ids),
+        "wait_anim_entry_count": len(wait_entry_keys),
+        "total": evidence_count,
+        "admitted": admitted,
+        "blocked": blocked,
+        "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
+        "source_fingerprint_closure_sample": source_fingerprint_closure_sample,
+        "blocked_samples": blocked_sample_rows,
+        "evidence": {
+            "format": "jsonl",
+            "path": str(evidence_path),
+            "record_count": evidence_count,
+            "byte_size": evidence_bytes,
+            "sha256": evidence_hash.hexdigest(),
+        },
+        "memory_checkpoints": memory_checkpoints,
+        "required_task_ids_present": sorted(required_seen),
+    }
+
+
 def formal_wait_anim_denominator(
     root: Path,
     *,
     required_task_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
+    if os.environ.get("P9_A2_P3_FULL_CANONICAL_DENOMINATOR") != "1":
+        return _formal_wait_anim_denominator_streamed(
+            root,
+            required_task_ids=required_task_ids,
+        )
     lowerer = _FormalTaskGraphViewBuilder(root)
     canonical = lowerer.build()
     source_catalog = lowerer.source_catalog
