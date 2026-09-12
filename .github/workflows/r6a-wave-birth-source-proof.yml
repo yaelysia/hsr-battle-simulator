@@ -1,0 +1,128 @@
+name: R6A wave birth source-proof validation
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/r6a-wave-birth-source-proof.yml'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_wave_birth_source_proof.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.head_ref == 'fix/r6a-wave-birth-source-proof'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: ${{ github.workspace }}/hsr_v075_baseline_clean/hsr
+      PYTHONUNBUFFERED: '1'
+      CORE: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+      BASE: f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4
+    steps:
+      - name: Checkout actual committed PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
+            .github/workflows
+      - name: Checkout exact pinned wave-source family
+        uses: actions/checkout@v4
+        with:
+          repository: DimbreathBot/TurnBasedGameData
+          ref: 14c1d18f91a8101d610e6c523447a7517de3fae1
+          path: turnbasedgamedata-main
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ExcelOutput/StageConfig.json
+            /ExcelOutput/HardLevelGroup.json
+            /ExcelOutput/MonsterConfig.json
+            /ExcelOutput/MonsterTemplateConfig.json
+            /ExcelOutput/MonsterUniqueConfig.json
+            /ExcelOutput/MonsterTemplateUniqueConfig.json
+            /ExcelOutput/MonsterSkillConfig.json
+            /ExcelOutput/MonsterSkillUniqueConfig.json
+            /Config/GlobalConfig/
+            /Config/ConfigCharacter/Monster/
+            /Config/ConfigAbility/Monster/
+            /Config/ConfigAI/
+      - name: Isolated validation tools, no application dependency changes
+        run: |
+          python -m venv /tmp/r6a-tools
+          /tmp/r6a-tools/bin/python -m pip install --disable-pip-version-check pytest==8.3.5 ruff==0.12.12
+          echo '/tmp/r6a-tools/bin' >> "$GITHUB_PATH"
+      - name: Verify identities and exact change scope
+        run: |
+          set -euo pipefail
+          python --version
+          git rev-parse HEAD HEAD^
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = 14c1d18f91a8101d610e6c523447a7517de3fae1
+          test "$(git ls-tree HEAD turnbasedgamedata-main | awk '{print $3}')" = 14c1d18f91a8101d610e6c523447a7517de3fae1
+          git diff --check "$BASE" HEAD
+          git diff --stat "$BASE" HEAD
+          git show "$BASE:$CORE/tbgd/lowering.py" > /tmp/r6a-before-lowering.py
+          python - <<'PY'
+          import os, subprocess
+          allowed={os.environ['CORE']+'/tbgd/lowering.py',os.environ['CORE']+'/tests/test_wave_birth_source_proof.py','.github/workflows/r6a-wave-birth-source-proof.yml'}
+          actual=set(subprocess.check_output(['git','diff','--name-only',os.environ['BASE'],'HEAD'],text=True).splitlines())
+          assert actual == allowed, actual.symmetric_difference(allowed)
+          PY
+      - name: Compile import and affected Ruff checks
+        run: |
+          set -euo pipefail
+          python -m compileall -q "$CORE/tbgd/lowering.py" "$CORE/tests/test_wave_birth_source_proof.py"
+          python -c "import runpy; runpy.run_path('$CORE/tests/test_wave_birth_source_proof.py',run_name='import_smoke')"
+          ruff check "$CORE/tests/test_wave_birth_source_proof.py"
+          ruff format --check "$CORE/tests/test_wave_birth_source_proof.py"
+          python - <<'PY'
+          import ast, collections, json, os, subprocess
+          from pathlib import Path
+          paths=['/tmp/r6a-before-lowering.py',os.environ['CORE']+'/tbgd/lowering.py']
+          results=[]
+          for path in paths:
+              run=subprocess.run(['ruff','check','--output-format=json',path],capture_output=True,text=True)
+              assert run.returncode in (0,1),run.stderr
+              results.append(collections.Counter((r['code'],r['message']) for r in json.loads(run.stdout)))
+          print('lowering_ruff_baseline_diagnostics='+str(sum(results[0].values())))
+          print('lowering_ruff_candidate_diagnostics='+str(sum(results[1].values())))
+          assert results[0] == results[1], results[1]-results[0]
+          # Check the exact added proof expression without reformatting legacy code.
+          text=Path(paths[1]).read_text()
+          fn=next(n for n in ast.parse(text).body if isinstance(n,ast.FunctionDef) and n.name=='_wave_enemy_birth_template')
+          values=[v for n in ast.walk(fn) if isinstance(n,ast.Dict) for k,v in zip(n.keys,n.values) if isinstance(k,ast.Constant) and k.value=='monster_rank_source_trace']
+          assert len(values)==1
+          lines=ast.get_source_segment(text,values[0]).splitlines()
+          snippet='from simulator_v8_clean_core.ir_types import IRSource\n\n\ndef source_proof(monster_rank, monster_rank_score):\n    return '+lines[0]+'\n'+'\n'.join(line[4:] for line in lines[1:])+'\n'
+          Path('/tmp/r6a-proof-format.py').write_text(snippet)
+          PY
+          ruff check /tmp/r6a-proof-format.py
+          ruff format --check /tmp/r6a-proof-format.py
+      - name: Real Direct and consumer-aligned wave-enemy Catalog
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Disable errexit only to print the true result; never mask pytest failure.
+          set +e
+          /usr/bin/time -v -o /tmp/r6a-tests.time nice -n 10 python -m pytest -q -s --tb=short \
+            "$CORE/tests/test_wave_birth_source_proof.py" 2>&1 | tee /tmp/r6a-tests.log
+          code=${PIPESTATUS[0]}
+          cat /tmp/r6a-tests.time
+          echo "pytest_exit_code=$code"
+          exit "$code"
+      - name: Retain exact-head evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r6a-validation-${{ github.event.pull_request.head.sha }}
+          path: |
+            /tmp/r6a-tests.log
+            /tmp/r6a-tests.time
+          if-no-files-found: warn
+          retention-days: 7
