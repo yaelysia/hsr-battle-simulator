@@ -862,9 +862,7 @@ def formal_wait_anim_denominator(
     max_stream_rss = _current_rss_kib()
 
     with evidence_path.open("w", encoding="utf-8") as evidence_file:
-        for entry_index, (phase_id, callback_kind) in enumerate(
-            selected_entry_keys
-        ):
+        for phase_id, callback_kind in selected_entry_keys:
             phase = phases.get(phase_id)
             if phase is None:
                 fail("formal_wait_anim_entry_phase_missing")
@@ -1001,8 +999,6 @@ def formal_wait_anim_denominator(
 
             del graph
             del entry
-            if entry_index % 64 == 63:
-                gc.collect()
             max_stream_rss = max(max_stream_rss, _current_rss_kib())
 
     gc.collect()
