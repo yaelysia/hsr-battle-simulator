@@ -727,8 +727,9 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
     for token in (
         "canonical = lowerer.build()",
         "task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES",
-        "task_graph_materializer.materialize_ability_phase_task_graph(",
-        "slice_catalog.entry_materializations",
+        "materialization_context = task_graph_materializer._prepare_materialization(",
+        "task_graph_materializer._materialize_entry(",
+        "task_graph_materializer._ability_task(",
         '"entry_blocked_reason": entry.blocked_reason',
         "documents = lowerer.formal_context.documents",
         "RuleBook(canonical)",
@@ -736,6 +737,7 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
         assert token in denominator_text
     assert "build_character_action_ability_slice(" not in denominator_text
     assert "materialize_character_runtime_task_graph_catalog(" not in denominator_text
+    assert "materialize_ability_phase_task_graph(" not in denominator_text
     for token in (
         '"formal_wait_anim_denominator"',
         '"formal_channel_counts"',
@@ -748,6 +750,64 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
     ):
         assert token in text
     assert "def _source_denominator(" not in text
+
+
+def test_direct_validator_prepares_materialization_context_once() -> None:
+    validator = (
+        Path(__file__).resolve().parents[1]
+        / "tools"
+        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+    )
+    text = validator.read_text(encoding="utf-8")
+    module = ast.parse(text)
+    denominator = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "formal_wait_anim_denominator"
+    )
+
+    def call_name(node: ast.Call) -> str:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            return func.attr
+        if isinstance(func, ast.Name):
+            return func.id
+        return ""
+
+    prepare_top_level = [
+        statement
+        for statement in denominator.body
+        if any(
+            isinstance(node, ast.Call)
+            and call_name(node) == "_prepare_materialization"
+            for node in ast.walk(statement)
+        )
+    ]
+    all_prepare_calls = [
+        node
+        for node in ast.walk(denominator)
+        if isinstance(node, ast.Call)
+        and call_name(node) == "_prepare_materialization"
+    ]
+    entry_calls = [
+        node
+        for node in ast.walk(denominator)
+        if isinstance(node, ast.Call)
+        and call_name(node) == "_materialize_entry"
+    ]
+    public_slice_calls = [
+        node
+        for node in ast.walk(denominator)
+        if isinstance(node, ast.Call)
+        and call_name(node) == "materialize_ability_phase_task_graph"
+    ]
+
+    assert len(all_prepare_calls) == 1
+    assert len(prepare_top_level) == 1
+    assert not isinstance(prepare_top_level[0], (ast.For, ast.While))
+    assert len(entry_calls) == 1
+    assert not public_slice_calls
 
 
 def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:

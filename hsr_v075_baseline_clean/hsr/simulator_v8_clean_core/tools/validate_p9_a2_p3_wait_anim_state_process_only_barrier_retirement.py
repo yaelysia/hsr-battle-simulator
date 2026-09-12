@@ -760,35 +760,50 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     selected_entry_keys = sorted(
         {(task.phase_id, task.callback_kind) for task in wait_tasks}
     )
-    slices: dict[tuple[str, str], TaskGraphCatalogIR] = {}
+    materialization_context = task_graph_materializer._prepare_materialization(
+        source_catalog,
+        canonical,
+        lowerer.snapshot,
+    )
+    entries: dict[tuple[str, str], Any] = {}
+    graphs: dict[tuple[str, str], TaskGraphIR | None] = {}
     for phase_id, callback_kind in selected_entry_keys:
-        slice_catalog = task_graph_materializer.materialize_ability_phase_task_graph(
-            source_catalog,
-            canonical,
-            phase_id=phase_id,
-            callback_kind=callback_kind,
-            source_snapshot=lowerer.snapshot,
+        phase = phases.get(phase_id)
+        if phase is None:
+            fail("formal_wait_anim_entry_phase_missing")
+        callback_tasks = tuple(
+            tasks[task_id]
+            for task_id in phase.task_ids
+            if task_id in tasks and tasks[task_id].callback_kind == callback_kind
         )
-        if (
-            type(slice_catalog) is not TaskGraphCatalogIR
-            or len(slice_catalog.entry_materializations) != 1
-        ):
-            fail("formal_wait_anim_entry_slice_invalid")
-        slices[(phase_id, callback_kind)] = slice_catalog
+        if not callback_tasks:
+            fail("formal_wait_anim_entry_task_selection_empty")
+        entry, graph = task_graph_materializer._materialize_entry(
+            materialization_context,
+            "ability_phase_callback",
+            phase_id,
+            callback_kind,
+            tuple(task.task_id for task in callback_tasks),
+            tuple(
+                task_graph_materializer._ability_task(task)
+                for task in callback_tasks
+            ),
+        )
+        entries[(phase_id, callback_kind)] = entry
+        graphs[(phase_id, callback_kind)] = graph
 
     rows: list[dict[str, Any]] = []
     for task in wait_tasks:
         phase = phases.get(task.phase_id)
-        slice_catalog = slices[(task.phase_id, task.callback_kind)]
-        entry = slice_catalog.entry_materializations[0]
+        entry_key = (task.phase_id, task.callback_kind)
+        entry = entries[entry_key]
+        graph = graphs[entry_key]
         if task.task_id not in entry.formal_task_ids:
             fail("formal_wait_anim_task_missing_from_entry_slice")
-        graph: TaskGraphIR | None = None
         node: Any | None = None
         if entry.status == "materialized":
-            if len(slice_catalog.graphs) != 1:
+            if graph is None:
                 fail("formal_wait_anim_materialized_entry_graph_missing")
-            graph = slice_catalog.graphs[0]
             matches = tuple(
                 candidate
                 for candidate in graph.nodes
@@ -796,7 +811,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
             )
             if len(matches) == 1:
                 node = matches[0]
-        elif slice_catalog.graphs:
+        elif graph is not None:
             fail("formal_wait_anim_blocked_entry_published_graph")
 
         effect = rules.effect(task.effect_id) if task.effect_id else None
