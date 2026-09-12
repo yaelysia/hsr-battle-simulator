@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import cast
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -81,6 +81,7 @@ from .task_graph import (
     TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
+    TaskGraphWeightedSelectionResult,
 )
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .timeline import TimelineSystem
@@ -136,6 +137,8 @@ def _blocked_task_graph_hook_result(name: str, reason: str) -> object:
         return TaskGraphTargetResult("blocked", blocked_reason=reason)
     if name == "graph":
         return TaskGraphGraphResult("blocked", blocked_reason=reason)
+    if name == "weighted_selection":
+        return TaskGraphWeightedSelectionResult("blocked", blocked_reason=reason)
     raise ValueError("unknown task graph hook channel")
 
 
@@ -200,6 +203,175 @@ class StatusCallbackSystem:
                     node_id=f"{unit_id}:{modifier_name}:{event}",
                     status="complete" if result.ok else "blocked",
                     reason_code=reason or ("" if result.ok else "status_callback_incomplete"),
+                ),
+            ),
+        )
+
+    def execute_action_window_formal_root(
+        self,
+        state: BattleState,
+        *,
+        callback_id: str,
+        unit_id: str,
+        modifier_name: str,
+        event: str,
+        trigger_event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None = None,
+        detail_override: dict[str, JSONValue] | None = None,
+        nested_ability_provider: object,
+    ) -> StatusCallbackExecutionResult:
+        from .ability import StatusNestedAbilityContext, StatusNestedAbilityHookProvider
+
+        if type(nested_ability_provider) is not StatusNestedAbilityHookProvider:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_nested_ability_provider_type_invalid",
+            )
+        if (
+            type(trigger_event) is not GameEvent
+            or not trigger_event.event_type.startswith("action.window.")
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_event_invalid",
+            )
+        trigger_event_id = trigger_event.event_id or str(
+            trigger_event.to_json().get("event_id") or ""
+        )
+        if not trigger_event_id:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_event_identity_missing",
+            )
+        callback = self.rules.status_callback(callback_id)
+        if (
+            callback is None
+            or callback.modifier_name != modifier_name
+            or callback.event != event
+            or callback.source_mode != "mainline_avatar_ability"
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_callback_identity_mismatch",
+            )
+        if callback.coverage_status != "executable":
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                callback.blocked_reason
+                or f"status_callback_not_executable:{callback.coverage_status}",
+            )
+        if callback.admission_status != "executable":
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                callback.blocking_dependency
+                or f"listener_not_admitted:{callback.admission_status}",
+            )
+        detail = detail_override or find_status_detail(
+            state,
+            unit_id,
+            modifier_name=modifier_name,
+        )
+        if detail is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_missing",
+            )
+        status_instance_id = str(detail.get("instance_id") or "")
+        if (
+            str(detail.get("owner_id") or "") != unit_id
+            or str(detail.get("modifier_name") or "") != modifier_name
+            or not status_instance_id
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_override_identity_mismatch",
+            )
+        attached_ids = _trigger_ids_for_event(detail, event)
+        if attached_ids is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "formal_status_instance_callback_ledger_missing",
+            )
+        if callback_id not in attached_ids:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_callback_not_attached_to_instance",
+            )
+        tasks = tuple(self.rules.status_callback_tasks_for_callback(callback_id))
+        graph_result = self.rules.query_formal_task_graph(
+            "status_callback",
+            callback_id,
+            event,
+            (task.task_id for task in tasks),
+        )
+        graph = graph_result.value
+        if (
+            graph_result.status != "resolved"
+            or type(graph) is not TaskGraphIR
+            or callback.task_ids != graph.root_formal_task_ids
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                graph_result.blocked_reason
+                or "formal_status_callback_task_graph_identity_mismatch",
+            )
+        target_resolution, target_reason = _status_action_window_target_resolution(
+            state,
+            trigger_event,
+            detail,
+        )
+        if target_resolution is None:
+            return _selected_callback_blocked(state, callback_id, target_reason)
+        context = StatusNestedAbilityContext(
+            callback_id=callback_id,
+            modifier_name=modifier_name,
+            status_instance_id=status_instance_id,
+            owner_id=unit_id,
+            root_graph_id=graph.graph_id,
+            trigger_event_id=trigger_event_id,
+            target_resolution=target_resolution,
+        )
+        try:
+            nested_ability_hooks = nested_ability_provider.hooks_for(context)
+        except (TypeError, ValueError):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_nested_ability_provider_context_rejected",
+            )
+        staged_damage_ledger = _stage_damage_window_ledger(damage_window_ledger)
+        result = self._execute_callback(
+            state,
+            callback,
+            detail,
+            trigger_event,
+            staged_damage_ledger,
+            None,
+            nested_ability_hooks,
+        )
+        if not result.ok:
+            return result
+        _commit_damage_window_ledger(damage_window_ledger, staged_damage_ledger)
+        if result.node_results:
+            return result
+        return replace(
+            result,
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="status_callback",
+                    node_id=callback_id,
+                    status="complete",
                 ),
             ),
         )
@@ -702,6 +874,10 @@ class StatusCallbackSystem:
             graph=lambda request, state: self._resolve_formal_status_nested_graph(
                 request, state, callback
             ),
+            weighted_selection=lambda _request, _selection, _state: TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="status_callback_weighted_selection_not_admitted",
+            ),
         )
 
         def route(name: str, request: TaskGraphHookRequest, *args: object) -> object:
@@ -744,6 +920,10 @@ class StatusCallbackSystem:
             ),
             graph=lambda request, state: cast(
                 TaskGraphGraphResult, route("graph", request, state)
+            ),
+            weighted_selection=lambda request, selection, state: cast(
+                TaskGraphWeightedSelectionResult,
+                route("weighted_selection", request, selection, state),
             ),
         )
 
@@ -4161,6 +4341,76 @@ class StatusCallbackSystem:
             ),
             errors=(blocked_reason,),
         )
+
+
+def _status_action_window_target_resolution(
+    state: BattleState,
+    event: GameEvent,
+    detail: dict[str, JSONValue],
+) -> tuple[TargetResolution | None, str]:
+    if type(event) is not GameEvent or not event.event_type.startswith("action.window."):
+        return None, "status_action_window_target_event_invalid"
+    payload = event.payload
+    raw_selected = payload.get("selected_target_ids")
+    if not isinstance(raw_selected, (list, tuple)):
+        return None, "status_action_window_target_scope_missing"
+    selected = tuple(raw_selected)
+    if (
+        not selected
+        or any(type(item) is not str or not item for item in selected)
+        or len(selected) != len(set(selected))
+        or any(item not in state.units for item in selected)
+    ):
+        return None, "status_action_window_target_scope_invalid"
+    primary = ""
+    for key in (
+        "primary_action_target_id",
+        "primary_target_id",
+        "current_hit_target_id",
+        "target_id",
+        "param_entity_id",
+    ):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            primary = value
+            break
+    if not primary and isinstance(event.target_id, str):
+        primary = event.target_id
+    if not primary:
+        primary = selected[0]
+    if primary not in state.units:
+        return None, "status_action_window_primary_target_invalid"
+    if primary not in selected:
+        selected = (primary, *selected)
+    raw_requested = payload.get("requested_target_ids")
+    if isinstance(raw_requested, (list, tuple)):
+        requested = tuple(raw_requested)
+        if (
+            any(type(item) is not str or not item for item in requested)
+            or len(requested) != len(set(requested))
+        ):
+            return None, "status_action_window_requested_target_scope_invalid"
+    else:
+        requested = selected
+    return (
+        TargetResolution(
+            requested=requested,
+            selectable=selected,
+            legal=selected,
+            primary=primary,
+            impact_group=selected,
+            selected=selected,
+            rejected=(),
+            reason="status_action_window_formal_root",
+            source="status_callback_system",
+            metadata={
+                "event_id": event.event_id or str(event.to_json().get("event_id") or ""),
+                "status_instance_id": str(detail.get("instance_id") or ""),
+                "status_owner_id": str(detail.get("owner_id") or ""),
+            },
+        ),
+        "",
+    )
 
 
 def _queue_resource_policy(intent: QueueIntentIR) -> dict[str, JSONValue]:

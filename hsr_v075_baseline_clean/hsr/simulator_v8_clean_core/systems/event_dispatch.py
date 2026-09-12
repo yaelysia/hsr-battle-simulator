@@ -182,6 +182,41 @@ class EventDispatchSystem:
             skipped_reason=skipped_reason,
         )
 
+    def dispatch_action_window_listeners(
+        self,
+        state: BattleState,
+        *,
+        event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None,
+        nested_ability_provider: StatusNestedAbilityHookProvider,
+    ) -> EventDispatchResult:
+        from .ability import StatusNestedAbilityHookProvider
+
+        if type(nested_ability_provider) is not StatusNestedAbilityHookProvider:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="action_window_formal_root_transport",
+                scope=_event_scope_kind(event),
+                reason="action_window_nested_ability_provider_type_invalid",
+                metadata={"event_type": event.event_type},
+            )
+        if not event.event_type.startswith("action.window."):
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="action_window_formal_root_transport",
+                scope=_event_scope_kind(event),
+                reason="action_window_formal_root_event_invalid",
+                metadata={"event_type": event.event_type},
+            )
+        return self._dispatch_event(
+            state,
+            event=event,
+            damage_window_ledger=damage_window_ledger,
+            status_nested_ability_provider=nested_ability_provider,
+        )
+
     def dispatch_event(
         self,
         state: BattleState,
@@ -198,6 +233,40 @@ class EventDispatchSystem:
         task_graph_continuation: TaskGraphContinuation | None = None,
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
     ) -> EventDispatchResult:
+        return self._dispatch_event(
+            state,
+            event=event,
+            command=command,
+            action_definition=action_definition,
+            target_resolution=target_resolution,
+            enabled=enabled,
+            skipped_reason=skipped_reason,
+            unit_id=unit_id,
+            modifier_name=modifier_name,
+            damage_window_ledger=damage_window_ledger,
+            task_graph_continuation=task_graph_continuation,
+            nested_ability_hooks=nested_ability_hooks,
+        )
+
+    def _dispatch_event(
+        self,
+        state: BattleState,
+        *,
+        event: GameEvent,
+        command: ActionCommand | None = None,
+        action_definition: ActionDefinitionIR | None = None,
+        target_resolution: TargetResolution | None = None,
+        enabled: bool = True,
+        skipped_reason: str = "",
+        unit_id: str | None = None,
+        modifier_name: str | None = None,
+        damage_window_ledger: DamageWindowLedger | None = None,
+        task_graph_continuation: TaskGraphContinuation | None = None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None = None,
+        status_nested_ability_provider: StatusNestedAbilityHookProvider | None = None,
+    ) -> EventDispatchResult:
+        from .ability import StatusNestedAbilityHookProvider
+
         transport_reason = _task_graph_transport_reason(
             task_graph_continuation,
             nested_ability_hooks,
@@ -209,6 +278,19 @@ class EventDispatchSystem:
                 listener_kind="task_graph_event_transport",
                 scope=_event_scope_kind(event),
                 reason=transport_reason,
+                metadata={"event_type": event.event_type},
+            )
+        if status_nested_ability_provider is not None and (
+            type(status_nested_ability_provider) is not StatusNestedAbilityHookProvider
+            or task_graph_continuation is not None
+            or nested_ability_hooks is not None
+        ):
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="action_window_formal_root_transport",
+                scope=_event_scope_kind(event),
+                reason="action_window_formal_root_transport_conflict",
                 metadata={"event_type": event.event_type},
             )
         event_before_normalization = event
@@ -293,6 +375,7 @@ class EventDispatchSystem:
                 damage_window_ledger=damage_window_ledger,
                 task_graph_continuation=task_graph_continuation,
                 nested_ability_hooks=nested_ability_hooks,
+                status_nested_ability_provider=status_nested_ability_provider,
             )
         result = self._reconcile_ability_property_watchers(
             result,
@@ -509,6 +592,7 @@ class EventDispatchSystem:
         damage_window_ledger: DamageWindowLedger | None,
         task_graph_continuation: TaskGraphContinuation | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
+        status_nested_ability_provider: StatusNestedAbilityHookProvider | None,
     ) -> EventDispatchResult:
         aliases = _event_aliases(event, self.rules)
         dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
@@ -612,17 +696,33 @@ class EventDispatchSystem:
                 if match.status == "blocked" and match.reason:
                     errors.append(match.reason)
                 continue
-            result = self.status_callbacks.execute(
-                current_state,
-                unit_id=match.unit_id,
-                modifier_name=match.modifier_name,
-                event=match.callback_event,
-                trigger_event=event,
-                damage_window_ledger=damage_window_ledger,
-                detail_override=match.status_detail,
-                task_graph_continuation=task_graph_continuation,
-                nested_ability_hooks=nested_ability_hooks,
-            )
+            if status_nested_ability_provider is not None:
+                if match.callback is None:
+                    errors.append("action_window_formal_root_callback_missing")
+                    continue
+                result = self.status_callbacks.execute_action_window_formal_root(
+                    current_state,
+                    callback_id=match.callback.callback_id,
+                    unit_id=match.unit_id,
+                    modifier_name=match.modifier_name,
+                    event=match.callback_event,
+                    trigger_event=event,
+                    damage_window_ledger=damage_window_ledger,
+                    detail_override=match.status_detail,
+                    nested_ability_provider=status_nested_ability_provider,
+                )
+            else:
+                result = self.status_callbacks.execute(
+                    current_state,
+                    unit_id=match.unit_id,
+                    modifier_name=match.modifier_name,
+                    event=match.callback_event,
+                    trigger_event=event,
+                    damage_window_ledger=damage_window_ledger,
+                    detail_override=match.status_detail,
+                    task_graph_continuation=task_graph_continuation,
+                    nested_ability_hooks=nested_ability_hooks,
+                )
             current_state = result.after_state
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
