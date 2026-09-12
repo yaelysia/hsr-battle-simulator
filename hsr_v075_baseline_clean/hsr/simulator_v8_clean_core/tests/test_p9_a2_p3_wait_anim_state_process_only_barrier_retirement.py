@@ -765,4 +765,7 @@ def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
     assert builder_text is not None
     assert "relative not in formal_status_root_paths" in builder_text
     assert "formal_status_source_context=self.formal_context" in builder_text
+    assert "formal_ability_files = [" in builder_text
+    assert "_lower_standalone_ability_graphs(formal_ability_files)" in builder_text
+    assert "_lower_standalone_ability_graphs(ability_files)" not in builder_text
     assert "if relative in formal_status_root_paths\n                    else None" not in builder_text

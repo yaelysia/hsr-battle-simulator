@@ -553,6 +553,12 @@ class _FormalTaskGraphViewBuilder:
         formal_status_root_paths = {
             item.source.source_path for item in self.snapshot.sources
         }
+        formal_ability_files = [
+            path
+            for path in ability_files
+            if lowering_module.relative_source_path(self.root, path)
+            in formal_status_root_paths
+        ]
         for ability_file_order, path in enumerate(ability_files):
             relative = lowering_module.relative_source_path(self.root, path)
             if (
@@ -582,7 +588,7 @@ class _FormalTaskGraphViewBuilder:
             _standalone_formulas,
             standalone_target_expressions,
             _standalone_root_task_ids_by_graph,
-        ) = lowerer._lower_standalone_ability_graphs(ability_files)
+        ) = lowerer._lower_standalone_ability_graphs(formal_ability_files)
         ability_phases.extend(standalone_phases)
         ability_tasks.extend(standalone_tasks)
         effects.extend(standalone_effects)
