@@ -12,7 +12,11 @@ from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR
+from ..rules.task_graph import (
+    TaskGraphIR,
+    TaskGraphNumericDefinitionIR,
+    TaskGraphWeightedSelectionIR,
+)
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
@@ -33,6 +37,15 @@ from .ability_task_contract import (
     is_process_only_ability_task,
 )
 from .target import TargetSystem
+from .rng import (
+    RNGOutcome,
+    RNGRequest,
+    choice_key_for_identity,
+    event_id_for_identity,
+    resolve_rng_request,
+    rng_choices_from_payload,
+    rng_mode_from_payload,
+)
 from .task_graph import (
     TaskGraphBranchResult,
     TaskGraphConditionResult,
@@ -47,6 +60,7 @@ from .task_graph import (
     TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
+    TaskGraphWeightedSelectionResult,
 )
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
@@ -569,6 +583,12 @@ class AbilityTaskSystem:
                 request,
                 state,
             ),
+            weighted_selection=lambda request, selection, state: self._resolve_formal_weighted_selection(
+                request,
+                selection,
+                state,
+                invocation=invocation,
+            ),
         )
 
     def _execute_formal_leaf(
@@ -986,6 +1006,196 @@ class AbilityTaskSystem:
                 or "ability_task_graph_count_not_nonnegative_integer",
             )
         return TaskGraphCountResult("resolved", int(result.value))
+
+    def _resolve_formal_weighted_selection(
+        self,
+        request: TaskGraphHookRequest,
+        selection: TaskGraphWeightedSelectionIR,
+        state: BattleState,
+        *,
+        invocation: _FormalAbilityInvocation,
+    ) -> TaskGraphWeightedSelectionResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphWeightedSelectionResult(
+                "blocked", blocked_reason=reason
+            )
+        if (
+            invocation.invocation_kind != "action"
+            or type(invocation.action_command) is not ActionCommand
+        ):
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_config_requires_action_invocation",
+            )
+        if (
+            request.source_family != "RandomConfig"
+            or selection.family != "RandomConfig"
+            or selection.selection_kind != "weighted_single"
+            or selection.graph_node_id != request.graph_node_id
+            or not selection.choices
+        ):
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_config_contract_mismatch",
+            )
+
+        definitions = {
+            definition.definition_id: definition
+            for definition in selection.numeric_definitions
+        }
+        if len(definitions) != len(selection.numeric_definitions):
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_config_numeric_definition_duplicate",
+            )
+        scoped = _task_graph_target_resolution(
+            request, invocation.target_resolution
+        )
+        weights: list[float] = []
+        for choice in selection.choices:
+            definition = definitions.get(choice.weight_definition_id)
+            if (
+                definition is None
+                or definition.source_occurrence_id
+                != choice.weight_source_occurrence_id
+                or definition.source != choice.source
+            ):
+                return TaskGraphWeightedSelectionResult(
+                    "blocked",
+                    blocked_reason="ability_task_graph_random_config_weight_identity_mismatch",
+                )
+            result = self.evaluator.evaluate_numeric(
+                definition.expression,
+                NumericEvaluationContext(
+                    binding_sources=_binding_sources(
+                        self.rules,
+                        state,
+                        invocation.actor_id,
+                        scoped.primary,
+                        action_level=invocation.ability_level,
+                        current_action_trigger_key=_formal_action_trigger_key(
+                            invocation
+                        ),
+                    ),
+                    source_trace=definition.source.to_json(),
+                ),
+            )
+            if (
+                not result.ok
+                or result.value is None
+                or not math.isfinite(result.value)
+                or result.value < 0
+            ):
+                return TaskGraphWeightedSelectionResult(
+                    "blocked",
+                    blocked_reason=result.blocked_reason
+                    or "ability_task_graph_random_config_weight_invalid",
+                )
+            weights.append(float(result.value))
+        if not any(weight > 0.0 for weight in weights):
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_config_total_weight_not_positive",
+            )
+
+        command = cast(ActionCommand, invocation.action_command)
+        identity: dict[str, JSONValue] = {
+            "decision_scope": "ability_task_graph_random_config",
+            "decision_index": task.task_index,
+            "action_id": command.action_id,
+            "action_level": command.action_level,
+            "actor_id": command.actor_id,
+            "task_id": task.task_id,
+            "graph_id": request.graph_id,
+            "graph_node_id": request.graph_node_id,
+            "selection_id": selection.selection_id,
+            "invocation_id": request.invocation_id,
+            "active_graph_stack": list(request.active_graph_stack),
+            "frame_ids": list(request.frame_ids),
+            "target_ids": list(request.target_ids or scoped.selected),
+            "iteration_index": request.iteration_index,
+        }
+        rng_type = "ability_task_graph_random_config"
+        choice_key = choice_key_for_identity(rng_type, identity)
+        event_id = event_id_for_identity(
+            rng_type, identity, event_index=state.event_index
+        )
+        outcomes = tuple(
+            RNGOutcome(
+                outcome_id=choice.choice_id,
+                payload={
+                    "selection_id": selection.selection_id,
+                    "choice_id": choice.choice_id,
+                    "ordinal": choice.ordinal,
+                    "branch_id": choice.branch_id,
+                    "weight_definition_id": choice.weight_definition_id,
+                    "weight_source_occurrence_id": choice.weight_source_occurrence_id,
+                },
+                weight=weights[index],
+            )
+            for index, choice in enumerate(selection.choices)
+        )
+        resolution = resolve_rng_request(
+            RNGRequest(
+                rng_type=rng_type,
+                purpose="weighted_single",
+                event_id=event_id,
+                choice_key=choice_key,
+                source="ability_task_system",
+                before_state=state.rng_state,
+                decision_kind="weighted_choice",
+                outcomes=outcomes,
+                source_trace=selection.source.to_json(),
+                metadata={
+                    "selection_id": selection.selection_id,
+                    "graph_id": request.graph_id,
+                    "graph_node_id": request.graph_node_id,
+                    "formal_task_id": request.formal_task_id,
+                    "action_id": command.action_id,
+                    "actor_id": command.actor_id,
+                    "choice_ids": [choice.choice_id for choice in selection.choices],
+                    "weights": weights,
+                },
+                identity=identity,
+                missing_choice_reason="ability_task_graph_random_config_requires_rng_choice",
+                invalid_choice_reason="ability_task_graph_random_config_rng_choice_invalid",
+            ),
+            rng_choices=rng_choices_from_payload(dict(command.metadata)),
+            rng_mode=rng_mode_from_payload(dict(command.metadata)),
+        )
+        if (
+            not resolution.ok
+            or resolution.selected_outcome is None
+            or resolution.event is None
+        ):
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason=resolution.blocked_reason
+                or "ability_task_graph_random_config_rng_resolution_blocked",
+            )
+        selected = next(
+            (
+                choice
+                for choice in selection.choices
+                if choice.choice_id == resolution.selected_outcome_id
+            ),
+            None,
+        )
+        if selected is None:
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_graph_random_config_selected_choice_missing",
+            )
+        return TaskGraphWeightedSelectionResult(
+            "resolved",
+            selection.selection_id,
+            request.graph_node_id,
+            selected.choice_id,
+            selected.ordinal,
+            selected.branch_id,
+            resolution.event,
+        )
 
     def _resolve_formal_targets(
         self,

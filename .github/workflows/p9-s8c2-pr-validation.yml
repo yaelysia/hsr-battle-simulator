@@ -1,6 +1,5 @@
-name: P9 S8C2 PR Validation
+name: P9 S8C RandomConfig Action Caller R1 Validation
 
-# REVIEW checkpoint trigger: keep validation commands unchanged and force final-head CI after governance-only updates.
 on:
   pull_request:
     branches:
@@ -9,9 +8,15 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
     paths:
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py'
-      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
+      - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-S8C_RANDOM_CONFIG_ACTION_CALLER_RNG_LEDGER_execution_report.md'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/**'
+      - 'hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md'
       - '.github/workflows/p9-s8c2-pr-validation.yml'
 
 permissions:
@@ -20,45 +25,59 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          submodules: true
 
-      - name: Install focused test dependency
-        run: |
-          python -m venv .ci-venv
-          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
-          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Focused pytest
-        run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-pytest.time \
-            python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py -q
-          code=$?
-          cat /tmp/p9-s8c2-pytest.time
-          echo "exit_code=$code"
-          exit "$code"
+      - name: Install test runner
+        run: python -m pip install --disable-pip-version-check pytest==8.3.5
 
-      - name: Compile scoped files
+      - name: Compile R1 scoped implementation and validators
         run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-compile.time \
-            python -m compileall -q \
-              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py \
-              hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
-          code=$?
-          cat /tmp/p9-s8c2-compile.time
-          echo "exit_code=$code"
-          exit "$code"
+          env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c_random_config_action_caller.py
 
-      - name: Fixed-base diff check
+      - name: Fast RandomConfig action caller validation
         run: |
-          /usr/bin/time -v -o /tmp/p9-s8c2-diff.time \
-            git diff --check 2e8589622c27ebf05c0b021214fddc138e883dbb...HEAD
-          code=$?
-          cat /tmp/p9-s8c2-diff.time
-          echo "exit_code=$code"
-          exit "$code"
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --fast
+
+      - name: S8C2 shared executor regression
+        run: |
+          python3 -m pytest -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py
+
+      - name: Direct real CombatExecutor RandomConfig action validation
+        run: |
+          timeout --signal=TERM --kill-after=5s 240s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c_random_config_action_caller --direct
+
+      - name: S8C1B direct materializer regression
+        run: |
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_selection --direct
+
+      - name: S8C1C direct source-closure regression
+        run: |
+          timeout --signal=TERM --kill-after=5s 120s \
+            env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+              python3 -B -m simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --direct
+
+      - name: Diff hygiene against planning base
+        run: git diff --check b01e813bd194b5e5bc7bcd6ba65d8ba0ee0e44ce...HEAD

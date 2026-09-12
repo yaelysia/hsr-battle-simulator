@@ -1065,6 +1065,13 @@ def _build_graph(
             sources[task.task_id],
             reason,
         ))
+    nodes = list(
+        _admit_action_random_config_nodes(
+            entry_kind,
+            tuple(nodes),
+            tuple(weighted),
+        )
+    )
     has_obligation = any(item.materialization_status == "deferred" for item in nodes) or any(
         ref.resolution_status != "resolved" for node in nodes for ref in node.references
     )
@@ -1088,6 +1095,111 @@ def _build_graph(
         sources[ordered_task_ids[0]],
         "lowered_with_obligation" if has_obligation else "lowered",
         tuple(weighted),
+    )
+
+
+def _action_random_config_ignorable_reference(
+    reference: TaskGraphDefinitionReferenceIR,
+) -> bool:
+    return (
+        reference.reference_kind == "effect"
+        and reference.resolution_status == "deferred"
+        and reference.owner_domain == "event_effect_execution"
+        and not reference.source_contract_record_id
+        and reference.blocked_reason
+        == "task_graph_definition_not_admitted:effect:unsupported"
+    )
+
+
+def _admit_action_random_config_nodes(
+    entry_kind: EntryKind,
+    nodes: tuple[TaskGraphNodeIR, ...],
+    weighted: tuple[TaskGraphWeightedSelectionIR, ...],
+) -> tuple[TaskGraphNodeIR, ...]:
+    """Retire only the action-side RandomConfig S8C obligation proven executable."""
+
+    if entry_kind != "ability_phase_callback" or not weighted:
+        return nodes
+    selections_by_node: dict[str, TaskGraphWeightedSelectionIR] = {}
+    for selection in weighted:
+        previous = selections_by_node.get(selection.graph_node_id)
+        if previous is not None and previous != selection:
+            raise _Blocked(
+                f"task_graph_action_random_config_selection_ambiguous:{selection.graph_node_id}"
+            )
+        selections_by_node[selection.graph_node_id] = selection
+    node_by_id = {item.graph_node_id: item for item in nodes}
+    if len(node_by_id) != len(nodes):
+        raise _Blocked("task_graph_action_random_config_node_identity_ambiguous")
+
+    eligible: set[str] = set()
+    for node in nodes:
+        selection = selections_by_node.get(node.graph_node_id)
+        if selection is None:
+            continue
+        if (
+            node.source_family != "RandomConfig"
+            or selection.family != "RandomConfig"
+            or selection.selection_kind != "weighted_single"
+            or selection.graph_node_id != node.graph_node_id
+            or node.materialization_status != "deferred"
+            or node.owner_domains != ("hit_random_sequence",)
+            or node.termination_kind != "not_applicable"
+            or any(
+                ref.resolution_status != "resolved"
+                and not _action_random_config_ignorable_reference(ref)
+                for ref in node.references
+            )
+            or not selection.choices
+            or len(selection.choices) != len(node.branches)
+        ):
+            continue
+        if any(
+            choice.graph_node_id != node.graph_node_id
+            or choice.family != "RandomConfig"
+            or choice.ordinal != branch.ordinal
+            or choice.branch_id != branch.branch_id
+            for choice, branch in zip(selection.choices, node.branches, strict=True)
+        ):
+            raise _Blocked(
+                f"task_graph_action_random_config_choice_branch_mismatch:{node.graph_node_id}"
+            )
+        eligible.add(node.graph_node_id)
+
+    admitted: set[str] = {
+        node.graph_node_id
+        for node in nodes
+        if node.materialization_status == "materialized"
+        and node.node_kind != "deferred"
+    }
+    pending = set(eligible)
+    while pending:
+        progressed = False
+        for node_id in tuple(sorted(pending)):
+            node = node_by_id[node_id]
+            children = tuple(
+                child_id
+                for branch in node.branches
+                for child_id in branch.child_node_ids
+            )
+            if all(child_id in admitted for child_id in children):
+                admitted.add(node_id)
+                pending.remove(node_id)
+                progressed = True
+        if not progressed:
+            break
+
+    return tuple(
+        replace(
+            node,
+            node_kind="branch",
+            materialization_status="materialized",
+            owner_domains=("task_graph_execution",),
+            status_reason="",
+        )
+        if node.graph_node_id in admitted and node.graph_node_id in eligible
+        else node
+        for node in nodes
     )
 
 
@@ -1568,7 +1680,9 @@ def _materialization_dispositions(
     if any(item.formal_materialization_ids for item in base):
         raise ValueError("task graph materialization base already contains formal links")
     graph_by_id = {item.graph_id: item for item in graphs}
+    entry_by_materialization = {item.materialization_id: item for item in entries}
     linked_by_materialization: dict[str, set[str]] = {}
+    action_random_links_by_record: dict[str, set[str]] = defaultdict(set)
     for entry in entries:
         if entry.status == "blocked":
             linked_by_materialization[entry.materialization_id] = set()
@@ -1594,6 +1708,17 @@ def _materialization_dispositions(
             if reference.source_contract_record_id
         )
         linked_by_materialization[entry.materialization_id] = linked
+        if entry.entry_kind == "ability_phase_callback":
+            for node in graph.nodes:
+                if (
+                    node.source_family == "RandomConfig"
+                    and node.materialization_status == "materialized"
+                    and node.owner_domains == ("task_graph_execution",)
+                    and node.source_contract_node_id
+                ):
+                    action_random_links_by_record[node.source_contract_node_id].add(
+                        entry.materialization_id
+                    )
     materializations_by_record: dict[str, list[str]] = defaultdict(list)
     for materialization_id, linked in linked_by_materialization.items():
         for record_id in linked:
@@ -1608,8 +1733,34 @@ def _materialization_dispositions(
             continue
         if item.disposition == "blocked":
             raise ValueError("blocked task graph source cannot enter a formal graph")
+        action_random_ids = tuple(
+            sorted(action_random_links_by_record.get(item.source_record_id, ()))
+        )
+        retire_hit_random = bool(action_random_ids)
+        if retire_hit_random:
+            if (
+                item.family != "RandomConfig"
+                or item.disposition != "deferred"
+                or "hit_random_sequence" not in item.owner_domains
+            ):
+                raise ValueError(
+                    "action RandomConfig materialization cannot retire its source owner"
+                )
+            non_action_links = tuple(
+                materialization_id
+                for materialization_id in materialization_ids
+                if entry_by_materialization[materialization_id].entry_kind
+                != "ability_phase_callback"
+            )
+            if non_action_links:
+                raise ValueError(
+                    "action RandomConfig source owner is shared with a non-action formal producer"
+                )
         remaining_domains = tuple(
-            domain for domain in item.owner_domains if domain != "task_graph_execution"
+            domain
+            for domain in item.owner_domains
+            if domain != "task_graph_execution"
+            and not (retire_hit_random and domain == "hit_random_sequence")
         )
         result.append(replace(
             item,
