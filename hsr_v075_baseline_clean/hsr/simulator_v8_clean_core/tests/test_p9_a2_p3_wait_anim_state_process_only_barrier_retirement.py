@@ -745,3 +745,24 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
     ):
         assert token in text
     assert "def _source_denominator(" not in text
+
+
+def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
+    validator = (
+        Path(__file__).resolve().parents[1]
+        / "tools"
+        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+    )
+    text = validator.read_text(encoding="utf-8")
+    module = ast.parse(text)
+    builder = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "_FormalTaskGraphViewBuilder"
+    )
+    builder_text = ast.get_source_segment(text, builder)
+    assert builder_text is not None
+    assert "relative not in formal_status_root_paths" in builder_text
+    assert "formal_status_source_context=self.formal_context" in builder_text
+    assert "if relative in formal_status_root_paths\n                    else None" not in builder_text

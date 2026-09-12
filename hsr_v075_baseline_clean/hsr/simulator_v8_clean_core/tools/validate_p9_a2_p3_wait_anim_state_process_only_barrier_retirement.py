@@ -555,17 +555,16 @@ class _FormalTaskGraphViewBuilder:
         }
         for ability_file_order, path in enumerate(ability_files):
             relative = lowering_module.relative_source_path(self.root, path)
-            if relative.startswith("Config/ConfigAbility/Equip/"):
+            if (
+                relative.startswith("Config/ConfigAbility/Equip/")
+                or relative not in formal_status_root_paths
+            ):
                 continue
             lowered = lowerer._lower_ability_file(
                 path,
                 queue_priority_lookup,
                 ability_file_order=ability_file_order,
-                formal_status_source_context=(
-                    self.formal_context
-                    if relative in formal_status_root_paths
-                    else None
-                ),
+                formal_status_source_context=self.formal_context,
             )
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
