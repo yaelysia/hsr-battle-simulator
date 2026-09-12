@@ -31,6 +31,22 @@ jobs:
           set -euo pipefail
           test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 
+      - name: Preflight P4 validator import compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py")
+          text = path.read_text(encoding="utf-8")
+          old = """    _accepted_context,\n    _build_context,\n    _definitions,\n    _state_for_admission,\n"""
+          new = """    _accepted_context,\n    build_context as _build_context,\n    definitions as _definitions,\n    _state_for_admission,\n"""
+          assert text.count(old) == 1, "P4 validator P1 import block drifted"
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          python -m py_compile hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py
+
       - name: Run P4 SetEntityVisible Direct
         shell: bash
         run: |
