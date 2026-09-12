@@ -60,6 +60,7 @@ from hsr.simulator_v8_clean_core.systems.task_graph import (
     TaskGraphExecutor,
 )
 from hsr.simulator_v8_clean_core.tbgd import (
+    lowering as lowering_module,
     task_graph_materializer as task_graph_materializer,
 )
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
@@ -506,17 +507,202 @@ def _classify_formal_wait_occurrence(
     }
 
 
-def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
-    lowerer, _source_graph, snapshot, scope = _build_context(root)
-    source_catalog = lowerer.build_character_control_flow_contract_catalog(
-        snapshot=snapshot,
-        scope_catalog=scope,
-    )
-    controls = {item.node_id: item for item in source_catalog.nodes}
-    formal_context = lowerer._character_formal_task_source_context()
-    content_sha_by_path = formal_context.content_sha256_by_path
 
+class _FormalTaskGraphViewBuilder:
+    """Build the production formal ability/task-graph view without unrelated entity catalogs."""
+
+    def __init__(self, root: Path):
+        production_lowerer, _source_graph, snapshot, scope = _build_context(root)
+        self.root = root
+        self.production_lowerer = production_lowerer
+        self.snapshot = snapshot
+        self.scope = scope
+        self.source_catalog = production_lowerer.build_character_control_flow_contract_catalog(
+            snapshot=snapshot,
+            scope_catalog=scope,
+        )
+        self.formal_context = production_lowerer._character_formal_task_source_context()
+
+    def build(self) -> CanonicalIR:
+        lowerer = self.production_lowerer
+        action_definitions = lowerer._lower_action_definitions()
+        (
+            action_ability_bindings,
+            ability_phases,
+            ability_tasks,
+            action_effects,
+            action_conditions,
+            _action_formulas,
+            action_target_expressions,
+        ) = lowerer._lower_action_ability_bindings(action_definitions)
+
+        effects = list(action_effects)
+        conditions = list(action_conditions)
+        target_expressions = list(action_target_expressions)
+        status_callbacks: list[Any] = []
+        status_callback_tasks: list[Any] = []
+        queue_intents: list[Any] = []
+
+        queue_priorities = lowerer._lower_queue_priorities()
+        queue_priority_lookup = {
+            (priority.priority_table, priority.priority_key): priority
+            for priority in queue_priorities
+            if priority.coverage_status == "executable"
+        }
+        ability_files = lowerer._ability_files()
+        formal_status_root_paths = {
+            item.source.source_path for item in self.snapshot.sources
+        }
+        for ability_file_order, path in enumerate(ability_files):
+            relative = lowering_module.relative_source_path(self.root, path)
+            if relative.startswith("Config/ConfigAbility/Equip/"):
+                continue
+            lowered = lowerer._lower_ability_file(
+                path,
+                queue_priority_lookup,
+                ability_file_order=ability_file_order,
+                formal_status_source_context=(
+                    self.formal_context
+                    if relative in formal_status_root_paths
+                    else None
+                ),
+            )
+            effects.extend(lowered.effects)
+            conditions.extend(lowered.conditions)
+            target_expressions.extend(lowered.target_expressions)
+            status_callbacks.extend(lowered.status_callbacks)
+            status_callback_tasks.extend(lowered.status_callback_tasks)
+            queue_intents.extend(lowered.queue_intents)
+
+        (
+            standalone_ability_graphs,
+            standalone_phases,
+            standalone_tasks,
+            standalone_effects,
+            standalone_conditions,
+            _standalone_formulas,
+            standalone_target_expressions,
+            _standalone_root_task_ids_by_graph,
+        ) = lowerer._lower_standalone_ability_graphs(ability_files)
+        ability_phases.extend(standalone_phases)
+        ability_tasks.extend(standalone_tasks)
+        effects.extend(standalone_effects)
+        conditions.extend(standalone_conditions)
+        target_expressions.extend(standalone_target_expressions)
+
+        ability_tasks = lowering_module._link_trigger_ability_graphs(
+            ability_tasks,
+            effects,
+            standalone_ability_graphs,
+            ability_phases,
+        )
+        status_callback_tasks = lowering_module._link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            effects,
+            standalone_ability_graphs,
+        )
+
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        (
+            status_callbacks,
+            status_callback_tasks,
+            _status_callback_finalization_audit,
+        ) = lowering_module._finalize_action_window_status_callback_admission(
+            status_callbacks,
+            status_callback_tasks,
+            status_event_families,
+            effects,
+            standalone_ability_graphs,
+            ability_phases,
+            formal_status_root_paths,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        status_event_blocked_reasons = lowering_module._status_event_blocked_reasons(
+            status_event_families
+        )
+        status_callbacks = lowering_module._block_status_callbacks_by_event_family(
+            status_callbacks,
+            status_event_blocked_reasons,
+        )
+        status_callback_blocked_reasons = {
+            callback.callback_id: (
+                status_event_blocked_reasons.get(callback.event)
+                or callback.blocked_reason
+                or callback.blocking_dependency
+            )
+            for callback in status_callbacks
+            if (
+                callback.event in status_event_blocked_reasons
+                or callback.blocked_reason
+                == "equipment_modifier_definition_unreferenced"
+            )
+        }
+        status_callback_tasks = lowering_module._block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = lowering_module._block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+
+        combatant_action_sets = lowerer._lower_combatant_action_sets(action_definitions)
+        queue_resolutions = lowering_module._lower_queue_resolutions(
+            queue_intents=queue_intents,
+            action_bindings=action_ability_bindings,
+            ability_phases=ability_phases,
+            standalone_graphs=standalone_ability_graphs,
+            combatant_action_sets=combatant_action_sets,
+        )
+        ability_phases = lowering_module._assign_character_ability_invocation_roles(
+            ability_phases,
+            ability_tasks,
+            standalone_ability_graphs,
+            queue_resolutions,
+            status_callback_tasks=status_callback_tasks,
+            status_callbacks=status_callbacks,
+        )
+
+        formal = CanonicalIR(
+            version=lowering_module.BASELINE_VERSION,
+            action_ability_bindings=tuple(action_ability_bindings),
+            ability_phases=tuple(ability_phases),
+            ability_tasks=tuple(ability_tasks),
+            standalone_ability_graphs=tuple(standalone_ability_graphs),
+            effects=tuple(effects),
+            conditions=tuple(conditions),
+            target_expressions=tuple(
+                lowering_module._dedupe_target_expressions(target_expressions).values()
+            ),
+            status_callbacks=tuple(status_callbacks),
+            status_callback_tasks=tuple(status_callback_tasks),
+        )
+        catalog = task_graph_materializer.materialize_character_runtime_task_graph_catalog(
+            self.source_catalog,
+            formal,
+            source_snapshot=self.snapshot,
+            definition_scope_complete=True,
+        )
+        canonical = replace(formal, task_graph_catalog=catalog)
+        RuleBook(canonical)
+        return canonical
+
+
+def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
+    lowerer = _FormalTaskGraphViewBuilder(root)
     canonical = lowerer.build()
+    snapshot = lowerer.snapshot
+    source_catalog = lowerer.source_catalog
+    controls = {item.node_id: item for item in source_catalog.nodes}
+    content_sha_by_path = lowerer.formal_context.content_sha256_by_path
+
     catalog = canonical.task_graph_catalog
     if type(catalog) is not TaskGraphCatalogIR:
         fail("formal_wait_anim_task_graph_catalog_missing")
@@ -546,7 +732,6 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
         for node in graph.nodes:
             graph_nodes_by_task.setdefault(node.formal_task_id, []).append((graph, node))
 
-    rows: list[dict[str, Any]] = []
     wait_task_ids = [
         task_id
         for task_id in formal_task_ids
@@ -556,6 +741,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     if not wait_task_ids:
         fail("formal_wait_anim_denominator_empty")
 
+    rows: list[dict[str, Any]] = []
     for task_id in wait_task_ids:
         task = tasks.get(task_id)
         if task is None:
@@ -613,9 +799,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     admitted = sum(bool(row["admitted"]) for row in rows)
     blocked = len(rows) - admitted
     blocked_reasons = Counter(
-        str(row["reason"])
-        for row in rows
-        if not row["admitted"]
+        str(row["reason"]) for row in rows if not row["admitted"]
     )
     return {
         "kind": "formal_ability_wait_anim_state_occurrences",
@@ -630,6 +814,7 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
         "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
         "rows": rows,
     }
+
 
 
 def _s8c_sibling_signature(source_catalog: Any) -> list[list[Any]]:
