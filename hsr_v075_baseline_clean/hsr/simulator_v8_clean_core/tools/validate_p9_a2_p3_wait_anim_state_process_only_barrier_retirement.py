@@ -385,16 +385,16 @@ def _source_denominator(source_catalog: Any, snapshot: Any) -> dict[str, Any]:
     }
 
 
-def _s8c_sibling_signature(source_catalog: Any) -> list[tuple[Any, ...]]:
+def _s8c_sibling_signature(source_catalog: Any) -> list[list[Any]]:
     return sorted(
-        (
+        [
             node.node_id,
             node.family,
             node.control_role,
-            tuple(node.downstream_stages),
+            list(node.downstream_stages),
             node.coverage_status,
             node.blocked_reason,
-        )
+        ]
         for node in source_catalog.nodes
         if node.family != "WaitAnimState"
         and "p9_s8c" in node.downstream_stages
