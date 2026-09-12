@@ -553,11 +553,12 @@ class _FormalTaskGraphViewBuilder:
         formal_status_root_paths = {
             item.source.source_path for item in self.snapshot.sources
         }
+        formal_ability_source_paths = set(self.formal_context.documents)
         formal_ability_files = [
             path
             for path in ability_files
             if lowering_module.relative_source_path(self.root, path)
-            in formal_status_root_paths
+            in formal_ability_source_paths
         ]
         for ability_file_order, path in enumerate(ability_files):
             relative = lowering_module.relative_source_path(self.root, path)
