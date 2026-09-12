@@ -715,12 +715,25 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
         / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
     )
     text = validator.read_text(encoding="utf-8")
-    ast.parse(text)
+    module = ast.parse(text)
+    denominator = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "formal_wait_anim_denominator"
+    )
+    denominator_text = ast.get_source_segment(text, denominator)
+    assert denominator_text is not None
     for token in (
-        "def formal_wait_anim_denominator(",
-        "build_character_action_ability_slice(",
-        "materialize_ability_task_graph_catalog(",
-        "RuleBook(formal)",
+        "canonical = lowerer.build()",
+        "catalog = canonical.task_graph_catalog",
+        "catalog.entry_materializations",
+        'entry.entry_kind != "ability_phase_callback"',
+        "RuleBook(canonical)",
+    ):
+        assert token in denominator_text
+    assert "build_character_action_ability_slice(" not in denominator_text
+    for token in (
         '"formal_wait_anim_denominator"',
         '"formal_channel_counts"',
         '"mutation_count"',

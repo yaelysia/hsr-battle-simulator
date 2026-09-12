@@ -322,8 +322,8 @@ def _formal_wait_nodes(
 
 def _classify_formal_wait_occurrence(
     *,
-    definition: Any,
     task: Any,
+    phase: Any,
     effect: Any | None,
     graph: TaskGraphIR | None,
     node: Any | None,
@@ -355,6 +355,14 @@ def _classify_formal_wait_occurrence(
     elif task_content_sha != expected_content_sha256:
         reasons.append("task_source_content_fingerprint_mismatch")
 
+    if phase is None:
+        reasons.append("formal_phase_owner_missing")
+        invocation_role = ""
+    else:
+        invocation_role = str(phase.invocation_role)
+        if phase.phase_id != task.phase_id:
+            reasons.append("formal_phase_task_identity_mismatch")
+
     if task.execution_mode != "process_only":
         reasons.append("task_execution_mode_not_process_only")
     if task.coverage_status != "audit_only":
@@ -379,6 +387,12 @@ def _classify_formal_wait_occurrence(
     else:
         graph_id = graph.graph_id
         graph_node_id = node.graph_node_id
+        if (
+            graph.entry_kind != "ability_phase_callback"
+            or graph.owner_id != task.phase_id
+            or graph.callback_kind != task.callback_kind
+        ):
+            reasons.append("formal_graph_owner_identity_mismatch")
         if node.formal_task_id != task.task_id:
             reasons.append("graph_node_formal_task_identity_mismatch")
         if node.source_family != "WaitAnimState":
@@ -412,7 +426,11 @@ def _classify_formal_wait_occurrence(
         branch_count = len(control.branches)
         termination_kind = control.termination.termination_kind
         responsibility_count = len(control.field_responsibilities)
-        if graph is not None and node is not None and node.source_contract_node_id != control.node_id:
+        if (
+            graph is not None
+            and node is not None
+            and node.source_contract_node_id != control.node_id
+        ):
             reasons.append("graph_control_identity_mismatch")
         if control.family != "WaitAnimState":
             reasons.append("control_family_not_wait_anim_state")
@@ -457,9 +475,10 @@ def _classify_formal_wait_occurrence(
 
     admitted = not reasons
     return {
-        "definition_id": definition.definition_id,
-        "action_id": definition.action_id,
-        "action_level": definition.level,
+        "action_id": task.action_id,
+        "action_level": task.level,
+        "ability_name": task.ability_name,
+        "invocation_role": invocation_role,
         "task_id": task.task_id,
         "phase_id": task.phase_id,
         "callback_kind": task.callback_kind,
@@ -488,7 +507,7 @@ def _classify_formal_wait_occurrence(
 
 
 def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
-    lowerer, source_graph, snapshot, scope = _build_context(root)
+    lowerer, _source_graph, snapshot, scope = _build_context(root)
     source_catalog = lowerer.build_character_control_flow_contract_catalog(
         snapshot=snapshot,
         scope_catalog=scope,
@@ -496,78 +515,92 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     controls = {item.node_id: item for item in source_catalog.nodes}
     formal_context = lowerer._character_formal_task_source_context()
     content_sha_by_path = formal_context.content_sha256_by_path
+
+    canonical = lowerer.build()
+    catalog = canonical.task_graph_catalog
+    if type(catalog) is not TaskGraphCatalogIR:
+        fail("formal_wait_anim_task_graph_catalog_missing")
+    rules = RuleBook(canonical)
+
+    phases = {phase.phase_id: phase for phase in canonical.ability_phases}
+    tasks = {task.task_id: task for task in canonical.ability_tasks}
+    if len(phases) != len(canonical.ability_phases):
+        fail("formal_wait_anim_phase_identity_ambiguous")
+    if len(tasks) != len(canonical.ability_tasks):
+        fail("formal_wait_anim_task_identity_ambiguous")
+
+    formal_task_ids: list[str] = []
+    for entry in catalog.entry_materializations:
+        if entry.entry_kind != "ability_phase_callback":
+            continue
+        formal_task_ids.extend(entry.formal_task_ids)
+    if not formal_task_ids:
+        fail("formal_ability_task_denominator_empty")
+    if len(formal_task_ids) != len(set(formal_task_ids)):
+        fail("formal_ability_task_denominator_identity_ambiguous")
+
+    graph_nodes_by_task: dict[str, list[tuple[TaskGraphIR, Any]]] = {}
+    for graph in catalog.graphs:
+        if graph.entry_kind != "ability_phase_callback":
+            continue
+        for node in graph.nodes:
+            graph_nodes_by_task.setdefault(node.formal_task_id, []).append((graph, node))
+
     rows: list[dict[str, Any]] = []
-    identities: set[tuple[str, str]] = set()
-
-    for definition in _definitions(root):
-        canonical = lowerer.build_character_action_ability_slice(
-            definition,
-            snapshot=snapshot,
-            scope_catalog=scope,
-            source_graph_catalog=source_graph,
-        )
-        catalog = task_graph_materializer.materialize_ability_task_graph_catalog(
-            source_catalog,
-            canonical,
-            source_snapshot=snapshot,
-        )
-        formal = replace(canonical, task_graph_catalog=catalog)
-        rules = RuleBook(formal)
-        graph_nodes_by_task: dict[str, list[tuple[TaskGraphIR, Any]]] = {}
-        for graph in catalog.graphs:
-            for node in graph.nodes:
-                graph_nodes_by_task.setdefault(node.formal_task_id, []).append((graph, node))
-
-        for task in canonical.ability_tasks:
-            if _family_for_task(task) != "WaitAnimState":
-                continue
-            occurrence_identity = (definition.definition_id, task.task_id)
-            if occurrence_identity in identities:
-                fail("formal_wait_anim_occurrence_identity_duplicate")
-            identities.add(occurrence_identity)
-
-            matches = graph_nodes_by_task.get(task.task_id, [])
-            graph: TaskGraphIR | None = None
-            node: Any | None = None
-            if len(matches) == 1:
-                graph, node = matches[0]
-            effect = rules.effect(task.effect_id) if task.effect_id else None
-            control = (
-                controls.get(node.source_contract_node_id)
-                if node is not None and node.source_contract_node_id
-                else None
-            )
-
-            source_path = task.source.source_path
-            json_path = str(task.source.evidence.get("json_path") or "")
-            raw: object = None
-            document = snapshot.documents.get(source_path)
-            if document is not None:
-                try:
-                    raw = _value_at_rooted_json_path(document, json_path)
-                except (KeyError, IndexError, TypeError, ValueError):
-                    raw = None
-
-            row = _classify_formal_wait_occurrence(
-                definition=definition,
-                task=task,
-                effect=effect,
-                graph=graph,
-                node=node,
-                control=control,
-                raw=raw,
-                expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
-            )
-            if len(matches) != 1:
-                if "formal_task_graph_node_missing_or_ambiguous" not in row["reasons"]:
-                    row["reasons"].insert(0, "formal_task_graph_node_missing_or_ambiguous")
-                    row["reason"] = row["reasons"][0]
-                    row["admitted"] = False
-                    row["disposition"] = "blocked"
-            rows.append(row)
-
-    if not rows:
+    wait_task_ids = [
+        task_id
+        for task_id in formal_task_ids
+        if (task := tasks.get(task_id)) is not None
+        and _family_for_task(task) == "WaitAnimState"
+    ]
+    if not wait_task_ids:
         fail("formal_wait_anim_denominator_empty")
+
+    for task_id in wait_task_ids:
+        task = tasks.get(task_id)
+        if task is None:
+            fail("formal_wait_anim_task_missing")
+        phase = phases.get(task.phase_id)
+        matches = graph_nodes_by_task.get(task.task_id, [])
+        graph: TaskGraphIR | None = None
+        node: Any | None = None
+        if len(matches) == 1:
+            graph, node = matches[0]
+        effect = rules.effect(task.effect_id) if task.effect_id else None
+        control = (
+            controls.get(node.source_contract_node_id)
+            if node is not None and node.source_contract_node_id
+            else None
+        )
+
+        source_path = task.source.source_path
+        json_path = str(task.source.evidence.get("json_path") or "")
+        raw: object = None
+        document = snapshot.documents.get(source_path)
+        if document is not None:
+            try:
+                raw = _value_at_rooted_json_path(document, json_path)
+            except (KeyError, IndexError, TypeError, ValueError):
+                raw = None
+
+        row = _classify_formal_wait_occurrence(
+            task=task,
+            phase=phase,
+            effect=effect,
+            graph=graph,
+            node=node,
+            control=control,
+            raw=raw,
+            expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
+        )
+        if len(matches) != 1:
+            if "formal_task_graph_node_missing_or_ambiguous" not in row["reasons"]:
+                row["reasons"].insert(0, "formal_task_graph_node_missing_or_ambiguous")
+                row["reason"] = row["reasons"][0]
+                row["admitted"] = False
+                row["disposition"] = "blocked"
+        rows.append(row)
+
     rows.sort(
         key=lambda item: (
             str(item["source_path"]),
@@ -586,6 +619,11 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     )
     return {
         "kind": "formal_ability_wait_anim_state_occurrences",
+        "formal_ability_entry_count": sum(
+            entry.entry_kind == "ability_phase_callback"
+            for entry in catalog.entry_materializations
+        ),
+        "formal_ability_task_count": len(formal_task_ids),
         "total": len(rows),
         "admitted": admitted,
         "blocked": blocked,
