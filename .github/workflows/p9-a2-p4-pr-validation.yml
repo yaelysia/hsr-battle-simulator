@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 
-      - name: Preflight P4 validator compatibility and narrowed owner probe
+      - name: Preflight P4 validator compatibility and isolated denominator
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +44,10 @@ jobs:
               (
                   """    _accepted_context,\n    _build_context,\n    _definitions,\n    _state_for_admission,\n""",
                   """    _accepted_context,\n    build_context as _build_context,\n    definitions as _definitions,\n    _state_for_admission,\n""",
+              ),
+              (
+                  """from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_ability_task_graph_catalog,\n)\n""",
+                  """from hsr.simulator_v8_clean_core.tbgd import task_graph_materializer\nfrom hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_ability_task_graph_catalog,\n)\n""",
               ),
               (
                   """    definitions = _definitions(root)\n    if target is not None:\n""",
@@ -71,7 +75,19 @@ jobs:
               ),
               (
                   """    baseline = baseline_probe(root)\n    target = {\n        key: baseline["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    current = probe(root, target=target)\n""",
-                  """    print(\"P4_STAGE current_probe_start\", file=sys.stderr, flush=True)\n    current = probe(root)\n    print(\"P4_STAGE current_probe_done\", file=sys.stderr, flush=True)\n    target = {\n        key: current["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    print(\"P4_STAGE baseline_probe_start\", file=sys.stderr, flush=True)\n    baseline = baseline_probe(root, target)\n    print(\"P4_STAGE baseline_probe_done\", file=sys.stderr, flush=True)\n""",
+                  """    print(\"P4_STAGE current_probe_start\", file=sys.stderr, flush=True)\n    current = probe(root)\n    print(\"P4_STAGE current_probe_done\", file=sys.stderr, flush=True)\n    target = {\n        key: current["representative"][key]\n        for key in (\"definition_id\", \"action_id\", \"action_level\")\n    }\n    print(\"P4_STAGE baseline_probe_start\", file=sys.stderr, flush=True)\n    baseline = baseline_probe(root, target)\n    print(\"P4_STAGE baseline_probe_done\", file=sys.stderr, flush=True)\n""",
+              ),
+              (
+                  """    canonical = view.build()\n    graph_catalog = materialize_ability_task_graph_catalog(\n        view.source_catalog,\n        canonical,\n        source_snapshot=view.snapshot,\n    )\n    rules = RuleBook(replace(canonical, task_graph_catalog=graph_catalog))\n    tasks = tuple(\n        task for task in canonical.ability_tasks if _family_for_task(task) == FAMILY\n    )\n""",
+                  """    print(\"P4_STAGE denominator_canonical_start\", file=sys.stderr, flush=True)\n    canonical = view.build()\n    print(\"P4_STAGE denominator_canonical_done\", file=sys.stderr, flush=True)\n    effect_by_id = {effect.effect_id: effect for effect in canonical.effects}\n    if len(effect_by_id) != len(canonical.effects):\n        fail(\"formal_effect_identity_ambiguous\")\n    materialization_context = task_graph_materializer._prepare_materialization(\n        view.source_catalog,\n        canonical,\n        view.snapshot,\n    )\n    entry_cache: dict[tuple[str, str], tuple[Any, Any]] = {}\n    tasks = tuple(\n        task for task in canonical.ability_tasks if _family_for_task(task) == FAMILY\n    )\n""",
+              ),
+              (
+                  "            effect = rules.effect(task.effect_id) if task.effect_id else None",
+                  "            effect = effect_by_id.get(task.effect_id) if task.effect_id else None",
+              ),
+              (
+                  """            phase_tasks = tuple(\n                candidate\n                for candidate in rules.ability_tasks_for_phase(task.phase_id)\n                if candidate.callback_kind == task.callback_kind\n            )\n            query = rules.query_formal_task_graph(\n                "ability_phase_callback",\n                task.phase_id,\n                task.callback_kind,\n                (candidate.task_id for candidate in phase_tasks),\n            )\n            graph = query.value\n            if query.status != "resolved" or type(graph) is not TaskGraphIR:\n                reasons.append("formal_task_graph_missing")\n                continue\n""",
+                  """            entry_key = (task.phase_id, task.callback_kind)\n            cached = entry_cache.get(entry_key)\n            if cached is None:\n                phase_tasks = tuple(\n                    candidate\n                    for candidate in canonical.ability_tasks\n                    if candidate.phase_id == task.phase_id\n                    and candidate.callback_kind == task.callback_kind\n                )\n                entry, graph = task_graph_materializer._materialize_entry(\n                    materialization_context,\n                    "ability_phase_callback",\n                    task.phase_id,\n                    task.callback_kind,\n                    tuple(candidate.task_id for candidate in phase_tasks),\n                    tuple(task_graph_materializer._ability_task(candidate) for candidate in phase_tasks),\n                )\n                cached = (entry, graph)\n                entry_cache[entry_key] = cached\n            entry, graph = cached\n            if entry.status != "materialized" or graph is None:\n                reasons.append(\n                    "formal_task_graph_missing:"\n                    + str(entry.blocked_reason or entry.status)\n                )\n                continue\n""",
               ),
               (
                   """        denominator = formal_denominator(root)\n    if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:\n""",
