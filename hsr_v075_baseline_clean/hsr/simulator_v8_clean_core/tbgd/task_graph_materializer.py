@@ -1374,6 +1374,83 @@ def _raw_source_value(
     return current
 
 
+def _is_wait_anim_state_process_only_presentation_shape(
+    control: CharacterControlFlowNodeIR | None,
+    task: _FormalTask,
+) -> bool:
+    if control is None:
+        return False
+    return (
+        control.family == "WaitAnimState"
+        and control.control_role == "presentation_barrier"
+        and control.coverage_status != "blocked"
+        and task.family == "WaitAnimState"
+        and task.opcode == "WaitAnimState"
+        and task.execution_mode == "process_only"
+        and task.coverage_status == "audit_only"
+        and bool(task.effect_id)
+        and not task.condition_id
+        and not task.target_expression_id
+        and not task.ability_definition_id
+        and not control.branches
+        and not control.template_reference_ids
+        and control.termination.termination_kind == "not_applicable"
+        and control.termination.status == "not_applicable"
+        and control.downstream_stages == ("p9_s8c",)
+        and all(
+            item.responsibility == "presentation_excluded"
+            and item.owner_stage == "excluded"
+            for item in control.field_responsibilities
+        )
+    )
+
+
+def _wait_anim_state_process_only_effect(
+    task: _FormalTask,
+    indexes: _DefinitionIndexes,
+) -> EffectIR:
+    matches = indexes.effects.get(task.effect_id, ())
+    if len(matches) != 1:
+        raise _Blocked(
+            "task_graph_wait_anim_state_process_only_effect_"
+            + ("missing" if not matches else "ambiguous")
+        )
+    effect = matches[0]
+    contract = effect.payload.get("process_only_contract")
+    source_fields = (
+        contract.get("source_fields") if isinstance(contract, Mapping) else None
+    )
+    source_field_types = (
+        contract.get("source_field_types") if isinstance(contract, Mapping) else None
+    )
+    if (
+        effect.opcode != task.opcode
+        or effect.coverage_status != "audit_only"
+        or effect.source != task.source
+        or not isinstance(contract, Mapping)
+        or contract.get("schema_version") != "ability_process_only_source_shape_v1"
+        or contract.get("opcode") != task.opcode
+        or contract.get("source_shape_status") != "admitted"
+        or bool(contract.get("blocked_reason"))
+        or not isinstance(source_fields, (list, tuple))
+        or "$type" not in source_fields
+        or len(source_fields) != len(set(source_fields))
+        or not isinstance(source_field_types, Mapping)
+        or set(source_field_types) != set(source_fields)
+        or not all(
+            isinstance(field_name, str)
+            and field_name
+            and isinstance(field_type, str)
+            and field_type
+            for field_name, field_type in source_field_types.items()
+        )
+    ):
+        raise _Blocked(
+            "task_graph_wait_anim_state_process_only_effect_contract_invalid"
+        )
+    return effect
+
+
 def _references(
     task: _FormalTask,
     control: CharacterControlFlowNodeIR | None,
@@ -1395,6 +1472,8 @@ def _references(
             "ability_graph_resolution",
         ),
     )
+    if _is_wait_anim_state_process_only_presentation_shape(control, task):
+        _wait_anim_state_process_only_effect(task, indexes)
     result: list[TaskGraphDefinitionReferenceIR] = []
     for kind, definition_id, values, default_owner in definitions:
         if not definition_id:
@@ -1475,6 +1554,10 @@ def _node_status(
     task: _FormalTask,
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
+        if task.family == "WaitAnimState" and task.execution_mode == "process_only":
+            raise _Blocked("task_graph_wait_anim_state_source_contract_missing")
+        return "leaf", "materialized", ("task_graph_execution",), ""
+    if _is_wait_anim_state_process_only_presentation_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
@@ -1569,6 +1652,7 @@ def _materialization_dispositions(
         raise ValueError("task graph materialization base already contains formal links")
     graph_by_id = {item.graph_id: item for item in graphs}
     linked_by_materialization: dict[str, set[str]] = {}
+    linked_nodes_by_record: dict[str, list[TaskGraphNodeIR]] = defaultdict(list)
     for entry in entries:
         if entry.status == "blocked":
             linked_by_materialization[entry.materialization_id] = set()
@@ -1581,6 +1665,9 @@ def _materialization_dispositions(
             for node in graph.nodes
             if node.source_contract_node_id
         }
+        for node in graph.nodes:
+            if node.source_contract_node_id:
+                linked_nodes_by_record[node.source_contract_node_id].append(node)
         linked.update(
             reference.definition_id
             for node in graph.nodes
@@ -1608,8 +1695,37 @@ def _materialization_dispositions(
             continue
         if item.disposition == "blocked":
             raise ValueError("blocked task graph source cannot enter a formal graph")
+        linked_nodes = tuple(linked_nodes_by_record.get(item.source_record_id, ()))
+        retire_wait_anim_state_barrier = (
+            item.source_kind == "control_node"
+            and item.family == "WaitAnimState"
+            and bool(linked_nodes)
+            and all(
+                node.source_family == "WaitAnimState"
+                and node.opcode == "WaitAnimState"
+                and node.node_kind == "leaf"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and not node.branches
+                and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].resolution_status == "deferred"
+                and node.references[0].blocked_reason
+                == "task_graph_definition_not_admitted:effect:audit_only"
+                and node.references[0].source == node.source
+                and node.termination_kind == "not_applicable"
+                and node.termination_status == "not_applicable"
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
-            domain for domain in item.owner_domains if domain != "task_graph_execution"
+            domain
+            for domain in item.owner_domains
+            if domain != "task_graph_execution"
+            and not (
+                retire_wait_anim_state_barrier
+                and domain == "hit_random_sequence"
+            )
         )
         result.append(replace(
             item,

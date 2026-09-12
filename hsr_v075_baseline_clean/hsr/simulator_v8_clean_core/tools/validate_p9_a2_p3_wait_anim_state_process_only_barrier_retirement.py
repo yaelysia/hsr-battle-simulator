@@ -1,0 +1,2547 @@
+from __future__ import annotations
+
+import argparse
+import gc
+import hashlib
+import json
+import os
+import random
+import resource
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[4]
+BASELINE = ROOT / "hsr_v075_baseline_clean"
+TBGD = ROOT / "turnbasedgamedata-main"
+BASE_SHA = "eedebb406b85ab2611e8345b3fe7a75e9a7c53a0"
+TBGD_PIN = "14c1d18f91a8101d610e6c523447a7517de3fae1"
+MATERIALIZER = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py"
+TEST = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+VALIDATOR = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+REPORT = "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P3_S8C_WAIT_ANIM_STATE_PROCESS_ONLY_BARRIER_RETIREMENT_execution_report.md"
+CARD = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P3_S8C_WAIT_ANIM_STATE_PROCESS_ONLY_BARRIER_RETIREMENT.md"
+ALLOWED = {MATERIALIZER, TEST, VALIDATOR, REPORT, CARD}
+READ_ONLY = (
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_control_flow_contracts.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/ir.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/control_flow_contract.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/rules/task_graph.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py",
+    "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability_task_contract.py",
+)
+
+if os.environ.get("P9_A2_P3_EXTERNAL_BASELINE") != "1":
+    sys.path.insert(0, str(BASELINE))
+
+from hsr.simulator_v8_clean_core.rules.evaluator import RuleEvaluator
+from hsr.simulator_v8_clean_core.rules.ir import (
+    AbilityPhaseIR,
+    CanonicalIR,
+    ConditionIR,
+    EffectIR,
+    StandaloneAbilityGraphIR,
+)
+from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+from hsr.simulator_v8_clean_core.rules.task_graph import (
+    TaskGraphCatalogIR,
+    TaskGraphDefinitionReferenceIR,
+    TaskGraphIR,
+    task_graph_reference_id,
+)
+from hsr.simulator_v8_clean_core.systems.action_contract import (
+    _formal_action_task_graph_projection,
+)
+from hsr.simulator_v8_clean_core.systems.task_graph import (
+    TaskGraphExecutionResult,
+    TaskGraphExecutor,
+)
+from hsr.simulator_v8_clean_core.tbgd import (
+    lowering as lowering_module,
+    task_graph_materializer as task_graph_materializer,
+)
+from hsr.simulator_v8_clean_core.tbgd.lowering import (
+    _process_only_ability_task_source_blocked_reason,
+    _value_at_rooted_json_path,
+)
+from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p1_formal_process_only_source_identity import (
+    _accepted_context,
+    _state_for_admission,
+    build_context as _build_context,
+    definitions as _definitions,
+)
+
+HIT_RANDOM = "task_graph_control_requires_domains:hit_random_sequence"
+AUDIT_EFFECT_BLOCKER = "task_graph_definition_not_admitted:effect:audit_only"
+PRESERVED = {
+    "effect_coverage_status:unsupported:FireProjectile",
+    "task_graph_definition_not_admitted:effect:unsupported",
+    "task_graph_definition_not_admitted:effect:audit_only",
+    "task_graph_control_requires_domains:damage_heal_shield",
+}
+_ZERO_CHANNEL_KEYS = (
+    "mutation_count",
+    "event_count",
+    "rng_event_count",
+    "settlement_record_count",
+    "replay_mutation_count",
+)
+
+
+def fail(message: str) -> None:
+    raise AssertionError(message)
+
+
+def git(*args: str, cwd: Path = ROOT) -> str:
+    return subprocess.check_output(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        stderr=subprocess.STDOUT,
+    ).strip()
+
+
+def governance() -> dict[str, Any]:
+    if git("merge-base", BASE_SHA, "HEAD") != BASE_SHA:
+        fail("fixed_base_not_ancestor")
+    changed = tuple(
+        item
+        for item in git("diff", "--name-only", BASE_SHA, "HEAD").splitlines()
+        if item
+    )
+    extra = sorted(set(changed) - ALLOWED)
+    if extra:
+        fail("scope_leak:" + ",".join(extra))
+    production = tuple(
+        item
+        for item in changed
+        if "/simulator_v8_clean_core/" in item
+        and "/tools/" not in item
+        and "/tests/" not in item
+        and "/docs/" not in item
+    )
+    if production != (MATERIALIZER,):
+        fail("production_authority_changed:" + ",".join(production))
+    for path in READ_ONLY:
+        current = (ROOT / path).read_text(encoding="utf-8").rstrip("\n")
+        baseline = git("show", f"{BASE_SHA}:{path}").rstrip("\n")
+        if current != baseline:
+            fail("read_only_authority_changed:" + path)
+    current_materializer = (ROOT / MATERIALIZER).read_text(encoding="utf-8")
+    diff = git("diff", "--unified=3", BASE_SHA, "HEAD", "--", MATERIALIZER)
+    for token in (
+        "_is_wait_anim_state_process_only_presentation_shape",
+        "_wait_anim_state_process_only_effect",
+        "task_graph_wait_anim_state_source_contract_missing",
+        "task_graph_wait_anim_state_process_only_effect_contract_invalid",
+        "retire_wait_anim_state_barrier",
+        AUDIT_EFFECT_BLOCKER,
+    ):
+        if token not in diff:
+            fail("production_patch_shape_missing:" + token)
+    if 'presentation_only_wait and kind == "effect"' in current_materializer:
+        fail("wait_anim_state_effect_reference_still_suppressed")
+    return {
+        "fixed_base": BASE_SHA,
+        "changed_paths": list(changed),
+        "production_paths": list(production),
+        "read_only_authorities_unchanged": True,
+        "wait_anim_effect_reference_suppression_removed": True,
+    }
+
+
+def _family_for_task(task: Any) -> str:
+    family = task.source.evidence.get("source_opcode")
+    return family if isinstance(family, str) and family else str(task.opcode)
+
+
+def _process_contract_ok(effect: Any, task: Any) -> bool:
+    if effect is None:
+        return False
+    contract = effect.payload.get("process_only_contract")
+    source_fields = (
+        contract.get("source_fields") if isinstance(contract, Mapping) else None
+    )
+    source_field_types = (
+        contract.get("source_field_types") if isinstance(contract, Mapping) else None
+    )
+    return bool(
+        effect.opcode == task.opcode
+        and effect.coverage_status == "audit_only"
+        and effect.source == task.source
+        and isinstance(contract, Mapping)
+        and contract.get("schema_version") == "ability_process_only_source_shape_v1"
+        and contract.get("opcode") == task.opcode
+        and contract.get("source_shape_status") == "admitted"
+        and not contract.get("blocked_reason")
+        and isinstance(source_fields, (list, tuple))
+        and "$type" in source_fields
+        and len(source_fields) == len(set(source_fields))
+        and isinstance(source_field_types, Mapping)
+        and set(source_field_types) == set(source_fields)
+        and all(
+            isinstance(field_name, str)
+            and field_name
+            and isinstance(field_type, str)
+            and field_type
+            for field_name, field_type in source_field_types.items()
+        )
+    )
+
+
+def _source_location(source: Any) -> tuple[str, str]:
+    evidence = source.evidence
+    return (
+        str(source.source_path),
+        str(evidence.get("json_path") or ""),
+    )
+
+
+def _source_identity(source: Any) -> tuple[str, str, str]:
+    source_path, json_path = _source_location(source)
+    return (
+        source_path,
+        json_path,
+        str(source.evidence.get("content_sha256") or ""),
+    )
+
+
+def _raw_family(raw: object) -> str:
+    if not isinstance(raw, Mapping):
+        return ""
+    value = raw.get("$type")
+    if not isinstance(value, str) or not value:
+        return ""
+    return value.rsplit(".", 1)[-1]
+
+
+def _enriched_provenance(
+    rules: RuleBook,
+    projection: Any,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for raw in projection.blocker_provenance:
+        row = dict(raw)
+        task_id = str(row.get("task_id") or "")
+        if task_id:
+            task = rules.ability_task(task_id)
+            row["family"] = _family_for_task(task) if task is not None else "<missing>"
+        else:
+            row["family"] = ""
+        result.append(row)
+    return result
+
+
+def _hit_random_rows(
+    provenance: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in provenance
+        if row.get("reason") == HIT_RANDOM
+        and row.get("source") == "node_materialization"
+    ]
+
+
+def _formal_wait_nodes(
+    rules: RuleBook,
+    projection: Any,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for task_id in projection.reachable_task_ids:
+        task = rules.ability_task(task_id)
+        if task is None or _family_for_task(task) != "WaitAnimState":
+            continue
+        phase_tasks = tuple(
+            candidate
+            for candidate in rules.ability_tasks_for_phase(task.phase_id)
+            if candidate.callback_kind == task.callback_kind
+        )
+        query = rules.query_formal_task_graph(
+            "ability_phase_callback",
+            task.phase_id,
+            task.callback_kind,
+            (candidate.task_id for candidate in phase_tasks),
+        )
+        graph = query.value
+        if query.status != "resolved" or type(graph) is not TaskGraphIR:
+            fail("wait_anim_graph_missing")
+        nodes = tuple(
+            node
+            for node in graph.nodes
+            if node.formal_task_id == task.task_id
+        )
+        if len(nodes) != 1:
+            fail("wait_anim_node_missing_or_ambiguous")
+        node = nodes[0]
+        if node.graph_node_id in seen:
+            fail("wait_anim_node_duplicate")
+        seen.add(node.graph_node_id)
+        effect = rules.effect(task.effect_id) if task.effect_id else None
+        references = [
+            {
+                "reference_kind": item.reference_kind,
+                "definition_id": item.definition_id,
+                "resolution_status": item.resolution_status,
+                "owner_domain": item.owner_domain,
+                "blocked_reason": item.blocked_reason,
+                "source_matches_node": item.source == node.source,
+            }
+            for item in node.references
+        ]
+        rows.append(
+            {
+                "task_id": task.task_id,
+                "phase_id": task.phase_id,
+                "callback_kind": task.callback_kind,
+                "graph_id": graph.graph_id,
+                "graph_node_id": node.graph_node_id,
+                "node_kind": node.node_kind,
+                "materialization_status": node.materialization_status,
+                "owner_domains": list(node.owner_domains),
+                "status_reason": node.status_reason,
+                "references": references,
+                "execution_mode": task.execution_mode,
+                "task_coverage_status": task.coverage_status,
+                "task_effect_id": task.effect_id,
+                "effect_present": effect is not None,
+                "effect_opcode": getattr(effect, "opcode", ""),
+                "effect_coverage_status": getattr(effect, "coverage_status", ""),
+                "effect_source_matches_task": (
+                    effect is not None and effect.source == task.source
+                ),
+                "process_only_contract_admitted": _process_contract_ok(effect, task),
+                "source_path": task.source.source_path,
+                "json_path": task.source.evidence.get("json_path"),
+                "source_contract_node_id": node.source_contract_node_id,
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda item: (
+            str(item["source_path"]),
+            str(item["json_path"]),
+        ),
+    )
+
+
+def _classify_formal_wait_occurrence(
+    *,
+    task: Any,
+    phase: Any,
+    effect: Any | None,
+    graph: TaskGraphIR | None,
+    node: Any | None,
+    control: Any | None,
+    raw: object,
+    formal_source: Any,
+    expected_content_sha256: str,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    source_path, json_path = _source_location(task.source)
+    task_content_sha = str(task.source.evidence.get("content_sha256") or "")
+    formal_identity = _source_identity(formal_source)
+    formal_source_path, formal_json_path, formal_content_sha = formal_identity
+    formal_fingerprint_scope = str(
+        formal_source.evidence.get("content_fingerprint_scope") or ""
+    )
+
+    source_contract_reason = ""
+    if not isinstance(raw, Mapping):
+        reasons.append("raw_source_missing_or_not_object")
+    else:
+        if _raw_family(raw) != "WaitAnimState":
+            reasons.append("raw_family_not_wait_anim_state")
+        source_contract_reason = _process_only_ability_task_source_blocked_reason(
+            dict(raw),
+            "WaitAnimState",
+        )
+        if source_contract_reason:
+            reasons.append("source_contract:" + source_contract_reason)
+
+    if not source_path or not json_path.startswith("$"):
+        reasons.append("task_source_identity_incomplete")
+    if (source_path, json_path) != (formal_source_path, formal_json_path):
+        reasons.append("task_source_location_mismatch")
+    if not expected_content_sha256 or len(expected_content_sha256) != 64:
+        reasons.append("formal_source_content_fingerprint_missing")
+    elif formal_content_sha != expected_content_sha256:
+        reasons.append("formal_source_content_fingerprint_mismatch")
+    if formal_fingerprint_scope != "source_file":
+        reasons.append("formal_source_content_fingerprint_scope_invalid")
+    if task_content_sha and task_content_sha != formal_content_sha:
+        reasons.append("task_source_content_fingerprint_conflict")
+
+    if phase is None:
+        reasons.append("formal_phase_owner_missing")
+        invocation_role = ""
+    else:
+        invocation_role = str(phase.invocation_role)
+        if phase.phase_id != task.phase_id:
+            reasons.append("formal_phase_task_identity_mismatch")
+
+    if task.execution_mode != "process_only":
+        reasons.append("task_execution_mode_not_process_only")
+    if task.coverage_status != "audit_only":
+        reasons.append("task_coverage_not_audit_only")
+    if task.blocked_reason:
+        reasons.append("task_blocked:" + str(task.blocked_reason))
+    if not task.effect_id:
+        reasons.append("task_effect_identity_missing")
+
+    if effect is None:
+        reasons.append("audit_effect_missing")
+    else:
+        if not _process_contract_ok(effect, task):
+            reasons.append("audit_effect_process_only_contract_invalid")
+        if effect.source != task.source:
+            reasons.append("effect_source_identity_mismatch")
+        if _source_location(effect.source) != (formal_source_path, formal_json_path):
+            reasons.append("effect_source_location_mismatch")
+
+    if graph is None or node is None:
+        reasons.append("formal_task_graph_node_missing_or_ambiguous")
+        graph_id = ""
+        graph_node_id = ""
+    else:
+        graph_id = graph.graph_id
+        graph_node_id = node.graph_node_id
+        if (
+            graph.entry_kind != "ability_phase_callback"
+            or graph.owner_id != task.phase_id
+            or graph.callback_kind != task.callback_kind
+        ):
+            reasons.append("formal_graph_owner_identity_mismatch")
+        if node.formal_task_id != task.task_id:
+            reasons.append("graph_node_formal_task_identity_mismatch")
+        if node.source_family != "WaitAnimState":
+            reasons.append("graph_node_family_not_wait_anim_state")
+        if _source_identity(node.source) != formal_identity:
+            reasons.append("graph_node_source_identity_mismatch")
+        if node.node_kind != "leaf":
+            reasons.append("graph_node_not_leaf")
+        if node.materialization_status != "materialized":
+            reasons.append(
+                "graph_node_not_materialized:"
+                + str(node.status_reason or node.materialization_status)
+            )
+        if tuple(node.owner_domains) != ("task_graph_execution",):
+            reasons.append("graph_node_owner_domains_not_execution_only")
+
+    if control is None:
+        reasons.append("control_node_missing")
+        control_node_id = ""
+        control_role = ""
+        control_coverage_status = ""
+        control_blocked_reason = ""
+        branch_count = -1
+        termination_kind = ""
+        responsibility_count = 0
+    else:
+        control_node_id = control.node_id
+        control_role = control.control_role
+        control_coverage_status = control.coverage_status
+        control_blocked_reason = control.blocked_reason
+        branch_count = len(control.branches)
+        termination_kind = control.termination.termination_kind
+        responsibility_count = len(control.field_responsibilities)
+        if (
+            graph is not None
+            and node is not None
+            and node.source_contract_node_id != control.node_id
+        ):
+            reasons.append("graph_control_identity_mismatch")
+        if control.family != "WaitAnimState":
+            reasons.append("control_family_not_wait_anim_state")
+        if control.control_role != "presentation_barrier":
+            reasons.append("control_role_not_presentation_barrier")
+        if control.blocked_reason:
+            reasons.append("control_blocked:" + str(control.blocked_reason))
+        if _source_identity(control.source) != formal_identity:
+            reasons.append("control_source_identity_mismatch")
+        if any(
+            item.responsibility != "presentation_excluded"
+            or item.owner_stage != "excluded"
+            for item in control.field_responsibilities
+        ):
+            reasons.append("control_has_non_presentation_responsibility")
+        if control.branches:
+            reasons.append("control_has_child_branch")
+        if control.termination.termination_kind != "not_applicable":
+            reasons.append("control_has_gameplay_termination")
+
+    references: list[dict[str, Any]] = []
+    if graph is not None and node is not None:
+        references = [
+            {
+                "reference_kind": item.reference_kind,
+                "definition_id": item.definition_id,
+                "resolution_status": item.resolution_status,
+                "blocked_reason": item.blocked_reason,
+                "source_matches_formal": item.source == formal_source,
+            }
+            for item in node.references
+        ]
+        if (
+            len(node.references) != 1
+            or node.references[0].reference_kind != "effect"
+            or node.references[0].definition_id != task.effect_id
+            or node.references[0].resolution_status != "deferred"
+            or node.references[0].blocked_reason != AUDIT_EFFECT_BLOCKER
+            or node.references[0].source != formal_source
+        ):
+            reasons.append("graph_audit_effect_reference_invalid")
+
+    effect_content_sha = (
+        str(effect.source.evidence.get("content_sha256") or "")
+        if effect is not None
+        else ""
+    )
+    control_content_sha = (
+        str(control.source.evidence.get("content_sha256") or "")
+        if control is not None
+        else ""
+    )
+    graph_node_content_sha = (
+        str(node.source.evidence.get("content_sha256") or "")
+        if node is not None
+        else ""
+    )
+    audit_reference_content_sha = (
+        str(node.references[0].source.evidence.get("content_sha256") or "")
+        if node is not None and len(node.references) == 1
+        else ""
+    )
+
+    admitted = not reasons
+    return {
+        "action_id": task.action_id,
+        "action_level": task.level,
+        "ability_name": task.ability_name,
+        "invocation_role": invocation_role,
+        "task_id": task.task_id,
+        "phase_id": task.phase_id,
+        "callback_kind": task.callback_kind,
+        "source_path": source_path,
+        "json_path": json_path,
+        "task_evidence_content_sha256": task_content_sha,
+        "effect_evidence_content_sha256": effect_content_sha,
+        "formal_source_path": formal_source_path,
+        "formal_json_path": formal_json_path,
+        "formal_content_sha256": formal_content_sha,
+        "formal_content_fingerprint_scope": formal_fingerprint_scope,
+        "control_content_sha256": control_content_sha,
+        "graph_node_content_sha256": graph_node_content_sha,
+        "audit_reference_content_sha256": audit_reference_content_sha,
+        "content_sha256": expected_content_sha256,
+        "raw_family": _raw_family(raw),
+        "source_contract_reason": source_contract_reason,
+        "control_node_id": control_node_id,
+        "control_role": control_role,
+        "control_coverage_status": control_coverage_status,
+        "control_blocked_reason": control_blocked_reason,
+        "responsibility_count": responsibility_count,
+        "branch_count": branch_count,
+        "termination_kind": termination_kind,
+        "effect_id": task.effect_id,
+        "effect_present": effect is not None,
+        "graph_id": graph_id,
+        "graph_node_id": graph_node_id,
+        "references": references,
+        "admitted": admitted,
+        "disposition": "admitted" if admitted else "blocked",
+        "reason": "" if admitted else reasons[0],
+        "reasons": reasons,
+    }
+
+
+
+class _FormalTaskGraphViewBuilder:
+    """Build the production formal ability/task-graph view without unrelated entity catalogs."""
+
+    def __init__(self, root: Path):
+        production_lowerer, _source_graph, snapshot, scope = _build_context(root)
+        self.root = root
+        self.production_lowerer = production_lowerer
+        self.snapshot = snapshot
+        self.scope = scope
+        self.source_catalog = production_lowerer.build_character_control_flow_contract_catalog(
+            snapshot=snapshot,
+            scope_catalog=scope,
+        )
+        self.formal_context = production_lowerer._character_formal_task_source_context()
+
+    def build(self) -> CanonicalIR:
+        lowerer = self.production_lowerer
+        action_definitions = lowerer._lower_action_definitions()
+        (
+            action_ability_bindings,
+            ability_phases,
+            ability_tasks,
+            action_effects,
+            action_conditions,
+            _action_formulas,
+            action_target_expressions,
+        ) = lowerer._lower_action_ability_bindings(action_definitions)
+
+        effects = list(action_effects)
+        conditions = list(action_conditions)
+        target_expressions = list(action_target_expressions)
+        status_callbacks: list[Any] = []
+        status_callback_tasks: list[Any] = []
+        queue_intents: list[Any] = []
+
+        queue_priorities = lowerer._lower_queue_priorities()
+        queue_priority_lookup = {
+            (priority.priority_table, priority.priority_key): priority
+            for priority in queue_priorities
+            if priority.coverage_status == "executable"
+        }
+        ability_files = lowerer._ability_files()
+        formal_status_root_paths = {
+            item.source.source_path for item in self.snapshot.sources
+        }
+        formal_ability_source_paths = set(self.formal_context.documents)
+        formal_ability_files = [
+            path
+            for path in ability_files
+            if lowering_module.relative_source_path(self.root, path)
+            in formal_ability_source_paths
+        ]
+        for ability_file_order, path in enumerate(ability_files):
+            relative = lowering_module.relative_source_path(self.root, path)
+            if (
+                relative.startswith("Config/ConfigAbility/Equip/")
+                or relative not in formal_status_root_paths
+            ):
+                continue
+            lowered = lowerer._lower_ability_file(
+                path,
+                queue_priority_lookup,
+                ability_file_order=ability_file_order,
+                formal_status_source_context=self.formal_context,
+            )
+            effects.extend(lowered.effects)
+            conditions.extend(lowered.conditions)
+            target_expressions.extend(lowered.target_expressions)
+            status_callbacks.extend(lowered.status_callbacks)
+            status_callback_tasks.extend(lowered.status_callback_tasks)
+            queue_intents.extend(lowered.queue_intents)
+
+        (
+            standalone_ability_graphs,
+            standalone_phases,
+            standalone_tasks,
+            standalone_effects,
+            standalone_conditions,
+            _standalone_formulas,
+            standalone_target_expressions,
+            _standalone_root_task_ids_by_graph,
+        ) = lowerer._lower_standalone_ability_graphs(formal_ability_files)
+        ability_phases.extend(standalone_phases)
+        ability_tasks.extend(standalone_tasks)
+        effects.extend(standalone_effects)
+        conditions.extend(standalone_conditions)
+        target_expressions.extend(standalone_target_expressions)
+
+        ability_tasks = lowering_module._link_trigger_ability_graphs(
+            ability_tasks,
+            effects,
+            standalone_ability_graphs,
+            ability_phases,
+        )
+        status_callback_tasks = lowering_module._link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            effects,
+            standalone_ability_graphs,
+        )
+
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        (
+            status_callbacks,
+            status_callback_tasks,
+            _status_callback_finalization_audit,
+        ) = lowering_module._finalize_action_window_status_callback_admission(
+            status_callbacks,
+            status_callback_tasks,
+            status_event_families,
+            effects,
+            standalone_ability_graphs,
+            ability_phases,
+            formal_status_root_paths,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        status_event_blocked_reasons = lowering_module._status_event_blocked_reasons(
+            status_event_families
+        )
+        status_callbacks = lowering_module._block_status_callbacks_by_event_family(
+            status_callbacks,
+            status_event_blocked_reasons,
+        )
+        status_callback_blocked_reasons = {
+            callback.callback_id: (
+                status_event_blocked_reasons.get(callback.event)
+                or callback.blocked_reason
+                or callback.blocking_dependency
+            )
+            for callback in status_callbacks
+            if (
+                callback.event in status_event_blocked_reasons
+                or callback.blocked_reason
+                == "equipment_modifier_definition_unreferenced"
+            )
+        }
+        status_callback_tasks = lowering_module._block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = lowering_module._block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+
+        combatant_action_sets = lowerer._lower_combatant_action_sets(action_definitions)
+        queue_resolutions = lowering_module._lower_queue_resolutions(
+            queue_intents=queue_intents,
+            action_bindings=action_ability_bindings,
+            ability_phases=ability_phases,
+            standalone_graphs=standalone_ability_graphs,
+            combatant_action_sets=combatant_action_sets,
+        )
+        ability_phases = lowering_module._assign_character_ability_invocation_roles(
+            ability_phases,
+            ability_tasks,
+            standalone_ability_graphs,
+            queue_resolutions,
+            status_callback_tasks=status_callback_tasks,
+            status_callbacks=status_callbacks,
+        )
+
+        formal = CanonicalIR(
+            version=lowering_module.BASELINE_VERSION,
+            action_ability_bindings=tuple(action_ability_bindings),
+            ability_phases=tuple(ability_phases),
+            ability_tasks=tuple(ability_tasks),
+            standalone_ability_graphs=tuple(standalone_ability_graphs),
+            effects=tuple(effects),
+            conditions=tuple(conditions),
+            target_expressions=tuple(
+                lowering_module._dedupe_target_expressions(target_expressions).values()
+            ),
+            status_callbacks=tuple(status_callbacks),
+            status_callback_tasks=tuple(status_callback_tasks),
+        )
+        RuleBook(formal)
+        return formal
+
+
+def _current_rss_kib() -> int:
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+
+
+
+def _slice_materialization_context(
+    base_context: Any,
+    *,
+    conditions: list[Any] | tuple[Any, ...],
+    effects: list[Any] | tuple[Any, ...],
+    phases: list[Any] | tuple[Any, ...],
+    standalone_graphs: list[Any] | tuple[Any, ...],
+) -> Any:
+    """Reuse one source-side context while swapping only typed definition indexes."""
+
+    return replace(
+        base_context,
+        definitions=task_graph_materializer._DefinitionIndexes(
+            task_graph_materializer._definition_multimap(
+                conditions,
+                ConditionIR,
+                "condition_id",
+            ),
+            {},
+            task_graph_materializer._definition_multimap(
+                effects,
+                EffectIR,
+                "effect_id",
+            ),
+            task_graph_materializer._definition_multimap(
+                (*phases, *standalone_graphs),
+                (AbilityPhaseIR, StandaloneAbilityGraphIR),
+                ("phase_id", "standalone_ability_graph_id"),
+            ),
+        ),
+    )
+
+
+def _formal_wait_anim_denominator_streamed(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Close the formal WaitAnim denominator without retaining one whole CanonicalIR."""
+
+    view = _FormalTaskGraphViewBuilder(root)
+    lowerer = view.production_lowerer
+    source_catalog = view.source_catalog
+    formal_context = view.formal_context
+    snapshot = view.snapshot
+    controls_by_location = {
+        (
+            item.source.source_path,
+            str(item.source.evidence.get("json_path") or ""),
+            item.family,
+        ): item
+        for item in source_catalog.nodes
+    }
+    if len(controls_by_location) != len(source_catalog.nodes):
+        fail("formal_wait_anim_control_identity_ambiguous")
+    content_sha_by_path = formal_context.content_sha256_by_path
+    documents = formal_context.documents
+
+    empty_canonical = CanonicalIR(version=lowering_module.BASELINE_VERSION)
+    base_materialization_context = task_graph_materializer._prepare_materialization(
+        source_catalog,
+        empty_canonical,
+        snapshot,
+    )
+    memory_checkpoints: dict[str, int] = {
+        "after_source_context_rss_kib": _current_rss_kib(),
+        "after_source_context_peak_rss_kib": int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ),
+    }
+
+    ability_files = lowerer._ability_files()
+    formal_ability_source_paths = set(formal_context.documents)
+    formal_ability_files = [
+        path
+        for path in ability_files
+        if lowering_module.relative_source_path(root, path)
+        in formal_ability_source_paths
+    ]
+
+    # Pass 1 keeps only standalone graph/phase metadata plus typed call edges.
+    standalone_graphs: list[Any] = []
+    standalone_phases: list[Any] = []
+    standalone_trigger_tasks: list[Any] = []
+    standalone_trigger_effects: list[Any] = []
+    for path in formal_ability_files:
+        (
+            file_graphs,
+            file_phases,
+            file_tasks,
+            file_effects,
+            _file_conditions,
+            _file_formulas,
+            _file_targets,
+            _file_roots,
+        ) = lowerer._lower_standalone_ability_graphs([path])
+        standalone_graphs.extend(file_graphs)
+        standalone_phases.extend(file_phases)
+        trigger_tasks = [task for task in file_tasks if task.opcode == "TriggerAbility"]
+        trigger_effect_ids = {task.effect_id for task in trigger_tasks if task.effect_id}
+        standalone_trigger_tasks.extend(trigger_tasks)
+        standalone_trigger_effects.extend(
+            effect for effect in file_effects if effect.effect_id in trigger_effect_ids
+        )
+    if len({graph.standalone_ability_graph_id for graph in standalone_graphs}) != len(
+        standalone_graphs
+    ):
+        fail("formal_standalone_graph_identity_ambiguous")
+    if len({phase.phase_id for phase in standalone_phases}) != len(standalone_phases):
+        fail("formal_standalone_phase_identity_ambiguous")
+    standalone_graph_by_id = {
+        graph.standalone_ability_graph_id: graph for graph in standalone_graphs
+    }
+    standalone_graph_ids = set(standalone_graph_by_id)
+    standalone_trigger_tasks = [
+        task
+        for task in lowering_module._link_trigger_ability_graphs(
+            standalone_trigger_tasks,
+            standalone_trigger_effects,
+            standalone_graphs,
+            standalone_phases,
+        )
+        if task.linked_ability_phase_id or task.linked_standalone_graph_id
+    ]
+    standalone_trigger_effects.clear()
+    memory_checkpoints["after_standalone_index_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_standalone_index_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    evidence_path = Path(tempfile.gettempdir()) / (
+        f"p9-a2-p3-wait-denominator-{os.getpid()}.jsonl"
+    )
+    evidence_hash = hashlib.sha256()
+    evidence_bytes = 0
+    evidence_count = 0
+    admitted = 0
+    blocked = 0
+    blocked_reasons = Counter()
+    required_seen: set[str] = set()
+    admitted_sample: dict[str, Any] | None = None
+    blocked_samples: dict[str, dict[str, Any]] = {}
+    formal_task_ids: set[str] = set()
+    formal_entry_keys: set[tuple[str, str]] = set()
+    wait_entry_keys: set[tuple[str, str]] = set()
+    action_phase_metadata: list[Any] = []
+    action_link_tasks: list[Any] = []
+    avatar_bindings: list[Any] = []
+    max_action_slice_rss = _current_rss_kib()
+
+    def record_entry(
+        *,
+        phase: Any,
+        callback_kind: str,
+        callback_tasks: tuple[Any, ...],
+        wait_tasks: tuple[Any, ...],
+        context: Any,
+        effects_by_id: Mapping[str, Any],
+        evidence_file: Any,
+    ) -> None:
+        nonlocal evidence_bytes, evidence_count, admitted, blocked
+        nonlocal admitted_sample
+        entry, graph = task_graph_materializer._materialize_entry(
+            context,
+            "ability_phase_callback",
+            phase.phase_id,
+            callback_kind,
+            tuple(task.task_id for task in callback_tasks),
+            tuple(task_graph_materializer._ability_task(task) for task in callback_tasks),
+        )
+        for task in sorted(
+            wait_tasks,
+            key=lambda item: (
+                item.source.source_path,
+                str(item.source.evidence.get("json_path") or ""),
+                item.task_id,
+            ),
+        ):
+            if task.task_id not in entry.formal_task_ids:
+                fail("formal_wait_anim_task_missing_from_entry_slice")
+            node: Any | None = None
+            if entry.status == "materialized":
+                if graph is None:
+                    fail("formal_wait_anim_materialized_entry_graph_missing")
+                matches = tuple(
+                    candidate
+                    for candidate in graph.nodes
+                    if candidate.formal_task_id == task.task_id
+                )
+                if len(matches) == 1:
+                    node = matches[0]
+            elif graph is not None:
+                fail("formal_wait_anim_blocked_entry_published_graph")
+
+            effect = effects_by_id.get(task.effect_id) if task.effect_id else None
+            source_path = task.source.source_path
+            json_path = str(task.source.evidence.get("json_path") or "")
+            formal_source = task_graph_materializer._formal_source(
+                task_graph_materializer._ability_task(task),
+                context.digest_by_path,
+            )
+            control = controls_by_location.get(
+                (source_path, json_path, _family_for_task(task))
+            )
+            raw: object = None
+            document = documents.get(source_path)
+            if document is not None:
+                try:
+                    raw = _value_at_rooted_json_path(document, json_path)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    raw = None
+
+            row = _classify_formal_wait_occurrence(
+                task=task,
+                phase=phase,
+                effect=effect,
+                graph=graph,
+                node=node,
+                control=control,
+                raw=raw,
+                formal_source=formal_source,
+                expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
+            )
+            row.update(
+                {
+                    "entry_id": entry.entry_id,
+                    "entry_status": entry.status,
+                    "entry_blocked_reason": entry.blocked_reason,
+                }
+            )
+            if entry.status != "materialized":
+                blocked_reason = entry.blocked_reason or "formal_entry_graph_missing"
+                row["admitted"] = False
+                row["disposition"] = "blocked"
+                row["reason"] = blocked_reason
+                row["reasons"] = [
+                    "entry_materialization:" + blocked_reason,
+                    *[
+                        reason
+                        for reason in row["reasons"]
+                        if reason != "formal_task_graph_node_missing_or_ambiguous"
+                    ],
+                ]
+            elif graph is None or node is None:
+                row["admitted"] = False
+                row["disposition"] = "blocked"
+                row["reason"] = "formal_task_graph_node_missing_or_ambiguous"
+                if row["reason"] not in row["reasons"]:
+                    row["reasons"].insert(0, row["reason"])
+            if bool(row["admitted"]) != (not row["reasons"]):
+                fail("formal_wait_anim_denominator_disposition_inconsistent")
+
+            line = json.dumps(
+                row,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n"
+            raw_line = line.encode("utf-8")
+            evidence_file.write(line)
+            evidence_hash.update(raw_line)
+            evidence_bytes += len(raw_line)
+            evidence_count += 1
+            if task.task_id in required_task_ids:
+                required_seen.add(task.task_id)
+            if row["admitted"]:
+                admitted += 1
+                if admitted_sample is None:
+                    admitted_sample = row
+            else:
+                blocked += 1
+                reason = str(row["reason"])
+                blocked_reasons[reason] += 1
+                blocked_samples.setdefault(reason, row)
+
+    action_definitions = lowerer._lower_action_definitions()
+    avatar_definitions = [
+        definition
+        for definition in action_definitions
+        if definition.action_id.startswith("avatar_skill:")
+    ]
+    non_avatar_definitions = [
+        definition
+        for definition in action_definitions
+        if not definition.action_id.startswith("avatar_skill:")
+    ]
+
+    with evidence_path.open("w", encoding="utf-8") as evidence_file:
+        # Action phases already carry production action_root/nested_only roles.
+        for definition in avatar_definitions:
+            binding, phases, lowered = lowerer._avatar_action_binding(definition)
+            avatar_bindings.append(binding)
+            linked_tasks = lowering_module._link_trigger_ability_graphs(
+                lowered.ability_tasks,
+                lowered.effects,
+                standalone_graphs,
+                [*phases, *standalone_phases],
+            )
+            action_phase_metadata.extend(phases)
+            action_link_tasks.extend(
+                task
+                for task in linked_tasks
+                if task.linked_ability_phase_id or task.linked_standalone_graph_id
+            )
+            tasks_by_id = {task.task_id: task for task in linked_tasks}
+            if len(tasks_by_id) != len(linked_tasks):
+                fail("formal_action_slice_task_identity_ambiguous")
+            effects_by_id = {effect.effect_id: effect for effect in lowered.effects}
+            if len(effects_by_id) != len(lowered.effects):
+                fail("formal_action_slice_effect_identity_ambiguous")
+            referenced_graph_ids = {
+                task.linked_standalone_graph_id
+                for task in linked_tasks
+                if task.linked_standalone_graph_id
+            }
+            referenced_graphs = [
+                standalone_graph_by_id[graph_id]
+                for graph_id in sorted(referenced_graph_ids)
+                if graph_id in standalone_graph_by_id
+            ]
+            if len(referenced_graphs) != len(referenced_graph_ids):
+                fail("formal_action_slice_linked_graph_missing")
+            context = _slice_materialization_context(
+                base_materialization_context,
+                conditions=lowered.conditions,
+                effects=lowered.effects,
+                phases=phases,
+                standalone_graphs=referenced_graphs,
+            )
+            for phase in phases:
+                if phase.invocation_role not in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES:
+                    continue
+                phase_tasks = tuple(
+                    tasks_by_id[task_id]
+                    for task_id in phase.task_ids
+                    if task_id in tasks_by_id
+                )
+                if (
+                    not phase_tasks
+                    or len(phase_tasks) != len(phase.task_ids)
+                    or any(task.phase_id != phase.phase_id for task in phase_tasks)
+                ):
+                    fail("formal_action_slice_phase_task_ledger_incomplete")
+                for task in phase_tasks:
+                    if task.task_id in formal_task_ids:
+                        fail("formal_ability_task_denominator_identity_ambiguous")
+                    formal_task_ids.add(task.task_id)
+                callback_kinds = tuple(
+                    dict.fromkeys(task.callback_kind for task in phase_tasks)
+                )
+                if not callback_kinds or any(not value for value in callback_kinds):
+                    fail("formal_ability_phase_callback_denominator_invalid")
+                for callback_kind in callback_kinds:
+                    entry_key = (phase.phase_id, callback_kind)
+                    if entry_key in formal_entry_keys:
+                        fail("formal_ability_entry_denominator_identity_ambiguous")
+                    formal_entry_keys.add(entry_key)
+                    callback_tasks = tuple(
+                        task for task in phase_tasks if task.callback_kind == callback_kind
+                    )
+                    waits = tuple(
+                        task
+                        for task in callback_tasks
+                        if _family_for_task(task) == "WaitAnimState"
+                    )
+                    if waits:
+                        wait_entry_keys.add(entry_key)
+                        record_entry(
+                            phase=phase,
+                            callback_kind=callback_kind,
+                            callback_tasks=callback_tasks,
+                            wait_tasks=waits,
+                            context=context,
+                            effects_by_id=effects_by_id,
+                            evidence_file=evidence_file,
+                        )
+            max_action_slice_rss = max(max_action_slice_rss, _current_rss_kib())
+
+        memory_checkpoints["max_action_slice_rss_kib"] = max_action_slice_rss
+        memory_checkpoints["after_action_stream_peak_rss_kib"] = int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        )
+
+        # Complete binding metadata without retaining non-avatar task/effect IR.
+        (
+            other_bindings,
+            _other_phases,
+            _other_tasks,
+            _other_effects,
+            _other_conditions,
+            _other_formulas,
+            _other_targets,
+        ) = lowerer._lower_action_ability_bindings(
+            non_avatar_definitions,
+            retain_lowered_details=False,
+        )
+        action_bindings = [*avatar_bindings, *other_bindings]
+
+        # Status lowering retains only role/queue/link data needed to classify
+        # standalone invocation roots; unrelated status definitions are dropped.
+        status_callbacks: list[Any] = []
+        status_callback_tasks: list[Any] = []
+        queue_intents: list[Any] = []
+        status_effects: list[Any] = []
+        queue_priorities = lowerer._lower_queue_priorities()
+        queue_priority_lookup = {
+            (priority.priority_table, priority.priority_key): priority
+            for priority in queue_priorities
+            if priority.coverage_status == "executable"
+        }
+        formal_status_root_paths = {
+            item.source.source_path for item in snapshot.sources
+        }
+        for ability_file_order, path in enumerate(ability_files):
+            relative = lowering_module.relative_source_path(root, path)
+            if (
+                relative.startswith("Config/ConfigAbility/Equip/")
+                or relative not in formal_status_root_paths
+            ):
+                continue
+            lowered_status = lowerer._lower_ability_file(
+                path,
+                queue_priority_lookup,
+                ability_file_order=ability_file_order,
+                formal_status_source_context=formal_context,
+            )
+            status_callbacks.extend(lowered_status.status_callbacks)
+            status_callback_tasks.extend(lowered_status.status_callback_tasks)
+            queue_intents.extend(lowered_status.queue_intents)
+            needed_effect_ids = {
+                task.effect_id
+                for task in lowered_status.status_callback_tasks
+                if task.effect_id and task.opcode == "TriggerAbility"
+            }
+            status_effects.extend(
+                effect
+                for effect in lowered_status.effects
+                if effect.effect_id in needed_effect_ids
+            )
+
+        status_callback_tasks = lowering_module._link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            status_effects,
+            standalone_graphs,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        all_phase_metadata = [*action_phase_metadata, *standalone_phases]
+        (
+            status_callbacks,
+            status_callback_tasks,
+            _status_callback_finalization_audit,
+        ) = lowering_module._finalize_action_window_status_callback_admission(
+            status_callbacks,
+            status_callback_tasks,
+            status_event_families,
+            status_effects,
+            standalone_graphs,
+            all_phase_metadata,
+            formal_status_root_paths,
+        )
+        status_event_families = lowering_module._lower_status_event_families(
+            status_callbacks,
+            status_callback_tasks,
+        )
+        status_event_blocked_reasons = lowering_module._status_event_blocked_reasons(
+            status_event_families
+        )
+        status_callbacks = lowering_module._block_status_callbacks_by_event_family(
+            status_callbacks,
+            status_event_blocked_reasons,
+        )
+        status_callback_blocked_reasons = {
+            callback.callback_id: (
+                status_event_blocked_reasons.get(callback.event)
+                or callback.blocked_reason
+                or callback.blocking_dependency
+            )
+            for callback in status_callbacks
+            if (
+                callback.event in status_event_blocked_reasons
+                or callback.blocked_reason
+                == "equipment_modifier_definition_unreferenced"
+            )
+        }
+        status_callback_tasks = lowering_module._block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = lowering_module._block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+
+        combatant_action_sets = lowerer._lower_combatant_action_sets(action_definitions)
+        queue_resolutions = lowering_module._lower_queue_resolutions(
+            queue_intents=queue_intents,
+            action_bindings=action_bindings,
+            ability_phases=all_phase_metadata,
+            standalone_graphs=standalone_graphs,
+            combatant_action_sets=combatant_action_sets,
+        )
+        assigned_phases = lowering_module._assign_character_ability_invocation_roles(
+            all_phase_metadata,
+            [*action_link_tasks, *standalone_trigger_tasks],
+            standalone_graphs,
+            queue_resolutions,
+            status_callback_tasks=status_callback_tasks,
+            status_callbacks=status_callbacks,
+        )
+        assigned_by_id = {phase.phase_id: phase for phase in assigned_phases}
+        if len(assigned_by_id) != len(assigned_phases):
+            fail("formal_invocation_phase_identity_ambiguous")
+        standalone_phase_ids = {phase.phase_id for phase in standalone_phases}
+        formal_standalone_phase_ids = {
+            phase.phase_id
+            for phase in assigned_phases
+            if phase.phase_id in standalone_phase_ids
+            and phase.invocation_role
+            in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES
+        }
+        memory_checkpoints["after_role_assignment_rss_kib"] = _current_rss_kib()
+        memory_checkpoints["after_role_assignment_peak_rss_kib"] = int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        )
+
+        # Release status-only role evidence before re-lowering only formal
+        # standalone source files for actual task/effect/graph closure.
+        del status_callbacks
+        del status_callback_tasks
+        del status_effects
+        del queue_intents
+        del combatant_action_sets
+        gc.collect()
+
+        formal_phase_ids_by_path: dict[str, list[str]] = {}
+        for phase_id in sorted(formal_standalone_phase_ids):
+            formal_phase_ids_by_path.setdefault(
+                assigned_by_id[phase_id].source.source_path, []
+            ).append(phase_id)
+        formal_paths = sorted(formal_phase_ids_by_path)
+        path_lookup = {
+            lowering_module.relative_source_path(root, path): path
+            for path in formal_ability_files
+        }
+        max_standalone_slice_rss = _current_rss_kib()
+        for source_path in formal_paths:
+            path = path_lookup.get(source_path)
+            if path is None:
+                fail("formal_standalone_source_path_missing")
+            (
+                file_graphs,
+                file_phases,
+                file_tasks,
+                file_effects,
+                file_conditions,
+                _file_formulas,
+                _file_targets,
+                _file_roots,
+            ) = lowerer._lower_standalone_ability_graphs([path])
+            file_phase_by_id = {phase.phase_id: phase for phase in file_phases}
+            if any(
+                graph.standalone_ability_graph_id not in standalone_graph_ids
+                for graph in file_graphs
+            ):
+                fail("formal_standalone_graph_second_pass_identity_changed")
+            linked_file_tasks = lowering_module._link_trigger_ability_graphs(
+                file_tasks,
+                file_effects,
+                standalone_graphs,
+                assigned_phases,
+            )
+            tasks_by_id = {task.task_id: task for task in linked_file_tasks}
+            effects_by_id = {effect.effect_id: effect for effect in file_effects}
+            referenced_graph_ids = {
+                task.linked_standalone_graph_id
+                for task in linked_file_tasks
+                if task.linked_standalone_graph_id
+            }
+            referenced_graphs = [
+                standalone_graph_by_id[graph_id]
+                for graph_id in sorted(referenced_graph_ids)
+                if graph_id in standalone_graph_by_id
+            ]
+            if len(referenced_graphs) != len(referenced_graph_ids):
+                fail("formal_standalone_slice_linked_graph_missing")
+            context = _slice_materialization_context(
+                base_materialization_context,
+                conditions=file_conditions,
+                effects=file_effects,
+                phases=file_phases,
+                standalone_graphs=referenced_graphs,
+            )
+            for phase_id in formal_phase_ids_by_path[source_path]:
+                assigned_phase = assigned_by_id[phase_id]
+                source_phase = file_phase_by_id.get(phase_id)
+                if source_phase is None or source_phase.task_ids != assigned_phase.task_ids:
+                    fail("formal_standalone_phase_second_pass_identity_changed")
+                phase_tasks = tuple(
+                    tasks_by_id[task_id]
+                    for task_id in assigned_phase.task_ids
+                    if task_id in tasks_by_id
+                )
+                if (
+                    not phase_tasks
+                    or len(phase_tasks) != len(assigned_phase.task_ids)
+                    or any(task.phase_id != phase_id for task in phase_tasks)
+                ):
+                    fail("formal_standalone_phase_task_ledger_incomplete")
+                for task in phase_tasks:
+                    if task.task_id in formal_task_ids:
+                        fail("formal_ability_task_denominator_identity_ambiguous")
+                    formal_task_ids.add(task.task_id)
+                callback_kinds = tuple(
+                    dict.fromkeys(task.callback_kind for task in phase_tasks)
+                )
+                if not callback_kinds or any(not value for value in callback_kinds):
+                    fail("formal_ability_phase_callback_denominator_invalid")
+                for callback_kind in callback_kinds:
+                    entry_key = (phase_id, callback_kind)
+                    if entry_key in formal_entry_keys:
+                        fail("formal_ability_entry_denominator_identity_ambiguous")
+                    formal_entry_keys.add(entry_key)
+                    callback_tasks = tuple(
+                        task for task in phase_tasks if task.callback_kind == callback_kind
+                    )
+                    waits = tuple(
+                        task
+                        for task in callback_tasks
+                        if _family_for_task(task) == "WaitAnimState"
+                    )
+                    if waits:
+                        wait_entry_keys.add(entry_key)
+                        record_entry(
+                            phase=assigned_phase,
+                            callback_kind=callback_kind,
+                            callback_tasks=callback_tasks,
+                            wait_tasks=waits,
+                            context=context,
+                            effects_by_id=effects_by_id,
+                            evidence_file=evidence_file,
+                        )
+            max_standalone_slice_rss = max(
+                max_standalone_slice_rss, _current_rss_kib()
+            )
+
+    gc.collect()
+    memory_checkpoints["max_standalone_slice_rss_kib"] = max_standalone_slice_rss
+    memory_checkpoints["final_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["final_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    if evidence_count <= 0:
+        fail("formal_wait_anim_denominator_empty")
+    if evidence_count != admitted + blocked:
+        fail("formal_wait_anim_denominator_count_mismatch")
+    missing_required = sorted(required_task_ids - required_seen)
+    if missing_required:
+        fail("representative_wait_anim_missing_from_formal_denominator")
+
+    blocked_sample_rows = [
+        blocked_samples[reason]
+        for reason in sorted(blocked_samples)[:12]
+    ]
+    sample_row = admitted_sample or (
+        blocked_sample_rows[0] if blocked_sample_rows else None
+    )
+    source_fingerprint_closure_sample = (
+        {
+            key: sample_row[key]
+            for key in (
+                "task_id",
+                "source_path",
+                "json_path",
+                "task_evidence_content_sha256",
+                "effect_evidence_content_sha256",
+                "formal_content_sha256",
+                "formal_content_fingerprint_scope",
+                "control_content_sha256",
+                "graph_node_content_sha256",
+                "audit_reference_content_sha256",
+                "control_node_id",
+                "graph_node_id",
+                "admitted",
+                "reason",
+            )
+        }
+        if sample_row is not None
+        else {}
+    )
+    return {
+        "kind": "formal_ability_wait_anim_state_occurrences",
+        "builder_mode": "streamed_production_slices_v1",
+        "formal_ability_entry_count": len(formal_entry_keys),
+        "formal_ability_task_count": len(formal_task_ids),
+        "wait_anim_entry_count": len(wait_entry_keys),
+        "total": evidence_count,
+        "admitted": admitted,
+        "blocked": blocked,
+        "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
+        "source_fingerprint_closure_sample": source_fingerprint_closure_sample,
+        "blocked_samples": blocked_sample_rows,
+        "evidence": {
+            "format": "jsonl",
+            "path": str(evidence_path),
+            "record_count": evidence_count,
+            "byte_size": evidence_bytes,
+            "sha256": evidence_hash.hexdigest(),
+        },
+        "memory_checkpoints": memory_checkpoints,
+        "required_task_ids_present": sorted(required_seen),
+    }
+
+
+def formal_wait_anim_denominator(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    if os.environ.get("P9_A2_P3_FULL_CANONICAL_DENOMINATOR") != "1":
+        return _formal_wait_anim_denominator_streamed(
+            root,
+            required_task_ids=required_task_ids,
+        )
+    lowerer = _FormalTaskGraphViewBuilder(root)
+    canonical = lowerer.build()
+    source_catalog = lowerer.source_catalog
+    controls_by_location = {
+        (
+            item.source.source_path,
+            str(item.source.evidence.get("json_path") or ""),
+            item.family,
+        ): item
+        for item in source_catalog.nodes
+    }
+    if len(controls_by_location) != len(source_catalog.nodes):
+        fail("formal_wait_anim_control_identity_ambiguous")
+    content_sha_by_path = lowerer.formal_context.content_sha256_by_path
+    documents = lowerer.formal_context.documents
+    rules = RuleBook(canonical)
+
+    phases = {phase.phase_id: phase for phase in canonical.ability_phases}
+    tasks = {task.task_id: task for task in canonical.ability_tasks}
+    if len(phases) != len(canonical.ability_phases):
+        fail("formal_wait_anim_phase_identity_ambiguous")
+    if len(tasks) != len(canonical.ability_tasks):
+        fail("formal_wait_anim_task_identity_ambiguous")
+
+    formal_phases = tuple(
+        phase
+        for phase in canonical.ability_phases
+        if phase.invocation_role
+        in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES
+    )
+    if not formal_phases:
+        fail("formal_ability_phase_denominator_empty")
+    formal_task_ids: list[str] = []
+    formal_entry_keys: set[tuple[str, str]] = set()
+    for phase in formal_phases:
+        phase_tasks = tuple(tasks.get(task_id) for task_id in phase.task_ids)
+        if (
+            not phase_tasks
+            or any(task is None for task in phase_tasks)
+            or any(
+                task.phase_id != phase.phase_id
+                for task in phase_tasks
+                if task is not None
+            )
+        ):
+            fail("formal_ability_phase_task_ledger_incomplete")
+        for task in phase_tasks:
+            assert task is not None
+            formal_task_ids.append(task.task_id)
+            formal_entry_keys.add((phase.phase_id, task.callback_kind))
+    if len(formal_task_ids) != len(set(formal_task_ids)):
+        fail("formal_ability_task_denominator_identity_ambiguous")
+
+    wait_tasks = tuple(
+        task
+        for task_id in formal_task_ids
+        if (task := tasks.get(task_id)) is not None
+        and _family_for_task(task) == "WaitAnimState"
+    )
+    if not wait_tasks:
+        fail("formal_wait_anim_denominator_empty")
+    waits_by_entry: dict[tuple[str, str], list[Any]] = {}
+    for task in wait_tasks:
+        waits_by_entry.setdefault(
+            (task.phase_id, task.callback_kind), []
+        ).append(task)
+    selected_entry_keys = sorted(waits_by_entry)
+
+    memory_checkpoints: dict[str, int] = {
+        "after_canonical_rss_kib": _current_rss_kib(),
+        "after_canonical_peak_rss_kib": int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ),
+    }
+    materialization_context = task_graph_materializer._prepare_materialization(
+        source_catalog,
+        canonical,
+        lowerer.snapshot,
+    )
+    memory_checkpoints["after_materialization_context_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_materialization_context_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    evidence_path = Path(tempfile.gettempdir()) / (
+        f"p9-a2-p3-wait-denominator-{os.getpid()}.jsonl"
+    )
+    evidence_hash = hashlib.sha256()
+    evidence_bytes = 0
+    evidence_count = 0
+    admitted = 0
+    blocked = 0
+    blocked_reasons = Counter()
+    required_seen: set[str] = set()
+    admitted_sample: dict[str, Any] | None = None
+    blocked_samples: dict[str, dict[str, Any]] = {}
+    max_stream_rss = _current_rss_kib()
+
+    with evidence_path.open("w", encoding="utf-8") as evidence_file:
+        for phase_id, callback_kind in selected_entry_keys:
+            phase = phases.get(phase_id)
+            if phase is None:
+                fail("formal_wait_anim_entry_phase_missing")
+            callback_tasks = tuple(
+                tasks[task_id]
+                for task_id in phase.task_ids
+                if task_id in tasks
+                and tasks[task_id].callback_kind == callback_kind
+            )
+            if not callback_tasks:
+                fail("formal_wait_anim_entry_task_selection_empty")
+            entry, graph = task_graph_materializer._materialize_entry(
+                materialization_context,
+                "ability_phase_callback",
+                phase_id,
+                callback_kind,
+                tuple(task.task_id for task in callback_tasks),
+                tuple(
+                    task_graph_materializer._ability_task(task)
+                    for task in callback_tasks
+                ),
+            )
+            for task in sorted(
+                waits_by_entry[(phase_id, callback_kind)],
+                key=lambda item: (
+                    item.source.source_path,
+                    str(item.source.evidence.get("json_path") or ""),
+                    item.task_id,
+                ),
+            ):
+                if task.task_id not in entry.formal_task_ids:
+                    fail("formal_wait_anim_task_missing_from_entry_slice")
+                node: Any | None = None
+                if entry.status == "materialized":
+                    if graph is None:
+                        fail("formal_wait_anim_materialized_entry_graph_missing")
+                    matches = tuple(
+                        candidate
+                        for candidate in graph.nodes
+                        if candidate.formal_task_id == task.task_id
+                    )
+                    if len(matches) == 1:
+                        node = matches[0]
+                elif graph is not None:
+                    fail("formal_wait_anim_blocked_entry_published_graph")
+
+                effect = rules.effect(task.effect_id) if task.effect_id else None
+                source_path = task.source.source_path
+                json_path = str(task.source.evidence.get("json_path") or "")
+                formal_source = task_graph_materializer._formal_source(
+                    task_graph_materializer._ability_task(task),
+                    materialization_context.digest_by_path,
+                )
+                control = controls_by_location.get(
+                    (source_path, json_path, _family_for_task(task))
+                )
+                raw: object = None
+                document = documents.get(source_path)
+                if document is not None:
+                    try:
+                        raw = _value_at_rooted_json_path(document, json_path)
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        raw = None
+
+                row = _classify_formal_wait_occurrence(
+                    task=task,
+                    phase=phase,
+                    effect=effect,
+                    graph=graph,
+                    node=node,
+                    control=control,
+                    raw=raw,
+                    formal_source=formal_source,
+                    expected_content_sha256=str(
+                        content_sha_by_path.get(source_path) or ""
+                    ),
+                )
+                row.update(
+                    {
+                        "entry_id": entry.entry_id,
+                        "entry_status": entry.status,
+                        "entry_blocked_reason": entry.blocked_reason,
+                    }
+                )
+                if entry.status != "materialized":
+                    blocked_reason = (
+                        entry.blocked_reason or "formal_entry_graph_missing"
+                    )
+                    row["admitted"] = False
+                    row["disposition"] = "blocked"
+                    row["reason"] = blocked_reason
+                    row["reasons"] = [
+                        "entry_materialization:" + blocked_reason,
+                        *[
+                            reason
+                            for reason in row["reasons"]
+                            if reason
+                            != "formal_task_graph_node_missing_or_ambiguous"
+                        ],
+                    ]
+                elif graph is None or node is None:
+                    row["admitted"] = False
+                    row["disposition"] = "blocked"
+                    row["reason"] = (
+                        "formal_task_graph_node_missing_or_ambiguous"
+                    )
+                    if row["reason"] not in row["reasons"]:
+                        row["reasons"].insert(0, row["reason"])
+                if bool(row["admitted"]) != (not row["reasons"]):
+                    fail("formal_wait_anim_denominator_disposition_inconsistent")
+
+                line = json.dumps(
+                    row,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ) + "\n"
+                raw_line = line.encode("utf-8")
+                evidence_file.write(line)
+                evidence_hash.update(raw_line)
+                evidence_bytes += len(raw_line)
+                evidence_count += 1
+                if task.task_id in required_task_ids:
+                    required_seen.add(task.task_id)
+                if row["admitted"]:
+                    admitted += 1
+                    if admitted_sample is None:
+                        admitted_sample = row
+                else:
+                    blocked += 1
+                    reason = str(row["reason"])
+                    blocked_reasons[reason] += 1
+                    blocked_samples.setdefault(reason, row)
+
+            del graph
+            del entry
+            max_stream_rss = max(max_stream_rss, _current_rss_kib())
+
+    gc.collect()
+    memory_checkpoints["max_entry_stream_rss_kib"] = max_stream_rss
+    memory_checkpoints["after_entry_stream_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_entry_stream_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
+
+    if evidence_count != len(wait_tasks):
+        fail("formal_wait_anim_denominator_evidence_incomplete")
+    if len(wait_tasks) != admitted + blocked:
+        fail("formal_wait_anim_denominator_count_mismatch")
+    missing_required = sorted(required_task_ids - required_seen)
+    if missing_required:
+        fail("representative_wait_anim_missing_from_formal_denominator")
+
+    blocked_sample_rows = [
+        blocked_samples[reason]
+        for reason in sorted(blocked_samples)[:12]
+    ]
+    sample_row = admitted_sample or (
+        blocked_sample_rows[0] if blocked_sample_rows else None
+    )
+    source_fingerprint_closure_sample = (
+        {
+            key: sample_row[key]
+            for key in (
+                "task_id",
+                "source_path",
+                "json_path",
+                "task_evidence_content_sha256",
+                "effect_evidence_content_sha256",
+                "formal_content_sha256",
+                "formal_content_fingerprint_scope",
+                "control_content_sha256",
+                "graph_node_content_sha256",
+                "audit_reference_content_sha256",
+                "control_node_id",
+                "graph_node_id",
+                "admitted",
+                "reason",
+            )
+        }
+        if sample_row is not None
+        else {}
+    )
+    return {
+        "kind": "formal_ability_wait_anim_state_occurrences",
+        "formal_ability_entry_count": len(formal_entry_keys),
+        "formal_ability_task_count": len(formal_task_ids),
+        "wait_anim_entry_count": len(selected_entry_keys),
+        "total": len(wait_tasks),
+        "admitted": admitted,
+        "blocked": blocked,
+        "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
+        "source_fingerprint_closure_sample": source_fingerprint_closure_sample,
+        "blocked_samples": blocked_sample_rows,
+        "evidence": {
+            "format": "jsonl",
+            "path": str(evidence_path),
+            "record_count": evidence_count,
+            "byte_size": evidence_bytes,
+            "sha256": evidence_hash.hexdigest(),
+        },
+        "memory_checkpoints": memory_checkpoints,
+        "required_task_ids_present": sorted(required_seen),
+    }
+
+
+
+def _s8c_sibling_signature(source_catalog: Any) -> list[list[Any]]:
+    return sorted(
+        [
+            node.node_id,
+            node.family,
+            node.control_role,
+            list(node.downstream_stages),
+            node.coverage_status,
+            node.blocked_reason,
+        ]
+        for node in source_catalog.nodes
+        if node.family != "WaitAnimState"
+        and "p9_s8c" in node.downstream_stages
+    )
+
+
+def _sequence_len(value: object) -> int:
+    return len(value) if isinstance(value, (list, tuple)) else 0
+
+
+def _mapping_len(value: object) -> int:
+    return len(value) if isinstance(value, Mapping) else 0
+
+
+def _replay_state_entries(snapshot: Mapping[str, Any]) -> int:
+    global_flags = snapshot.get("global_flags")
+    if not isinstance(global_flags, Mapping):
+        return 0
+    count = 0
+    for key, value in global_flags.items():
+        if "replay" not in str(key).lower():
+            continue
+        if isinstance(value, Mapping):
+            count += len(value)
+        elif isinstance(value, (list, tuple)):
+            count += len(value)
+        elif value not in (None, "", False, 0):
+            count += 1
+    return count
+
+
+def _state_channel_deltas(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> dict[str, int]:
+    before_settlement = before.get("settlement")
+    after_settlement = after.get("settlement")
+    return {
+        "pending_event_delta_count": (
+            _sequence_len(after.get("pending_events"))
+            - _sequence_len(before.get("pending_events"))
+        ),
+        "event_index_delta": int(after.get("event_index") or 0)
+        - int(before.get("event_index") or 0),
+        "rng_state_event_delta_count": (
+            _sequence_len(after.get("rng_events"))
+            - _sequence_len(before.get("rng_events"))
+        ),
+        "settlement_state_delta_count": (
+            _mapping_len(after_settlement)
+            - _mapping_len(before_settlement)
+        ),
+        "replay_state_delta_count": (
+            _replay_state_entries(after)
+            - _replay_state_entries(before)
+        ),
+    }
+
+
+def _formal_channel_observation(
+    *,
+    execute_calls: int,
+    condition_calls: int,
+    rng_draw_calls: int,
+    state_deltas: Mapping[str, int],
+) -> dict[str, Any]:
+    result_fields = set(TaskGraphExecutionResult.__dataclass_fields__)
+    required = {"mutations", "events", "rng_events", "settlement_records"}
+    if not required.issubset(result_fields):
+        fail("task_graph_formal_channel_contract_changed")
+    replay_fields = sorted(name for name in result_fields if "replay" in name.lower())
+    if replay_fields:
+        fail("task_graph_replay_channel_requires_explicit_observer")
+    if execute_calls:
+        fail("admission_attempted_runtime_graph_execution")
+    if condition_calls:
+        fail("admission_attempted_condition_evaluation")
+    if rng_draw_calls:
+        fail("admission_attempted_rng")
+    if any(int(value) != 0 for value in state_deltas.values()):
+        fail("action_admission_formal_channel_state_delta")
+    return {
+        "task_graph_execute_calls": execute_calls,
+        "condition_evaluation_calls": condition_calls,
+        "rng_draw_calls": rng_draw_calls,
+        "mutation_count": 0,
+        "event_count": 0,
+        "rng_event_count": 0,
+        "settlement_record_count": 0,
+        "replay_mutation_count": 0,
+        "replay_runtime_channel_defined": False,
+        "state_deltas": dict(state_deltas),
+    }
+
+
+def representative(
+    root: Path,
+    *,
+    target: Mapping[str, Any] | None,
+    require_baseline_shape: bool,
+    started: float,
+) -> dict[str, Any]:
+    lowerer, source_graph, snapshot, scope = _build_context(root)
+    source_catalog = lowerer.build_character_control_flow_contract_catalog(
+        snapshot=snapshot,
+        scope_catalog=scope,
+    )
+    definitions = _definitions(root)
+    if target is not None:
+        definitions = tuple(
+            definition
+            for definition in definitions
+            if definition.definition_id == target["definition_id"]
+            and definition.action_id == target["action_id"]
+            and definition.level == target["action_level"]
+        )
+        if len(definitions) != 1:
+            fail("representative_definition_missing")
+    diagnostics: list[str] = []
+    scanned = 0
+    for definition in definitions:
+        if time.perf_counter() - started > 150:
+            break
+        scanned += 1
+        try:
+            canonical = lowerer.build_character_action_ability_slice(
+                definition,
+                snapshot=snapshot,
+                scope_catalog=scope,
+                source_graph_catalog=source_graph,
+            )
+            catalog = task_graph_materializer.materialize_ability_task_graph_catalog(
+                source_catalog,
+                canonical,
+                source_snapshot=snapshot,
+            )
+            canonical_with_graph = replace(canonical, task_graph_catalog=catalog)
+            rules = RuleBook(canonical_with_graph)
+            tasks = rules.ability_tasks_for_action(
+                definition.action_id,
+                definition.level,
+            )
+            projection = _formal_action_task_graph_projection(
+                rules,
+                definition.action_id,
+                definition.level,
+                tasks,
+            )
+            accepted = _accepted_context(
+                rules,
+                definition,
+                tuple(str(value) for value in projection.blocked_reasons),
+            )
+            if accepted is None or accepted[4] != "external_turn":
+                continue
+            state, _, _, admission, mode, decision = accepted
+            window = str(state.global_flags.get("current_window") or "idle")
+            expected_state = _state_for_admission(admission, window)
+            before_snapshot = expected_state.snapshot().to_json()
+            after_snapshot = state.snapshot().to_json()
+            if after_snapshot != before_snapshot:
+                fail("action_contract_mutated_state")
+            provenance = _enriched_provenance(rules, projection)
+            hit_random = _hit_random_rows(provenance)
+            counts = Counter(str(row.get("family") or "") for row in hit_random)
+            if (
+                require_baseline_shape
+                and counts != Counter({"WaitAnimState": 2, "FireProjectile": 1})
+            ):
+                continue
+            return {
+                "definition_id": definition.definition_id,
+                "action_id": definition.action_id,
+                "action_level": definition.level,
+                "admission_id": admission.admission_id,
+                "submission_mode": mode,
+                "action_contract_ok": decision.ok,
+                "blocked_reasons": list(projection.blocked_reasons),
+                "blocker_provenance": provenance,
+                "hit_random_provenance": hit_random,
+                "hit_random_family_counts": dict(sorted(counts.items())),
+                "wait_anim_nodes": _formal_wait_nodes(rules, projection),
+                "root_graph_ids": list(projection.root_graph_ids),
+                "reachable_task_ids": list(projection.reachable_task_ids),
+                "excluded_bound_task_ids": list(projection.excluded_bound_task_ids),
+                "source_fingerprint": snapshot.source_fingerprint,
+                "source_catalog_id": source_catalog.catalog_id,
+                "s8c_sibling_signature": _s8c_sibling_signature(source_catalog),
+                "scanned_action_definitions": scanned,
+                "state_unchanged": True,
+                "state_channel_deltas": _state_channel_deltas(
+                    before_snapshot,
+                    after_snapshot,
+                ),
+            }
+        except (AssertionError, TypeError, ValueError, RuntimeError) as exc:
+            diagnostics.append(
+                f"{definition.action_id}@{definition.level}:"
+                f"{type(exc).__name__}:{exc}"
+            )
+            if target is not None:
+                raise
+    fail(
+        "representative_not_found:"
+        + json.dumps(
+            {"scanned": scanned, "diagnostics": diagnostics[-10:]},
+            ensure_ascii=False,
+        )
+    )
+
+
+def probe(
+    root: Path,
+    *,
+    target: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if git("rev-parse", "HEAD", cwd=root) != TBGD_PIN:
+        fail("tbgd_pin_mismatch")
+    started = time.perf_counter()
+    with patch.object(
+        TaskGraphExecutor,
+        "execute",
+        side_effect=AssertionError("admission attempted runtime graph execution"),
+    ) as execute_mock, patch.object(
+        RuleEvaluator,
+        "evaluate_condition_result",
+        side_effect=AssertionError("admission attempted condition evaluation"),
+    ) as condition_mock, patch.object(
+        random,
+        "random",
+        side_effect=AssertionError("admission attempted RNG"),
+    ) as rng_mock:
+        row = representative(
+            root,
+            target=target,
+            require_baseline_shape=target is None,
+            started=started,
+        )
+    row["formal_channels"] = _formal_channel_observation(
+        execute_calls=execute_mock.call_count,
+        condition_calls=condition_mock.call_count,
+        rng_draw_calls=rng_mock.call_count,
+        state_deltas=row.pop("state_channel_deltas"),
+    )
+    return {
+        "representative": row,
+        "resource": {
+            "wall_seconds": round(time.perf_counter() - started, 6),
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        },
+    }
+
+
+def baseline_probe(root: Path) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="p9-a2-p3-wait-base-") as temp:
+        worktree = Path(temp) / "base"
+        git(
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            str(worktree),
+            BASE_SHA,
+        )
+        try:
+            env = os.environ.copy()
+            env["P9_A2_P3_EXTERNAL_BASELINE"] = "1"
+            env["P9_A2_P1_EXTERNAL_BASELINE"] = "1"
+            env["PYTHONPATH"] = str(worktree / "hsr_v075_baseline_clean")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--probe-json",
+                    "--tbgd-root",
+                    str(root),
+                ],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=180,
+                check=False,
+            )
+            if completed.returncode:
+                fail(
+                    "baseline_probe_failed:"
+                    + json.dumps(
+                        {
+                            "rc": completed.returncode,
+                            "stdout": completed.stdout[-3000:],
+                            "stderr": completed.stderr[-3000:],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return json.loads(completed.stdout)
+        finally:
+            git("worktree", "remove", "--force", str(worktree))
+            git("worktree", "prune")
+
+
+def _catalog_with_node_references(
+    catalog: TaskGraphCatalogIR,
+    *,
+    graph_id: str,
+    graph_node_id: str,
+    references: tuple[TaskGraphDefinitionReferenceIR, ...],
+) -> TaskGraphCatalogIR:
+    graphs = []
+    for graph in catalog.graphs:
+        if graph.graph_id != graph_id:
+            graphs.append(graph)
+            continue
+        nodes = tuple(
+            replace(node, references=references)
+            if node.graph_node_id == graph_node_id
+            else node
+            for node in graph.nodes
+        )
+        has_obligation = any(
+            node.materialization_status == "deferred"
+            for node in nodes
+        ) or any(
+            reference.resolution_status != "resolved"
+            for node in nodes
+            for reference in node.references
+        )
+        graphs.append(
+            replace(
+                graph,
+                nodes=nodes,
+                coverage_status=(
+                    "lowered_with_obligation" if has_obligation else "lowered"
+                ),
+            )
+        )
+    return replace(catalog, graphs=tuple(graphs))
+
+
+def canonical_reference_negatives(
+    root: Path,
+    target: Mapping[str, Any],
+) -> dict[str, bool]:
+    lowerer, source_graph, snapshot, scope = _build_context(root)
+    source_catalog = lowerer.build_character_control_flow_contract_catalog(
+        snapshot=snapshot,
+        scope_catalog=scope,
+    )
+    definitions = tuple(
+        definition
+        for definition in _definitions(root)
+        if definition.definition_id == target["definition_id"]
+        and definition.action_id == target["action_id"]
+        and definition.level == target["action_level"]
+    )
+    if len(definitions) != 1:
+        fail("negative_definition_missing")
+    canonical = lowerer.build_character_action_ability_slice(
+        definitions[0],
+        snapshot=snapshot,
+        scope_catalog=scope,
+        source_graph_catalog=source_graph,
+    )
+    catalog = task_graph_materializer.materialize_ability_task_graph_catalog(
+        source_catalog,
+        canonical,
+        source_snapshot=snapshot,
+    )
+    valid = replace(canonical, task_graph_catalog=catalog)
+    RuleBook(valid)
+    task_by_id = {task.task_id: task for task in canonical.ability_tasks}
+    candidates = [
+        (graph, node, task_by_id.get(node.formal_task_id))
+        for graph in catalog.graphs
+        for node in graph.nodes
+        if node.source_family == "WaitAnimState"
+    ]
+    candidates = [
+        (graph, node, task)
+        for graph, node, task in candidates
+        if task is not None
+        and task.execution_mode == "process_only"
+        and task.coverage_status == "audit_only"
+        and len(node.references) == 1
+        and node.references[0].reference_kind == "effect"
+        and node.references[0].definition_id == task.effect_id
+    ]
+    if not candidates:
+        fail("canonical_negative_wait_anim_candidate_missing")
+    graph, node, task = candidates[0]
+    original = node.references[0]
+    wrong_definition_id = f"{task.effect_id}:wrong"
+    wrong = TaskGraphDefinitionReferenceIR(
+        reference_id=task_graph_reference_id(
+            node.graph_node_id,
+            "effect",
+            wrong_definition_id,
+        ),
+        graph_node_id=node.graph_node_id,
+        reference_kind="effect",
+        definition_id=wrong_definition_id,
+        source_contract_record_id="",
+        resolution_status="deferred",
+        owner_domain=original.owner_domain,
+        source=node.source,
+        blocked_reason=AUDIT_EFFECT_BLOCKER,
+    )
+    cases = {
+        "zero": (),
+        "multiple": (original, wrong),
+        "wrong": (wrong,),
+    }
+    results: dict[str, bool] = {}
+    for label, references in cases.items():
+        mutated_catalog = _catalog_with_node_references(
+            catalog,
+            graph_id=graph.graph_id,
+            graph_node_id=node.graph_node_id,
+            references=references,
+        )
+        try:
+            replace(canonical, task_graph_catalog=mutated_catalog)
+        except ValueError as exc:
+            if "task graph formal definition references are inconsistent" not in str(exc):
+                fail(f"canonical_{label}_wrong_error:{exc}")
+            results[label] = True
+        else:
+            fail(f"canonical_{label}_effect_reference_not_rejected")
+    return results
+
+
+def _current_wait_node_ok(row: Mapping[str, Any]) -> bool:
+    references = row.get("references")
+    if not isinstance(references, list) or len(references) != 1:
+        return False
+    reference = references[0]
+    return bool(
+        row.get("materialization_status") == "materialized"
+        and row.get("node_kind") == "leaf"
+        and row.get("owner_domains") == ["task_graph_execution"]
+        and row.get("execution_mode") == "process_only"
+        and row.get("task_coverage_status") == "audit_only"
+        and row.get("task_effect_id")
+        and row.get("effect_present")
+        and row.get("effect_opcode") == "WaitAnimState"
+        and row.get("effect_coverage_status") == "audit_only"
+        and row.get("effect_source_matches_task")
+        and row.get("process_only_contract_admitted")
+        and row.get("source_contract_node_id")
+        and reference.get("reference_kind") == "effect"
+        and reference.get("definition_id") == row.get("task_effect_id")
+        and reference.get("resolution_status") == "deferred"
+        and reference.get("blocked_reason") == AUDIT_EFFECT_BLOCKER
+        and reference.get("source_matches_node")
+    )
+
+
+def _denominator_subprocess(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str],
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--denominator-json",
+            "--tbgd-root",
+            str(root),
+            *(
+                argument
+                for task_id in sorted(required_task_ids)
+                for argument in ("--required-task-id", task_id)
+            ),
+        ],
+        cwd=ROOT,
+        env=os.environ.copy(),
+        text=True,
+        capture_output=True,
+        timeout=360,
+        check=False,
+    )
+    if completed.returncode:
+        fail(
+            "formal_wait_anim_denominator_worker_failed:"
+            + json.dumps(
+                {
+                    "rc": completed.returncode,
+                    "stdout": completed.stdout[-3000:],
+                    "stderr": completed.stderr[-3000:],
+                },
+                ensure_ascii=False,
+            )
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            "formal_wait_anim_denominator_worker_output_invalid"
+        ) from exc
+    denominator = payload.get("denominator")
+    resource_payload = payload.get("resource")
+    if not isinstance(denominator, Mapping) or not isinstance(
+        resource_payload, Mapping
+    ):
+        fail("formal_wait_anim_denominator_worker_contract_invalid")
+    return {
+        "denominator": dict(denominator),
+        "resource": dict(resource_payload),
+    }
+
+
+def run_direct(root: Path) -> dict[str, Any]:
+    started = time.perf_counter()
+    gov = governance()
+    if git("rev-parse", "HEAD", cwd=root) != TBGD_PIN:
+        fail("tbgd_pin_mismatch")
+    baseline = baseline_probe(root)
+    base = baseline["representative"]
+    target = {
+        key: base[key]
+        for key in ("definition_id", "action_id", "action_level")
+    }
+    current = probe(root, target=target)["representative"]
+
+    base_hit = base["hit_random_family_counts"]
+    current_hit = current["hit_random_family_counts"]
+    if base_hit != {"FireProjectile": 1, "WaitAnimState": 2}:
+        fail("baseline_hit_random_provenance_changed:" + json.dumps(base_hit))
+    if current_hit != {"FireProjectile": 1}:
+        fail("current_hit_random_provenance_not_3_to_1:" + json.dumps(current_hit))
+    if HIT_RANDOM not in current["blocked_reasons"]:
+        fail("top_level_hit_random_blocker_was_overclosed")
+    if not PRESERVED.issubset(set(current["blocked_reasons"])):
+        fail("required_future_blocker_missing")
+    if set(current["blocked_reasons"]) != set(base["blocked_reasons"]):
+        fail("top_level_blocker_set_changed")
+    if current["action_contract_ok"] or not current["state_unchanged"]:
+        fail("outer_action_no_longer_fail_closed")
+    if current["source_fingerprint"] != base["source_fingerprint"]:
+        fail("source_fingerprint_changed")
+    if current["s8c_sibling_signature"] != base["s8c_sibling_signature"]:
+        fail("s8c_sibling_source_authority_changed")
+
+    base_wait = {
+        (row["task_id"], row["graph_node_id"]): row
+        for row in base["wait_anim_nodes"]
+    }
+    current_wait = {
+        (row["task_id"], row["graph_node_id"]): row
+        for row in current["wait_anim_nodes"]
+    }
+    if set(base_wait) != set(current_wait) or len(current_wait) != 2:
+        fail("representative_wait_anim_identity_changed")
+    for key, row in current_wait.items():
+        prior = base_wait[key]
+        if prior["materialization_status"] != "deferred":
+            fail("baseline_wait_anim_not_deferred")
+        if not _current_wait_node_ok(row):
+            fail(
+                "current_wait_anim_shape_not_retired:"
+                + json.dumps(row, sort_keys=True)
+            )
+
+    baseline_provenance = base["blocker_provenance"]
+    removed_wait = [
+        row
+        for row in baseline_provenance
+        if row.get("reason") == HIT_RANDOM
+        and row.get("source") == "node_materialization"
+        and row.get("family") == "WaitAnimState"
+    ]
+    expected_current = [
+        row for row in baseline_provenance if row not in removed_wait
+    ]
+    if (
+        len(removed_wait) != 2
+        or current["blocker_provenance"] != expected_current
+    ):
+        fail("non_wait_anim_provenance_changed")
+
+    representative_task_ids = frozenset(
+        row["task_id"] for row in current_wait.values()
+    )
+    denominator_worker = _denominator_subprocess(
+        root,
+        required_task_ids=representative_task_ids,
+    )
+    denominator = denominator_worker["denominator"]
+    if (
+        denominator["total"] <= 0
+        or denominator["admitted"] <= 0
+        or denominator["total"]
+        != denominator["admitted"] + denominator["blocked"]
+    ):
+        fail("formal_wait_anim_denominator_not_proven")
+    if set(denominator["required_task_ids_present"]) != set(
+        representative_task_ids
+    ):
+        fail("representative_wait_anim_missing_from_formal_denominator")
+
+    channels = current["formal_channels"]
+    if any(int(channels[key]) != 0 for key in _ZERO_CHANNEL_KEYS):
+        fail("zero_gameplay_formal_channels_not_zero")
+    if (
+        channels["task_graph_execute_calls"]
+        or channels["condition_evaluation_calls"]
+        or channels["rng_draw_calls"]
+        or any(int(value) != 0 for value in channels["state_deltas"].values())
+    ):
+        fail("zero_gameplay_runtime_boundary_not_preserved")
+
+    canonical_negatives = canonical_reference_negatives(root, target)
+    if canonical_negatives != {
+        "zero": True,
+        "multiple": True,
+        "wrong": True,
+    }:
+        fail("canonical_reference_negatives_incomplete")
+
+    elapsed = time.perf_counter() - started
+    parent_peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    denominator_worker_peak = int(
+        denominator_worker["resource"].get("peak_rss_kib") or 0
+    )
+    baseline_worker_peak = int(
+        (baseline.get("resource") or {}).get("peak_rss_kib") or 0
+    )
+    peak = max(parent_peak, denominator_worker_peak, baseline_worker_peak)
+    predicates = {
+        "fixed_base": gov["fixed_base"] == BASE_SHA,
+        "baseline_provenance_2_wait_plus_1_projectile": True,
+        "current_provenance_0_wait_plus_1_projectile": True,
+        "wait_anim_nodes_materialized_process_only_leaf": True,
+        "wait_anim_nodes_keep_exactly_one_audit_effect_reference": True,
+        "canonical_zero_multiple_wrong_effect_refs_fail_closed": all(
+            canonical_negatives.values()
+        ),
+        "fire_projectile_and_s11_blockers_preserved": True,
+        "top_level_hit_random_still_fail_closed": True,
+        "s8c_sibling_source_authority_unchanged": True,
+        "formal_wait_anim_denominator_nonempty": bool(denominator["total"]),
+        "formal_wait_anim_denominator_admitted_nonempty": bool(
+            denominator["admitted"]
+        ),
+        "formal_wait_anim_denominator_complete": (
+            denominator["total"]
+            == denominator["admitted"] + denominator["blocked"]
+        ),
+        "action_admission_state_unchanged": True,
+        "formal_mutation_event_rng_settlement_replay_channels_zero": True,
+        "runtime_graph_condition_rng_zero": True,
+        "read_only_authorities_unchanged": gov[
+            "read_only_authorities_unchanged"
+        ],
+    }
+    return {
+        "ok": (
+            elapsed < 480
+            and peak < 3 * 1024 * 1024
+            and all(predicates.values())
+        ),
+        "mode": "direct",
+        "predicates": predicates,
+        "governance": gov,
+        "baseline": base,
+        "current": current,
+        "canonical_reference_negatives": canonical_negatives,
+        "provenance_delta": {
+            "removed_wait_anim_state": removed_wait,
+            "remaining_hit_random": current["hit_random_provenance"],
+        },
+        "formal_wait_anim_denominator": denominator,
+        "formal_channel_counts": channels,
+        "baseline_probe_resource": baseline.get("resource"),
+        "denominator_worker_resource": denominator_worker["resource"],
+        "resource": {
+            "wall_seconds": round(elapsed, 6),
+            "peak_rss_kib": peak,
+            "parent_peak_rss_kib": parent_peak,
+            "baseline_worker_peak_rss_kib": baseline_worker_peak,
+            "denominator_worker_peak_rss_kib": denominator_worker_peak,
+        },
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--probe-json", action="store_true")
+    parser.add_argument("--denominator-json", action="store_true")
+    parser.add_argument("--required-task-id", action="append", default=[])
+    parser.add_argument("--tbgd-root", type=Path, default=TBGD)
+    args = parser.parse_args()
+    root = args.tbgd_root.resolve()
+    if args.denominator_json:
+        started = time.perf_counter()
+        denominator = formal_wait_anim_denominator(
+            root,
+            required_task_ids=frozenset(args.required_task_id),
+        )
+        print(
+            json.dumps(
+                {
+                    "denominator": denominator,
+                    "resource": {
+                        "wall_seconds": round(
+                            time.perf_counter() - started, 6
+                        ),
+                        "peak_rss_kib": int(
+                            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.probe_json:
+        print(
+            json.dumps(
+                probe(root),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
+    result = run_direct(root)
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
