@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 
-      - name: Preflight P4 validator compatibility and targeted baseline probe
+      - name: Preflight P4 validator compatibility and narrowed owner probe
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +44,10 @@ jobs:
               (
                   """    _accepted_context,\n    _build_context,\n    _definitions,\n    _state_for_admission,\n""",
                   """    _accepted_context,\n    build_context as _build_context,\n    definitions as _definitions,\n    _state_for_admission,\n""",
+              ),
+              (
+                  """    definitions = _definitions(root)\n    if target is not None:\n""",
+                  """    definitions = _definitions(root)\n    if target is None:\n        scope_view = scope.for_families((FAMILY,))\n        owner_avatar_ids = {\n            str(record.source.evidence.get(\"avatar_id\") or \"\")\n            for record in scope_view.scope_records\n            if record.family == FAMILY\n            and record.materialization_role == \"selected\"\n        }\n        owner_avatar_ids.discard(\"\")\n        candidate_action_ids = {\n            action.action_id\n            for action in source_graph.action_sources\n            if action.owner_avatar_id in owner_avatar_ids\n        }\n        definitions = tuple(\n            definition\n            for definition in definitions\n            if definition.action_id in candidate_action_ids\n        )\n        if not definitions:\n            fail(\"set_entity_visible_owner_action_candidates_empty\")\n    if target is not None:\n""",
               ),
               (
                   """            projection = _formal_action_task_graph_projection(\n                rules,\n                definition.action_id,\n                definition.level,\n                tasks,\n            )\n            accepted = _accepted_context(\n""",
@@ -67,7 +71,11 @@ jobs:
               ),
               (
                   """    baseline = baseline_probe(root)\n    target = {\n        key: baseline["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    current = probe(root, target=target)\n""",
-                  """    current = probe(root)\n    target = {\n        key: current["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    baseline = baseline_probe(root, target)\n""",
+                  """    print(\"P4_STAGE current_probe_start\", file=sys.stderr, flush=True)\n    current = probe(root)\n    print(\"P4_STAGE current_probe_done\", file=sys.stderr, flush=True)\n    target = {\n        key: current["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    print(\"P4_STAGE baseline_probe_start\", file=sys.stderr, flush=True)\n    baseline = baseline_probe(root, target)\n    print(\"P4_STAGE baseline_probe_done\", file=sys.stderr, flush=True)\n""",
+              ),
+              (
+                  """        denominator = formal_denominator(root)\n    if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:\n""",
+                  """        print(\"P4_STAGE denominator_start\", file=sys.stderr, flush=True)\n        denominator = formal_denominator(root)\n        print(\"P4_STAGE denominator_done\", file=sys.stderr, flush=True)\n    if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:\n""",
               ),
               (
                   """    parser.add_argument("--tbgd-root", type=Path, default=TBGD)\n    args = parser.parse_args()\n    root = args.tbgd_root.resolve()\n    if args.probe_json:\n        print(json.dumps(probe(root), ensure_ascii=False, sort_keys=True))\n        return 0\n""",
