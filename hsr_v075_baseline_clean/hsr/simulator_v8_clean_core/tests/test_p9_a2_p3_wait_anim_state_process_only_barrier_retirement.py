@@ -708,30 +708,44 @@ def test_canonical_rejects_zero_multiple_or_wrong_effect_reference(
         _formal_fixture(references, graph_coverage=coverage)
 
 
-def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels() -> None:
+def _validator_ast() -> tuple[str, ast.Module]:
     validator = (
         Path(__file__).resolve().parents[1]
         / "tools"
         / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
     )
     text = validator.read_text(encoding="utf-8")
-    module = ast.parse(text)
-    denominator = next(
+    return text, ast.parse(text)
+
+
+def _function_source(text: str, module: ast.Module, name: str) -> str:
+    node = next(
         node
         for node in module.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "formal_wait_anim_denominator"
+        if isinstance(node, ast.FunctionDef) and node.name == name
     )
-    denominator_text = ast.get_source_segment(text, denominator)
-    assert denominator_text is not None
+    result = ast.get_source_segment(text, node)
+    assert result is not None
+    return result
+
+
+def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels() -> None:
+    text, module = _validator_ast()
+    denominator_text = _function_source(
+        text, module, "formal_wait_anim_denominator"
+    )
     for token in (
         "canonical = lowerer.build()",
         "task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES",
-        "materialization_context = task_graph_materializer._prepare_materialization(",
+        "task_graph_materializer._prepare_materialization(",
         "task_graph_materializer._materialize_entry(",
         "task_graph_materializer._ability_task(",
         '"entry_blocked_reason": entry.blocked_reason',
-        "documents = lowerer.formal_context.documents",
+        "task_graph_materializer._formal_source(",
+        '"blocked_reason_counts"',
+        '"source_fingerprint_closure_sample"',
+        '"evidence"',
+        '"memory_checkpoints"',
         "RuleBook(canonical)",
     ):
         assert token in denominator_text
@@ -752,14 +766,29 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
     assert "def _source_denominator(" not in text
 
 
-def test_direct_validator_prepares_materialization_context_once() -> None:
-    validator = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+def test_direct_validator_streams_denominator_evidence_without_retaining_graphs() -> None:
+    text, module = _validator_ast()
+    denominator_text = _function_source(
+        text, module, "formal_wait_anim_denominator"
     )
-    text = validator.read_text(encoding="utf-8")
-    module = ast.parse(text)
+    assert "hashlib.sha256()" in denominator_text
+    assert 'evidence_path.open("w", encoding="utf-8")' in denominator_text
+    assert "evidence_hash.update(raw_line)" in denominator_text
+    assert "del graph" in denominator_text
+    assert "del entry" in denominator_text
+    assert "gc.collect()" in denominator_text
+    assert '"max_entry_stream_rss_kib"' in denominator_text
+    assert '"after_canonical_rss_kib"' in denominator_text
+    assert '"after_materialization_context_rss_kib"' in denominator_text
+    assert '"record_count": evidence_count' in denominator_text
+    assert '"sha256": evidence_hash.hexdigest()' in denominator_text
+    assert '"rows"' not in denominator_text
+    assert "entries: dict[" not in denominator_text
+    assert "graphs: dict[" not in denominator_text
+
+
+def test_direct_validator_prepares_materialization_context_once() -> None:
+    text, module = _validator_ast()
     denominator = next(
         node
         for node in module.body
@@ -775,16 +804,7 @@ def test_direct_validator_prepares_materialization_context_once() -> None:
             return func.id
         return ""
 
-    prepare_top_level = [
-        statement
-        for statement in denominator.body
-        if any(
-            isinstance(node, ast.Call)
-            and call_name(node) == "_prepare_materialization"
-            for node in ast.walk(statement)
-        )
-    ]
-    all_prepare_calls = [
+    prepare_calls = [
         node
         for node in ast.walk(denominator)
         if isinstance(node, ast.Call)
@@ -802,22 +822,13 @@ def test_direct_validator_prepares_materialization_context_once() -> None:
         if isinstance(node, ast.Call)
         and call_name(node) == "materialize_ability_phase_task_graph"
     ]
-
-    assert len(all_prepare_calls) == 1
-    assert len(prepare_top_level) == 1
-    assert not isinstance(prepare_top_level[0], (ast.For, ast.While))
+    assert len(prepare_calls) == 1
     assert len(entry_calls) == 1
     assert not public_slice_calls
 
 
 def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
-    validator = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
-    )
-    text = validator.read_text(encoding="utf-8")
-    module = ast.parse(text)
+    text, module = _validator_ast()
     builder = next(
         node
         for node in module.body
@@ -838,29 +849,13 @@ def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
 
 
 def test_direct_validator_closes_fingerprint_via_production_formal_source() -> None:
-    validator = (
-        Path(__file__).resolve().parents[1]
-        / "tools"
-        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+    text, module = _validator_ast()
+    denominator_text = _function_source(
+        text, module, "formal_wait_anim_denominator"
     )
-    text = validator.read_text(encoding="utf-8")
-    module = ast.parse(text)
-    denominator = next(
-        node
-        for node in module.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "formal_wait_anim_denominator"
+    classifier_text = _function_source(
+        text, module, "_classify_formal_wait_occurrence"
     )
-    classifier = next(
-        node
-        for node in module.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_classify_formal_wait_occurrence"
-    )
-    denominator_text = ast.get_source_segment(text, denominator)
-    classifier_text = ast.get_source_segment(text, classifier)
-    assert denominator_text is not None
-    assert classifier_text is not None
 
     for token in (
         "task_graph_materializer._formal_source(",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import gc
+import hashlib
 import json
 import os
 import random
@@ -746,7 +748,21 @@ class _FormalTaskGraphViewBuilder:
         return formal
 
 
-def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
+def _current_rss_kib() -> int:
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+
+
+def formal_wait_anim_denominator(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     lowerer = _FormalTaskGraphViewBuilder(root)
     canonical = lowerer.build()
     source_catalog = lowerer.source_catalog
@@ -808,166 +824,252 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     )
     if not wait_tasks:
         fail("formal_wait_anim_denominator_empty")
+    waits_by_entry: dict[tuple[str, str], list[Any]] = {}
+    for task in wait_tasks:
+        waits_by_entry.setdefault(
+            (task.phase_id, task.callback_kind), []
+        ).append(task)
+    selected_entry_keys = sorted(waits_by_entry)
 
-    selected_entry_keys = sorted(
-        {(task.phase_id, task.callback_kind) for task in wait_tasks}
-    )
+    memory_checkpoints: dict[str, int] = {
+        "after_canonical_rss_kib": _current_rss_kib(),
+        "after_canonical_peak_rss_kib": int(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        ),
+    }
     materialization_context = task_graph_materializer._prepare_materialization(
         source_catalog,
         canonical,
         lowerer.snapshot,
     )
-    entries: dict[tuple[str, str], Any] = {}
-    graphs: dict[tuple[str, str], TaskGraphIR | None] = {}
-    for phase_id, callback_kind in selected_entry_keys:
-        phase = phases.get(phase_id)
-        if phase is None:
-            fail("formal_wait_anim_entry_phase_missing")
-        callback_tasks = tuple(
-            tasks[task_id]
-            for task_id in phase.task_ids
-            if task_id in tasks and tasks[task_id].callback_kind == callback_kind
-        )
-        if not callback_tasks:
-            fail("formal_wait_anim_entry_task_selection_empty")
-        entry, graph = task_graph_materializer._materialize_entry(
-            materialization_context,
-            "ability_phase_callback",
-            phase_id,
-            callback_kind,
-            tuple(task.task_id for task in callback_tasks),
-            tuple(
-                task_graph_materializer._ability_task(task)
-                for task in callback_tasks
-            ),
-        )
-        entries[(phase_id, callback_kind)] = entry
-        graphs[(phase_id, callback_kind)] = graph
+    memory_checkpoints["after_materialization_context_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_materialization_context_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    )
 
-    rows: list[dict[str, Any]] = []
-    for task in wait_tasks:
-        phase = phases.get(task.phase_id)
-        entry_key = (task.phase_id, task.callback_kind)
-        entry = entries[entry_key]
-        graph = graphs[entry_key]
-        if task.task_id not in entry.formal_task_ids:
-            fail("formal_wait_anim_task_missing_from_entry_slice")
-        node: Any | None = None
-        if entry.status == "materialized":
-            if graph is None:
-                fail("formal_wait_anim_materialized_entry_graph_missing")
-            matches = tuple(
-                candidate
-                for candidate in graph.nodes
-                if candidate.formal_task_id == task.task_id
+    evidence_path = Path(tempfile.gettempdir()) / (
+        f"p9-a2-p3-wait-denominator-{os.getpid()}.jsonl"
+    )
+    evidence_hash = hashlib.sha256()
+    evidence_bytes = 0
+    evidence_count = 0
+    admitted = 0
+    blocked = 0
+    blocked_reasons = Counter()
+    required_seen: set[str] = set()
+    admitted_sample: dict[str, Any] | None = None
+    blocked_samples: dict[str, dict[str, Any]] = {}
+    max_stream_rss = _current_rss_kib()
+
+    with evidence_path.open("w", encoding="utf-8") as evidence_file:
+        for entry_index, (phase_id, callback_kind) in enumerate(
+            selected_entry_keys
+        ):
+            phase = phases.get(phase_id)
+            if phase is None:
+                fail("formal_wait_anim_entry_phase_missing")
+            callback_tasks = tuple(
+                tasks[task_id]
+                for task_id in phase.task_ids
+                if task_id in tasks
+                and tasks[task_id].callback_kind == callback_kind
             )
-            if len(matches) == 1:
-                node = matches[0]
-        elif graph is not None:
-            fail("formal_wait_anim_blocked_entry_published_graph")
+            if not callback_tasks:
+                fail("formal_wait_anim_entry_task_selection_empty")
+            entry, graph = task_graph_materializer._materialize_entry(
+                materialization_context,
+                "ability_phase_callback",
+                phase_id,
+                callback_kind,
+                tuple(task.task_id for task in callback_tasks),
+                tuple(
+                    task_graph_materializer._ability_task(task)
+                    for task in callback_tasks
+                ),
+            )
+            for task in sorted(
+                waits_by_entry[(phase_id, callback_kind)],
+                key=lambda item: (
+                    item.source.source_path,
+                    str(item.source.evidence.get("json_path") or ""),
+                    item.task_id,
+                ),
+            ):
+                if task.task_id not in entry.formal_task_ids:
+                    fail("formal_wait_anim_task_missing_from_entry_slice")
+                node: Any | None = None
+                if entry.status == "materialized":
+                    if graph is None:
+                        fail("formal_wait_anim_materialized_entry_graph_missing")
+                    matches = tuple(
+                        candidate
+                        for candidate in graph.nodes
+                        if candidate.formal_task_id == task.task_id
+                    )
+                    if len(matches) == 1:
+                        node = matches[0]
+                elif graph is not None:
+                    fail("formal_wait_anim_blocked_entry_published_graph")
 
-        effect = rules.effect(task.effect_id) if task.effect_id else None
-        source_path = task.source.source_path
-        json_path = str(task.source.evidence.get("json_path") or "")
-        formal_source = task_graph_materializer._formal_source(
-            task_graph_materializer._ability_task(task),
-            materialization_context.digest_by_path,
-        )
-        control = controls_by_location.get(
-            (source_path, json_path, _family_for_task(task))
-        )
-        raw: object = None
-        document = documents.get(source_path)
-        if document is not None:
-            try:
-                raw = _value_at_rooted_json_path(document, json_path)
-            except (KeyError, IndexError, TypeError, ValueError):
-                raw = None
+                effect = rules.effect(task.effect_id) if task.effect_id else None
+                source_path = task.source.source_path
+                json_path = str(task.source.evidence.get("json_path") or "")
+                formal_source = task_graph_materializer._formal_source(
+                    task_graph_materializer._ability_task(task),
+                    materialization_context.digest_by_path,
+                )
+                control = controls_by_location.get(
+                    (source_path, json_path, _family_for_task(task))
+                )
+                raw: object = None
+                document = documents.get(source_path)
+                if document is not None:
+                    try:
+                        raw = _value_at_rooted_json_path(document, json_path)
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        raw = None
 
-        row = _classify_formal_wait_occurrence(
-            task=task,
-            phase=phase,
-            effect=effect,
-            graph=graph,
-            node=node,
-            control=control,
-            raw=raw,
-            formal_source=formal_source,
-            expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
-        )
-        row.update(
-            {
-                "entry_id": entry.entry_id,
-                "entry_status": entry.status,
-                "entry_blocked_reason": entry.blocked_reason,
-            }
-        )
-        if entry.status != "materialized":
-            blocked_reason = entry.blocked_reason or "formal_entry_graph_missing"
-            row["admitted"] = False
-            row["disposition"] = "blocked"
-            row["reason"] = blocked_reason
-            row["reasons"] = [
-                "entry_materialization:" + blocked_reason,
-                *[
-                    reason
-                    for reason in row["reasons"]
-                    if reason != "formal_task_graph_node_missing_or_ambiguous"
-                ],
-            ]
-        elif graph is None or node is None:
-            row["admitted"] = False
-            row["disposition"] = "blocked"
-            row["reason"] = "formal_task_graph_node_missing_or_ambiguous"
-            if row["reason"] not in row["reasons"]:
-                row["reasons"].insert(0, row["reason"])
-        rows.append(row)
+                row = _classify_formal_wait_occurrence(
+                    task=task,
+                    phase=phase,
+                    effect=effect,
+                    graph=graph,
+                    node=node,
+                    control=control,
+                    raw=raw,
+                    formal_source=formal_source,
+                    expected_content_sha256=str(
+                        content_sha_by_path.get(source_path) or ""
+                    ),
+                )
+                row.update(
+                    {
+                        "entry_id": entry.entry_id,
+                        "entry_status": entry.status,
+                        "entry_blocked_reason": entry.blocked_reason,
+                    }
+                )
+                if entry.status != "materialized":
+                    blocked_reason = (
+                        entry.blocked_reason or "formal_entry_graph_missing"
+                    )
+                    row["admitted"] = False
+                    row["disposition"] = "blocked"
+                    row["reason"] = blocked_reason
+                    row["reasons"] = [
+                        "entry_materialization:" + blocked_reason,
+                        *[
+                            reason
+                            for reason in row["reasons"]
+                            if reason
+                            != "formal_task_graph_node_missing_or_ambiguous"
+                        ],
+                    ]
+                elif graph is None or node is None:
+                    row["admitted"] = False
+                    row["disposition"] = "blocked"
+                    row["reason"] = (
+                        "formal_task_graph_node_missing_or_ambiguous"
+                    )
+                    if row["reason"] not in row["reasons"]:
+                        row["reasons"].insert(0, row["reason"])
+                if bool(row["admitted"]) != (not row["reasons"]):
+                    fail("formal_wait_anim_denominator_disposition_inconsistent")
 
-    rows.sort(
-        key=lambda item: (
-            str(item["source_path"]),
-            str(item["json_path"]),
-            str(item["action_id"]),
-            int(item["action_level"]),
-            str(item["task_id"]),
-        )
+                line = json.dumps(
+                    row,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ) + "\n"
+                raw_line = line.encode("utf-8")
+                evidence_file.write(line)
+                evidence_hash.update(raw_line)
+                evidence_bytes += len(raw_line)
+                evidence_count += 1
+                if task.task_id in required_task_ids:
+                    required_seen.add(task.task_id)
+                if row["admitted"]:
+                    admitted += 1
+                    if admitted_sample is None:
+                        admitted_sample = row
+                else:
+                    blocked += 1
+                    reason = str(row["reason"])
+                    blocked_reasons[reason] += 1
+                    blocked_samples.setdefault(reason, row)
+
+            del graph
+            del entry
+            if entry_index % 64 == 63:
+                gc.collect()
+            max_stream_rss = max(max_stream_rss, _current_rss_kib())
+
+    gc.collect()
+    memory_checkpoints["max_entry_stream_rss_kib"] = max_stream_rss
+    memory_checkpoints["after_entry_stream_rss_kib"] = _current_rss_kib()
+    memory_checkpoints["after_entry_stream_peak_rss_kib"] = int(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     )
-    admitted = sum(bool(row["admitted"]) for row in rows)
-    blocked = len(rows) - admitted
-    blocked_reasons = Counter(
-        str(row["reason"]) for row in rows if not row["admitted"]
+
+    if evidence_count != len(wait_tasks):
+        fail("formal_wait_anim_denominator_evidence_incomplete")
+    if len(wait_tasks) != admitted + blocked:
+        fail("formal_wait_anim_denominator_count_mismatch")
+    missing_required = sorted(required_task_ids - required_seen)
+    if missing_required:
+        fail("representative_wait_anim_missing_from_formal_denominator")
+
+    blocked_sample_rows = [
+        blocked_samples[reason]
+        for reason in sorted(blocked_samples)[:12]
+    ]
+    sample_row = admitted_sample or (
+        blocked_sample_rows[0] if blocked_sample_rows else None
     )
-    sample_row = next((row for row in rows if row["admitted"]), rows[0])
-    source_fingerprint_closure_sample = {
-        key: sample_row[key]
-        for key in (
-            "task_id",
-            "source_path",
-            "json_path",
-            "task_evidence_content_sha256",
-            "effect_evidence_content_sha256",
-            "formal_content_sha256",
-            "formal_content_fingerprint_scope",
-            "control_content_sha256",
-            "graph_node_content_sha256",
-            "audit_reference_content_sha256",
-            "control_node_id",
-            "graph_node_id",
-            "admitted",
-            "reason",
-        )
-    }
+    source_fingerprint_closure_sample = (
+        {
+            key: sample_row[key]
+            for key in (
+                "task_id",
+                "source_path",
+                "json_path",
+                "task_evidence_content_sha256",
+                "effect_evidence_content_sha256",
+                "formal_content_sha256",
+                "formal_content_fingerprint_scope",
+                "control_content_sha256",
+                "graph_node_content_sha256",
+                "audit_reference_content_sha256",
+                "control_node_id",
+                "graph_node_id",
+                "admitted",
+                "reason",
+            )
+        }
+        if sample_row is not None
+        else {}
+    )
     return {
         "kind": "formal_ability_wait_anim_state_occurrences",
         "formal_ability_entry_count": len(formal_entry_keys),
         "formal_ability_task_count": len(formal_task_ids),
         "wait_anim_entry_count": len(selected_entry_keys),
-        "total": len(rows),
+        "total": len(wait_tasks),
         "admitted": admitted,
         "blocked": blocked,
         "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
         "source_fingerprint_closure_sample": source_fingerprint_closure_sample,
-        "rows": rows,
+        "blocked_samples": blocked_sample_rows,
+        "evidence": {
+            "format": "jsonl",
+            "path": str(evidence_path),
+            "record_count": evidence_count,
+            "byte_size": evidence_bytes,
+            "sha256": evidence_hash.hexdigest(),
+        },
+        "memory_checkpoints": memory_checkpoints,
+        "required_task_ids_present": sorted(required_seen),
     }
 
 
@@ -1509,7 +1611,13 @@ def run_direct(root: Path) -> dict[str, Any]:
     ):
         fail("non_wait_anim_provenance_changed")
 
-    denominator = formal_wait_anim_denominator(root)
+    representative_task_ids = frozenset(
+        row["task_id"] for row in current_wait.values()
+    )
+    denominator = formal_wait_anim_denominator(
+        root,
+        required_task_ids=representative_task_ids,
+    )
     if (
         denominator["total"] <= 0
         or denominator["admitted"] <= 0
@@ -1517,14 +1625,9 @@ def run_direct(root: Path) -> dict[str, Any]:
         != denominator["admitted"] + denominator["blocked"]
     ):
         fail("formal_wait_anim_denominator_not_proven")
-    if any(
-        bool(row["admitted"]) != (not row["reasons"])
-        for row in denominator["rows"]
+    if set(denominator["required_task_ids_present"]) != set(
+        representative_task_ids
     ):
-        fail("formal_wait_anim_denominator_disposition_inconsistent")
-    representative_task_ids = {row["task_id"] for row in current_wait.values()}
-    denominator_task_ids = {row["task_id"] for row in denominator["rows"]}
-    if not representative_task_ids.issubset(denominator_task_ids):
         fail("representative_wait_anim_missing_from_formal_denominator")
 
     channels = current["formal_channels"]
