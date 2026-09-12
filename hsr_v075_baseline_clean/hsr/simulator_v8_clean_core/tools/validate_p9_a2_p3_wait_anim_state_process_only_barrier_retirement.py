@@ -1538,6 +1538,61 @@ def _current_wait_node_ok(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _denominator_subprocess(
+    root: Path,
+    *,
+    required_task_ids: frozenset[str],
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--denominator-json",
+            "--tbgd-root",
+            str(root),
+            *(
+                argument
+                for task_id in sorted(required_task_ids)
+                for argument in ("--required-task-id", task_id)
+            ),
+        ],
+        cwd=ROOT,
+        env=os.environ.copy(),
+        text=True,
+        capture_output=True,
+        timeout=360,
+        check=False,
+    )
+    if completed.returncode:
+        fail(
+            "formal_wait_anim_denominator_worker_failed:"
+            + json.dumps(
+                {
+                    "rc": completed.returncode,
+                    "stdout": completed.stdout[-3000:],
+                    "stderr": completed.stderr[-3000:],
+                },
+                ensure_ascii=False,
+            )
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            "formal_wait_anim_denominator_worker_output_invalid"
+        ) from exc
+    denominator = payload.get("denominator")
+    resource_payload = payload.get("resource")
+    if not isinstance(denominator, Mapping) or not isinstance(
+        resource_payload, Mapping
+    ):
+        fail("formal_wait_anim_denominator_worker_contract_invalid")
+    return {
+        "denominator": dict(denominator),
+        "resource": dict(resource_payload),
+    }
+
+
 def run_direct(root: Path) -> dict[str, Any]:
     started = time.perf_counter()
     gov = governance()
@@ -1610,10 +1665,11 @@ def run_direct(root: Path) -> dict[str, Any]:
     representative_task_ids = frozenset(
         row["task_id"] for row in current_wait.values()
     )
-    denominator = formal_wait_anim_denominator(
+    denominator_worker = _denominator_subprocess(
         root,
         required_task_ids=representative_task_ids,
     )
+    denominator = denominator_worker["denominator"]
     if (
         denominator["total"] <= 0
         or denominator["admitted"] <= 0
@@ -1646,7 +1702,14 @@ def run_direct(root: Path) -> dict[str, Any]:
         fail("canonical_reference_negatives_incomplete")
 
     elapsed = time.perf_counter() - started
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    parent_peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    denominator_worker_peak = int(
+        denominator_worker["resource"].get("peak_rss_kib") or 0
+    )
+    baseline_worker_peak = int(
+        (baseline.get("resource") or {}).get("peak_rss_kib") or 0
+    )
+    peak = max(parent_peak, denominator_worker_peak, baseline_worker_peak)
     predicates = {
         "fixed_base": gov["fixed_base"] == BASE_SHA,
         "baseline_provenance_2_wait_plus_1_projectile": True,
@@ -1693,9 +1756,13 @@ def run_direct(root: Path) -> dict[str, Any]:
         "formal_wait_anim_denominator": denominator,
         "formal_channel_counts": channels,
         "baseline_probe_resource": baseline.get("resource"),
+        "denominator_worker_resource": denominator_worker["resource"],
         "resource": {
             "wall_seconds": round(elapsed, 6),
             "peak_rss_kib": peak,
+            "parent_peak_rss_kib": parent_peak,
+            "baseline_worker_peak_rss_kib": baseline_worker_peak,
+            "denominator_worker_peak_rss_kib": denominator_worker_peak,
         },
     }
 
@@ -1703,9 +1770,35 @@ def run_direct(root: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe-json", action="store_true")
+    parser.add_argument("--denominator-json", action="store_true")
+    parser.add_argument("--required-task-id", action="append", default=[])
     parser.add_argument("--tbgd-root", type=Path, default=TBGD)
     args = parser.parse_args()
     root = args.tbgd_root.resolve()
+    if args.denominator_json:
+        started = time.perf_counter()
+        denominator = formal_wait_anim_denominator(
+            root,
+            required_task_ids=frozenset(args.required_task_id),
+        )
+        print(
+            json.dumps(
+                {
+                    "denominator": denominator,
+                    "resource": {
+                        "wall_seconds": round(
+                            time.perf_counter() - started, 6
+                        ),
+                        "peak_rss_kib": int(
+                            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.probe_json:
         print(
             json.dumps(
