@@ -1,0 +1,101 @@
+name: P9 A2 P4 candidate preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p9-a2-p4-pr-validation.yml"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Build and verify minimal SetEntityVisible candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path.cwd()
+          coverage = root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
+          lowering = root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+
+          coverage_text = coverage.read_text(encoding="utf-8")
+          coverage_needle = '        "SetTeamFormation",\n        "SkillExecutionStart",'
+          assert coverage_text.count(coverage_needle) == 1, "coverage insertion point drifted"
+          coverage.write_text(
+              coverage_text.replace(
+                  coverage_needle,
+                  '        "SetEntityVisible",\n' + coverage_needle,
+                  1,
+              ),
+              encoding="utf-8",
+          )
+
+          lowering_text = lowering.read_text(encoding="utf-8")
+          lowering_needle = '    "SetTeamFormation": {'
+          assert lowering_text.count(lowering_needle) == 1, "lowering schema insertion point drifted"
+          lowering.write_text(
+              lowering_text.replace(
+                  lowering_needle,
+                  '    "SetEntityVisible": {"TargetType": "mapping", "Visible": "bool"},\n'
+                  + lowering_needle,
+                  1,
+              ),
+              encoding="utf-8",
+          )
+
+          subprocess.run(
+              [sys.executable, "-m", "py_compile", str(coverage), str(lowering)],
+              check=True,
+          )
+          sys.path.insert(0, str(root / "hsr_v075_baseline_clean/hsr"))
+          from simulator_v8_clean_core.tbgd.coverage import ability_task_execution_mode
+          from simulator_v8_clean_core.tbgd.lowering import (
+              _process_only_ability_task_source_blocked_reason,
+          )
+
+          assert ability_task_execution_mode("SetEntityVisible") == "process_only"
+          assert ability_task_execution_mode("SetEntityForceVisible") == "runtime_effect"
+          valid = {
+              "$type": "RPG.GameCore.SetEntityVisible",
+              "TargetType": {"$type": "RPG.GameCore.TargetFetchAdvCharacter"},
+              "Visible": True,
+          }
+          valid_false = {**valid, "Visible": False}
+          assert not _process_only_ability_task_source_blocked_reason(valid, "SetEntityVisible")
+          assert not _process_only_ability_task_source_blocked_reason(valid_false, "SetEntityVisible")
+          assert _process_only_ability_task_source_blocked_reason(
+              {**valid, "Unexpected": 1}, "SetEntityVisible"
+          )
+          assert _process_only_ability_task_source_blocked_reason(
+              {**valid, "Visible": 1}, "SetEntityVisible"
+          )
+
+          for path in (coverage, lowering):
+              rel = path.relative_to(root).as_posix()
+              base_blob = subprocess.check_output(
+                  ["git", "rev-parse", f"HEAD:{rel}"], text=True
+              ).strip()
+              result_blob = subprocess.check_output(
+                  ["git", "hash-object", str(path)], text=True
+              ).strip()
+              print(f"CANDIDATE_BLOB {rel} base={base_blob} result={result_blob}")
+          PY
+          git diff --check
