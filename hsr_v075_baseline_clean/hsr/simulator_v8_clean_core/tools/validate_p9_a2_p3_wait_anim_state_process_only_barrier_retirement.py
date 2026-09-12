@@ -690,28 +690,26 @@ class _FormalTaskGraphViewBuilder:
             status_callbacks=tuple(status_callbacks),
             status_callback_tasks=tuple(status_callback_tasks),
         )
-        catalog = task_graph_materializer.materialize_character_runtime_task_graph_catalog(
-            self.source_catalog,
-            formal,
-            source_snapshot=self.snapshot,
-            definition_scope_complete=True,
-        )
-        canonical = replace(formal, task_graph_catalog=catalog)
-        RuleBook(canonical)
-        return canonical
+        RuleBook(formal)
+        return formal
 
 
 def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     lowerer = _FormalTaskGraphViewBuilder(root)
     canonical = lowerer.build()
-    snapshot = lowerer.snapshot
     source_catalog = lowerer.source_catalog
-    controls = {item.node_id: item for item in source_catalog.nodes}
+    controls_by_location = {
+        (
+            item.source.source_path,
+            str(item.source.evidence.get("json_path") or ""),
+            item.family,
+        ): item
+        for item in source_catalog.nodes
+    }
+    if len(controls_by_location) != len(source_catalog.nodes):
+        fail("formal_wait_anim_control_identity_ambiguous")
     content_sha_by_path = lowerer.formal_context.content_sha256_by_path
-
-    catalog = canonical.task_graph_catalog
-    if type(catalog) is not TaskGraphCatalogIR:
-        fail("formal_wait_anim_task_graph_catalog_missing")
+    documents = lowerer.formal_context.documents
     rules = RuleBook(canonical)
 
     phases = {phase.phase_id: phase for phase in canonical.ability_phases}
@@ -721,54 +719,94 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     if len(tasks) != len(canonical.ability_tasks):
         fail("formal_wait_anim_task_identity_ambiguous")
 
+    formal_phases = tuple(
+        phase
+        for phase in canonical.ability_phases
+        if phase.invocation_role
+        in task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES
+    )
+    if not formal_phases:
+        fail("formal_ability_phase_denominator_empty")
     formal_task_ids: list[str] = []
-    for entry in catalog.entry_materializations:
-        if entry.entry_kind != "ability_phase_callback":
-            continue
-        formal_task_ids.extend(entry.formal_task_ids)
-    if not formal_task_ids:
-        fail("formal_ability_task_denominator_empty")
+    formal_entry_keys: set[tuple[str, str]] = set()
+    for phase in formal_phases:
+        phase_tasks = tuple(tasks.get(task_id) for task_id in phase.task_ids)
+        if (
+            not phase_tasks
+            or any(task is None for task in phase_tasks)
+            or any(
+                task.phase_id != phase.phase_id
+                for task in phase_tasks
+                if task is not None
+            )
+        ):
+            fail("formal_ability_phase_task_ledger_incomplete")
+        for task in phase_tasks:
+            assert task is not None
+            formal_task_ids.append(task.task_id)
+            formal_entry_keys.add((phase.phase_id, task.callback_kind))
     if len(formal_task_ids) != len(set(formal_task_ids)):
         fail("formal_ability_task_denominator_identity_ambiguous")
 
-    graph_nodes_by_task: dict[str, list[tuple[TaskGraphIR, Any]]] = {}
-    for graph in catalog.graphs:
-        if graph.entry_kind != "ability_phase_callback":
-            continue
-        for node in graph.nodes:
-            graph_nodes_by_task.setdefault(node.formal_task_id, []).append((graph, node))
-
-    wait_task_ids = [
-        task_id
+    wait_tasks = tuple(
+        task
         for task_id in formal_task_ids
         if (task := tasks.get(task_id)) is not None
         and _family_for_task(task) == "WaitAnimState"
-    ]
-    if not wait_task_ids:
+    )
+    if not wait_tasks:
         fail("formal_wait_anim_denominator_empty")
 
+    selected_entry_keys = sorted(
+        {(task.phase_id, task.callback_kind) for task in wait_tasks}
+    )
+    slices: dict[tuple[str, str], TaskGraphCatalogIR] = {}
+    for phase_id, callback_kind in selected_entry_keys:
+        slice_catalog = task_graph_materializer.materialize_ability_phase_task_graph(
+            source_catalog,
+            canonical,
+            phase_id=phase_id,
+            callback_kind=callback_kind,
+            source_snapshot=lowerer.snapshot,
+        )
+        if (
+            type(slice_catalog) is not TaskGraphCatalogIR
+            or len(slice_catalog.entry_materializations) != 1
+        ):
+            fail("formal_wait_anim_entry_slice_invalid")
+        slices[(phase_id, callback_kind)] = slice_catalog
+
     rows: list[dict[str, Any]] = []
-    for task_id in wait_task_ids:
-        task = tasks.get(task_id)
-        if task is None:
-            fail("formal_wait_anim_task_missing")
+    for task in wait_tasks:
         phase = phases.get(task.phase_id)
-        matches = graph_nodes_by_task.get(task.task_id, [])
+        slice_catalog = slices[(task.phase_id, task.callback_kind)]
+        entry = slice_catalog.entry_materializations[0]
+        if task.task_id not in entry.formal_task_ids:
+            fail("formal_wait_anim_task_missing_from_entry_slice")
         graph: TaskGraphIR | None = None
         node: Any | None = None
-        if len(matches) == 1:
-            graph, node = matches[0]
-        effect = rules.effect(task.effect_id) if task.effect_id else None
-        control = (
-            controls.get(node.source_contract_node_id)
-            if node is not None and node.source_contract_node_id
-            else None
-        )
+        if entry.status == "materialized":
+            if len(slice_catalog.graphs) != 1:
+                fail("formal_wait_anim_materialized_entry_graph_missing")
+            graph = slice_catalog.graphs[0]
+            matches = tuple(
+                candidate
+                for candidate in graph.nodes
+                if candidate.formal_task_id == task.task_id
+            )
+            if len(matches) == 1:
+                node = matches[0]
+        elif slice_catalog.graphs:
+            fail("formal_wait_anim_blocked_entry_published_graph")
 
+        effect = rules.effect(task.effect_id) if task.effect_id else None
         source_path = task.source.source_path
         json_path = str(task.source.evidence.get("json_path") or "")
+        control = controls_by_location.get(
+            (source_path, json_path, _family_for_task(task))
+        )
         raw: object = None
-        document = snapshot.documents.get(source_path)
+        document = documents.get(source_path)
         if document is not None:
             try:
                 raw = _value_at_rooted_json_path(document, json_path)
@@ -785,12 +823,32 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
             raw=raw,
             expected_content_sha256=str(content_sha_by_path.get(source_path) or ""),
         )
-        if len(matches) != 1:
-            if "formal_task_graph_node_missing_or_ambiguous" not in row["reasons"]:
-                row["reasons"].insert(0, "formal_task_graph_node_missing_or_ambiguous")
-                row["reason"] = row["reasons"][0]
-                row["admitted"] = False
-                row["disposition"] = "blocked"
+        row.update(
+            {
+                "entry_id": entry.entry_id,
+                "entry_status": entry.status,
+                "entry_blocked_reason": entry.blocked_reason,
+            }
+        )
+        if entry.status != "materialized":
+            blocked_reason = entry.blocked_reason or "formal_entry_graph_missing"
+            row["admitted"] = False
+            row["disposition"] = "blocked"
+            row["reason"] = blocked_reason
+            row["reasons"] = [
+                "entry_materialization:" + blocked_reason,
+                *[
+                    reason
+                    for reason in row["reasons"]
+                    if reason != "formal_task_graph_node_missing_or_ambiguous"
+                ],
+            ]
+        elif graph is None or node is None:
+            row["admitted"] = False
+            row["disposition"] = "blocked"
+            row["reason"] = "formal_task_graph_node_missing_or_ambiguous"
+            if row["reason"] not in row["reasons"]:
+                row["reasons"].insert(0, row["reason"])
         rows.append(row)
 
     rows.sort(
@@ -809,11 +867,9 @@ def formal_wait_anim_denominator(root: Path) -> dict[str, Any]:
     )
     return {
         "kind": "formal_ability_wait_anim_state_occurrences",
-        "formal_ability_entry_count": sum(
-            entry.entry_kind == "ability_phase_callback"
-            for entry in catalog.entry_materializations
-        ),
+        "formal_ability_entry_count": len(formal_entry_keys),
         "formal_ability_task_count": len(formal_task_ids),
+        "wait_anim_entry_count": len(selected_entry_keys),
         "total": len(rows),
         "admitted": admitted,
         "blocked": blocked,

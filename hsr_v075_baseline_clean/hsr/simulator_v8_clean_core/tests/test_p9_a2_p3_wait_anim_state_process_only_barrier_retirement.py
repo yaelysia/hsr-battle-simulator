@@ -726,13 +726,16 @@ def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels()
     assert denominator_text is not None
     for token in (
         "canonical = lowerer.build()",
-        "catalog = canonical.task_graph_catalog",
-        "catalog.entry_materializations",
-        'entry.entry_kind != "ability_phase_callback"',
+        "task_graph_materializer._FORMAL_ABILITY_INVOCATION_ROLES",
+        "task_graph_materializer.materialize_ability_phase_task_graph(",
+        "slice_catalog.entry_materializations",
+        '"entry_blocked_reason": entry.blocked_reason',
+        "documents = lowerer.formal_context.documents",
         "RuleBook(canonical)",
     ):
         assert token in denominator_text
     assert "build_character_action_ability_slice(" not in denominator_text
+    assert "materialize_character_runtime_task_graph_catalog(" not in denominator_text
     for token in (
         '"formal_wait_anim_denominator"',
         '"formal_channel_counts"',
@@ -771,3 +774,4 @@ def test_direct_validator_scopes_status_lowering_to_formal_sources() -> None:
     assert "_lower_standalone_ability_graphs(formal_ability_files)" in builder_text
     assert "_lower_standalone_ability_graphs(ability_files)" not in builder_text
     assert "if relative in formal_status_root_paths\n                    else None" not in builder_text
+    assert "materialize_character_runtime_task_graph_catalog(" not in builder_text
