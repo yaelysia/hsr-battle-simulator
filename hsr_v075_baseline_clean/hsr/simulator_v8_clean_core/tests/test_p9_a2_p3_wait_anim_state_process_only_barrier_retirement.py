@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -705,3 +706,29 @@ def test_canonical_rejects_zero_multiple_or_wrong_effect_reference(
         match="task graph formal definition references are inconsistent",
     ):
         _formal_fixture(references, graph_coverage=coverage)
+
+
+def test_direct_validator_proves_formal_denominator_and_explicit_zero_channels() -> None:
+    validator = (
+        Path(__file__).resolve().parents[1]
+        / "tools"
+        / "validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py"
+    )
+    text = validator.read_text(encoding="utf-8")
+    ast.parse(text)
+    for token in (
+        "def formal_wait_anim_denominator(",
+        "build_character_action_ability_slice(",
+        "materialize_ability_task_graph_catalog(",
+        "RuleBook(formal)",
+        '"formal_wait_anim_denominator"',
+        '"formal_channel_counts"',
+        '"mutation_count"',
+        '"event_count"',
+        '"rng_event_count"',
+        '"settlement_record_count"',
+        '"replay_mutation_count"',
+        "TaskGraphExecutionResult.__dataclass_fields__",
+    ):
+        assert token in text
+    assert "def _source_denominator(" not in text
