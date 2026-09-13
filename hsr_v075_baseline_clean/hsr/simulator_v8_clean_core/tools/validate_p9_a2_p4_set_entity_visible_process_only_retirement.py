@@ -749,24 +749,17 @@ def formal_denominator(root: Path) -> dict[str, Any]:
     action_definitions = lowerer._lower_action_definitions()
     action_phase_metadata: list[Any] = []
     for index, definition in enumerate(action_definitions):
-        (
-            _bindings,
-            phases,
-            tasks,
-            effects,
-            conditions,
-            _formulas,
-            _targets,
-        ) = lowerer._lower_action_ability_bindings((definition,))
-        if definition.action_id.startswith("avatar_skill:"):
-            action_phase_metadata.extend(phases)
+        if not definition.action_id.startswith("avatar_skill:"):
+            continue
+        _binding, phases, lowered = lowerer._avatar_action_binding(definition)
+        action_phase_metadata.extend(phases)
         record_ability_slice(
             phases=phases,
-            tasks=tasks,
-            effects=effects,
-            conditions=conditions,
+            tasks=lowered.ability_tasks,
+            effects=lowered.effects,
+            conditions=lowered.conditions,
         )
-        del _bindings, phases, tasks, effects, conditions, _formulas, _targets
+        del _binding, phases, lowered
         if index % 32 == 31:
             gc.collect()
 
