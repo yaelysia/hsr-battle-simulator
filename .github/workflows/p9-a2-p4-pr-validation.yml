@@ -8,6 +8,8 @@ on:
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py"
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P4_SET_ENTITY_VISIBLE_PROCESS_ONLY_RETIREMENT_execution_report.md"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P4_SET_ENTITY_VISIBLE_PROCESS_ONLY_RETIREMENT.md"
   workflow_dispatch:
 
 permissions:
@@ -32,43 +34,36 @@ jobs:
           set -euo pipefail
           test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 
-      - name: Diagnostic isolate P4 task-local materializer contract
+      - name: Compile P4 scope
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py
 
-          path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py")
-          text = path.read_text(encoding="utf-8")
+      - name: Run focused P4 Fast
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py -q
 
-          anchor = '''        entry, graph = _ability_entry(\n            canonical,\n            materialization_context,\n            entry_cache,\n            task,\n        )\n'''
-          insertion = '''        formal_task = task_graph_materializer._ability_task(task)\n        direct_reference_rows: list[dict[str, Any]] = []\n        direct_node_id = ""\n        direct_reference = None\n        try:\n            formal_source = task_graph_materializer._formal_source(\n                formal_task,\n                materialization_context.digest_by_path,\n            )\n            control = materialization_context.control_by_location.get(\n                (\n                    formal_source.source_path,\n                    formal_source.evidence["json_path"],\n                    formal_task.family,\n                )\n            )\n            node_kind, node_status, owner_domains, node_reason = (\n                task_graph_materializer._node_status(control, formal_task)\n            )\n            direct_entry_id = task_graph_materializer.task_graph_entry_id(\n                "ability_phase_callback",\n                task.phase_id,\n                task.callback_kind,\n            )\n            direct_graph_id = task_graph_materializer.task_graph_id(\n                materialization_context.base.source_catalog_id,\n                direct_entry_id,\n                materialization_context.base.source_fingerprint,\n            )\n            occurrence_id = task_graph_materializer.task_graph_source_occurrence_id(\n                formal_source,\n                formal_task.family,\n            )\n            direct_node_id = task_graph_materializer.task_graph_node_id(\n                direct_graph_id,\n                task.task_id,\n                occurrence_id,\n            )\n            direct_references = task_graph_materializer._references(\n                formal_task,\n                control,\n                direct_node_id,\n                formal_source,\n                materialization_context.definitions,\n                materialization_context.template_refs_by_node,\n            )\n            task_reasons.extend(\n                _source_contract_reasons(\n                    formal_source,\n                    source_path=source_path,\n                    json_path=json_path,\n                    content_sha256=expected_sha,\n                    require_fingerprint=True,\n                )\n            )\n            if (\n                node_kind != "leaf"\n                or node_status != "materialized"\n                or tuple(owner_domains) != ("task_graph_execution",)\n                or node_reason\n            ):\n                task_reasons.append("formal_task_node_contract_not_materialized_leaf")\n            if len(direct_references) != 1:\n                task_reasons.append("formal_task_node_audit_reference_count_invalid")\n            else:\n                direct_reference = direct_references[0]\n                direct_reference_rows.append(\n                    {\n                        "reference_kind": direct_reference.reference_kind,\n                        "definition_id": direct_reference.definition_id,\n                        "resolution_status": direct_reference.resolution_status,\n                        "owner_domain": direct_reference.owner_domain,\n                        "blocked_reason": direct_reference.blocked_reason,\n                        "source": direct_reference.source.to_json(),\n                    }\n                )\n                if (\n                    direct_reference.reference_kind != "effect"\n                    or direct_reference.definition_id != task.effect_id\n                    or direct_reference.resolution_status != "deferred"\n                    or direct_reference.blocked_reason != AUDIT_EFFECT_BLOCKER\n                    or direct_reference.source != formal_source\n                ):\n                    task_reasons.append("formal_task_node_audit_reference_invalid")\n        except (TypeError, ValueError, RuntimeError) as exc:\n            task_reasons.append(\n                "formal_task_node_contract_blocked:"\n                + type(exc).__name__\n                + ":"\n                + str(exc)\n            )\n\n''' + anchor
-          assert text.count(anchor) == 1, "P4 ability entry anchor drifted"
-          text = text.replace(anchor, insertion, 1)
-
-          old_block = '''        if entry.status != "materialized" or graph is None:\n            task_reasons.append(\n                "formal_task_graph_missing:"\n                + str(entry.blocked_reason or entry.status)\n            )\n        else:\n'''
-          new_block = '''        if entry.status != "materialized":\n            if graph is not None:\n                task_reasons.append("formal_task_graph_blocked_entry_published_graph")\n        elif graph is None:\n            task_reasons.append("formal_task_graph_materialized_entry_graph_missing")\n        else:\n'''
-          assert text.count(old_block) == 1, "P4 blocked entry branch drifted"
-          text = text.replace(old_block, new_block, 1)
-
-          old_condition = '''                        or reference.blocked_reason != AUDIT_EFFECT_BLOCKER\n                    ):\n'''
-          new_condition = '''                        or reference.blocked_reason != AUDIT_EFFECT_BLOCKER\n                        or direct_reference is None\n                        or reference != direct_reference\n                    ):\n'''
-          assert text.count(old_condition) == 1, "P4 published reference condition drifted"
-          text = text.replace(old_condition, new_condition, 1)
-
-          old_row = '''                "graph_node_id": node.graph_node_id if node is not None else "",\n                "references": references,\n'''
-          new_row = '''                "graph_node_id": node.graph_node_id if node is not None else "",\n                "direct_node_id": direct_node_id,\n                "direct_references": direct_reference_rows,\n                "references": references,\n'''
-          assert text.count(old_row) == 1, "P4 producer evidence row drifted"
-          text = text.replace(old_row, new_row, 1)
-
-          path.write_text(text, encoding="utf-8")
-          PY
-          python -m py_compile hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py
-          echo "P4_PATCHED_VALIDATOR_BLOB=$(git hash-object hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py)"
+      - name: Run A1 Fast
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=hsr_v075_baseline_clean/hsr python -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --fast
 
       - name: Run P4 SetEntityVisible Direct
         shell: bash
         run: |
           set -euo pipefail
           python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py --direct
+
+      - name: Check fixed-base diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check 4beebe293f74e37e709d5cfc978f098d1e804128...HEAD

@@ -396,6 +396,98 @@ def _validate_ability_occurrence(
                 )
             )
 
+        formal_task = task_graph_materializer._ability_task(task)
+        direct_reference_rows: list[dict[str, Any]] = []
+        direct_node_id = ""
+        direct_reference = None
+        try:
+            formal_source = task_graph_materializer._formal_source(
+                formal_task,
+                materialization_context.digest_by_path,
+            )
+            control = materialization_context.control_by_location.get(
+                (
+                    formal_source.source_path,
+                    formal_source.evidence["json_path"],
+                    formal_task.family,
+                )
+            )
+            node_kind, node_status, owner_domains, node_reason = (
+                task_graph_materializer._node_status(control, formal_task)
+            )
+            direct_entry_id = task_graph_materializer.task_graph_entry_id(
+                "ability_phase_callback",
+                task.phase_id,
+                task.callback_kind,
+            )
+            direct_graph_id = task_graph_materializer.task_graph_id(
+                materialization_context.base.source_catalog_id,
+                direct_entry_id,
+                materialization_context.base.source_fingerprint,
+            )
+            occurrence_id = task_graph_materializer.task_graph_source_occurrence_id(
+                formal_source,
+                formal_task.family,
+            )
+            direct_node_id = task_graph_materializer.task_graph_node_id(
+                direct_graph_id,
+                task.task_id,
+                occurrence_id,
+            )
+            direct_references = task_graph_materializer._references(
+                formal_task,
+                control,
+                direct_node_id,
+                formal_source,
+                materialization_context.definitions,
+                materialization_context.template_refs_by_node,
+            )
+            task_reasons.extend(
+                _source_contract_reasons(
+                    formal_source,
+                    source_path=source_path,
+                    json_path=json_path,
+                    content_sha256=expected_sha,
+                    require_fingerprint=True,
+                )
+            )
+            if (
+                node_kind != "leaf"
+                or node_status != "materialized"
+                or tuple(owner_domains) != ("task_graph_execution",)
+                or node_reason
+            ):
+                task_reasons.append("formal_task_node_contract_not_materialized_leaf")
+            if len(direct_references) != 1:
+                task_reasons.append("formal_task_node_audit_reference_count_invalid")
+            else:
+                direct_reference = direct_references[0]
+                direct_reference_rows.append(
+                    {
+                        "reference_kind": direct_reference.reference_kind,
+                        "definition_id": direct_reference.definition_id,
+                        "resolution_status": direct_reference.resolution_status,
+                        "owner_domain": direct_reference.owner_domain,
+                        "blocked_reason": direct_reference.blocked_reason,
+                        "source": direct_reference.source.to_json(),
+                    }
+                )
+                if (
+                    direct_reference.reference_kind != "effect"
+                    or direct_reference.definition_id != task.effect_id
+                    or direct_reference.resolution_status != "deferred"
+                    or direct_reference.blocked_reason != AUDIT_EFFECT_BLOCKER
+                    or direct_reference.source != formal_source
+                ):
+                    task_reasons.append("formal_task_node_audit_reference_invalid")
+        except (TypeError, ValueError, RuntimeError) as exc:
+            task_reasons.append(
+                "formal_task_node_contract_blocked:"
+                + type(exc).__name__
+                + ":"
+                + str(exc)
+            )
+
         entry, graph = _ability_entry(
             canonical,
             materialization_context,
@@ -404,11 +496,11 @@ def _validate_ability_occurrence(
         )
         node = None
         references: list[dict[str, Any]] = []
-        if entry.status != "materialized" or graph is None:
-            task_reasons.append(
-                "formal_task_graph_missing:"
-                + str(entry.blocked_reason or entry.status)
-            )
+        if entry.status != "materialized":
+            if graph is not None:
+                task_reasons.append("formal_task_graph_blocked_entry_published_graph")
+        elif graph is None:
+            task_reasons.append("formal_task_graph_materialized_entry_graph_missing")
         else:
             nodes = tuple(
                 candidate
@@ -454,6 +546,8 @@ def _validate_ability_occurrence(
                         or reference.definition_id != task.effect_id
                         or reference.resolution_status != "deferred"
                         or reference.blocked_reason != AUDIT_EFFECT_BLOCKER
+                        or direct_reference is None
+                        or reference != direct_reference
                     ):
                         task_reasons.append(
                             "formal_task_graph_audit_reference_invalid"
@@ -483,6 +577,8 @@ def _validate_ability_occurrence(
                 "entry_blocked_reason": entry.blocked_reason,
                 "graph_id": graph.graph_id if graph is not None else "",
                 "graph_node_id": node.graph_node_id if node is not None else "",
+                "direct_node_id": direct_node_id,
+                "direct_references": direct_reference_rows,
                 "references": references,
                 "reasons": list(dict.fromkeys(task_reasons)),
             }
