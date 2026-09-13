@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import random
@@ -57,13 +58,17 @@ if os.environ.get("P9_A2_P4_EXTERNAL_BASELINE") != "1":
     sys.path.insert(0, str(BASELINE))
 
 from hsr.simulator_v8_clean_core.rules.evaluator import RuleEvaluator
+from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR, TargetExpressionIR
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.rules.task_graph import TaskGraphIR
 from hsr.simulator_v8_clean_core.systems.action_contract import (
     _formal_action_task_graph_projection,
 )
 from hsr.simulator_v8_clean_core.systems.task_graph import TaskGraphExecutor
-from hsr.simulator_v8_clean_core.tbgd import task_graph_materializer
+from hsr.simulator_v8_clean_core.tbgd import (
+    lowering as lowering_module,
+    task_graph_materializer,
+)
 from hsr.simulator_v8_clean_core.tbgd.coverage import ability_task_execution_mode
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
     _process_only_ability_task_source_blocked_reason,
@@ -84,6 +89,7 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p3_wait_anim_state_process
     _enriched_provenance,
     _family_for_task,
     _process_contract_ok,
+    _slice_materialization_context,
     _state_channel_deltas,
 )
 
@@ -580,6 +586,10 @@ def _validate_status_occurrence(
 
 def formal_denominator(root: Path) -> dict[str, Any]:
     view = _FormalTaskGraphViewBuilder(root)
+    lowerer = view.production_lowerer
+    source_catalog = view.source_catalog
+    snapshot = view.snapshot
+    formal_context = view.formal_context
     scope_view = view.scope.for_families((FAMILY,))
     records = tuple(
         record
@@ -606,47 +616,11 @@ def formal_denominator(root: Path) -> dict[str, Any]:
             + json.dumps(bad_scope[:8], sort_keys=True)
         )
 
-    print("P4_STAGE denominator_canonical_start", file=sys.stderr, flush=True)
-    canonical = view.build()
-    print("P4_STAGE denominator_canonical_done", file=sys.stderr, flush=True)
-
-    effect_by_id = {effect.effect_id: effect for effect in canonical.effects}
-    if len(effect_by_id) != len(canonical.effects):
-        fail("formal_effect_identity_ambiguous")
-    callback_by_id = {
-        callback.callback_id: callback for callback in canonical.status_callbacks
-    }
-    if len(callback_by_id) != len(canonical.status_callbacks):
-        fail("formal_status_callback_identity_ambiguous")
-
-    materialization_context = task_graph_materializer._prepare_materialization(
-        view.source_catalog,
-        canonical,
-        view.snapshot,
-    )
-    ability_entry_cache: dict[
-        tuple[str, str], tuple[Any, TaskGraphIR | None]
-    ] = {}
-    status_entry_cache: dict[str, tuple[Any, TaskGraphIR | None]] = {}
-
-    ability_groups: dict[tuple[str, str], list[Any]] = {}
-    for task in canonical.ability_tasks:
-        if _family_for_task(task) != FAMILY:
-            continue
-        ability_groups.setdefault(_source_location(task.source), []).append(task)
-
-    status_groups: dict[tuple[str, str], list[Any]] = {}
-    for task in canonical.status_callback_tasks:
-        raw_family = task.source.evidence.get("raw_opcode")
-        if task.opcode != FAMILY and raw_family != FAMILY:
-            continue
-        status_groups.setdefault(_source_location(task.source), []).append(task)
-
     snapshot_sha_by_path = {
         str(source.source.source_path): str(source.content_sha256)
-        for source in view.snapshot.sources
+        for source in snapshot.sources
     }
-    if len(snapshot_sha_by_path) != len(view.snapshot.sources):
+    if len(snapshot_sha_by_path) != len(snapshot.sources):
         fail("snapshot_source_identity_ambiguous")
 
     record_keys = [
@@ -655,32 +629,24 @@ def formal_denominator(root: Path) -> dict[str, Any]:
     ]
     if len(record_keys) != len(set(record_keys)):
         fail("set_entity_visible_scope_occurrence_identity_ambiguous")
+    record_key_set = set(record_keys)
 
     field_sets: Counter[tuple[str, ...]] = Counter()
     field_types: Counter[tuple[tuple[str, str], ...]] = Counter()
-    partition_rows: dict[str, list[dict[str, Any]]] = {
-        PARTITION_A: [],
-        PARTITION_B: [],
-        PARTITION_C: [],
-        PARTITION_D: [],
-    }
-    reason_counts: Counter[str] = Counter()
-    producer_task_count = Counter()
-
+    raw_reasons: dict[tuple[str, str], list[str]] = {}
     for record in records:
         source_path = str(record.source.source_path)
         json_path = _object_json_path(record)
+        key = (source_path, json_path)
         occurrence_reasons: list[str] = []
-        expected_sha = str(
-            view.formal_context.content_sha256_by_path.get(source_path) or ""
-        )
+        expected_sha = str(formal_context.content_sha256_by_path.get(source_path) or "")
         snapshot_sha = snapshot_sha_by_path.get(source_path, "")
         if len(expected_sha) != 64:
             occurrence_reasons.append("source_content_fingerprint_missing")
         elif snapshot_sha != expected_sha:
             occurrence_reasons.append("snapshot_formal_content_fingerprint_mismatch")
 
-        document = view.formal_context.documents.get(source_path)
+        document = formal_context.documents.get(source_path)
         raw: object = None
         if document is not None and json_path.startswith("$"):
             try:
@@ -698,27 +664,396 @@ def formal_denominator(root: Path) -> dict[str, Any]:
             )
             if source_reason:
                 occurrence_reasons.append("source_contract:" + source_reason)
-            field_sets[tuple(sorted(str(key) for key in raw))] += 1
+            field_sets[tuple(sorted(str(field) for field in raw))] += 1
             field_types[
                 tuple(
                     sorted(
-                        (str(key), _field_type(value))
-                        for key, value in raw.items()
+                        (str(field), _field_type(value))
+                        for field, value in raw.items()
                     )
                 )
             ] += 1
+        raw_reasons[key] = list(dict.fromkeys(occurrence_reasons))
 
+    empty_canonical = CanonicalIR(version=lowering_module.BASELINE_VERSION)
+    base_materialization_context = task_graph_materializer._prepare_materialization(
+        source_catalog,
+        empty_canonical,
+        snapshot,
+    )
+
+    ability_evidence: dict[tuple[str, str], dict[str, Any]] = {}
+    status_evidence: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def record_ability_slice(
+        *,
+        phases: list[Any] | tuple[Any, ...],
+        tasks: list[Any] | tuple[Any, ...],
+        effects: list[Any] | tuple[Any, ...],
+        conditions: list[Any] | tuple[Any, ...],
+        standalone_graphs: list[Any] | tuple[Any, ...] = (),
+    ) -> None:
+        groups: dict[tuple[str, str], list[Any]] = {}
+        for task in tasks:
+            if _family_for_task(task) != FAMILY:
+                continue
+            key = _source_location(task.source)
+            if key in record_key_set:
+                groups.setdefault(key, []).append(task)
+        if not groups:
+            return
+
+        canonical = CanonicalIR(
+            version=lowering_module.BASELINE_VERSION,
+            ability_phases=tuple(phases),
+            ability_tasks=tuple(tasks),
+            standalone_ability_graphs=tuple(standalone_graphs),
+            effects=tuple(effects),
+            conditions=tuple(conditions),
+        )
+        context = _slice_materialization_context(
+            base_materialization_context,
+            conditions=conditions,
+            effects=effects,
+            phases=phases,
+            standalone_graphs=standalone_graphs,
+        )
+        effect_by_id = {effect.effect_id: effect for effect in effects}
+        if len(effect_by_id) != len(effects):
+            fail("formal_ability_slice_effect_identity_ambiguous")
+        entry_cache: dict[
+            tuple[str, str], tuple[Any, TaskGraphIR | None]
+        ] = {}
+        for key, matching in groups.items():
+            expected_sha = str(
+                formal_context.content_sha256_by_path.get(key[0]) or ""
+            )
+            reasons, rows = _validate_ability_occurrence(
+                canonical=canonical,
+                materialization_context=context,
+                entry_cache=entry_cache,
+                effect_by_id=effect_by_id,
+                matching_tasks=tuple(matching),
+                source_path=key[0],
+                json_path=key[1],
+                expected_sha=expected_sha,
+            )
+            bucket = ability_evidence.setdefault(
+                key,
+                {"count": 0, "reasons": [], "producer_rows": []},
+            )
+            bucket["count"] += len(matching)
+            bucket["reasons"].extend(reasons)
+            bucket["producer_rows"].extend(rows)
+
+    action_definitions = lowerer._lower_action_definitions()
+    action_phase_metadata: list[Any] = []
+    for index, definition in enumerate(action_definitions):
+        (
+            _bindings,
+            phases,
+            tasks,
+            effects,
+            conditions,
+            _formulas,
+            _targets,
+        ) = lowerer._lower_action_ability_bindings((definition,))
+        if definition.action_id.startswith("avatar_skill:"):
+            action_phase_metadata.extend(phases)
+        record_ability_slice(
+            phases=phases,
+            tasks=tasks,
+            effects=effects,
+            conditions=conditions,
+        )
+        del _bindings, phases, tasks, effects, conditions, _formulas, _targets
+        if index % 32 == 31:
+            gc.collect()
+
+    ability_files = lowerer._ability_files()
+    formal_ability_source_paths = set(formal_context.documents)
+    formal_ability_files = [
+        path
+        for path in ability_files
+        if lowering_module.relative_source_path(root, path)
+        in formal_ability_source_paths
+    ]
+    standalone_graphs: list[Any] = []
+    standalone_phases: list[Any] = []
+    for index, path in enumerate(formal_ability_files):
+        (
+            file_graphs,
+            file_phases,
+            file_tasks,
+            file_effects,
+            file_conditions,
+            _file_formulas,
+            _file_targets,
+            _file_roots,
+        ) = lowerer._lower_standalone_ability_graphs([path])
+        standalone_graphs.extend(file_graphs)
+        standalone_phases.extend(file_phases)
+        record_ability_slice(
+            phases=file_phases,
+            tasks=file_tasks,
+            effects=file_effects,
+            conditions=file_conditions,
+            standalone_graphs=file_graphs,
+        )
+        del (
+            file_graphs,
+            file_phases,
+            file_tasks,
+            file_effects,
+            file_conditions,
+            _file_formulas,
+            _file_targets,
+            _file_roots,
+        )
+        if index % 16 == 15:
+            gc.collect()
+
+    status_callbacks: list[Any] = []
+    status_callback_tasks: list[Any] = []
+    status_effects: list[Any] = []
+    status_conditions: list[Any] = []
+    status_targets: list[Any] = []
+    queue_priorities = lowerer._lower_queue_priorities()
+    queue_priority_lookup = {
+        (priority.priority_table, priority.priority_key): priority
+        for priority in queue_priorities
+        if priority.coverage_status == "executable"
+    }
+    formal_status_root_paths = {
+        item.source.source_path for item in snapshot.sources
+    }
+    for ability_file_order, path in enumerate(ability_files):
+        relative = lowering_module.relative_source_path(root, path)
+        if (
+            relative.startswith("Config/ConfigAbility/Equip/")
+            or relative not in formal_status_root_paths
+        ):
+            continue
+        lowered = lowerer._lower_ability_file(
+            path,
+            queue_priority_lookup,
+            ability_file_order=ability_file_order,
+            formal_status_source_context=formal_context,
+        )
+        status_callbacks.extend(lowered.status_callbacks)
+        status_callback_tasks.extend(lowered.status_callback_tasks)
+
+        p4_callback_ids = {
+            task.callback_id
+            for task in lowered.status_callback_tasks
+            if (
+                task.opcode == FAMILY
+                or task.source.evidence.get("raw_opcode") == FAMILY
+            )
+            and _source_location(task.source) in record_key_set
+        }
+        selected_callback_tasks = [
+            task
+            for task in lowered.status_callback_tasks
+            if task.callback_id in p4_callback_ids
+        ]
+        needed_effect_ids = {
+            task.effect_id
+            for task in lowered.status_callback_tasks
+            if task.effect_id
+            and (
+                task.opcode == "TriggerAbility"
+                or task.callback_id in p4_callback_ids
+            )
+        }
+        needed_condition_ids = {
+            task.condition_id
+            for task in selected_callback_tasks
+            if task.condition_id
+        }
+        needed_target_ids = {
+            task.target_expression_id
+            for task in selected_callback_tasks
+            if task.target_expression_id
+        }
+        status_effects.extend(
+            effect
+            for effect in lowered.effects
+            if effect.effect_id in needed_effect_ids
+        )
+        status_conditions.extend(
+            condition
+            for condition in lowered.conditions
+            if condition.condition_id in needed_condition_ids
+        )
+        status_targets.extend(
+            target
+            for target in lowered.target_expressions
+            if target.target_expression_id in needed_target_ids
+        )
+        del lowered
+        if ability_file_order % 32 == 31:
+            gc.collect()
+
+    status_callback_tasks = list(
+        lowering_module._link_status_trigger_ability_graphs(
+            status_callback_tasks,
+            status_callbacks,
+            status_effects,
+            standalone_graphs,
+        )
+    )
+    status_event_families = lowering_module._lower_status_event_families(
+        status_callbacks,
+        status_callback_tasks,
+    )
+    all_phase_metadata = [*action_phase_metadata, *standalone_phases]
+    (
+        status_callbacks,
+        status_callback_tasks,
+        _status_callback_finalization_audit,
+    ) = lowering_module._finalize_action_window_status_callback_admission(
+        status_callbacks,
+        status_callback_tasks,
+        status_event_families,
+        status_effects,
+        standalone_graphs,
+        all_phase_metadata,
+        formal_status_root_paths,
+    )
+    status_event_families = lowering_module._lower_status_event_families(
+        status_callbacks,
+        status_callback_tasks,
+    )
+    status_event_blocked_reasons = lowering_module._status_event_blocked_reasons(
+        status_event_families
+    )
+    status_callbacks = list(
+        lowering_module._block_status_callbacks_by_event_family(
+            status_callbacks,
+            status_event_blocked_reasons,
+        )
+    )
+    status_callback_blocked_reasons = {
+        callback.callback_id: (
+            status_event_blocked_reasons.get(callback.event)
+            or callback.blocked_reason
+            or callback.blocking_dependency
+        )
+        for callback in status_callbacks
+        if (
+            callback.event in status_event_blocked_reasons
+            or callback.blocked_reason
+            == "equipment_modifier_definition_unreferenced"
+        )
+    }
+    status_callback_tasks = list(
+        lowering_module._block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+    )
+
+    status_groups: dict[tuple[str, str], list[Any]] = {}
+    for task in status_callback_tasks:
+        raw_family = task.source.evidence.get("raw_opcode")
+        if task.opcode != FAMILY and raw_family != FAMILY:
+            continue
+        key = _source_location(task.source)
+        if key in record_key_set:
+            status_groups.setdefault(key, []).append(task)
+
+    if status_groups:
+        callback_by_id = {
+            callback.callback_id: callback for callback in status_callbacks
+        }
+        if len(callback_by_id) != len(status_callbacks):
+            fail("formal_status_callback_identity_ambiguous")
+        status_canonical = CanonicalIR(
+            version=lowering_module.BASELINE_VERSION,
+            status_callbacks=tuple(status_callbacks),
+            status_callback_tasks=tuple(status_callback_tasks),
+        )
+        status_context = _slice_materialization_context(
+            base_materialization_context,
+            conditions=status_conditions,
+            effects=status_effects,
+            phases=all_phase_metadata,
+            standalone_graphs=standalone_graphs,
+        )
+        if status_targets:
+            status_context = replace(
+                status_context,
+                definitions=replace(
+                    status_context.definitions,
+                    targets=task_graph_materializer._definition_multimap(
+                        status_targets,
+                        TargetExpressionIR,
+                        "target_expression_id",
+                    ),
+                ),
+            )
+        status_entry_cache: dict[str, tuple[Any, TaskGraphIR | None]] = {}
+        for key, matching in status_groups.items():
+            expected_sha = str(
+                formal_context.content_sha256_by_path.get(key[0]) or ""
+            )
+            reasons, rows = _validate_status_occurrence(
+                canonical=status_canonical,
+                materialization_context=status_context,
+                callback_by_id=callback_by_id,
+                entry_cache=status_entry_cache,
+                matching_tasks=tuple(matching),
+                source_path=key[0],
+                json_path=key[1],
+                expected_sha=expected_sha,
+            )
+            status_evidence[key] = {
+                "count": len(matching),
+                "reasons": reasons,
+                "producer_rows": rows,
+            }
+
+    del (
+        status_callbacks,
+        status_callback_tasks,
+        status_effects,
+        status_conditions,
+        status_targets,
+        action_phase_metadata,
+        standalone_graphs,
+        standalone_phases,
+    )
+    gc.collect()
+
+    partition_rows: dict[str, list[dict[str, Any]]] = {
+        PARTITION_A: [],
+        PARTITION_B: [],
+        PARTITION_C: [],
+        PARTITION_D: [],
+    }
+    reason_counts: Counter[str] = Counter()
+    producer_task_count = Counter()
+
+    for record in records:
+        source_path = str(record.source.source_path)
+        json_path = _object_json_path(record)
         key = (source_path, json_path)
-        ability_tasks = tuple(ability_groups.get(key, ()))
-        status_tasks = tuple(status_groups.get(key, ()))
+        occurrence_reasons = list(raw_reasons.get(key, ()))
+        ability = ability_evidence.get(
+            key, {"count": 0, "reasons": [], "producer_rows": []}
+        )
+        status = status_evidence.get(
+            key, {"count": 0, "reasons": [], "producer_rows": []}
+        )
         templates, template_references = _template_attribution(
-            view.source_catalog,
+            source_catalog,
             source_path=source_path,
             json_path=json_path,
         )
         partition, partition_reason = _producer_partition_kind(
-            ability_count=len(ability_tasks),
-            status_count=len(status_tasks),
+            ability_count=int(ability["count"]),
+            status_count=int(status["count"]),
             template_count=len(templates),
             template_reference_count=len(template_references),
         )
@@ -727,31 +1062,13 @@ def formal_denominator(root: Path) -> dict[str, Any]:
 
         producer_rows: list[dict[str, Any]] = []
         if partition == PARTITION_A:
-            ability_reasons, producer_rows = _validate_ability_occurrence(
-                canonical=canonical,
-                materialization_context=materialization_context,
-                entry_cache=ability_entry_cache,
-                effect_by_id=effect_by_id,
-                matching_tasks=ability_tasks,
-                source_path=source_path,
-                json_path=json_path,
-                expected_sha=expected_sha,
-            )
-            occurrence_reasons.extend(ability_reasons)
-            producer_task_count[PARTITION_A] += len(ability_tasks)
+            occurrence_reasons.extend(ability["reasons"])
+            producer_rows = list(ability["producer_rows"])
+            producer_task_count[PARTITION_A] += int(ability["count"])
         elif partition == PARTITION_B:
-            status_reasons, producer_rows = _validate_status_occurrence(
-                canonical=canonical,
-                materialization_context=materialization_context,
-                callback_by_id=callback_by_id,
-                entry_cache=status_entry_cache,
-                matching_tasks=status_tasks,
-                source_path=source_path,
-                json_path=json_path,
-                expected_sha=expected_sha,
-            )
-            occurrence_reasons.extend(status_reasons)
-            producer_task_count[PARTITION_B] += len(status_tasks)
+            occurrence_reasons.extend(status["reasons"])
+            producer_rows = list(status["producer_rows"])
+            producer_task_count[PARTITION_B] += int(status["count"])
         elif partition == PARTITION_C:
             producer_rows = [
                 {
@@ -772,7 +1089,9 @@ def formal_denominator(root: Path) -> dict[str, Any]:
         row = {
             "source_path": source_path,
             "json_path": json_path,
-            "content_sha256": expected_sha,
+            "content_sha256": str(
+                formal_context.content_sha256_by_path.get(source_path) or ""
+            ),
             "avatar_id": record.source.evidence.get("avatar_id"),
             "source_kind": record.source.evidence.get("source_kind"),
             "parent_branch_path": record.parent_branch_path,
@@ -821,7 +1140,7 @@ def formal_denominator(root: Path) -> dict[str, Any]:
         "field_types": {
             str(key): value for key, value in sorted(field_types.items())
         },
-        "source_fingerprint": view.snapshot.source_fingerprint,
+        "source_fingerprint": snapshot.source_fingerprint,
         "samples": {
             key: rows[:4] for key, rows in partition_rows.items()
         },
@@ -839,6 +1158,7 @@ def formal_denominator(root: Path) -> dict[str, Any]:
             ),
             "no_formal_producer_count": counts[PARTITION_C],
         },
+        "materialization_mode": "streamed_source_slices",
     }
 
 
