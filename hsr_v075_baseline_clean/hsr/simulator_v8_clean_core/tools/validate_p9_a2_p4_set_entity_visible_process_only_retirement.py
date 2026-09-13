@@ -642,6 +642,13 @@ def formal_denominator(root: Path) -> dict[str, Any]:
             continue
         status_groups.setdefault(_source_location(task.source), []).append(task)
 
+    snapshot_sha_by_path = {
+        str(source.source.source_path): str(source.content_sha256)
+        for source in view.snapshot.sources
+    }
+    if len(snapshot_sha_by_path) != len(view.snapshot.sources):
+        fail("snapshot_source_identity_ambiguous")
+
     record_keys = [
         (str(record.source.source_path), _object_json_path(record))
         for record in records
@@ -667,11 +674,11 @@ def formal_denominator(root: Path) -> dict[str, Any]:
         expected_sha = str(
             view.formal_context.content_sha256_by_path.get(source_path) or ""
         )
-        record_sha = str(record.source.evidence.get("content_sha256") or "")
+        snapshot_sha = snapshot_sha_by_path.get(source_path, "")
         if len(expected_sha) != 64:
             occurrence_reasons.append("source_content_fingerprint_missing")
-        elif record_sha != expected_sha:
-            occurrence_reasons.append("scope_source_content_fingerprint_mismatch")
+        elif snapshot_sha != expected_sha:
+            occurrence_reasons.append("snapshot_formal_content_fingerprint_mismatch")
 
         document = view.formal_context.documents.get(source_path)
         raw: object = None
