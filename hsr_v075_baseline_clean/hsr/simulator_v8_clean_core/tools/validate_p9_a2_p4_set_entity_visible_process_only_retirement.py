@@ -22,6 +22,7 @@ TBGD = ROOT / "turnbasedgamedata-main"
 BASE_SHA = "4beebe293f74e37e709d5cfc978f098d1e804128"
 TBGD_PIN = "14c1d18f91a8101d610e6c523447a7517de3fae1"
 FAMILY = "SetEntityVisible"
+
 COVERAGE = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
 LOWERING = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
 TEST = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py"
@@ -30,6 +31,7 @@ REPORT = "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P4_SET_ENTIT
 WORKFLOW = ".github/workflows/p9-a2-p4-pr-validation.yml"
 CARD = "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P4_SET_ENTITY_VISIBLE_PROCESS_ONLY_RETIREMENT.md"
 ALLOWED = {COVERAGE, LOWERING, TEST, VALIDATOR, REPORT, WORKFLOW, CARD}
+
 READ_ONLY = (
     "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_ability_scope.py",
     "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/character_control_flow_contracts.py",
@@ -41,10 +43,15 @@ READ_ONLY = (
     "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/task_graph.py",
     "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/core/executor.py",
 )
+
 SET_UNSUPPORTED = "effect_coverage_status:unsupported:SetEntityVisible"
 UNSUPPORTED_DEFINITION = "task_graph_definition_not_admitted:effect:unsupported"
 DAMAGE_HEAL_SHIELD = "task_graph_control_requires_domains:damage_heal_shield"
 HIT_RANDOM = "task_graph_control_requires_domains:hit_random_sequence"
+PARTITION_A = "formal_ability_task"
+PARTITION_B = "formal_status_callback_task"
+PARTITION_C = "template_definition_no_formal_producer"
+PARTITION_D = "blocked_or_unresolved"
 
 if os.environ.get("P9_A2_P4_EXTERNAL_BASELINE") != "1":
     sys.path.insert(0, str(BASELINE))
@@ -56,6 +63,7 @@ from hsr.simulator_v8_clean_core.systems.action_contract import (
     _formal_action_task_graph_projection,
 )
 from hsr.simulator_v8_clean_core.systems.task_graph import TaskGraphExecutor
+from hsr.simulator_v8_clean_core.tbgd import task_graph_materializer
 from hsr.simulator_v8_clean_core.tbgd.coverage import ability_task_execution_mode
 from hsr.simulator_v8_clean_core.tbgd.lowering import (
     _process_only_ability_task_source_blocked_reason,
@@ -66,9 +74,9 @@ from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
 )
 from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p1_formal_process_only_source_identity import (
     _accepted_context,
-    _build_context,
-    _definitions,
     _state_for_admission,
+    build_context as _build_context,
+    definitions as _definitions,
 )
 from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p3_wait_anim_state_process_only_barrier_retirement import (
     AUDIT_EFFECT_BLOCKER,
@@ -76,7 +84,6 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p3_wait_anim_state_process
     _enriched_provenance,
     _family_for_task,
     _process_contract_ok,
-    _source_identity,
     _state_channel_deltas,
 )
 
@@ -127,6 +134,7 @@ def governance() -> dict[str, Any]:
         baseline = git("show", f"{BASE_SHA}:{path}").rstrip("\n")
         if current != baseline:
             fail("read_only_authority_changed:" + path)
+
     coverage_diff = git("diff", "--unified=0", BASE_SHA, "HEAD", "--", COVERAGE)
     lowering_diff = git("diff", "--unified=0", BASE_SHA, "HEAD", "--", LOWERING)
     if coverage_diff.count('+        "SetEntityVisible",') != 1:
@@ -151,6 +159,8 @@ def governance() -> dict[str, Any]:
         "changed_paths": list(changed),
         "production_paths": list(production),
         "read_only_authorities_unchanged": True,
+        "status_callback_authority_unchanged": True,
+        "task_graph_materializer_unchanged": True,
     }
 
 
@@ -163,9 +173,44 @@ def _raw_family(value: object) -> str:
     return raw_type.rsplit(".", 1)[-1]
 
 
+def _normalize_json_path(path: object) -> str:
+    value = str(path or "")
+    return value[:-6] if value.endswith(".$type") else value
+
+
 def _object_json_path(record: Any) -> str:
-    path = str(record.source.evidence.get("json_path") or "")
-    return path[:-6] if path.endswith(".$type") else path
+    return _normalize_json_path(record.source.evidence.get("json_path"))
+
+
+def _source_location(source: Any) -> tuple[str, str]:
+    return (
+        str(source.source_path),
+        _normalize_json_path(source.evidence.get("json_path")),
+    )
+
+
+def _source_contract_reasons(
+    source: Any,
+    *,
+    source_path: str,
+    json_path: str,
+    content_sha256: str,
+    require_fingerprint: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if _source_location(source) != (source_path, json_path):
+        reasons.append("source_location_mismatch")
+    actual_sha = str(source.evidence.get("content_sha256") or "")
+    if actual_sha and actual_sha != content_sha256:
+        reasons.append("source_content_fingerprint_conflict")
+    if require_fingerprint and actual_sha != content_sha256:
+        reasons.append("source_content_fingerprint_missing_or_mismatch")
+    if require_fingerprint and source.evidence.get("content_fingerprint_scope") not in {
+        None,
+        "source_file",
+    }:
+        reasons.append("source_content_fingerprint_scope_invalid")
+    return reasons
 
 
 def _field_type(value: object) -> str:
@@ -178,6 +223,361 @@ def _field_type(value: object) -> str:
     return type(value).__name__
 
 
+def _producer_partition_kind(
+    *,
+    ability_count: int,
+    status_count: int,
+    template_count: int,
+    template_reference_count: int,
+) -> tuple[str, str]:
+    if ability_count and status_count:
+        return PARTITION_D, "formal_producer_kind_ambiguous"
+    if ability_count:
+        return PARTITION_A, ""
+    if status_count:
+        return PARTITION_B, ""
+    if template_count > 1:
+        return PARTITION_D, "template_definition_identity_ambiguous"
+    if template_count == 1:
+        if template_reference_count:
+            return PARTITION_D, "template_reference_missing_formal_expansion"
+        return PARTITION_C, ""
+    return PARTITION_D, "formal_producer_unresolved"
+
+
+def _template_attribution(
+    source_catalog: Any,
+    *,
+    source_path: str,
+    json_path: str,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    candidates: list[tuple[int, Any]] = []
+    for template in source_catalog.template_definitions:
+        if template.source.source_path != source_path:
+            continue
+        template_path = _normalize_json_path(template.source.evidence.get("json_path"))
+        task_prefix = f"{template_path}.TaskList["
+        if json_path.startswith(task_prefix):
+            candidates.append((len(template_path), template))
+    if not candidates:
+        return (), ()
+    max_prefix = max(length for length, _template in candidates)
+    templates = tuple(
+        template
+        for length, template in candidates
+        if length == max_prefix
+    )
+    template_ids = {template.template_id for template in templates}
+    references = tuple(
+        reference
+        for reference in source_catalog.template_references
+        if template_ids.intersection(reference.candidate_template_ids)
+        or reference.resolved_template_id in template_ids
+    )
+    return templates, references
+
+
+def _ability_entry(
+    canonical: Any,
+    materialization_context: Any,
+    cache: dict[tuple[str, str], tuple[Any, TaskGraphIR | None]],
+    task: Any,
+) -> tuple[Any, TaskGraphIR | None]:
+    key = (task.phase_id, task.callback_kind)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    phase_tasks = tuple(
+        candidate
+        for candidate in canonical.ability_tasks
+        if candidate.phase_id == task.phase_id
+        and candidate.callback_kind == task.callback_kind
+    )
+    if not phase_tasks:
+        fail("ability_entry_task_denominator_empty")
+    entry, graph = task_graph_materializer._materialize_entry(
+        materialization_context,
+        "ability_phase_callback",
+        task.phase_id,
+        task.callback_kind,
+        tuple(candidate.task_id for candidate in phase_tasks),
+        tuple(task_graph_materializer._ability_task(candidate) for candidate in phase_tasks),
+    )
+    cache[key] = (entry, graph)
+    return entry, graph
+
+
+def _status_entry(
+    canonical: Any,
+    materialization_context: Any,
+    callback_by_id: Mapping[str, Any],
+    cache: dict[str, tuple[Any, TaskGraphIR | None]],
+    task: Any,
+) -> tuple[Any, TaskGraphIR | None]:
+    cached = cache.get(task.callback_id)
+    if cached is not None:
+        return cached
+    callback = callback_by_id.get(task.callback_id)
+    if callback is None:
+        fail("status_callback_owner_missing")
+    tasks = tuple(
+        candidate
+        for candidate in canonical.status_callback_tasks
+        if candidate.callback_id == task.callback_id
+    )
+    if not tasks:
+        fail("status_callback_task_denominator_empty")
+    ordered = task_graph_materializer._ordered_status_task_ids(callback, tasks)
+    entry, graph = task_graph_materializer._materialize_entry(
+        materialization_context,
+        "status_callback",
+        callback.callback_id,
+        callback.event,
+        ordered,
+        tuple(task_graph_materializer._status_task(candidate) for candidate in tasks),
+    )
+    cache[task.callback_id] = (entry, graph)
+    return entry, graph
+
+
+def _validate_ability_occurrence(
+    *,
+    canonical: Any,
+    materialization_context: Any,
+    entry_cache: dict[tuple[str, str], tuple[Any, TaskGraphIR | None]],
+    effect_by_id: Mapping[str, Any],
+    matching_tasks: tuple[Any, ...],
+    source_path: str,
+    json_path: str,
+    expected_sha: str,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    reasons: list[str] = []
+    producer_rows: list[dict[str, Any]] = []
+    for task in matching_tasks:
+        task_reasons: list[str] = []
+        if task.execution_mode != "process_only":
+            task_reasons.append("task_execution_mode_not_process_only")
+        if task.coverage_status != "audit_only" or task.blocked_reason:
+            task_reasons.append("task_not_admitted_audit_only")
+        if not task.effect_id:
+            task_reasons.append("task_effect_identity_missing")
+        task_reasons.extend(
+            _source_contract_reasons(
+                task.source,
+                source_path=source_path,
+                json_path=json_path,
+                content_sha256=expected_sha,
+                require_fingerprint=False,
+            )
+        )
+        effect = effect_by_id.get(task.effect_id) if task.effect_id else None
+        if effect is None:
+            task_reasons.append("audit_effect_missing")
+        else:
+            if not _process_contract_ok(effect, task):
+                task_reasons.append("audit_effect_process_only_contract_invalid")
+            if effect.source != task.source:
+                task_reasons.append("audit_effect_source_mismatch")
+            if effect.effect_id != task.effect_id or effect.opcode != FAMILY:
+                task_reasons.append("audit_effect_identity_mismatch")
+            task_reasons.extend(
+                _source_contract_reasons(
+                    effect.source,
+                    source_path=source_path,
+                    json_path=json_path,
+                    content_sha256=expected_sha,
+                    require_fingerprint=False,
+                )
+            )
+
+        entry, graph = _ability_entry(
+            canonical,
+            materialization_context,
+            entry_cache,
+            task,
+        )
+        node = None
+        references: list[dict[str, Any]] = []
+        if entry.status != "materialized" or graph is None:
+            task_reasons.append(
+                "formal_task_graph_missing:"
+                + str(entry.blocked_reason or entry.status)
+            )
+        else:
+            nodes = tuple(
+                candidate
+                for candidate in graph.nodes
+                if candidate.formal_task_id == task.task_id
+            )
+            if len(nodes) != 1:
+                task_reasons.append("formal_task_graph_node_missing_or_ambiguous")
+            else:
+                node = nodes[0]
+                if (
+                    node.node_kind != "leaf"
+                    or node.materialization_status != "materialized"
+                ):
+                    task_reasons.append("formal_task_graph_node_not_materialized_leaf")
+                task_reasons.extend(
+                    _source_contract_reasons(
+                        node.source,
+                        source_path=source_path,
+                        json_path=json_path,
+                        content_sha256=expected_sha,
+                        require_fingerprint=True,
+                    )
+                )
+                if len(node.references) != 1:
+                    task_reasons.append(
+                        "formal_task_graph_effect_reference_count_invalid"
+                    )
+                else:
+                    reference = node.references[0]
+                    references.append(
+                        {
+                            "reference_kind": reference.reference_kind,
+                            "definition_id": reference.definition_id,
+                            "resolution_status": reference.resolution_status,
+                            "owner_domain": reference.owner_domain,
+                            "blocked_reason": reference.blocked_reason,
+                            "source": reference.source.to_json(),
+                        }
+                    )
+                    if (
+                        reference.reference_kind != "effect"
+                        or reference.definition_id != task.effect_id
+                        or reference.resolution_status != "deferred"
+                        or reference.blocked_reason != AUDIT_EFFECT_BLOCKER
+                    ):
+                        task_reasons.append(
+                            "formal_task_graph_audit_reference_invalid"
+                        )
+                    task_reasons.extend(
+                        _source_contract_reasons(
+                            reference.source,
+                            source_path=source_path,
+                            json_path=json_path,
+                            content_sha256=expected_sha,
+                            require_fingerprint=True,
+                        )
+                    )
+
+        reasons.extend(task_reasons)
+        producer_rows.append(
+            {
+                "task_id": task.task_id,
+                "phase_id": task.phase_id,
+                "callback_kind": task.callback_kind,
+                "execution_mode": task.execution_mode,
+                "task_coverage_status": task.coverage_status,
+                "task_blocked_reason": task.blocked_reason,
+                "effect_id": task.effect_id,
+                "effect_coverage_status": getattr(effect, "coverage_status", ""),
+                "entry_status": entry.status,
+                "entry_blocked_reason": entry.blocked_reason,
+                "graph_id": graph.graph_id if graph is not None else "",
+                "graph_node_id": node.graph_node_id if node is not None else "",
+                "references": references,
+                "reasons": list(dict.fromkeys(task_reasons)),
+            }
+        )
+    return list(dict.fromkeys(reasons)), producer_rows
+
+
+def _validate_status_occurrence(
+    *,
+    canonical: Any,
+    materialization_context: Any,
+    callback_by_id: Mapping[str, Any],
+    entry_cache: dict[str, tuple[Any, TaskGraphIR | None]],
+    matching_tasks: tuple[Any, ...],
+    source_path: str,
+    json_path: str,
+    expected_sha: str,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    reasons: list[str] = []
+    producer_rows: list[dict[str, Any]] = []
+    for task in matching_tasks:
+        task_reasons: list[str] = []
+        raw_family = task.source.evidence.get("raw_opcode")
+        if raw_family not in {None, "", FAMILY} or task.opcode != FAMILY:
+            task_reasons.append("status_task_family_mismatch")
+        task_reasons.extend(
+            _source_contract_reasons(
+                task.source,
+                source_path=source_path,
+                json_path=json_path,
+                content_sha256=expected_sha,
+                require_fingerprint=False,
+            )
+        )
+        callback = callback_by_id.get(task.callback_id)
+        if callback is None:
+            task_reasons.append("status_callback_owner_missing")
+        elif (
+            callback.callback_id != task.callback_id
+            or callback.event != task.event
+            or callback.source.source_path
+            != str(task.source.evidence.get("admission_source_path") or "")
+        ):
+            task_reasons.append("status_callback_owner_identity_mismatch")
+
+        formal_task = task_graph_materializer._status_task(task)
+        if formal_task.execution_mode != "runtime_effect":
+            task_reasons.append("status_formal_execution_mode_changed")
+
+        entry, graph = _status_entry(
+            canonical,
+            materialization_context,
+            callback_by_id,
+            entry_cache,
+            task,
+        )
+        node = None
+        if graph is not None:
+            nodes = tuple(
+                candidate
+                for candidate in graph.nodes
+                if candidate.formal_task_id == task.task_id
+            )
+            if len(nodes) != 1:
+                task_reasons.append("status_formal_graph_node_missing_or_ambiguous")
+            else:
+                node = nodes[0]
+                task_reasons.extend(
+                    _source_contract_reasons(
+                        node.source,
+                        source_path=source_path,
+                        json_path=json_path,
+                        content_sha256=expected_sha,
+                        require_fingerprint=True,
+                    )
+                )
+
+        reasons.extend(task_reasons)
+        producer_rows.append(
+            {
+                "task_id": task.task_id,
+                "callback_id": task.callback_id,
+                "event": task.event,
+                "task_coverage_status": task.coverage_status,
+                "task_blocked_reason": task.blocked_reason,
+                "formal_execution_mode": formal_task.execution_mode,
+                "entry_status": entry.status,
+                "entry_blocked_reason": entry.blocked_reason,
+                "graph_id": graph.graph_id if graph is not None else "",
+                "graph_node_id": node.graph_node_id if node is not None else "",
+                "node_materialization_status": (
+                    node.materialization_status if node is not None else ""
+                ),
+                "node_status_reason": node.status_reason if node is not None else "",
+                "disposition": "deferred_status_callback_formal_authority",
+                "reasons": list(dict.fromkeys(task_reasons)),
+            }
+        )
+    return list(dict.fromkeys(reasons)), producer_rows
+
+
 def formal_denominator(root: Path) -> dict[str, Any]:
     view = _FormalTaskGraphViewBuilder(root)
     scope_view = view.scope.for_families((FAMILY,))
@@ -188,6 +588,7 @@ def formal_denominator(root: Path) -> dict[str, Any]:
     )
     if not records:
         fail("set_entity_visible_source_scope_denominator_empty")
+
     bad_scope = [
         {
             "source_path": record.source.source_path,
@@ -200,47 +601,78 @@ def formal_denominator(root: Path) -> dict[str, Any]:
         or record.effective_scope != "non_gameplay"
     ]
     if bad_scope:
-        fail("set_entity_visible_non_presentation_scope:" + json.dumps(bad_scope[:8]))
+        fail(
+            "set_entity_visible_non_presentation_scope:"
+            + json.dumps(bad_scope[:8], sort_keys=True)
+        )
 
+    print("P4_STAGE denominator_canonical_start", file=sys.stderr, flush=True)
     canonical = view.build()
-    graph_catalog = materialize_ability_task_graph_catalog(
+    print("P4_STAGE denominator_canonical_done", file=sys.stderr, flush=True)
+
+    effect_by_id = {effect.effect_id: effect for effect in canonical.effects}
+    if len(effect_by_id) != len(canonical.effects):
+        fail("formal_effect_identity_ambiguous")
+    callback_by_id = {
+        callback.callback_id: callback for callback in canonical.status_callbacks
+    }
+    if len(callback_by_id) != len(canonical.status_callbacks):
+        fail("formal_status_callback_identity_ambiguous")
+
+    materialization_context = task_graph_materializer._prepare_materialization(
         view.source_catalog,
         canonical,
-        source_snapshot=view.snapshot,
+        view.snapshot,
     )
-    rules = RuleBook(replace(canonical, task_graph_catalog=graph_catalog))
-    tasks = tuple(
-        task for task in canonical.ability_tasks if _family_for_task(task) == FAMILY
-    )
-    if not tasks:
-        fail("set_entity_visible_formal_task_denominator_empty")
-    task_groups: dict[tuple[str, str], list[Any]] = {}
-    for task in tasks:
-        key = (
-            str(task.source.source_path),
-            str(task.source.evidence.get("json_path") or ""),
-        )
-        task_groups.setdefault(key, []).append(task)
+    ability_entry_cache: dict[
+        tuple[str, str], tuple[Any, TaskGraphIR | None]
+    ] = {}
+    status_entry_cache: dict[str, tuple[Any, TaskGraphIR | None]] = {}
+
+    ability_groups: dict[tuple[str, str], list[Any]] = {}
+    for task in canonical.ability_tasks:
+        if _family_for_task(task) != FAMILY:
+            continue
+        ability_groups.setdefault(_source_location(task.source), []).append(task)
+
+    status_groups: dict[tuple[str, str], list[Any]] = {}
+    for task in canonical.status_callback_tasks:
+        raw_family = task.source.evidence.get("raw_opcode")
+        if task.opcode != FAMILY and raw_family != FAMILY:
+            continue
+        status_groups.setdefault(_source_location(task.source), []).append(task)
 
     record_keys = [
-        (str(record.source.source_path), _object_json_path(record)) for record in records
+        (str(record.source.source_path), _object_json_path(record))
+        for record in records
     ]
     if len(record_keys) != len(set(record_keys)):
         fail("set_entity_visible_scope_occurrence_identity_ambiguous")
 
     field_sets: Counter[tuple[str, ...]] = Counter()
     field_types: Counter[tuple[tuple[str, str], ...]] = Counter()
-    blocked_reasons: Counter[str] = Counter()
-    admitted = 0
-    blocked = 0
-    task_count = 0
-    graph_node_count = 0
-    sample: dict[str, Any] | None = None
+    partition_rows: dict[str, list[dict[str, Any]]] = {
+        PARTITION_A: [],
+        PARTITION_B: [],
+        PARTITION_C: [],
+        PARTITION_D: [],
+    }
+    reason_counts: Counter[str] = Counter()
+    producer_task_count = Counter()
 
     for record in records:
         source_path = str(record.source.source_path)
         json_path = _object_json_path(record)
-        reasons: list[str] = []
+        occurrence_reasons: list[str] = []
+        expected_sha = str(
+            view.formal_context.content_sha256_by_path.get(source_path) or ""
+        )
+        record_sha = str(record.source.evidence.get("content_sha256") or "")
+        if len(expected_sha) != 64:
+            occurrence_reasons.append("source_content_fingerprint_missing")
+        elif record_sha != expected_sha:
+            occurrence_reasons.append("scope_source_content_fingerprint_mismatch")
+
         document = view.formal_context.documents.get(source_path)
         raw: object = None
         if document is not None and json_path.startswith("$"):
@@ -249,124 +681,164 @@ def formal_denominator(root: Path) -> dict[str, Any]:
             except (KeyError, IndexError, TypeError, ValueError):
                 raw = None
         if not isinstance(raw, Mapping):
-            reasons.append("raw_source_missing")
+            occurrence_reasons.append("raw_source_missing")
         else:
             if _raw_family(raw) != FAMILY:
-                reasons.append("raw_family_mismatch")
+                occurrence_reasons.append("raw_family_mismatch")
             source_reason = _process_only_ability_task_source_blocked_reason(
-                dict(raw), FAMILY
+                dict(raw),
+                FAMILY,
             )
             if source_reason:
-                reasons.append("source_contract:" + source_reason)
+                occurrence_reasons.append("source_contract:" + source_reason)
             field_sets[tuple(sorted(str(key) for key in raw))] += 1
             field_types[
-                tuple(sorted((str(key), _field_type(value)) for key, value in raw.items()))
+                tuple(
+                    sorted(
+                        (str(key), _field_type(value))
+                        for key, value in raw.items()
+                    )
+                )
             ] += 1
 
-        expected_sha = str(
-            view.formal_context.content_sha256_by_path.get(source_path) or ""
+        key = (source_path, json_path)
+        ability_tasks = tuple(ability_groups.get(key, ()))
+        status_tasks = tuple(status_groups.get(key, ()))
+        templates, template_references = _template_attribution(
+            view.source_catalog,
+            source_path=source_path,
+            json_path=json_path,
         )
-        if len(expected_sha) != 64:
-            reasons.append("source_content_fingerprint_missing")
-        matching_tasks = tuple(task_groups.get((source_path, json_path), ()))
-        if not matching_tasks:
-            reasons.append("formal_task_missing")
+        partition, partition_reason = _producer_partition_kind(
+            ability_count=len(ability_tasks),
+            status_count=len(status_tasks),
+            template_count=len(templates),
+            template_reference_count=len(template_references),
+        )
+        if partition_reason:
+            occurrence_reasons.append(partition_reason)
 
-        for task in matching_tasks:
-            task_count += 1
-            if task.execution_mode != "process_only":
-                reasons.append("task_execution_mode_not_process_only")
-            if task.coverage_status != "audit_only" or task.blocked_reason:
-                reasons.append("task_not_admitted_audit_only")
-            if _source_identity(task.source) != (source_path, json_path, expected_sha):
-                reasons.append("task_source_identity_mismatch")
-            effect = rules.effect(task.effect_id) if task.effect_id else None
-            if effect is None:
-                reasons.append("audit_effect_missing")
-            else:
-                if not _process_contract_ok(effect, task):
-                    reasons.append("audit_effect_process_only_contract_invalid")
-                if effect.source != task.source:
-                    reasons.append("audit_effect_source_mismatch")
-                if effect.effect_id != task.effect_id or effect.opcode != FAMILY:
-                    reasons.append("audit_effect_identity_mismatch")
-
-            phase_tasks = tuple(
-                candidate
-                for candidate in rules.ability_tasks_for_phase(task.phase_id)
-                if candidate.callback_kind == task.callback_kind
+        producer_rows: list[dict[str, Any]] = []
+        if partition == PARTITION_A:
+            ability_reasons, producer_rows = _validate_ability_occurrence(
+                canonical=canonical,
+                materialization_context=materialization_context,
+                entry_cache=ability_entry_cache,
+                effect_by_id=effect_by_id,
+                matching_tasks=ability_tasks,
+                source_path=source_path,
+                json_path=json_path,
+                expected_sha=expected_sha,
             )
-            query = rules.query_formal_task_graph(
-                "ability_phase_callback",
-                task.phase_id,
-                task.callback_kind,
-                (candidate.task_id for candidate in phase_tasks),
+            occurrence_reasons.extend(ability_reasons)
+            producer_task_count[PARTITION_A] += len(ability_tasks)
+        elif partition == PARTITION_B:
+            status_reasons, producer_rows = _validate_status_occurrence(
+                canonical=canonical,
+                materialization_context=materialization_context,
+                callback_by_id=callback_by_id,
+                entry_cache=status_entry_cache,
+                matching_tasks=status_tasks,
+                source_path=source_path,
+                json_path=json_path,
+                expected_sha=expected_sha,
             )
-            graph = query.value
-            if query.status != "resolved" or type(graph) is not TaskGraphIR:
-                reasons.append("formal_task_graph_missing")
-                continue
-            nodes = tuple(
-                node for node in graph.nodes if node.formal_task_id == task.task_id
-            )
-            if len(nodes) != 1:
-                reasons.append("formal_task_graph_node_missing_or_ambiguous")
-                continue
-            node = nodes[0]
-            graph_node_count += 1
-            if node.node_kind != "leaf" or node.materialization_status != "materialized":
-                reasons.append("formal_task_graph_node_not_materialized_leaf")
-            if _source_identity(node.source) != (source_path, json_path, expected_sha):
-                reasons.append("formal_task_graph_node_source_mismatch")
-            if len(node.references) != 1:
-                reasons.append("formal_task_graph_effect_reference_count_invalid")
-            else:
-                reference = node.references[0]
-                if (
-                    reference.reference_kind != "effect"
-                    or reference.definition_id != task.effect_id
-                    or reference.source != task.source
-                    or reference.resolution_status != "deferred"
-                    or reference.blocked_reason != AUDIT_EFFECT_BLOCKER
-                ):
-                    reasons.append("formal_task_graph_audit_reference_invalid")
+            occurrence_reasons.extend(status_reasons)
+            producer_task_count[PARTITION_B] += len(status_tasks)
+        elif partition == PARTITION_C:
+            producer_rows = [
+                {
+                    "template_id": templates[0].template_id,
+                    "template_name": templates[0].name,
+                    "template_scope_kind": templates[0].scope_kind,
+                    "template_source": templates[0].source.to_json(),
+                    "reference_count": 0,
+                    "attribution": "no_formal_producer",
+                }
+            ]
 
-        reasons = list(dict.fromkeys(reasons))
-        if reasons:
-            blocked += 1
-            blocked_reasons[reasons[0]] += 1
-        else:
-            admitted += 1
-        if sample is None:
-            sample = {
-                "source_path": source_path,
-                "json_path": json_path,
-                "content_sha256": expected_sha,
-                "task_count": len(matching_tasks),
-                "admitted": not reasons,
-                "reasons": reasons,
-            }
+        occurrence_reasons = list(dict.fromkeys(occurrence_reasons))
+        final_partition = partition if not occurrence_reasons else PARTITION_D
+        if final_partition == PARTITION_D:
+            for reason in occurrence_reasons:
+                reason_counts[reason] += 1
+        row = {
+            "source_path": source_path,
+            "json_path": json_path,
+            "content_sha256": expected_sha,
+            "avatar_id": record.source.evidence.get("avatar_id"),
+            "source_kind": record.source.evidence.get("source_kind"),
+            "parent_branch_path": record.parent_branch_path,
+            "partition": final_partition,
+            "producer_rows": producer_rows,
+            "template_ids": [template.template_id for template in templates],
+            "template_references": [
+                {
+                    "reference_id": reference.reference_id,
+                    "node_id": reference.node_id,
+                    "reference_kind": reference.reference_kind,
+                    "candidate_template_ids": list(
+                        reference.candidate_template_ids
+                    ),
+                    "resolved_template_id": reference.resolved_template_id,
+                    "coverage_status": reference.coverage_status,
+                    "blocked_reason": reference.blocked_reason,
+                    "source": reference.source.to_json(),
+                }
+                for reference in template_references
+            ],
+            "reasons": occurrence_reasons,
+        }
+        partition_rows[final_partition].append(row)
 
-    if admitted + blocked != len(records):
-        fail("set_entity_visible_denominator_count_mismatch")
+    counts = {key: len(value) for key, value in partition_rows.items()}
+    total_partitioned = sum(counts.values())
+    if total_partitioned != len(records):
+        fail("set_entity_visible_partition_identity_mismatch")
+    if not counts[PARTITION_A]:
+        fail("set_entity_visible_formal_ability_task_slice_empty")
+
     return {
         "kind": "formal_source_scope_set_entity_visible_occurrences",
-        "total": len(records),
-        "admitted": admitted,
-        "blocked": blocked,
-        "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
-        "source_file_count": len({record.source.source_path for record in records}),
-        "formal_task_count": task_count,
-        "formal_graph_node_count": graph_node_count,
-        "field_sets": {str(key): value for key, value in sorted(field_sets.items())},
-        "field_types": {str(key): value for key, value in sorted(field_types.items())},
+        "total_selected": len(records),
+        "source_file_count": len(
+            {record.source.source_path for record in records}
+        ),
+        "partition_counts": counts,
+        "partition_identity_closed": total_partitioned == len(records),
+        "blocked_reason_counts": dict(sorted(reason_counts.items())),
+        "producer_task_counts": dict(sorted(producer_task_count.items())),
+        "field_sets": {
+            str(key): value for key, value in sorted(field_sets.items())
+        },
+        "field_types": {
+            str(key): value for key, value in sorted(field_types.items())
+        },
         "source_fingerprint": view.snapshot.source_fingerprint,
-        "sample": sample or {},
+        "samples": {
+            key: rows[:4] for key, rows in partition_rows.items()
+        },
+        "blocked_or_unresolved": partition_rows[PARTITION_D],
+        "status_callback_semantics": {
+            "authority": "StatusCallbackTaskIR/task_graph_materializer._status_task",
+            "production_unchanged": True,
+            "formal_execution_mode": "runtime_effect",
+        },
+        "template_attribution": {
+            "rule": (
+                "exact producer first; otherwise longest containing formal "
+                "template definition; any reference without production "
+                "expansion is blocked_or_unresolved"
+            ),
+            "no_formal_producer_count": counts[PARTITION_C],
+        },
     }
 
 
 def _set_specific(row: Mapping[str, Any]) -> bool:
-    return str(row.get("family") or "") == FAMILY and str(row.get("reason") or "") in {
+    return str(row.get("family") or "") == FAMILY and str(
+        row.get("reason") or ""
+    ) in {
         SET_UNSUPPORTED,
         UNSUPPORTED_DEFINITION,
     }
@@ -384,7 +856,28 @@ def representative(
         scope_catalog=scope,
     )
     definitions = _definitions(root)
-    if target is not None:
+    if target is None:
+        scope_view = scope.for_families((FAMILY,))
+        owner_avatar_ids = {
+            str(record.source.evidence.get("avatar_id") or "")
+            for record in scope_view.scope_records
+            if record.family == FAMILY
+            and record.materialization_role == "selected"
+        }
+        owner_avatar_ids.discard("")
+        candidate_action_ids = {
+            action.action_id
+            for action in source_graph.action_sources
+            if action.owner_avatar_id in owner_avatar_ids
+        }
+        definitions = tuple(
+            definition
+            for definition in definitions
+            if definition.action_id in candidate_action_ids
+        )
+        if not definitions:
+            fail("set_entity_visible_owner_action_candidates_empty")
+    else:
         definitions = tuple(
             definition
             for definition in definitions
@@ -394,6 +887,7 @@ def representative(
         )
         if len(definitions) != 1:
             fail("representative_definition_missing")
+
     scanned = 0
     diagnostics: list[str] = []
     for definition in definitions:
@@ -413,13 +907,23 @@ def representative(
                 source_snapshot=snapshot,
             )
             rules = RuleBook(replace(canonical, task_graph_catalog=catalog))
-            tasks = rules.ability_tasks_for_action(definition.action_id, definition.level)
+            tasks = rules.ability_tasks_for_action(
+                definition.action_id,
+                definition.level,
+            )
             projection = _formal_action_task_graph_projection(
                 rules,
                 definition.action_id,
                 definition.level,
                 tasks,
             )
+            if not any(
+                task.task_id in projection.reachable_task_ids
+                and _family_for_task(task) == FAMILY
+                for task in tasks
+            ):
+                continue
+
             accepted = _accepted_context(
                 rules,
                 definition,
@@ -434,9 +938,12 @@ def representative(
             after = state.snapshot().to_json()
             if before != after:
                 fail("action_contract_mutated_state")
+
             provenance = _enriched_provenance(rules, projection)
             set_rows = [row for row in provenance if _set_specific(row)]
-            has_effect = any(row.get("reason") == SET_UNSUPPORTED for row in set_rows)
+            has_effect = any(
+                row.get("reason") == SET_UNSUPPORTED for row in set_rows
+            )
             has_definition = any(
                 row.get("reason") == UNSUPPORTED_DEFINITION for row in set_rows
             )
@@ -471,17 +978,26 @@ def representative(
             }
         except (AssertionError, TypeError, ValueError, RuntimeError) as exc:
             diagnostics.append(
-                f"{definition.action_id}@{definition.level}:{type(exc).__name__}:{exc}"
+                f"{definition.action_id}@{definition.level}:"
+                f"{type(exc).__name__}:{exc}"
             )
             if target is not None:
                 raise
     fail(
         "same_owner_outer_action_not_found:"
-        + json.dumps({"scanned": scanned, "diagnostics": diagnostics[-12:]})
+        + json.dumps(
+            {"scanned": scanned, "diagnostics": diagnostics[-12:]},
+            sort_keys=True,
+        )
     )
 
 
-def probe(root: Path, *, target: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def probe(
+    root: Path,
+    *,
+    target: Mapping[str, Any] | None = None,
+    require_set_blocker: bool = False,
+) -> dict[str, Any]:
     assert_pin(root)
     with patch.object(
         TaskGraphExecutor,
@@ -499,7 +1015,7 @@ def probe(root: Path, *, target: Mapping[str, Any] | None = None) -> dict[str, A
         row = representative(
             root,
             target=target,
-            require_set_blocker=target is None,
+            require_set_blocker=require_set_blocker,
         )
     if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:
         fail("runtime_boundary_called")
@@ -519,7 +1035,10 @@ def probe(root: Path, *, target: Mapping[str, Any] | None = None) -> dict[str, A
     }
 
 
-def baseline_probe(root: Path) -> dict[str, Any]:
+def baseline_probe(
+    root: Path,
+    target: Mapping[str, Any],
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="p9-a2-p4-base-") as temp:
         worktree = Path(temp) / "base"
         git("worktree", "add", "--detach", "--quiet", str(worktree), BASE_SHA)
@@ -536,6 +1055,13 @@ def baseline_probe(root: Path) -> dict[str, Any]:
                     "--probe-json",
                     "--tbgd-root",
                     str(root),
+                    "--definition-id",
+                    str(target["definition_id"]),
+                    "--action-id",
+                    str(target["action_id"]),
+                    "--action-level",
+                    str(target["action_level"]),
+                    "--require-set-blocker",
                 ],
                 cwd=ROOT,
                 env=env,
@@ -552,7 +1078,8 @@ def baseline_probe(root: Path) -> dict[str, Any]:
                             "returncode": completed.returncode,
                             "stdout_tail": completed.stdout[-4000:],
                             "stderr_tail": completed.stderr[-4000:],
-                        }
+                        },
+                        sort_keys=True,
                     )
                 )
             return json.loads(completed.stdout)
@@ -570,22 +1097,34 @@ def compare_representative(
     for field in ("definition_id", "action_id", "action_level"):
         if base[field] != cur[field]:
             fail("representative_identity_changed:" + field)
+
     base_set = list(base["set_entity_visible_rows"])
     cur_set = list(cur["set_entity_visible_rows"])
     if not base_set:
         fail("baseline_set_entity_visible_provenance_missing")
+    if not any(row.get("reason") == SET_UNSUPPORTED for row in base_set):
+        fail("baseline_set_entity_visible_effect_blocker_missing")
+    if not any(row.get("reason") == UNSUPPORTED_DEFINITION for row in base_set):
+        fail("baseline_set_entity_visible_definition_blocker_missing")
     if cur_set:
         fail("current_set_entity_visible_unsupported_provenance_remaining")
+
     if base["wait_anim_hit_random_rows"] or cur["wait_anim_hit_random_rows"]:
         fail("p3_wait_anim_hit_random_regressed")
-    base_other = [row for row in base["blocker_provenance"] if not _set_specific(row)]
-    cur_other = [row for row in cur["blocker_provenance"] if not _set_specific(row)]
+
+    base_other = [
+        row for row in base["blocker_provenance"] if not _set_specific(row)
+    ]
+    cur_other = [
+        row for row in cur["blocker_provenance"] if not _set_specific(row)
+    ]
     if base_other != cur_other:
         fail("non_p4_blocker_provenance_changed")
     if DAMAGE_HEAL_SHIELD not in cur["blocked_reasons"]:
         fail("s11_damage_heal_shield_blocker_not_preserved")
     if not cur["blocked_reasons"]:
         fail("outer_action_unexpectedly_executable")
+
     return {
         "definition_id": cur["definition_id"],
         "action_id": cur["action_id"],
@@ -605,13 +1144,19 @@ def run_direct(root: Path) -> dict[str, Any]:
     started = time.perf_counter()
     gov = governance()
     pin = assert_pin(root)
-    baseline = baseline_probe(root)
+
+    print("P4_STAGE current_probe_start", file=sys.stderr, flush=True)
+    current = probe(root)
+    print("P4_STAGE current_probe_done", file=sys.stderr, flush=True)
     target = {
-        key: baseline["representative"][key]
+        key: current["representative"][key]
         for key in ("definition_id", "action_id", "action_level")
     }
-    current = probe(root, target=target)
+    print("P4_STAGE baseline_probe_start", file=sys.stderr, flush=True)
+    baseline = baseline_probe(root, target)
+    print("P4_STAGE baseline_probe_done", file=sys.stderr, flush=True)
     delta = compare_representative(baseline, current)
+
     if ability_task_execution_mode(FAMILY) != "process_only":
         fail("set_entity_visible_execution_mode_not_process_only")
     if ability_task_execution_mode("SetEntityForceVisible") != "runtime_effect":
@@ -620,7 +1165,9 @@ def run_direct(root: Path) -> dict[str, Any]:
     with patch.object(
         TaskGraphExecutor,
         "execute",
-        side_effect=AssertionError("denominator runtime task graph execution forbidden"),
+        side_effect=AssertionError(
+            "denominator runtime task graph execution forbidden"
+        ),
     ) as execute_mock, patch.object(
         RuleEvaluator,
         "evaluate_condition_result",
@@ -630,44 +1177,75 @@ def run_direct(root: Path) -> dict[str, Any]:
         "random",
         side_effect=AssertionError("denominator gameplay RNG forbidden"),
     ) as rng_mock:
+        print("P4_STAGE denominator_start", file=sys.stderr, flush=True)
         denominator = formal_denominator(root)
+        print("P4_STAGE denominator_done", file=sys.stderr, flush=True)
+
     if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:
         fail("denominator_runtime_boundary_called")
-    if denominator["blocked"]:
+    counts = denominator["partition_counts"]
+    if counts[PARTITION_D]:
         fail(
-            "set_entity_visible_denominator_not_fully_admitted:"
-            + json.dumps(denominator["blocked_reason_counts"])
+            "set_entity_visible_denominator_unresolved:"
+            + json.dumps(
+                denominator["blocked_reason_counts"],
+                sort_keys=True,
+            )
         )
-    if denominator["total"] != denominator["admitted"]:
+    if denominator["total_selected"] != sum(counts.values()):
         fail("set_entity_visible_denominator_incomplete")
+    if not counts[PARTITION_A]:
+        fail("set_entity_visible_formal_ability_task_slice_empty")
 
     elapsed = time.perf_counter() - started
     peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     predicates = {
         "fixed_base": gov["fixed_base"] == BASE_SHA,
         "pinned_tbgd": pin == TBGD_PIN,
-        "source_scope_denominator_nonempty": denominator["total"] > 0,
-        "source_scope_denominator_fully_admitted": denominator["blocked"] == 0,
-        "source_scope_presentation_only": True,
-        "process_only_task_effect_identity_closed": denominator["formal_task_count"] > 0,
-        "formal_task_graph_leaf_identity_closed": denominator["formal_graph_node_count"] > 0,
+        "source_scope_denominator_nonempty": denominator["total_selected"] > 0,
+        "producer_partition_identity_closed": denominator[
+            "partition_identity_closed"
+        ],
+        "blocked_or_unresolved_empty": counts[PARTITION_D] == 0,
+        "formal_ability_task_slice_nonempty": counts[PARTITION_A] > 0,
+        "formal_status_callback_slice_attributed": (
+            counts[PARTITION_B] >= 0
+            and denominator["status_callback_semantics"]["production_unchanged"]
+        ),
+        "template_no_producer_attribution_closed": (
+            denominator["template_attribution"]["no_formal_producer_count"]
+            == counts[PARTITION_C]
+        ),
         "set_entity_visible_unsupported_provenance_removed": not delta[
             "current_set_entity_visible_rows"
         ],
-        "p3_wait_anim_no_regression": not delta["p3_wait_anim_hit_random_rows"],
+        "p3_wait_anim_no_regression": not delta[
+            "p3_wait_anim_hit_random_rows"
+        ],
         "s11_damage_heal_shield_preserved": delta[
             "s11_damage_heal_shield_preserved"
         ],
-        "other_blockers_preserved": delta["other_blocker_provenance_preserved"],
-        "set_entity_force_visible_sibling_unchanged": ability_task_execution_mode(
-            "SetEntityForceVisible"
-        )
-        == "runtime_effect",
+        "other_blockers_preserved": delta[
+            "other_blocker_provenance_preserved"
+        ],
+        "set_entity_force_visible_sibling_unchanged": (
+            ability_task_execution_mode("SetEntityForceVisible")
+            == "runtime_effect"
+        ),
         "runtime_execution_condition_rng_zero": True,
-        "read_only_authorities_unchanged": gov["read_only_authorities_unchanged"],
+        "read_only_authorities_unchanged": gov[
+            "read_only_authorities_unchanged"
+        ],
+        "status_callback_authority_unchanged": gov[
+            "status_callback_authority_unchanged"
+        ],
     }
     return {
-        "ok": elapsed < 420 and peak < 3 * 1024 * 1024 and all(predicates.values()),
+        "ok": (
+            elapsed < 300
+            and peak < 2 * 1024 * 1024
+            and all(predicates.values())
+        ),
         "mode": "direct",
         "predicates": predicates,
         "governance": gov,
@@ -679,6 +1257,8 @@ def run_direct(root: Path) -> dict[str, Any]:
         "resource": {
             "wall_seconds": round(elapsed, 6),
             "peak_rss_kib": peak,
+            "budget_wall_seconds": 300,
+            "budget_peak_rss_kib": 2 * 1024 * 1024,
         },
     }
 
@@ -688,10 +1268,40 @@ def main() -> int:
     parser.add_argument("--direct", action="store_true")
     parser.add_argument("--probe-json", action="store_true")
     parser.add_argument("--tbgd-root", type=Path, default=TBGD)
+    parser.add_argument("--definition-id")
+    parser.add_argument("--action-id")
+    parser.add_argument("--action-level", type=int)
+    parser.add_argument("--require-set-blocker", action="store_true")
     args = parser.parse_args()
     root = args.tbgd_root.resolve()
+
+    target = None
+    target_fields = (args.definition_id, args.action_id, args.action_level)
+    if any(value is not None for value in target_fields):
+        if (
+            args.definition_id is None
+            or args.action_id is None
+            or args.action_level is None
+        ):
+            fail("probe_target_identity_incomplete")
+        target = {
+            "definition_id": args.definition_id,
+            "action_id": args.action_id,
+            "action_level": args.action_level,
+        }
+
     if args.probe_json:
-        print(json.dumps(probe(root), ensure_ascii=False, sort_keys=True))
+        print(
+            json.dumps(
+                probe(
+                    root,
+                    target=target,
+                    require_set_blocker=args.require_set_blocker,
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
         return 0
     if not args.direct:
         fail("--direct is required")
