@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import random
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -58,9 +57,8 @@ def test_set_entity_visible_uses_process_only_authority() -> None:
     assert ability_task_execution_mode("SetEntityForceVisible") == "runtime_effect"
 
 
-@pytest.mark.parametrize(
-    ("payload", "expected"),
-    [
+def test_set_entity_visible_schema_is_strict() -> None:
+    cases = [
         (_raw(), ""),
         (_raw(UniqueKey="Body"), ""),
         (_raw(Visible=False), ""),
@@ -72,13 +70,15 @@ def test_set_entity_visible_uses_process_only_authority() -> None:
         ),
         (_raw(UniqueKey=7), "process_only_task_field_invalid:UniqueKey:string"),
         (_raw(Visible=1), "process_only_task_field_invalid:Visible:bool"),
-    ],
-)
-def test_set_entity_visible_schema_is_strict(payload: dict, expected: str) -> None:
-    assert _process_only_ability_task_source_blocked_reason(
-        payload,
-        "SetEntityVisible",
-    ) == expected
+    ]
+    for payload, expected in cases:
+        assert (
+            _process_only_ability_task_source_blocked_reason(
+                payload,
+                "SetEntityVisible",
+            )
+            == expected
+        )
 
 
 def test_set_entity_visible_source_type_mismatch_fails_closed() -> None:
@@ -93,24 +93,26 @@ def test_set_entity_visible_source_type_mismatch_fails_closed() -> None:
     )
 
 
-def test_generic_lowering_keeps_task_effect_identity_and_no_runtime_calls(
-    tmp_path: Path,
-) -> None:
+def test_generic_lowering_keeps_task_effect_identity_and_no_runtime_calls() -> None:
     forbidden = AssertionError("runtime channel touched")
-    with patch.object(
-        TaskGraphExecutor,
-        "execute",
-        side_effect=forbidden,
-    ) as execute_mock, patch.object(
-        RuleEvaluator,
-        "evaluate_condition_result",
-        side_effect=forbidden,
-    ) as condition_mock, patch.object(
-        random,
-        "random",
-        side_effect=forbidden,
-    ) as rng_mock:
-        lowered = _lower(tmp_path, _raw(Visible=True, UniqueKey="Body"))
+    with tempfile.TemporaryDirectory(prefix="p9-a2-p4-focused-") as temp:
+        with patch.object(
+            TaskGraphExecutor,
+            "execute",
+            side_effect=forbidden,
+        ) as execute_mock, patch.object(
+            RuleEvaluator,
+            "evaluate_condition_result",
+            side_effect=forbidden,
+        ) as condition_mock, patch.object(
+            random,
+            "random",
+            side_effect=forbidden,
+        ) as rng_mock:
+            lowered = _lower(
+                Path(temp),
+                _raw(Visible=True, UniqueKey="Body"),
+            )
 
     assert execute_mock.call_count == 0
     assert condition_mock.call_count == 0
@@ -207,3 +209,26 @@ def test_ambiguous_formal_producer_fails_closed() -> None:
         template_count=0,
         template_reference_count=0,
     ) == (PARTITION_D, "formal_producer_kind_ambiguous")
+
+
+def main() -> int:
+    tests = (
+        test_set_entity_visible_uses_process_only_authority,
+        test_set_entity_visible_schema_is_strict,
+        test_set_entity_visible_source_type_mismatch_fails_closed,
+        test_generic_lowering_keeps_task_effect_identity_and_no_runtime_calls,
+        test_source_identity_mismatch_is_not_silently_accepted,
+        test_partition_prefers_exact_ability_producer,
+        test_status_callback_is_not_misclassified_as_missing_ability_task,
+        test_unreferenced_template_is_no_formal_producer,
+        test_referenced_template_without_expansion_requires_replan,
+        test_ambiguous_formal_producer_fails_closed,
+    )
+    for test in tests:
+        test()
+    print(f"P4_FOCUSED_FAST passed={len(tests)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
