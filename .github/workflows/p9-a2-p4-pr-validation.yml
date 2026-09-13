@@ -6,6 +6,7 @@ on:
       - ".github/workflows/p9-a2-p4-pr-validation.yml"
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py"
       - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py"
   workflow_dispatch:
 
@@ -30,88 +31,6 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
-
-      - name: Preflight P4 validator compatibility and isolated denominator
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py")
-          text = path.read_text(encoding="utf-8")
-          replacements = [
-              (
-                  """    _accepted_context,\n    _build_context,\n    _definitions,\n    _state_for_admission,\n""",
-                  """    _accepted_context,\n    build_context as _build_context,\n    definitions as _definitions,\n    _state_for_admission,\n""",
-              ),
-              (
-                  """from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_ability_task_graph_catalog,\n)\n""",
-                  """from hsr.simulator_v8_clean_core.tbgd import task_graph_materializer\nfrom hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (\n    materialize_ability_task_graph_catalog,\n)\n""",
-              ),
-              (
-                  """    definitions = _definitions(root)\n    if target is not None:\n""",
-                  """    definitions = _definitions(root)\n    if target is None:\n        scope_view = scope.for_families((FAMILY,))\n        owner_avatar_ids = {\n            str(record.source.evidence.get(\"avatar_id\") or \"\")\n            for record in scope_view.scope_records\n            if record.family == FAMILY\n            and record.materialization_role == \"selected\"\n        }\n        owner_avatar_ids.discard(\"\")\n        candidate_action_ids = {\n            action.action_id\n            for action in source_graph.action_sources\n            if action.owner_avatar_id in owner_avatar_ids\n        }\n        definitions = tuple(\n            definition\n            for definition in definitions\n            if definition.action_id in candidate_action_ids\n        )\n        if not definitions:\n            fail(\"set_entity_visible_owner_action_candidates_empty\")\n    if target is not None:\n""",
-              ),
-              (
-                  """            projection = _formal_action_task_graph_projection(\n                rules,\n                definition.action_id,\n                definition.level,\n                tasks,\n            )\n            accepted = _accepted_context(\n""",
-                  """            projection = _formal_action_task_graph_projection(\n                rules,\n                definition.action_id,\n                definition.level,\n                tasks,\n            )\n            if not any(\n                task.task_id in projection.reachable_task_ids\n                and _family_for_task(task) == FAMILY\n                for task in tasks\n            ):\n                continue\n            accepted = _accepted_context(\n""",
-              ),
-              (
-                  "def probe(root: Path, *, target: Mapping[str, Any] | None = None) -> dict[str, Any]:",
-                  "def probe(\n    root: Path,\n    *,\n    target: Mapping[str, Any] | None = None,\n    require_set_blocker: bool = False,\n) -> dict[str, Any]:",
-              ),
-              (
-                  "            require_set_blocker=target is None,",
-                  "            require_set_blocker=require_set_blocker,",
-              ),
-              (
-                  "def baseline_probe(root: Path) -> dict[str, Any]:",
-                  "def baseline_probe(root: Path, target: Mapping[str, Any]) -> dict[str, Any]:",
-              ),
-              (
-                  """                    "--tbgd-root",\n                    str(root),\n                ],\n""",
-                  """                    "--tbgd-root",\n                    str(root),\n                    "--definition-id",\n                    str(target["definition_id"]),\n                    "--action-id",\n                    str(target["action_id"]),\n                    "--action-level",\n                    str(target["action_level"]),\n                    "--require-set-blocker",\n                ],\n""",
-              ),
-              (
-                  """    baseline = baseline_probe(root)\n    target = {\n        key: baseline["representative"][key]\n        for key in ("definition_id", "action_id", "action_level")\n    }\n    current = probe(root, target=target)\n""",
-                  """    print(\"P4_STAGE current_probe_start\", file=sys.stderr, flush=True)\n    current = probe(root)\n    print(\"P4_STAGE current_probe_done\", file=sys.stderr, flush=True)\n    target = {\n        key: current["representative"][key]\n        for key in (\"definition_id\", \"action_id\", \"action_level\")\n    }\n    print(\"P4_STAGE baseline_probe_start\", file=sys.stderr, flush=True)\n    baseline = baseline_probe(root, target)\n    print(\"P4_STAGE baseline_probe_done\", file=sys.stderr, flush=True)\n""",
-              ),
-              (
-                  """    canonical = view.build()\n    graph_catalog = materialize_ability_task_graph_catalog(\n        view.source_catalog,\n        canonical,\n        source_snapshot=view.snapshot,\n    )\n    rules = RuleBook(replace(canonical, task_graph_catalog=graph_catalog))\n    tasks = tuple(\n        task for task in canonical.ability_tasks if _family_for_task(task) == FAMILY\n    )\n""",
-                  """    print(\"P4_STAGE denominator_canonical_start\", file=sys.stderr, flush=True)\n    canonical = view.build()\n    print(\"P4_STAGE denominator_canonical_done\", file=sys.stderr, flush=True)\n    effect_by_id = {effect.effect_id: effect for effect in canonical.effects}\n    if len(effect_by_id) != len(canonical.effects):\n        fail(\"formal_effect_identity_ambiguous\")\n    materialization_context = task_graph_materializer._prepare_materialization(\n        view.source_catalog,\n        canonical,\n        view.snapshot,\n    )\n    entry_cache: dict[tuple[str, str], tuple[Any, Any]] = {}\n    tasks = tuple(\n        task for task in canonical.ability_tasks if _family_for_task(task) == FAMILY\n    )\n""",
-              ),
-              (
-                  """        if not matching_tasks:\n            reasons.append(\"formal_task_missing\")\n\n        for task in matching_tasks:\n""",
-                  """        if not matching_tasks:\n            reasons.append(\"formal_task_missing\")\n            same_path_task_paths = sorted(\n                task_json_path\n                for task_source_path, task_json_path in task_groups\n                if task_source_path == source_path\n            )\n            print(\n                \"P4_MISSING_TASK \"\n                + json.dumps(\n                    {\n                        \"source_path\": source_path,\n                        \"json_path\": json_path,\n                        \"avatar_id\": record.source.evidence.get(\"avatar_id\"),\n                        \"source_kind\": record.source.evidence.get(\"source_kind\"),\n                        \"parent_branch_path\": record.parent_branch_path,\n                        \"same_path_task_paths\": same_path_task_paths[:24],\n                    },\n                    sort_keys=True,\n                ),\n                file=sys.stderr,\n                flush=True,\n            )\n\n        for task in matching_tasks:\n""",
-              ),
-              (
-                  """            if _source_identity(task.source) != (source_path, json_path, expected_sha):\n                reasons.append(\"task_source_identity_mismatch\")\n""",
-                  """            task_source_path = str(task.source.source_path)\n            task_json_path = str(task.source.evidence.get(\"json_path\") or \"\")\n            task_content_sha = str(task.source.evidence.get(\"content_sha256\") or \"\")\n            if (task_source_path, task_json_path) != (source_path, json_path):\n                reasons.append(\"task_source_identity_mismatch\")\n            if task_content_sha and task_content_sha != expected_sha:\n                reasons.append(\"task_source_content_fingerprint_conflict\")\n""",
-              ),
-              (
-                  "            effect = rules.effect(task.effect_id) if task.effect_id else None",
-                  "            effect = effect_by_id.get(task.effect_id) if task.effect_id else None",
-              ),
-              (
-                  """            phase_tasks = tuple(\n                candidate\n                for candidate in rules.ability_tasks_for_phase(task.phase_id)\n                if candidate.callback_kind == task.callback_kind\n            )\n            query = rules.query_formal_task_graph(\n                "ability_phase_callback",\n                task.phase_id,\n                task.callback_kind,\n                (candidate.task_id for candidate in phase_tasks),\n            )\n            graph = query.value\n            if query.status != "resolved" or type(graph) is not TaskGraphIR:\n                reasons.append("formal_task_graph_missing")\n                continue\n""",
-                  """            entry_key = (task.phase_id, task.callback_kind)\n            cached = entry_cache.get(entry_key)\n            if cached is None:\n                phase_tasks = tuple(\n                    candidate\n                    for candidate in canonical.ability_tasks\n                    if candidate.phase_id == task.phase_id\n                    and candidate.callback_kind == task.callback_kind\n                )\n                entry, graph = task_graph_materializer._materialize_entry(\n                    materialization_context,\n                    "ability_phase_callback",\n                    task.phase_id,\n                    task.callback_kind,\n                    tuple(candidate.task_id for candidate in phase_tasks),\n                    tuple(task_graph_materializer._ability_task(candidate) for candidate in phase_tasks),\n                )\n                cached = (entry, graph)\n                entry_cache[entry_key] = cached\n            entry, graph = cached\n            if entry.status != "materialized" or graph is None:\n                reasons.append(\n                    "formal_task_graph_missing:"\n                    + str(entry.blocked_reason or entry.status)\n                )\n                continue\n""",
-              ),
-              (
-                  """        denominator = formal_denominator(root)\n    if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:\n""",
-                  """        print(\"P4_STAGE denominator_start\", file=sys.stderr, flush=True)\n        denominator = formal_denominator(root)\n        print(\"P4_STAGE denominator_done\", file=sys.stderr, flush=True)\n    if execute_mock.call_count or condition_mock.call_count or rng_mock.call_count:\n""",
-              ),
-              (
-                  """    parser.add_argument("--tbgd-root", type=Path, default=TBGD)\n    args = parser.parse_args()\n    root = args.tbgd_root.resolve()\n    if args.probe_json:\n        print(json.dumps(probe(root), ensure_ascii=False, sort_keys=True))\n        return 0\n""",
-                  """    parser.add_argument("--tbgd-root", type=Path, default=TBGD)\n    parser.add_argument("--definition-id")\n    parser.add_argument("--action-id")\n    parser.add_argument("--action-level", type=int)\n    parser.add_argument("--require-set-blocker", action="store_true")\n    args = parser.parse_args()\n    root = args.tbgd_root.resolve()\n    target = None\n    target_fields = (args.definition_id, args.action_id, args.action_level)\n    if any(value is not None for value in target_fields):\n        if args.definition_id is None or args.action_id is None or args.action_level is None:\n            fail(\"probe_target_identity_incomplete\")\n        target = {\n            \"definition_id\": args.definition_id,\n            \"action_id\": args.action_id,\n            \"action_level\": args.action_level,\n        }\n    if args.probe_json:\n        print(\n            json.dumps(\n                probe(\n                    root,\n                    target=target,\n                    require_set_blocker=args.require_set_blocker,\n                ),\n                ensure_ascii=False,\n                sort_keys=True,\n            )\n        )\n        return 0\n""",
-              ),
-          ]
-          for old, new in replacements:
-              assert text.count(old) == 1, f"P4 validator patch point drifted: {old[:80]!r}"
-              text = text.replace(old, new, 1)
-          path.write_text(text, encoding="utf-8")
-          PY
-          python -m py_compile hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py
 
       - name: Run P4 SetEntityVisible Direct
         shell: bash
