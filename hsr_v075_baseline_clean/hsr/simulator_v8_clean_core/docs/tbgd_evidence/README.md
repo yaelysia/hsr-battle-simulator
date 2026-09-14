@@ -21,9 +21,13 @@ The existing v8 Combat Core is an important **independent reverse-engineered imp
 
 ## Current navigation / sequencing overlay
 
+**2026-09-14 R8 — W18 + startup-facing W09/W01 residual — is `bounded_complete` at the source/static-kernel boundary.** The [Battle-Start Effect Activation / Startup Admission v1 record](../../../../../docs/tbgd_evidence/shared/battle_start_effect_activation_v1.md) separates B0 static construction, B1 provider registration, B2 immediate startup ability and B3 battle-entry callbacks against actual business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f`. It maps LC20000 rank/source/graph transport, Set102 static speed versus hit-context bonus, and Set301 main/conditional-child property paths. Registration is not execution and a true speed comparison is not an executed conditional effect.
+
+Technique possession remains external pre-battle state. The current canonical-effect-referenced initial-status interface is not an automatic MazeBuff-to-CharacterSkill/SkillMaze adapter; no inspected contract promises that a finished character build acquires or imports MazeBuff100201. R8 records that boundary without inventing a build bug. No concrete new producer/consumer mismatch was identified in the inspected contracts. **E is not established: no R8 simulator/Direct/test run is claimed.** W01/W09/W18 remain `active`; their broad historical checklist leaves are not promoted by selected anchors. Native dispatcher/timer/property-watcher and static-arithmetic gaps remain. **Stop at R8; return to integration/planning for the R9 decision.** This separately authorized checkpoint supersedes the R7 sequencing stop, not its historical evidence.
+
 **2026-09-14 R7 — W11 + source-facing W15 — is `bounded_complete`.** The [Action Targeting / Enemy Decision Boundary v1 record](../../../../../docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md) separates T1 explicit selection, T2 automatic action targets, T3 impact expansion and T4 internal traversal. It closes the selected Asta/Aglaea target boundary, Monster1002011 fixed candidate plus automatic AllEnemy, and actual Monster1002041 complex-AI non-admission against business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f` and the existing TBGD pin. The positive raw `AISkillSequence` is an object array, not an integer array. Complex AI remains blocked/external; generic native AI is not recovered.
 
-R7 is a docs-only source/static consumer checkpoint: A/C/D apply only to the individual claims in its matrix; no new runtime/test E is claimed. Conditional target-shape alignment is not proof that the entire servant action is executable. W11/W15 remain `active`; scorer/weights/random/aggro/formation/scheduler gaps stay explicit. **Stop at R7; return to integration/planning for the R8 decision.** This authorized R7 checkpoint supersedes the older navigation wording that R7 has not started, without changing the historical R6 proof below.
+R7 is a docs-only source/static consumer checkpoint: A/C/D apply only to the individual claims in its matrix; no new runtime/test E is claimed. Conditional target-shape alignment is not proof that the entire servant action is executable. W11/W15 remain `active`; scorer/weights/random/aggro/formation/scheduler gaps stay explicit. Its historical stop-before-R8 is superseded by the separately authorized R8 checkpoint above. The R7 checkpoint supersedes older wording that R7 has not started, without changing the historical R6 proof below.
 
 The retained R6 execution contract and frozen boundaries are in [`POST_R5_RESEARCH_COMPACTION_2026-09-11.md`](POST_R5_RESEARCH_COMPACTION_2026-09-11.md). The **2026-09-14 R6 post-repair reconciliation** in the [R6 record](../../../../../docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md) is the current R6 status overlay.
 
@@ -38,7 +42,8 @@ Current bounded sequence completed:
 - R4 — Resource Economy Core v1;
 - R5 — Battle-start Build Construction v1;
 - R6 — Encounter / Spawn / Phase / Termination v1, closed after merged R6A proof repair and narrow evidence reconciliation;
-- R7 — Action Targeting / Enemy Decision Boundary v1, selected source-facing and static consumer closure, without a new runtime E claim.
+- R7 — Action Targeting / Enemy Decision Boundary v1, selected source-facing and static consumer closure, without a new runtime E claim;
+- R8 — Battle-Start Effect Activation / Startup Admission v1, selected static/provider/startup/entry boundaries and external Technique ownership, without a runtime E claim.
 
 `complete` here means the bounded evidence record met its own exit condition. It does **not** mean the corresponding W-package is globally `mechanism_closed`, and it does not imply runtime verification.
 
@@ -166,7 +171,8 @@ Completed bounded cross-cutting records:
 - repository-level `docs/tbgd_evidence/shared/resource_economy_core_v1.md` — R4 resource-economy topology;
 - repository-level `docs/tbgd_evidence/shared/battle_start_build_construction_v1.md` — R5 selected ordinary build -> battle-start construction slice;
 - repository-level `docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md` — R6 bounded closure after R6A merge; claim-level E evidence and explicit non-E residuals, with the original blocker history retained;
-- repository-level `docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md` — R7 T1/T2/T3/T4, fixed enemy candidate versus automatic target contract, actual complex-AI negative anchor, and external-controller handoff; no new runtime E.
+- repository-level `docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md` — R7 T1/T2/T3/T4, fixed enemy candidate versus automatic target contract, actual complex-AI negative anchor, and external-controller handoff; no new runtime E;
+- repository-level `docs/tbgd_evidence/shared/battle_start_effect_activation_v1.md` — R8 B0/B1/B2/B3, source-bearing provider/startup contracts, selected LC/set consequences, external Technique transport and actual setup order; E not established.
 
 Other representative/cross-cutting evidence:
 
@@ -197,4 +203,6 @@ The R6 record's sections 11–13 retain the limits: StageAbility/native dispatch
 
 R7 adds a selected target/decision boundary, not a source-family census or full-battle proof. Its exact-pin lookup table retains the new Monster1002041 reverse join and the raw sequence-shape correction. Source-family interpretation is unchanged, so the family inventory is not relabeled. W11/W15 bounded leaves and residuals are recorded in the worklist; the wider package obligations remain open.
 
-See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract and the R7 record for the current bounded result. Stop at R7 and return to integration/planning for the R8 decision.
+R8 maps the selected R5 activation residual without reopening build-source discovery. A/C/D are bounded source/static consumer claims, not proof that the selected bundle, conditional submodifier or Technique ran. The worklist, pinned index and source-family inventory are unchanged: this selected closure does not satisfy their broad remaining obligations or introduce a new raw family/lookup.
+
+See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract and the R8 record for the current bounded result. Stop at R8 and return to integration/planning for the R9 decision.
