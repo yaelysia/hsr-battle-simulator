@@ -145,11 +145,11 @@ A percentage may be used only after the source-family inventory and mechanism ta
 | W08 | Energy, Skill Points and actor-specific resources | P1 | `active` | shared resource mutation producers identified | 2026-09-08 | close one full generation/consumption/callback chain for each shared resource |
 | W09 | Buff/debuff/modifier/control semantics | P0 | `active` | formal Shield plus multiple ordinary shared property/modifier samples | 2026-09-08 | build lifetime/stack/refresh/dispel/immunity semantic rules |
 | W10 | Trigger, callback and event ordering | P0 | `active` | priority domains plus Aglaea natural pre-death/death-rattle/death-listener and muted forced-cleanup surfaces confirmed | 2026-09-09 | expand source-facing event/lifecycle chains; generic tie-break/cross-event dispatcher is `blocked_evidence` |
-| W11 | Targeting, adjacency, aggro, retargeting and internal traversal | P1 | `active` | friend/enemy target, aggro and Asta random-target sample confirmed | 2026-09-08 | distinguish legal external target contract from internal execution traversal generically |
+| W11 | Targeting, adjacency, aggro, retargeting and internal traversal | P1 | `active` | R7 selected T1/T2/T3/T4 source/static consumer boundary closed; no new runtime E | 2026-09-14 | selected predicate/formation or aggro residual only with new source and separate authorization; do not repeat R7 or reopen generic RNG/scheduler |
 | W12 | RNG and random-choice authority | P0 | `active` | RandomConfig, random target and SetDynamicValueByRandom ordinary chains confirmed; generic algorithm/stream is `blocked_evidence` | 2026-09-09 | continue primitive census only when high-signal; reopen generic RNG contracts only with a new engine source |
 | W13 | Summons, servants/memosprites and special battle entities | P0 | `active` | Aglaea construction numerics, self scheduling, natural lifecycle surfaces and priority-tiered muted forced cleanup confirmed | 2026-09-09 | close source-facing property sync/resource/JoinSkill semantics; passive auto-entry and universal death order remain blocked |
 | W14 | Monster final stats and difficulty scaling | P0 | `active` | ordinary HardLevelGroup five-stat inputs + typed HardLevel property read + stage/elite/phase topology confirmed | 2026-09-09 | pursue source-facing Stance/explicit MonsterUnique cases; final configured-spawn operator is `blocked_evidence` |
-| W15 | Enemy AI and decision authority | P1 | `active` | AI reference/random-source edges confirmed; final selection semantics unresolved | 2026-09-08 | close skill selection, target choice, priority/weights and randomness |
+| W15 | Enemy AI and decision authority | P1 | `active` | R7 Monster1002011 fixed candidate/AllEnemy and actual Monster1002041 complex-policy non-admission closed statically | 2026-09-14 | generic scorer/weights/target policy remain blocked; new exact consumer or independent implementation card only when authorized |
 | W16 | Encounter/wave/spawn/phase/stage-ability construction | P1 | `active` | wave, pre/post-spawn StageAbility binding and phase-property inputs confirmed | 2026-09-08 | close remaining spawn/transition/reinforcement and battle-end semantics |
 | W17 | Global/shared battle producers | P0 | `active` | broad reverse scan complete; AssistantTrigger/CommonSkillPool/loader tails frozen as ownership/export gaps | 2026-09-09 | inspect only new high-signal shared definitions with a concrete ordinary consumer; do not repeat broad scan |
 | W18 | Equipment/build effects and Technique-to-battle boundary | P1 | `active` | one Light Cone effect chain exists | 2026-09-08 | close relic/set/rank semantics and battle-entry Technique effects |
@@ -330,8 +330,13 @@ Goal: separate action legality from the targets affected during execution.
 - [ ] Trace taunt/aggro target-choice influence and exceptions.
 - [ ] Determine generic retarget behavior/cardinality/replacement rules, especially `ByRandom=true` without `MaxNumber`.
 - [ ] Distinguish AI target choice from player legal-target contract.
+- [x] R7: close selected Asta Skill02 TargetInfo -> explicit primary contract, separated from internal bounce ParamEntity traversal; retain the template's opaque raw `GLOABNLLLEL` type rather than quote it as literal Retarget.
+- [x] R7: close selected Aglaea servant Skill01 EnemySelect/TargetAdjoinEntity -> primary versus adjacent impact at the source/static consumer boundary, without claiming a successful full servant action or native formation formula.
+- [x] R7: distinguish T1 explicit, T2 automatic, T3 impact expansion and T4 internal traversal in the current query -> accept -> resolve_impact and external Decision handoff; AllEnemy is not an AI request to choose one target.
 
-**Next closure:** one end-to-end action showing external selection -> internal traversal -> final affected entities, then generalize selector semantics.
+**R7 evidence:** [Action Targeting / Enemy Decision Boundary v1](../../../../../docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md), inspected business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f`, reviewed 2026-09-14. These new leaves are selected A/C/D claims, not E, a selector census, full native adjacency or generic AI target-choice closure. Broader unchecked leaves remain open.
+
+**Next closure:** an independently authorized, exact source-facing predicate/formation or aggro residual when concrete new evidence warrants it. The prior external/internal sample task is satisfied by bounded R7; do not repeat it or start generic RNG/scheduler/scoring archaeology. Stop this thread at R7.
 
 ### W12 — RNG and random-choice authority
 
@@ -412,8 +417,13 @@ Goal: reconstruct ordinary enemy action and target choice without confusing AI m
 - [ ] Determine weighted/random selection and RNG ownership.
 - [ ] Trace AI-selected action into the same execution graph used by battle runtime.
 - [ ] Distinguish auto-fight player AI from enemy AI where shared filenames/primitives exist.
+- [x] R7: close Monster1002011 -> Template1002011 -> UseSequencedSkill plus raw `AISkillSequence=[{"MNAHFIGOHML":100201101}]` -> local card fixed candidate constraint, preserving formal `monster_skill:100201101` identity.
+- [x] R7: close Skill04 AllEnemy as an automatic action-target contract, separate from the fixed candidate and external Decision submission; current candidate/command/authorization transport retains the same actor/action/level.
+- [x] R7: close actual Monster1002041 -> Template1002041 -> `Monster_W1_Soldier01_00_AI_A.json`; its SelectAISkillTarget/UseSkill/CheckSkillUsabilityAxis policy is not silently admitted as fixed sequence, and external card-action exposure does not implement native AI.
 
-**Next closure:** one ordinary enemy from battle state -> AI decision -> target -> skill -> execution.
+**R7 evidence:** [Action Targeting / Enemy Decision Boundary v1](../../../../../docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md), reviewed 2026-09-14 against business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f`. Only the selected source-facing candidate/constraint boundary is bounded complete. Generic native AI scorer, conditional/weighted/random evaluation and target scoring remain B/G; no runtime E is added. The broad unchecked leaves are deliberately not promoted by a fixed-sequence example.
+
+**Next closure:** an independently authorized exact complex-policy consumer or implementation card when new evidence warrants it. The older whole AI-decision-to-execution target is not an instruction to recover a hidden scorer or force complex AI through the fixed-sequence path. Return to planning after R7.
 
 ### W16 — Encounter/wave/spawn/phase/stage-ability construction
 
@@ -574,8 +584,11 @@ Retirement requires a durable negative-evidence note. “We did not find a consu
 | 2026-09-08 | Integrated first five-lane parallel archaeology checkpoint. | Corrected W02 producer false-negative and W14 `IL*` false-friend, promoted closed W05/W10/W12/W13/W16/W17 leaves, recorded W07/RNG engine-export boundaries, and retained all packages as `active` where mechanism-level obligations remain. |
 | 2026-09-09 | Integrated second boundary-focused archaeology pass. | Closed Aglaea natural pre-death/death-rattle/death-listener surfaces plus priority-tiered muted forced cleanup; proved HardLevel typed property access while freezing the generic spawn-stat constructor; froze W10/W12 dispatcher/RNG implementation gaps and W17 AssistantTrigger ownership/ID producer at the exact pinned release-data boundary. |
 | 2026-09-09 | Compacted post-integration stale leaves and reset the next research sequence. | Promoted March main-shield `CanDispel=true` and the OneMore/OneMorePerTurn source-facing protocol, preserved their generic engine boundaries, and made W03 Battle Language Core v1 the first single-thread closure before mechanism-specific vertical slices. |
+| 2026-09-14 | Added bounded R7 W11/W15 leaves; parent statuses remain active. | Selected explicit/automatic/impact/internal target separation, Monster1002011 fixed candidate and Monster1002041 complex-policy non-admission are source/static consumer closed against master f8e8a053ef591e1aeeb99956d46acd8390676c6f. No runtime E, generic AI or formation closure; see the R7 record and its claim matrix. |
 
 ## Current single-thread research sequence
+
+**2026-09-14 sequencing overlay:** the numbered preference below is retained historical planning context. R0–R7 bounded status is maintained in README.md and the durable records, not inferred from that old ordering. R7 is now bounded complete for the narrow target/candidate/controller boundary; it did not close generic native enemy AI. Stop at R7 and return to integration/planning for the R8 decision.
 
 This is a sequencing preference for the next serial archaeology pass, not a new fixed taxonomy or a claim that the listed packages are the only remaining work.
 

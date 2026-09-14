@@ -21,9 +21,13 @@ The existing v8 Combat Core is an important **independent reverse-engineered imp
 
 ## Current navigation / sequencing overlay
 
+**2026-09-14 R7 — W11 + source-facing W15 — is `bounded_complete`.** The [Action Targeting / Enemy Decision Boundary v1 record](../../../../../docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md) separates T1 explicit selection, T2 automatic action targets, T3 impact expansion and T4 internal traversal. It closes the selected Asta/Aglaea target boundary, Monster1002011 fixed candidate plus automatic AllEnemy, and actual Monster1002041 complex-AI non-admission against business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f` and the existing TBGD pin. The positive raw `AISkillSequence` is an object array, not an integer array. Complex AI remains blocked/external; generic native AI is not recovered.
+
+R7 is a docs-only source/static consumer checkpoint: A/C/D apply only to the individual claims in its matrix; no new runtime/test E is claimed. Conditional target-shape alignment is not proof that the entire servant action is executable. W11/W15 remain `active`; scorer/weights/random/aggro/formation/scheduler gaps stay explicit. **Stop at R7; return to integration/planning for the R8 decision.** This authorized R7 checkpoint supersedes the older navigation wording that R7 has not started, without changing the historical R6 proof below.
+
 The retained R6 execution contract and frozen boundaries are in [`POST_R5_RESEARCH_COMPACTION_2026-09-11.md`](POST_R5_RESEARCH_COMPACTION_2026-09-11.md). The **2026-09-14 R6 post-repair reconciliation** in the [R6 record](../../../../../docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md) is the current R6 status overlay.
 
-The post-R5 document retains the original **R6 sequencing and kernel-cross-check plan**; its wording that R6 is next is superseded by the completed bounded R6 checkpoint below. [`POST_R4_RESEARCH_COMPACTION_2026-09-10.md`](POST_R4_RESEARCH_COMPACTION_2026-09-10.md) remains historical planning context. Neither document authorizes automatically starting R7; return to integration/planning for that decision.
+The post-R5 document retains the original **R6 sequencing and kernel-cross-check plan**; its wording that R6 is next is superseded by the completed bounded R6 checkpoint below. [`POST_R4_RESEARCH_COMPACTION_2026-09-10.md`](POST_R4_RESEARCH_COMPACTION_2026-09-10.md) remains historical planning context. Those documents did not authorize automatically starting R7; the separately authorized R7 result is recorded above.
 
 Current bounded sequence completed:
 
@@ -33,7 +37,8 @@ Current bounded sequence completed:
 - R3 — Healing + Modifier Lifecycle Core v1;
 - R4 — Resource Economy Core v1;
 - R5 — Battle-start Build Construction v1;
-- R6 — Encounter / Spawn / Phase / Termination v1, closed after merged R6A proof repair and narrow evidence reconciliation.
+- R6 — Encounter / Spawn / Phase / Termination v1, closed after merged R6A proof repair and narrow evidence reconciliation;
+- R7 — Action Targeting / Enemy Decision Boundary v1, selected source-facing and static consumer closure, without a new runtime E claim.
 
 `complete` here means the bounded evidence record met its own exit condition. It does **not** mean the corresponding W-package is globally `mechanism_closed`, and it does not imply runtime verification.
 
@@ -41,7 +46,7 @@ Current bounded sequence completed:
 
 Accepted [run 34570966064](https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34570966064) / [artifact 10187755334](https://github.com/yaelysia/hsr-battle-simulator/actions/runs/34570966064/artifacts/10187755334) executed on **`70eabfe4a94ec458eacdd4bf324d9a8889743c49`**, not on the merge SHA: 12 passed / exit=0. E applies only to Stage103201 materialization, duplicate-slot identity, `_wave_unit_spec`, Stage202212020 subsequent-wave spawn/mutations/replay from an explicit cleared-wave + inert-ally fixture boundary, eight source/request rejection cases, and the consumer-aligned shape Catalog (59,940 templates; 899,100 formal identities; missing formal evidence=0). It does not prove complete attacks/kills, victory/defeat battles, StageAbility execution or hidden native formulas.
 
-Exact merged producer/test blobs match the validated head; the base-to-merge changes did not rewrite wave/spawn consumers. Thus accepted runtime evidence remains applicable to the merged R6A behavior. This docs-only reconciliation ran no new simulator/Direct/Catalog and did not rebase the research branch. **Bounded complete is not global W14/W16 mechanism closure or all encounter-engine internals recovered. R6 bounded sequence closed. Do not automatically start R7.** Do not resume stale worklist `Next closure` wording as a serial task assignment.
+Exact merged producer/test blobs match the validated head; the base-to-merge changes did not rewrite wave/spawn consumers. Thus accepted runtime evidence remains applicable to the merged R6A behavior. This docs-only reconciliation ran no new simulator/Direct/Catalog and did not rebase the research branch. **Bounded complete is not global W14/W16 mechanism closure or all encounter-engine internals recovered. R6 bounded sequence closed.** Its historical stop-before-R7 instruction has been superseded only by the separately authorized R7 checkpoint above. Do not resume stale worklist `Next closure` wording as a serial task assignment.
 
 ## Battle-semantic scope
 
@@ -160,7 +165,8 @@ Completed bounded cross-cutting records:
 - repository-level `docs/tbgd_evidence/shared/healing_modifier_lifecycle_core_v1.md` — R3 HealHP plus modifier lifecycle surfaces;
 - repository-level `docs/tbgd_evidence/shared/resource_economy_core_v1.md` — R4 resource-economy topology;
 - repository-level `docs/tbgd_evidence/shared/battle_start_build_construction_v1.md` — R5 selected ordinary build -> battle-start construction slice;
-- repository-level `docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md` — R6 bounded closure after R6A merge; claim-level E evidence and explicit non-E residuals, with the original blocker history retained.
+- repository-level `docs/tbgd_evidence/shared/encounter_spawn_phase_termination_v1.md` — R6 bounded closure after R6A merge; claim-level E evidence and explicit non-E residuals, with the original blocker history retained;
+- repository-level `docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md` — R7 T1/T2/T3/T4, fixed enemy candidate versus automatic target contract, actual complex-AI negative anchor, and external-controller handoff; no new runtime E.
 
 Other representative/cross-cutting evidence:
 
@@ -187,6 +193,8 @@ The post-R5 **encounter construction and control** topics below are traced in th
 
 W17 broad reverse scan remains an event-driven sentinel. W02 hidden producer searches, hidden W07 scheduler body, hidden W10 universal dispatcher, hidden W12 PRNG implementation, W13 passive/sync internals, W14 native configured-spawn arithmetic, and prior R2/R3/R4 native evaluator gaps must not be reopened by default without a concrete new source, consumer or local-kernel mismatch.
 
-The R6 record's sections 11–13 retain the limits: StageAbility/native dispatcher, complete victory/defeat, generic monster arithmetic, flat/clamp/rounding, HardLevel/Elite precedence, malformed-input validation and full reinforcement/AI admission are not promoted by the R6A Direct. No new TBGD family/index fact changed, so this checkpoint does not relabel source inventory entries or mark the historical W14/W16 worklist globally closed.
+The R6 record's sections 11–13 retain the limits: StageAbility/native dispatcher, complete victory/defeat, generic monster arithmetic, flat/clamp/rounding, HardLevel/Elite precedence, malformed-input validation and full reinforcement/AI admission are not promoted by the R6A Direct. No new TBGD family/index fact changed in that R6 checkpoint, so it does not relabel source inventory entries or mark the historical W14/W16 worklist globally closed.
 
-See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract; return to integration/planning for the R7 decision, without starting R7 here.
+R7 adds a selected target/decision boundary, not a source-family census or full-battle proof. Its exact-pin lookup table retains the new Monster1002041 reverse join and the raw sequence-shape correction. Source-family interpretation is unchanged, so the family inventory is not relabeled. W11/W15 bounded leaves and residuals are recorded in the worklist; the wider package obligations remain open.
+
+See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract and the R7 record for the current bounded result. Stop at R7 and return to integration/planning for the R8 decision.
