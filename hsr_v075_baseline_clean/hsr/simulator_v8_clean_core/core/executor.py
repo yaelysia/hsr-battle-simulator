@@ -743,10 +743,13 @@ class CombatExecutor:
                     trigger_results.append(trigger_result)
                     ordered_mutations.extend(trigger_result.mutations)
                     runtime_records.extend(trigger_result.records)
-                    listener_result = self.event_dispatcher.dispatch_event(
+                    listener_result = self.event_dispatcher.dispatch_action_window_listeners(
                         current_state,
                         event=dispatch_event,
                         damage_window_ledger=damage_window_ledger,
+                        nested_ability_provider=(
+                            self.ability_tasks.formal_status_nested_ability_provider()
+                        ),
                     )
                     current_state = listener_result.after_state
                     trigger_results.append(listener_result)

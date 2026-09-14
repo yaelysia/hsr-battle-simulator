@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Literal, cast
 
@@ -12,7 +12,7 @@ from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR
+from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR, TaskGraphWeightedSelectionIR
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
@@ -47,6 +47,7 @@ from .task_graph import (
     TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
+    TaskGraphWeightedSelectionResult,
 )
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
@@ -108,8 +109,64 @@ class StandaloneAbilityInvocation:
 
 
 @dataclass(frozen=True)
+class StatusNestedAbilityContext:
+    callback_id: str
+    modifier_name: str
+    status_instance_id: str
+    owner_id: str
+    root_graph_id: str
+    trigger_event_id: str
+    target_resolution: TargetResolution
+
+    def __post_init__(self) -> None:
+        if type(self) is not StatusNestedAbilityContext:
+            raise TypeError("status nested ability context must not be subclassed")
+        for value in (
+            self.callback_id,
+            self.modifier_name,
+            self.status_instance_id,
+            self.owner_id,
+            self.root_graph_id,
+            self.trigger_event_id,
+        ):
+            if type(value) is not str or not value:
+                raise ValueError("status nested ability context identity is incomplete")
+        if type(self.target_resolution) is not TargetResolution:
+            raise TypeError("status nested ability target resolution type is invalid")
+
+
+@dataclass(frozen=True, init=False)
+class StatusNestedAbilityHookProvider:
+    _factory: Callable[[StatusNestedAbilityContext], TaskGraphExecutionHooks]
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("status nested ability hook provider is AbilityTaskSystem-owned")
+
+    @classmethod
+    def _from_ability_task_system(
+        cls,
+        factory: Callable[[StatusNestedAbilityContext], TaskGraphExecutionHooks],
+    ) -> "StatusNestedAbilityHookProvider":
+        if cls is not StatusNestedAbilityHookProvider or not callable(factory):
+            raise TypeError("status nested ability provider factory is invalid")
+        value = object.__new__(cls)
+        object.__setattr__(value, "_factory", factory)
+        return value
+
+    def hooks_for(self, context: StatusNestedAbilityContext) -> TaskGraphExecutionHooks:
+        if type(self) is not StatusNestedAbilityHookProvider:
+            raise TypeError("status nested ability provider type is invalid")
+        if type(context) is not StatusNestedAbilityContext:
+            raise TypeError("status nested ability context type is invalid")
+        hooks = self._factory(context)
+        if type(hooks) is not TaskGraphExecutionHooks:
+            raise TypeError("status nested ability provider returned invalid hooks")
+        return hooks
+
+
+@dataclass(frozen=True)
 class _FormalAbilityInvocation:
-    invocation_kind: Literal["action", "queue_standalone"]
+    invocation_kind: Literal["action", "queue_standalone", "status_nested"]
     actor_id: str
     ability_id: str
     ability_level: int
@@ -153,6 +210,13 @@ class _FormalAbilityInvocation:
                 or self.standalone.actor_id != self.actor_id
             ):
                 raise ValueError("formal standalone invocation is inconsistent")
+        elif self.invocation_kind == "status_nested":
+            if (
+                self.action_command is not None
+                or self.action_definition is not None
+                or self.standalone is not None
+            ):
+                raise ValueError("formal status nested invocation is inconsistent")
         else:
             raise ValueError("formal ability invocation kind is invalid")
 
@@ -179,6 +243,11 @@ class AbilityTaskSystem:
         self.summons = SummonSystem(rules)
         self.targets = TargetSystem(rules)
         self.task_graph_executor = TaskGraphExecutor()
+
+    def formal_status_nested_ability_provider(self) -> StatusNestedAbilityHookProvider:
+        return StatusNestedAbilityHookProvider._from_ability_task_system(
+            self._formal_status_nested_hooks
+        )
 
     def execute_callback(
         self,
@@ -569,6 +638,224 @@ class AbilityTaskSystem:
                 request,
                 state,
             ),
+            weighted_selection=lambda request, selection, state: self._resolve_formal_weighted_selection(
+                request,
+                selection,
+                state,
+            ),
+        )
+
+    def _formal_status_nested_hooks(
+        self,
+        context: StatusNestedAbilityContext,
+    ) -> TaskGraphExecutionHooks:
+        if type(context) is not StatusNestedAbilityContext:
+            raise TypeError("status nested ability context type is invalid")
+
+        def invocation_for(
+            request: TaskGraphHookRequest,
+            state: BattleState,
+        ) -> tuple[_FormalAbilityInvocation | None, str]:
+            return self._status_nested_invocation_for_request(context, request, state)
+
+        def leaf(request: TaskGraphHookRequest, state: BattleState) -> TaskGraphLeafResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphLeafResult("blocked", outcome_kind="", blocked_reason=reason)
+            return self._execute_formal_leaf(request, state, invocation=invocation)
+
+        def condition(request: TaskGraphHookRequest, state: BattleState) -> TaskGraphConditionResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphConditionResult("blocked", blocked_reason=reason)
+            return self._evaluate_formal_condition(request, state, invocation=invocation)
+
+        def branch(request: TaskGraphHookRequest, state: BattleState) -> TaskGraphBranchResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphBranchResult("blocked", blocked_reason=reason)
+            return TaskGraphBranchResult(
+                "blocked",
+                blocked_reason="ability_task_graph_branch_domain_not_admitted",
+            )
+
+        def count(
+            request: TaskGraphHookRequest,
+            definition: TaskGraphNumericDefinitionIR,
+            state: BattleState,
+        ) -> TaskGraphCountResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphCountResult("blocked", blocked_reason=reason)
+            return self._resolve_formal_count(
+                request,
+                definition,
+                state,
+                invocation=invocation,
+            )
+
+        def targets(request: TaskGraphHookRequest, state: BattleState) -> TaskGraphTargetResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphTargetResult("blocked", blocked_reason=reason)
+            return self._resolve_formal_targets(request, state, invocation=invocation)
+
+        def graph(request: TaskGraphHookRequest, state: BattleState) -> TaskGraphGraphResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphGraphResult("blocked", blocked_reason=reason)
+            return self._resolve_formal_nested_graph(request, state)
+
+        def weighted_selection(
+            request: TaskGraphHookRequest,
+            selection: TaskGraphWeightedSelectionIR,
+            state: BattleState,
+        ) -> TaskGraphWeightedSelectionResult:
+            invocation, reason = invocation_for(request, state)
+            if invocation is None:
+                return TaskGraphWeightedSelectionResult("blocked", blocked_reason=reason)
+            return self._resolve_formal_weighted_selection(request, selection, state)
+
+        return TaskGraphExecutionHooks(
+            leaf=leaf,
+            condition=condition,
+            branch=branch,
+            count=count,
+            targets=targets,
+            graph=graph,
+            weighted_selection=weighted_selection,
+        )
+
+    def _status_nested_invocation_for_request(
+        self,
+        context: StatusNestedAbilityContext,
+        request: TaskGraphHookRequest,
+        state: BattleState,
+    ) -> tuple[_FormalAbilityInvocation | None, str]:
+        if type(context) is not StatusNestedAbilityContext:
+            return None, "status_nested_ability_context_type_invalid"
+        if type(request) is not TaskGraphHookRequest:
+            return None, "status_nested_ability_request_type_invalid"
+        owner = state.units.get(context.owner_id)
+        if owner is None:
+            return None, "status_nested_ability_owner_missing"
+        details = owner.flags.get("status_details", ())
+        matching = tuple(
+            detail
+            for detail in details
+            if isinstance(detail, dict)
+            and str(detail.get("instance_id") or "") == context.status_instance_id
+            and str(detail.get("modifier_name") or "") == context.modifier_name
+            and str(detail.get("owner_id") or "") == context.owner_id
+        ) if isinstance(details, (list, tuple)) else ()
+        if len(matching) != 1:
+            return None, "status_nested_ability_status_instance_identity_mismatch"
+        callback = self.rules.status_callback(context.callback_id)
+        if (
+            callback is None
+            or callback.source_mode != "mainline_avatar_ability"
+            or callback.modifier_name != context.modifier_name
+        ):
+            return None, "status_nested_ability_callback_identity_mismatch"
+        trigger_ids = matching[0].get("trigger_ids_by_event")
+        admitted = (
+            trigger_ids.get(callback.event)
+            if isinstance(trigger_ids, dict)
+            else None
+        )
+        if not isinstance(admitted, list) or context.callback_id not in admitted:
+            return None, "status_nested_ability_callback_not_attached"
+        root_result = self.rules.query_task_graph(context.root_graph_id)
+        root_graph = root_result.value
+        if (
+            root_result.status != "resolved"
+            or type(root_graph) is not TaskGraphIR
+            or root_graph.entry_kind != "status_callback"
+            or root_graph.owner_id != context.callback_id
+            or root_graph.callback_kind != callback.event
+        ):
+            return None, "status_nested_ability_root_graph_identity_mismatch"
+        if (
+            len(request.active_graph_stack) != 2
+            or request.active_graph_stack[0] != context.root_graph_id
+            or request.active_graph_stack[-1] != request.graph_id
+        ):
+            return None, "status_nested_ability_request_stack_mismatch"
+        child_result = self.rules.query_task_graph(request.graph_id)
+        child_graph = child_result.value
+        if (
+            child_result.status != "resolved"
+            or type(child_graph) is not TaskGraphIR
+            or child_graph.entry_kind != "ability_phase_callback"
+        ):
+            return None, "status_nested_ability_child_graph_identity_mismatch"
+        phase = self.rules.ability_phase(child_graph.owner_id)
+        if (
+            phase is None
+            or phase.invocation_role != "nested_only"
+            or phase.phase_id != child_graph.owner_id
+        ):
+            return None, "status_nested_ability_child_phase_not_nested_only"
+        task, task_reason = self._formal_task_for_request(request)
+        if task is None:
+            return None, task_reason
+        if task.phase_id != phase.phase_id or task.callback_kind != child_graph.callback_kind:
+            return None, "status_nested_ability_child_task_identity_mismatch"
+        linked_root_tasks: list[str] = []
+        for status_task in self.rules.status_callback_tasks_for_callback(context.callback_id):
+            if status_task.coverage_status != "executable" or status_task.opcode != "TriggerAbility":
+                continue
+            if status_task.linked_ability_phase_id == phase.phase_id:
+                linked_root_tasks.append(status_task.task_id)
+                continue
+            if status_task.linked_standalone_graph_id:
+                standalone = self.rules.standalone_ability_graph(
+                    status_task.linked_standalone_graph_id
+                )
+                if standalone is not None and phase.phase_id in standalone.phase_ids:
+                    linked_root_tasks.append(status_task.task_id)
+        if len(linked_root_tasks) != 1:
+            return None, (
+                "status_nested_ability_root_link_missing"
+                if not linked_root_tasks
+                else "status_nested_ability_root_link_ambiguous"
+            )
+        if any(target_id not in state.units for target_id in request.target_ids):
+            return None, "status_nested_ability_request_target_missing"
+        scoped_resolution = _task_graph_target_resolution(
+            request,
+            context.target_resolution,
+        )
+        return (
+            _FormalAbilityInvocation(
+                "status_nested",
+                context.owner_id,
+                phase.phase_id,
+                phase.level,
+                scoped_resolution,
+                execution_path=_task_graph_execution_path(request),
+                iteration_index=request.iteration_index,
+            ),
+            "",
+        )
+
+    def _resolve_formal_weighted_selection(
+        self,
+        request: TaskGraphHookRequest,
+        selection: TaskGraphWeightedSelectionIR,
+        _state: BattleState,
+    ) -> TaskGraphWeightedSelectionResult:
+        task, reason = self._formal_task_for_request(request)
+        if task is None:
+            return TaskGraphWeightedSelectionResult("blocked", blocked_reason=reason)
+        if type(selection) is not TaskGraphWeightedSelectionIR:
+            return TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="ability_task_weighted_selection_type_invalid",
+            )
+        return TaskGraphWeightedSelectionResult(
+            "blocked",
+            blocked_reason="ability_task_weighted_selection_caller_deferred_to_pr9",
         )
 
     def _execute_formal_leaf(
@@ -683,7 +970,11 @@ class AbilityTaskSystem:
                 _task_process_record(
                     task,
                     ok=False,
-                    blocked_reason="standalone_ability_damage_context_deferred_to_s8c",
+                    blocked_reason=(
+                        "status_nested_ability_damage_context_deferred_to_s8c"
+                        if invocation.invocation_kind == "status_nested"
+                        else "standalone_ability_damage_context_deferred_to_s8c"
+                    ),
                 )
             ], []
         admission_reason = ability_task_runtime_blocked_reason(
@@ -767,7 +1058,7 @@ class AbilityTaskSystem:
         ability_instance_prefix = (
             "ability_action"
             if invocation.invocation_kind == "action"
-            else "queue_standalone"
+            else f"ability_{invocation.invocation_kind}"
         )
         result = self.effect_registry.execute(
             effect,
@@ -2690,7 +2981,7 @@ def _formal_event_payload(
             target_resolution,
         )
     payload: dict[str, JSONValue] = {
-        "invocation_kind": "queue_standalone",
+        "invocation_kind": invocation.invocation_kind,
         "ability_id": invocation.ability_id,
         "ability_level": invocation.ability_level,
         "actor_id": invocation.actor_id,
