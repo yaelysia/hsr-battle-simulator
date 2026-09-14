@@ -10235,11 +10235,16 @@ def _wave_enemy_birth_template(
         "monster_data_card_source_trace": card_source,
         "monster_rank": monster_rank,
         "monster_rank_score": monster_rank_score,
-        "monster_rank_source_trace": {
-            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
-            "raw_type": "MonsterRankScore",
-            "raw_id": monster_rank,
-        },
+        "monster_rank_source_trace": IRSource(
+            source_path="Config/GlobalConfig/GameCoreConstValue.json",
+            raw_type="MonsterRankScore",
+            raw_id=monster_rank,
+            evidence={
+                "raw_path": f"MonsterRankScore.{monster_rank}.Value",
+                "rank": monster_rank,
+                "value": monster_rank_score,
+            },
+        ).to_json(),
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
