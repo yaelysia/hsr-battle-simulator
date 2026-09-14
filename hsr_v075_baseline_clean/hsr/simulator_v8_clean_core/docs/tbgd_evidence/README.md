@@ -21,6 +21,10 @@ The existing v8 Combat Core is an important **independent reverse-engineered imp
 
 ## Current navigation / sequencing overlay
 
+**2026-09-14 R9 — W13 selected owned-servant creation — is `partial / NEEDS_REPLAN`.** The [Owned Servant Creation / Ownership / Runtime Admission v1 record](../../../../../docs/tbgd_evidence/shared/owned_servant_runtime_admission_v1.md) pins the exact ordinary Aglaea `CreateServant(11402)` occurrence and checks the production gate against actual business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f`. **R9-G01:** source-bearing generic task lowering, servant definitions and `SummonSystem.plan_spawn_servant` exist, but the formal Ability/default effect route does not connect the selected CreateServant to executable servant spawn. Definition presence and direct consumer tests are not that caller edge.
+
+The existing formal-owner spawn-source non-null/membership guards remain required; `definition.source` is not an allowed substitute for the actual create occurrence. Downstream selected build/stat/birth/registry/action closure is not claimed through the missing edge. **E is not established; no new runtime/test/Direct run or runtime change is claimed.** Only the selected W13 leaf is updated; its parent remains active and native sync/passive/scheduler/death-order boundaries stay frozen. **Stop at R9; return to integration/planning for repair/R10 decision, without automatically entering R10.** This separately authorized partial checkpoint supersedes the R8 sequencing stop, not R8's historical evidence.
+
 **2026-09-14 R8 — W18 + startup-facing W09/W01 residual — is `bounded_complete` at the source/static-kernel boundary.** The [Battle-Start Effect Activation / Startup Admission v1 record](../../../../../docs/tbgd_evidence/shared/battle_start_effect_activation_v1.md) separates B0 static construction, B1 provider registration, B2 immediate startup ability and B3 battle-entry callbacks against actual business master `f8e8a053ef591e1aeeb99956d46acd8390676c6f`. It maps LC20000 rank/source/graph transport, Set102 static speed versus hit-context bonus, and Set301 main/conditional-child property paths. Registration is not execution and a true speed comparison is not an executed conditional effect.
 
 Technique possession remains external pre-battle state. The current canonical-effect-referenced initial-status interface is not an automatic MazeBuff-to-CharacterSkill/SkillMaze adapter; no inspected contract promises that a finished character build acquires or imports MazeBuff100201. R8 records that boundary without inventing a build bug. No concrete new producer/consumer mismatch was identified in the inspected contracts. **E is not established: no R8 simulator/Direct/test run is claimed.** W01/W09/W18 remain `active`; their broad historical checklist leaves are not promoted by selected anchors. Native dispatcher/timer/property-watcher and static-arithmetic gaps remain. **Stop at R8; return to integration/planning for the R9 decision.** This separately authorized checkpoint supersedes the R7 sequencing stop, not its historical evidence.
@@ -44,6 +48,8 @@ Current bounded sequence completed:
 - R6 — Encounter / Spawn / Phase / Termination v1, closed after merged R6A proof repair and narrow evidence reconciliation;
 - R7 — Action Targeting / Enemy Decision Boundary v1, selected source-facing and static consumer closure, without a new runtime E claim;
 - R8 — Battle-Start Effect Activation / Startup Admission v1, selected static/provider/startup/entry boundaries and external Technique ownership, without a runtime E claim.
+
+R9 has a durable **partial** record above and is deliberately not included in this completed list.
 
 `complete` here means the bounded evidence record met its own exit condition. It does **not** mean the corresponding W-package is globally `mechanism_closed`, and it does not imply runtime verification.
 
@@ -162,6 +168,10 @@ Core governance and ledgers:
 - `POST_R4_RESEARCH_COMPACTION_2026-09-10.md` — historical R0-R4 compaction;
 - `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` — retained R6 execution contract; current R6 completion status is overlaid above and in the R6 record.
 
+Partial / replanning records:
+
+- repository-level `docs/tbgd_evidence/shared/owned_servant_runtime_admission_v1.md` — R9 exact CreateServant producer and static consumer gates; G01 formal caller gap; downstream selected closure and E not established.
+
 Completed bounded cross-cutting records:
 
 - repository-level `docs/tbgd_evidence/shared/battle_execution_language_core_v1.md` — R0 reusable P/E/D/O execution vocabulary;
@@ -205,4 +215,6 @@ R7 adds a selected target/decision boundary, not a source-family census or full-
 
 R8 maps the selected R5 activation residual without reopening build-source discovery. A/C/D are bounded source/static consumer claims, not proof that the selected bundle, conditional submodifier or Technique ran. The worklist, pinned index and source-family inventory are unchanged: this selected closure does not satisfy their broad remaining obligations or introduce a new raw family/lookup.
 
-See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract and the R8 record for the current bounded result. Stop at R8 and return to integration/planning for the R9 decision.
+R9 stops at a concrete local production transport gap, rather than extending source archaeology to compensate for it. The selected W13 creation leaf remains unchecked with R9-G01; downstream G02–G06 are not globally adjudicated. The pinned index and family inventory are unchanged because this checkpoint reuses established source identities.
+
+See `POST_R5_RESEARCH_COMPACTION_2026-09-11.md` for the retained R6 exit contract and the R9 record for the current partial result. Stop at R9 and return to integration/planning; do not automatically enter R10.
