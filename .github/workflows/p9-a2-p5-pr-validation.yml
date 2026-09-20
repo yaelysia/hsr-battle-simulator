@@ -34,6 +34,13 @@ jobs:
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p5_process_only_settlement_barrier_retirement.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p5_process_only_settlement_barrier_retirement.py
+      - name: Install focused test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
       - name: Run focused P5 and P3 Fast
         shell: bash
         run: |

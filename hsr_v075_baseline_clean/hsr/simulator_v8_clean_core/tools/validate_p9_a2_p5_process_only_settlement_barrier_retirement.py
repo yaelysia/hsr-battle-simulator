@@ -32,6 +32,10 @@ ALLOWED = {MATERIALIZER, TEST, VALIDATOR, REPORT, CARD, WORKFLOW}
 FAMILIES = frozenset({"DamagePerformFinish", "SkillPerformFinish"})
 AUDIT_BLOCKER = "task_graph_definition_not_admitted:effect:audit_only"
 DAMAGE_BLOCKER = "task_graph_control_requires_domains:damage_heal_shield"
+SETTLEMENT_PAYLOAD_REASONS = frozenset({
+    "damage_perform_finish_settlement_payload_not_admitted",
+    "skill_perform_finish_settlement_payload_not_admitted",
+})
 
 if os.environ.get("P9_A2_P5_EXTERNAL_BASELINE") != "1":
     sys.path.insert(0, str(BASELINE))
@@ -58,6 +62,7 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p1_formal_process_only_sou
     definitions as _definitions,
 )
 from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p0_action_window_status_callback_admission_finalization import (
+    _raw_occurrence_key,
     _raw_source_trigger_ability_denominator,
 )
 
@@ -75,6 +80,14 @@ def git(*args: str, cwd: Path = ROOT) -> str:
 def _family(task: Any) -> str:
     value = task.source.evidence.get("source_opcode")
     return value if isinstance(value, str) and value else str(task.opcode)
+
+
+def _source_partition(*, eligible: bool, source_reason: str) -> str:
+    if eligible:
+        return "A"
+    if source_reason in SETTLEMENT_PAYLOAD_REASONS:
+        return "B"
+    return "C"
 
 
 def governance() -> dict[str, Any]:
@@ -127,8 +140,9 @@ def source_denominator(root: Path) -> dict[str, Any]:
             and control.termination.status == "not_applicable"
             and control.downstream_stages == ("p9_s11",)
         )
-        payload = bool(control.peer_field_names or control.field_responsibilities)
-        partition = "A" if eligible else "B" if payload or source_reason else "C"
+        partition = _source_partition(
+            eligible=eligible, source_reason=source_reason
+        )
         partitions[partition] += 1
         reasons[source_reason or "admitted"] += 1
         if len(samples[partition]) < 3:
@@ -154,11 +168,13 @@ def source_denominator(root: Path) -> dict[str, Any]:
     }
 
 
-def _barrier_nodes(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
+def _formal_nodes(
+    rules: RuleBook, projection: Any, families: frozenset[str]
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for task_id in projection.reachable_task_ids:
         task = rules.ability_task(task_id)
-        if task is None or _family(task) not in FAMILIES:
+        if task is None or _family(task) not in families:
             continue
         phase_tasks = [
             candidate for candidate in rules.ability_tasks_for_phase(task.phase_id)
@@ -189,6 +205,7 @@ def _barrier_nodes(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
             ],
             "task_mode": task.execution_mode,
             "task_coverage": task.coverage_status,
+            "effect_coverage": effect.coverage_status if effect is not None else "",
             "effect_identity": bool(effect is not None and effect.source == task.source and effect.opcode == task.opcode),
             "process_contract_admitted": bool(
                 isinstance(contract, Mapping)
@@ -198,6 +215,14 @@ def _barrier_nodes(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
             ),
         })
     return sorted(rows, key=lambda row: (row["family"], row["task_id"]))
+
+
+def _barrier_nodes(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
+    return _formal_nodes(rules, projection, FAMILIES)
+
+
+def _damage_nodes(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
+    return _formal_nodes(rules, projection, frozenset({"DamageByAttackProperty"}))
 
 
 def _provenance(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
@@ -210,34 +235,87 @@ def _provenance(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _a2_candidate_action_ids(
+def _a2_candidate_bindings(
     lowerer: Any, source_graph: Any, snapshot: Any, scope: Any
-) -> set[str]:
-    """Reuse P0's raw action-window TriggerAbility denominator before action slices."""
+) -> dict[str, tuple[dict[str, Any], ...]]:
+    """Keep each P0 raw occurrence bound through its exact scope record and owner."""
 
     formal_context = lowerer._character_formal_task_source_context()
     formal_paths = {item.source.source_path for item in snapshot.sources}
     rows, _meta = _raw_source_trigger_ability_denominator(
         lowerer, formal_context, formal_paths
     )
-    candidate_paths = {
-        str(row["callback_source_path"])
-        for row in rows
+    actions_by_source_id = {
+        action.action_source_id: action for action in source_graph.action_sources
     }
-    owner_ids = {
-        str(record.source.evidence.get("avatar_id") or "")
-        for record in scope.scope_records
-        if record.source.source_path in candidate_paths
-    }
-    owner_ids.discard("")
-    result = {
-        action.action_id
-        for action in source_graph.action_sources
-        if action.owner_avatar_id in owner_ids
-    }
-    if not result:
+    bindings: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        task_path = str(row["task_json_path"])
+        records = [
+            record
+            for record in scope.scope_records
+            if record.family == "TriggerAbility"
+            and record.source.source_path == row["task_source_path"]
+            and str(record.source.evidence.get("json_path") or "").removesuffix(".$type")
+            == task_path
+        ]
+        if len(records) != 1:
+            fail("a2_raw_trigger_scope_record_missing_or_ambiguous")
+        record = records[0]
+        owner_id = str(record.source.evidence.get("avatar_id") or "")
+        if not owner_id:
+            fail("a2_raw_trigger_owner_missing")
+        raw = _value_at_rooted_json_path(
+            formal_context.documents[row["task_source_path"]],
+            str(row["task_json_path"]),
+        )
+        ability_name = (
+            raw.get("AbilityName", {}).get("Value")
+            if isinstance(raw, Mapping) and isinstance(raw.get("AbilityName"), Mapping)
+            else None
+        )
+        if not isinstance(ability_name, str) or not ability_name:
+            fail("a2_raw_trigger_ability_name_missing")
+        relation_bindings = [
+            binding
+            for binding in source_graph.bindings
+            if binding.owner_avatar_id == owner_id
+            and binding.ability_name == ability_name
+            and binding.action_source_id
+        ]
+        if len(relation_bindings) != 1:
+            fail("a2_raw_trigger_action_binding_missing_or_ambiguous")
+        relation_binding = relation_bindings[0]
+        action = actions_by_source_id.get(relation_binding.action_source_id)
+        if action is None or action.owner_avatar_id != owner_id:
+            fail("a2_raw_trigger_action_source_missing")
+        raw_occurrence = {
+            key: str(row[key])
+            for key in (
+                "callback_source_path",
+                "callback_json_path",
+                "event",
+                "task_source_path",
+                "task_json_path",
+                "raw_opcode",
+            )
+        }
+        bindings.setdefault(action.action_id, []).append({
+            "raw_occurrence_key": list(_raw_occurrence_key(row)),
+            "raw_occurrence": raw_occurrence,
+            "scope_record_id": record.record_id,
+            "owner_avatar_id": owner_id,
+            "triggered_ability_name": ability_name,
+            "action_source_id": action.action_source_id,
+            "source_graph_binding_id": relation_binding.binding_id,
+            "source_graph_definition_id": relation_binding.ability_definition_id,
+        })
+    if not bindings:
         fail("a2_raw_candidate_action_denominator_empty")
-    return result
+    return {
+        action_id: tuple(sorted(items, key=lambda item: tuple(item["raw_occurrence_key"])))
+        for action_id, items in sorted(bindings.items())
+    }
 
 
 def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -252,13 +330,24 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
             and item.level == target["action_level"]
         )
     else:
-        candidate_action_ids = _a2_candidate_action_ids(
+        candidate_bindings = _a2_candidate_bindings(
             lowerer, source_graph, snapshot, scope
         )
+        candidate_action_ids = set(candidate_bindings)
+        lowest_level_by_action = {
+            action_id: min(
+                item.level for item in definitions if item.action_id == action_id
+            )
+            for action_id in candidate_action_ids
+        }
         definitions = tuple(
-            item for item in definitions if item.action_id in candidate_action_ids
+            item
+            for item in definitions
+            if item.action_id in candidate_action_ids
+            and item.level == lowest_level_by_action[item.action_id]
         )
     scanned = 0
+    matches: list[dict[str, Any]] = []
     for definition in definitions:
         if not definition.action_id.startswith("avatar_skill:"):
             continue
@@ -270,16 +359,8 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
         rules = RuleBook(replace(canonical, task_graph_catalog=task_catalog))
         tasks = rules.ability_tasks_for_action(definition.action_id, definition.level)
         projection = _formal_action_task_graph_projection(rules, definition.action_id, definition.level, tasks)
-        reachable = [rules.ability_task(task_id) for task_id in projection.reachable_task_ids]
-        damage_tasks = [
-            task for task in reachable
-            if task is not None and _family(task) == "DamageByAttackProperty"
-        ]
-        if not (
-            any(task is not None and task.opcode == "TriggerAbility" for task in reachable)
-            and any(task is not None and _family(task) in FAMILIES for task in reachable)
-            and len(damage_tasks) > 1
-        ):
+        barrier_nodes = _barrier_nodes(rules, projection)
+        if {row["family"] for row in barrier_nodes} != FAMILIES:
             del canonical, task_catalog, rules
             gc.collect()
             continue
@@ -293,7 +374,7 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
         after = state.snapshot().to_json()
         if before != after:
             fail("action_contract_mutated_state")
-        return {
+        row = {
             "definition_id": definition.definition_id,
             "action_id": definition.action_id,
             "action_level": definition.level,
@@ -302,11 +383,21 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
             "action_contract_blocked_reason": decision.blocked_reason,
             "blocked_reasons": list(projection.blocked_reasons),
             "provenance": _provenance(rules, projection),
-            "barrier_nodes": _barrier_nodes(rules, projection),
-            "damage_task_ids": sorted(task.task_id for task in damage_tasks),
+            "a2_source_bindings": list(candidate_bindings[definition.action_id]) if target is None else [],
+            "barrier_nodes": barrier_nodes,
+            "damage_nodes": _damage_nodes(rules, projection),
+            "damage_task_ids": sorted(
+                row["task_id"]
+                for row in _damage_nodes(rules, projection)
+            ),
             "submission_mode": mode,
         }
-    fail("a2_action_window_trigger_ability_candidate_not_found:" + str(scanned))
+        matches.append(row)
+        del canonical, task_catalog, rules
+        gc.collect()
+    if len(matches) != 1:
+        fail("a2_action_window_trigger_ability_candidate_not_unique:" + str(len(matches)))
+    return matches[0]
 
 
 def probe(root: Path, target: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -345,20 +436,34 @@ def run_direct(root: Path) -> dict[str, Any]:
     cur = current["representative"]
     if any(base[key] != cur[key] for key in target):
         fail("same_owner_candidate_identity_changed")
+    if not cur["a2_source_bindings"]:
+        fail("a2_raw_trigger_source_binding_missing")
     base_stale = [row for row in base["provenance"] if row.get("family") in FAMILIES and row.get("reason") == DAMAGE_BLOCKER and row.get("source") == "node_materialization"]
     current_stale = [row for row in cur["provenance"] if row.get("family") in FAMILIES and row.get("reason") == DAMAGE_BLOCKER and row.get("source") == "node_materialization"]
     if not base_stale or current_stale:
         fail("settlement_barrier_provenance_delta_missing")
-    if not cur["damage_task_ids"] or cur["action_contract_ok"]:
+    damage_task_ids = set(cur["damage_task_ids"])
+    damage_node_ids = {row["task_id"] for row in cur["damage_nodes"]}
+    if not damage_task_ids or damage_task_ids != damage_node_ids or cur["action_contract_ok"]:
         fail("real_s11_gameplay_or_outer_action_not_deferred")
     current_damage_rows = [
         row for row in cur["provenance"]
         if row.get("family") == "DamageByAttackProperty"
     ]
-    if not current_damage_rows or any(
+    damage_provenance_ids = {str(row.get("task_id") or "") for row in current_damage_rows}
+    if damage_provenance_ids != damage_task_ids or any(
         row.get("reason") != AUDIT_BLOCKER for row in current_damage_rows
     ):
         fail("real_damage_task_not_preserved_as_nonexecutable")
+    if not all(
+        row["node_kind"] == "leaf" and row["materialization_status"] == "materialized"
+        and row["owner_domains"] == ["task_graph_execution"]
+        and row["references"] == [("effect", "deferred", AUDIT_BLOCKER)]
+        and row["task_mode"] == "runtime_effect"
+        and row["effect_coverage"] == "audit_only"
+        for row in cur["damage_nodes"]
+    ):
+        fail("real_damage_task_not_formally_nonexecutable")
     if not cur["barrier_nodes"] or not all(
         row["node_kind"] == "leaf" and row["materialization_status"] == "materialized"
         and row["owner_domains"] == ["task_graph_execution"]

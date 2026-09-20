@@ -39,10 +39,32 @@ from simulator_v8_clean_core.tbgd.task_graph_materializer import (
     _node_status,
     _references,
 )
+from simulator_v8_clean_core.tools.validate_p9_a2_p5_process_only_settlement_barrier_retirement import (
+    _source_partition,
+)
 
 
 _DIGEST = "1" * 64
 _AUDIT_BLOCKER = "task_graph_definition_not_admitted:effect:audit_only"
+
+
+@pytest.mark.parametrize(
+    ("source_reason", "expected"),
+    (
+        ("", "C"),
+        ("raw_source_missing", "C"),
+        ("process_only_task_source_type_mismatch", "C"),
+        ("process_only_task_unknown_fields", "C"),
+        ("process_only_task_source_field_invalid:IsFakeAvatarAttack", "C"),
+        ("damage_perform_finish_settlement_payload_not_admitted", "B"),
+        ("skill_perform_finish_settlement_payload_not_admitted", "B"),
+    ),
+)
+def test_settlement_denominator_only_admits_explicit_payload_reasons(
+    source_reason: str, expected: str
+) -> None:
+    assert _source_partition(eligible=False, source_reason=source_reason) == expected
+    assert _source_partition(eligible=True, source_reason=source_reason) == "A"
 
 
 def _source(family: str, path: str = "$.Task") -> IRSource:
