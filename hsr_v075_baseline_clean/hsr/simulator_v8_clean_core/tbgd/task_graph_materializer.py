@@ -1451,6 +1451,72 @@ def _wait_anim_state_process_only_effect(
     return effect
 
 
+def _is_process_only_settlement_barrier_shape(
+    control: CharacterControlFlowNodeIR | None,
+    task: _FormalTask,
+) -> bool:
+    if control is None:
+        return False
+    return (
+        control.family in {"DamagePerformFinish", "SkillPerformFinish"}
+        and control.control_role == "settlement_barrier"
+        and control.coverage_status != "blocked"
+        and not control.blocked_reason
+        and not control.peer_field_names
+        and not control.field_responsibilities
+        and not control.branches
+        and not control.template_reference_ids
+        and control.termination.termination_kind == "not_applicable"
+        and control.termination.status == "not_applicable"
+        and control.downstream_stages == ("p9_s11",)
+        and task.family == control.family
+        and task.opcode == control.family
+        and task.execution_mode == "process_only"
+        and task.coverage_status == "audit_only"
+        and bool(task.effect_id)
+        and not task.condition_id
+        and not task.target_expression_id
+        and not task.ability_definition_id
+    )
+
+
+def _process_only_settlement_barrier_effect(
+    task: _FormalTask,
+    indexes: _DefinitionIndexes,
+) -> EffectIR:
+    matches = indexes.effects.get(task.effect_id, ())
+    if len(matches) != 1:
+        raise _Blocked(
+            "task_graph_process_only_settlement_barrier_effect_"
+            + ("missing" if not matches else "ambiguous")
+        )
+    effect = matches[0]
+    contract = effect.payload.get("process_only_contract")
+    source_fields = (
+        contract.get("source_fields") if isinstance(contract, Mapping) else None
+    )
+    source_field_types = (
+        contract.get("source_field_types") if isinstance(contract, Mapping) else None
+    )
+    if (
+        effect.opcode != task.opcode
+        or effect.coverage_status != "audit_only"
+        or effect.source != task.source
+        or not isinstance(contract, Mapping)
+        or contract.get("schema_version") != "ability_process_only_source_shape_v1"
+        or contract.get("opcode") != task.opcode
+        or contract.get("source_shape_status") != "admitted"
+        or bool(contract.get("blocked_reason"))
+        or source_fields != ["$type"]
+        or not isinstance(source_field_types, Mapping)
+        or dict(source_field_types) != {"$type": "str"}
+    ):
+        raise _Blocked(
+            "task_graph_process_only_settlement_barrier_effect_contract_invalid"
+        )
+    return effect
+
+
 def _references(
     task: _FormalTask,
     control: CharacterControlFlowNodeIR | None,
@@ -1474,6 +1540,8 @@ def _references(
     )
     if _is_wait_anim_state_process_only_presentation_shape(control, task):
         _wait_anim_state_process_only_effect(task, indexes)
+    if _is_process_only_settlement_barrier_shape(control, task):
+        _process_only_settlement_barrier_effect(task, indexes)
     result: list[TaskGraphDefinitionReferenceIR] = []
     for kind, definition_id, values, default_owner in definitions:
         if not definition_id:
@@ -1558,6 +1626,8 @@ def _node_status(
             raise _Blocked("task_graph_wait_anim_state_source_contract_missing")
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_wait_anim_state_process_only_presentation_shape(control, task):
+        return "leaf", "materialized", ("task_graph_execution",), ""
+    if _is_process_only_settlement_barrier_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
@@ -1718,6 +1788,29 @@ def _materialization_dispositions(
                 for node in linked_nodes
             )
         )
+        retire_settlement_barrier = (
+            item.source_kind == "control_node"
+            and item.family in {"DamagePerformFinish", "SkillPerformFinish"}
+            and bool(linked_nodes)
+            and all(
+                node.source_contract_node_id == item.source_record_id
+                and node.source_family == item.family
+                and node.opcode == item.family
+                and node.node_kind == "leaf"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and not node.branches
+                and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].resolution_status == "deferred"
+                and node.references[0].blocked_reason
+                == "task_graph_definition_not_admitted:effect:audit_only"
+                and node.references[0].source == node.source
+                and node.termination_kind == "not_applicable"
+                and node.termination_status == "not_applicable"
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
             domain
             for domain in item.owner_domains
@@ -1725,6 +1818,10 @@ def _materialization_dispositions(
             and not (
                 retire_wait_anim_state_barrier
                 and domain == "hit_random_sequence"
+            )
+            and not (
+                retire_settlement_barrier
+                and domain == "damage_heal_shield"
             )
         )
         result.append(replace(
