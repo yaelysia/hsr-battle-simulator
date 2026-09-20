@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import random
@@ -55,6 +56,9 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p1_formal_process_only_sou
     _state_for_admission,
     build_context as _build_context,
     definitions as _definitions,
+)
+from hsr.simulator_v8_clean_core.tools.validate_p9_a2_p0_action_window_status_callback_admission_finalization import (
+    _raw_source_trigger_ability_denominator,
 )
 
 
@@ -206,6 +210,36 @@ def _provenance(rules: RuleBook, projection: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _a2_candidate_action_ids(
+    lowerer: Any, source_graph: Any, snapshot: Any, scope: Any
+) -> set[str]:
+    """Reuse P0's raw action-window TriggerAbility denominator before action slices."""
+
+    formal_context = lowerer._character_formal_task_source_context()
+    formal_paths = {item.source.source_path for item in snapshot.sources}
+    rows, _meta = _raw_source_trigger_ability_denominator(
+        lowerer, formal_context, formal_paths
+    )
+    candidate_paths = {
+        str(row["callback_source_path"])
+        for row in rows
+    }
+    owner_ids = {
+        str(record.source.evidence.get("avatar_id") or "")
+        for record in scope.scope_records
+        if record.source.source_path in candidate_paths
+    }
+    owner_ids.discard("")
+    result = {
+        action.action_id
+        for action in source_graph.action_sources
+        if action.owner_avatar_id in owner_ids
+    }
+    if not result:
+        fail("a2_raw_candidate_action_denominator_empty")
+    return result
+
+
 def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[str, Any]:
     lowerer, source_graph, snapshot, scope = _build_context(root)
     source_catalog = lowerer.build_character_control_flow_contract_catalog(snapshot=snapshot, scope_catalog=scope)
@@ -216,6 +250,13 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
             if item.definition_id == target["definition_id"]
             and item.action_id == target["action_id"]
             and item.level == target["action_level"]
+        )
+    else:
+        candidate_action_ids = _a2_candidate_action_ids(
+            lowerer, source_graph, snapshot, scope
+        )
+        definitions = tuple(
+            item for item in definitions if item.action_id in candidate_action_ids
         )
     scanned = 0
     for definition in definitions:
@@ -230,14 +271,22 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
         tasks = rules.ability_tasks_for_action(definition.action_id, definition.level)
         projection = _formal_action_task_graph_projection(rules, definition.action_id, definition.level, tasks)
         reachable = [rules.ability_task(task_id) for task_id in projection.reachable_task_ids]
+        damage_tasks = [
+            task for task in reachable
+            if task is not None and _family(task) == "DamageByAttackProperty"
+        ]
         if not (
             any(task is not None and task.opcode == "TriggerAbility" for task in reachable)
             and any(task is not None and _family(task) in FAMILIES for task in reachable)
-            and any(task is not None and _family(task) == "DamageByAttackProperty" for task in reachable)
+            and len(damage_tasks) > 1
         ):
+            del canonical, task_catalog, rules
+            gc.collect()
             continue
         accepted = _accepted_context(rules, definition, tuple(str(value) for value in projection.blocked_reasons))
         if accepted is None or accepted[4] != "external_turn":
+            del canonical, task_catalog, rules
+            gc.collect()
             continue
         state, _command, _context, admission, mode, decision = accepted
         before = _state_for_admission(admission, str(state.global_flags.get("current_window") or "idle")).snapshot().to_json()
@@ -254,7 +303,7 @@ def representative(root: Path, target: Mapping[str, Any] | None = None) -> dict[
             "blocked_reasons": list(projection.blocked_reasons),
             "provenance": _provenance(rules, projection),
             "barrier_nodes": _barrier_nodes(rules, projection),
-            "damage_task_ids": sorted(task.task_id for task in reachable if task is not None and _family(task) == "DamageByAttackProperty"),
+            "damage_task_ids": sorted(task.task_id for task in damage_tasks),
             "submission_mode": mode,
         }
     fail("a2_action_window_trigger_ability_candidate_not_found:" + str(scanned))
@@ -300,8 +349,16 @@ def run_direct(root: Path) -> dict[str, Any]:
     current_stale = [row for row in cur["provenance"] if row.get("family") in FAMILIES and row.get("reason") == DAMAGE_BLOCKER and row.get("source") == "node_materialization"]
     if not base_stale or current_stale:
         fail("settlement_barrier_provenance_delta_missing")
-    if DAMAGE_BLOCKER not in cur["blocked_reasons"] or not cur["damage_task_ids"] or cur["action_contract_ok"]:
+    if not cur["damage_task_ids"] or cur["action_contract_ok"]:
         fail("real_s11_gameplay_or_outer_action_not_deferred")
+    current_damage_rows = [
+        row for row in cur["provenance"]
+        if row.get("family") == "DamageByAttackProperty"
+    ]
+    if not current_damage_rows or any(
+        row.get("reason") != AUDIT_BLOCKER for row in current_damage_rows
+    ):
+        fail("real_damage_task_not_preserved_as_nonexecutable")
     if not cur["barrier_nodes"] or not all(
         row["node_kind"] == "leaf" and row["materialization_status"] == "materialized"
         and row["owner_domains"] == ["task_graph_execution"]
@@ -316,10 +373,11 @@ def run_direct(root: Path) -> dict[str, Any]:
     predicates = {
         "source_denominator_closed": denominator["identity_closed"],
         "source_denominator_a_nonempty": bool(denominator["eligible_no_payload_process_only"]),
+        "source_denominator_b_remains_s11_payload": bool(denominator["explicit_s11_payload"]),
         "source_denominator_c_empty": denominator["other_blocked_or_unresolved"] == 0,
         "same_owner_stale_damage_owner_retired": True,
         "audit_reference_remains_nonexecutable": True,
-        "real_s11_damage_task_remains_deferred": True,
+        "real_s11_damage_task_remains_nonexecutable": True,
         "outer_action_remains_fail_closed": True,
         "runtime_channels_zero": all(value == 0 for value in current["channels"].values()),
     }

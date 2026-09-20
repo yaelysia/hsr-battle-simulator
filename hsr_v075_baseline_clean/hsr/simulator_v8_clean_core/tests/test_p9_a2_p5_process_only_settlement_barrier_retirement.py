@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,7 @@ def _task(
     *,
     coverage_status: str = "audit_only",
     effect_id: str = "effect:fixture",
+    execution_mode: str = "process_only",
 ) -> _FormalTask:
     return _FormalTask(
         task_id=f"task:{family}",
@@ -123,7 +125,7 @@ def _task(
         effect_id=effect_id,
         ability_definition_id="",
         ability_definition_kind="",
-        execution_mode="process_only",
+        execution_mode=execution_mode,
         coverage_status=coverage_status,
         source=_source(family),
     )
@@ -228,6 +230,44 @@ def test_malformed_process_only_contract_fails_closed() -> None:
             "node:fixture",
             task.source,
             _indexes(task, _effect(task, contract={"source_shape_status": "blocked"})),
+            {},
+        )
+
+
+def test_template_bearing_or_runtime_effect_shape_is_not_retired() -> None:
+    control = _control("DamagePerformFinish")
+    assert not _is_process_only_settlement_barrier_shape(
+        replace(control, template_reference_ids=("template:fixture",)),
+        _task(control.family),
+    )
+    assert not _is_process_only_settlement_barrier_shape(
+        control,
+        _task(control.family, execution_mode="runtime_effect"),
+    )
+    assert not _is_process_only_settlement_barrier_shape(
+        _control("DamageByAttackProperty"),
+        _task("DamageByAttackProperty", execution_mode="runtime_effect"),
+    )
+
+
+def test_effect_source_mismatch_fails_closed() -> None:
+    task = _task("SkillPerformFinish")
+    with pytest.raises(
+        RuntimeError,
+        match="task_graph_process_only_settlement_barrier_effect_contract_invalid",
+    ):
+        _references(
+            task,
+            _control(task.family),
+            "node:fixture",
+            task.source,
+            _indexes(
+                task,
+                replace(
+                    _effect(task),
+                    source=_source(task.family, "$.Other"),
+                ),
+            ),
             {},
         )
 
