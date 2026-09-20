@@ -1,0 +1,69 @@
+name: P9 A2 P4 direct validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p9-a2-p4-pr-validation.yml"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P4_SET_ENTITY_VISIBLE_PROCESS_ONLY_RETIREMENT_execution_report.md"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P4_SET_ENTITY_VISIBLE_PROCESS_ONLY_RETIREMENT.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p4-direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head and pinned TBGD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify TBGD pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
+
+      - name: Compile P4 scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/coverage.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/lowering.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py
+
+      - name: Run focused P4 Fast
+        shell: bash
+        run: |
+          set -euo pipefail
+          python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p4_set_entity_visible_process_only_retirement.py
+
+      - name: Run A1 Fast
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=hsr_v075_baseline_clean/hsr python -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --fast
+
+      - name: Run P4 SetEntityVisible Direct
+        shell: bash
+        run: |
+          set -euo pipefail
+          python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p4_set_entity_visible_process_only_retirement.py --direct
+
+      - name: Check fixed-base diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check 4beebe293f74e37e709d5cfc978f098d1e804128...HEAD
