@@ -1,0 +1,75 @@
+name: P9 A2 P6 direct validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/p9-a2-p6-pr-validation.yml"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p6_damage_audit_reference_admission.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p6_damage_audit_reference_admission.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P6_DAMAGE_AUDIT_REFERENCE_ADMISSION.md"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P6_DAMAGE_AUDIT_REFERENCE_ADMISSION_execution_report.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p6-direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+      - name: Verify TBGD pin and compile P6 scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
+          python -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p6_damage_audit_reference_admission.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p6_damage_audit_reference_admission.py
+      - name: Install focused test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+      - name: Run P6 focused, P1 and P2 Fast
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p6_damage_audit_reference_admission.py -q
+          PYTHONPATH=hsr_v075_baseline_clean PYTHONDONTWRITEBYTECODE=1 python - <<'PY'
+          from unittest.mock import patch
+          from hsr.simulator_v8_clean_core.tools import validate_p9_a2_p1_formal_process_only_source_identity as v
+
+          with patch.object(v, "governance", return_value={"cross_stage_functional_regression": True}):
+              result = v.run_fast()
+          assert result["ok"], result
+          print({"ok": result["ok"], "predicates": result["predicates"]})
+          PY
+          PYTHONPATH=hsr_v075_baseline_clean PYTHONDONTWRITEBYTECODE=1 python - <<'PY'
+          from unittest.mock import patch
+          from hsr.simulator_v8_clean_core.tools import validate_p9_a2_p2_process_only_trigger_ability_admission_identity as v
+
+          with patch.object(v, "governance", return_value={"cross_stage_functional_regression": True}):
+              result = v.run_fast()
+          assert result["ok"], result
+          print({"ok": result["ok"], "predicates": result["predicates"]})
+          PY
+      - name: Run A1 Fast and P6 Direct
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 python -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --fast
+          python hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p6_damage_audit_reference_admission.py --direct
+      - name: Check fixed-base diff
+        shell: bash
+        run: git diff --check 5f9f909e276811bb36fc3bb6701633dc25e4ff27...HEAD
