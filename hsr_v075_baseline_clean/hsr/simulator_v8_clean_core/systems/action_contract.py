@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from ..core.model import ActionCommand, BattleState, JSONValue
 from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR
+from ..rules.task_graph import (
+    TaskGraphDefinitionReferenceIR,
+    TaskGraphIR,
+    TaskGraphNodeIR,
+)
 from .action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
@@ -246,6 +250,54 @@ def _stable_unique(values: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
+def _is_emission_backed_damage_audit_reference(
+    rules: RuleBook,
+    task: AbilityTaskIR,
+    node: TaskGraphNodeIR,
+    unresolved: tuple[TaskGraphDefinitionReferenceIR, ...],
+) -> bool:
+    if (
+        task.opcode != "DamageByAttackProperty"
+        or task.execution_mode != "runtime_effect"
+        or task.coverage_status != "executable"
+        or task.blocked_reason
+        or task.parent_task_id
+        or node.node_kind != "leaf"
+        or node.materialization_status != "materialized"
+        or node.owner_domains != ("task_graph_execution",)
+        or len(unresolved) != 1
+        or not task.effect_id
+        or not rules.damage_emissions_for_task(task.task_id)
+    ):
+        return False
+    reference = unresolved[0]
+    if (
+        reference.reference_kind != "effect"
+        or reference.definition_id != task.effect_id
+        or reference.resolution_status != "deferred"
+        or reference.blocked_reason
+        != "task_graph_definition_not_admitted:effect:audit_only"
+    ):
+        return False
+    effect = rules.effect(task.effect_id)
+    task_evidence = task.source.evidence
+    if (
+        effect is None
+        or effect.opcode != task.opcode
+        or effect.coverage_status != "audit_only"
+        or "parent_task_id" in task_evidence
+        or "child_task_count" in task_evidence
+        or effect.source.source_path != task.source.source_path
+        or effect.source.raw_type != task.source.raw_type
+        or effect.source.raw_id != task.source.raw_id
+    ):
+        return False
+    return effect.source.evidence == {
+        **task_evidence,
+        "parent_task_id": "",
+    }
+
+
 def _formal_action_task_graph_projection(
     rules: RuleBook,
     action_id: str,
@@ -472,7 +524,15 @@ def _formal_action_task_graph_projection(
                     for reference in node.references
                     if reference.resolution_status != "resolved"
                 )
-                if unresolved:
+                if unresolved and not (
+                    not runtime_reason
+                    and _is_emission_backed_damage_audit_reference(
+                        rules,
+                        task,
+                        node,
+                        unresolved,
+                    )
+                ):
                     block(
                         unresolved[0].blocked_reason
                         or "ability_task_graph_leaf_reference_not_resolved",
@@ -484,10 +544,17 @@ def _formal_action_task_graph_projection(
                         source="graph_reference",
                     )
 
-            nested_node = node.node_kind == "ability_call" or task.opcode == "TriggerAbility"
+            process_only = is_process_only_ability_task(task)
+            nested_node = node.node_kind == "ability_call" or (
+                task.opcode == "TriggerAbility" and not process_only
+            )
             if not nested_node:
                 continue
-            if node.node_kind != "ability_call" or task.opcode != "TriggerAbility":
+            if (
+                node.node_kind != "ability_call"
+                or task.opcode != "TriggerAbility"
+                or process_only
+            ):
                 block(
                     "ability_task_graph_nested_identity_mismatch",
                     phase_id=graph.owner_id,

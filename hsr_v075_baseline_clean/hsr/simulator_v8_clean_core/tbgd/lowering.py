@@ -5774,6 +5774,7 @@ class TBGDLowering:
             else:
                 coverage_status = "executable"
                 blocked_reason = ""
+        pre_canonical_parent_source = parent_source
         parent_source = IRSource(
             parent_source.source_path,
             parent_source.raw_type,
@@ -5784,6 +5785,25 @@ class TBGDLowering:
                 if key not in {"parent_task_id", "child_task_count"}
             },
         )
+        if (
+            parent.execution_mode == "process_only"
+            and parent.effect_id
+            and parent_source != pre_canonical_parent_source
+        ):
+            matching_effects = [
+                (effect_index, effect)
+                for effect_index, effect in enumerate(lowered.effects)
+                if effect.effect_id == parent.effect_id
+            ]
+            if (
+                len(matching_effects) == 1
+                and matching_effects[0][1].source == pre_canonical_parent_source
+            ):
+                effect_index, effect = matching_effects[0]
+                lowered.effects[effect_index] = replace(
+                    effect,
+                    source=parent_source,
+                )
         if topology_blocked_reason:
             coverage_status = "blocked"
             blocked_reason = topology_blocked_reason
@@ -8768,6 +8788,32 @@ def _mark_client_only_trigger_ability_tasks(
         else task
         for task in lowered.ability_tasks
     ]
+    for effect_index, effect in enumerate(lowered.effects):
+        if effect.effect_id not in client_only_effect_ids:
+            continue
+        matching_tasks = [
+            task
+            for task in lowered.ability_tasks
+            if task.effect_id == effect.effect_id
+            and task.execution_mode == "process_only"
+        ]
+        if len(matching_tasks) != 1:
+            continue
+        task = matching_tasks[0]
+        pre_canonical_task_source = IRSource(
+            task.source.source_path,
+            task.source.raw_type,
+            task.source.raw_id,
+            {
+                **dict(task.source.evidence),
+                "parent_task_id": "",
+            },
+        )
+        if effect.source == pre_canonical_task_source:
+            lowered.effects[effect_index] = replace(
+                effect,
+                source=task.source,
+            )
 
 
 @dataclass(frozen=True)
@@ -10189,11 +10235,16 @@ def _wave_enemy_birth_template(
         "monster_data_card_source_trace": card_source,
         "monster_rank": monster_rank,
         "monster_rank_score": monster_rank_score,
-        "monster_rank_source_trace": {
-            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
-            "raw_type": "MonsterRankScore",
-            "raw_id": monster_rank,
-        },
+        "monster_rank_source_trace": IRSource(
+            source_path="Config/GlobalConfig/GameCoreConstValue.json",
+            raw_type="MonsterRankScore",
+            raw_id=monster_rank,
+            evidence={
+                "raw_path": f"MonsterRankScore.{monster_rank}.Value",
+                "rank": monster_rank,
+                "value": monster_rank_score,
+            },
+        ).to_json(),
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
@@ -16286,6 +16337,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
         "Iteration": "integer",
         "TargetType": "mapping",
     },
+    "SetEntityVisible": {"TargetType": "mapping", "UniqueKey": "string", "Visible": "bool"},
     "SetTeamFormation": {
         "CustomCenterTargetType": "mapping",
         "CustomFormationIgnoreDying": "bool",
@@ -16440,6 +16492,8 @@ def _process_only_ability_task_source_blocked_reason(
             if set(task).intersection(visual_fields)
             else "radial_blur_visual_payload_missing"
         )
+    if opcode == "SetEntityVisible":
+        return ""
     if opcode == "SetTeamFormation":
         has_formation = bool(task.get("FormationType") or task.get("CustomFormationName"))
         has_scope = bool(

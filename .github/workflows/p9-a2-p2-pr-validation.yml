@@ -1,0 +1,65 @@
+name: P9 A2 P2 PR validation
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p2_process_only_trigger_ability_admission_identity.py"
+      - "hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2-P2_PROCESS_ONLY_TRIGGER_ABILITY_ADMISSION_IDENTITY_execution_report.md"
+      - "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2-P2_PROCESS_ONLY_TRIGGER_ABILITY_ADMISSION_IDENTITY.md"
+      - ".github/workflows/p9-a2-p2-pr-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head and pinned TBGD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Show committed head and source pin
+        run: |
+          expected_head='${{ github.event.pull_request.head.sha }}'
+          actual_head="$(git rev-parse HEAD)"
+          printf 'expected_head=%s\nactual_head=%s\n' "$expected_head" "$actual_head"
+          test "$actual_head" = "$expected_head"
+          git submodule status turnbasedgamedata-main
+          test "$(git -C turnbasedgamedata-main rev-parse HEAD)" = "14c1d18f91a8101d610e6c523447a7517de3fae1"
+
+      - name: Compile
+        run: |
+          env PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/action_contract.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p2_process_only_trigger_ability_admission_identity.py
+
+      - name: P2 Fast
+        run: |
+          /usr/bin/time -v env PYTHONDONTWRITEBYTECODE=1 python3 \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p2_process_only_trigger_ability_admission_identity.py \
+            --fast
+
+      - name: A1 Fast regression
+        run: |
+          /usr/bin/time -v env PYTHONPATH=hsr_v075_baseline_clean/hsr PYTHONDONTWRITEBYTECODE=1 \
+            python3 -B -m simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority \
+            --fast
+
+      - name: P2 Direct
+        run: |
+          /usr/bin/time -v env PYTHONDONTWRITEBYTECODE=1 python3 \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_p2_process_only_trigger_ability_admission_identity.py \
+            --direct
+
+      - name: Fixed-base diff check
+        run: |
+          git diff --check f6ea5d2e2d067cb8cecb82bb28faf14beb2a29b4 HEAD
