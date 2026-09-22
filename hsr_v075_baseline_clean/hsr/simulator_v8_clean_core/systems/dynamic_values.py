@@ -231,12 +231,14 @@ def binding_source_from_store(
     excluded_status_instance_ids: tuple[str, ...] = (),
     excluded_hashes: tuple[str, ...] = (),
     excluded_names: tuple[str, ...] = (),
+    excluded_scopes: tuple[str, ...] = (),
 ) -> dict[str, JSONValue]:
     normalized = normalized_dynamic_value_store(store)
     excluded = {item for item in excluded_status_instance_ids if item}
     excluded_hash_keys = {str(item) for item in excluded_hashes if str(item)}
     excluded_name_keys = {str(item) for item in excluded_names if str(item)}
-    if excluded or excluded_hash_keys or excluded_name_keys:
+    excluded_scope_keys = {str(item) for item in excluded_scopes if str(item)}
+    if excluded or excluded_hash_keys or excluded_name_keys or excluded_scope_keys:
         entries = normalized.get("entries")
         filtered_entries = {
             key: entry
@@ -246,6 +248,7 @@ def binding_source_from_store(
                 str(entry.get("status_instance_id") or "") not in excluded
                 and str(entry.get("hash") or "") not in excluded_hash_keys
                 and str(entry.get("name") or "") not in excluded_name_keys
+                and str(entry.get("scope") or "") not in excluded_scope_keys
             )
         }
         normalized = _reindex({"entries": filtered_entries})
@@ -1658,6 +1661,8 @@ def character_skill_param_binding_sources(
     *,
     action_level: int | None = None,
     current_action_trigger_key: str | None = None,
+    excluded_hashes: tuple[str, ...] = (),
+    excluded_names: tuple[str, ...] = (),
 ) -> tuple[dict[str, JSONValue], ...]:
     sources: list[dict[str, JSONValue]] = []
     seen: set[str] = set()
@@ -1674,6 +1679,8 @@ def character_skill_param_binding_sources(
             unit_id,
             action_level=action_level,
             current_action_trigger_key=current_action_trigger_key,
+            excluded_hashes=excluded_hashes,
+            excluded_names=excluded_names,
         )
         if source is not None:
             sources.append(source)
@@ -1687,13 +1694,20 @@ def character_skill_param_binding_source(
     *,
     action_level: int | None = None,
     current_action_trigger_key: str | None = None,
+    excluded_hashes: tuple[str, ...] = (),
+    excluded_names: tuple[str, ...] = (),
 ) -> dict[str, JSONValue] | None:
     unit = state.units.get(unit_id)
     if unit is None:
         return None
     card_id = unit.flags.get("character_data_card_id")
-    card = rules.character_data_card(str(card_id)) if isinstance(card_id, str) and card_id else None
-    if card is None:
+    if card_id is not None:
+        if not isinstance(card_id, str) or not card_id:
+            return None
+        card = rules.character_data_card(card_id)
+        if card is None or card.entity_ref != unit.template_id:
+            return None
+    else:
         card = rules.character_data_card_for_entity(unit.template_id)
     if card is None:
         return None
@@ -1723,7 +1737,13 @@ def character_skill_param_binding_source(
             continue
         trigger_key = read_info.get("TriggerKey")
         param_index = read_info.get("Index")
-        if not isinstance(trigger_key, str) or not isinstance(param_index, int):
+        if (
+            not isinstance(trigger_key, str)
+            or not trigger_key
+            or not isinstance(param_index, int)
+            or isinstance(param_index, bool)
+            or param_index < 0
+        ):
             continue
         selected_level, level_source = _skill_param_level_for_trigger(
             trigger_key,
@@ -1762,6 +1782,21 @@ def character_skill_param_binding_source(
     if not entries:
         return None
     indexed = _reindex({"entries": entries})
+    excluded_hash_keys = {str(item) for item in excluded_hashes if str(item)}
+    excluded_name_keys = {str(item) for item in excluded_names if str(item)}
+    if excluded_hash_keys or excluded_name_keys:
+        indexed = _reindex(
+            {
+                "entries": {
+                    key: entry
+                    for key, entry in indexed["entries"].items()
+                    if str(entry.get("hash") or "") not in excluded_hash_keys
+                    and str(entry.get("name") or "") not in excluded_name_keys
+                }
+            }
+        )
+    if not indexed["entries"]:
+        return None
     return {
         "source_type": "character_skill_param_slot",
         "unit_id": unit_id,
@@ -1772,6 +1807,35 @@ def character_skill_param_binding_source(
     }
 
 
+def character_skill_param_declared_keys(
+    rules: RuleBook,
+    state: BattleState,
+    unit_id: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return canonical SkillParam keys even when their runtime slot is unavailable."""
+
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return (), ()
+    card = rules.character_data_card_for_entity(unit.template_id)
+    if card is None:
+        return (), ()
+    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
+    by_hash = bindings.get("by_hash") if isinstance(bindings, dict) else None
+    if not isinstance(by_hash, dict):
+        return (), ()
+    hashes = tuple(
+        sorted(
+            str(raw_hash)
+            for raw_hash, binding in by_hash.items()
+            if isinstance(binding, dict)
+            and isinstance(binding.get("read_info"), dict)
+            and binding["read_info"].get("Type") == "SkillParam"
+        )
+    )
+    return hashes, ()
+
+
 def _skill_param_level_for_trigger(
     trigger_key: str,
     *,
@@ -1779,10 +1843,22 @@ def _skill_param_level_for_trigger(
     current_action_trigger_key: str | None,
     skill_levels_by_trigger_key: dict[object, object],
 ) -> tuple[int | None, str]:
+    configured = trigger_key in skill_levels_by_trigger_key
     configured_level = skill_levels_by_trigger_key.get(trigger_key)
-    if isinstance(configured_level, int):
+    if (
+        isinstance(configured_level, int)
+        and not isinstance(configured_level, bool)
+        and configured_level > 0
+    ):
         return configured_level, "unit.skill_levels_by_trigger_key"
-    if trigger_key == current_action_trigger_key and isinstance(action_level, int):
+    if configured:
+        return None, "skill_level_invalid_for_trigger_key"
+    if (
+        trigger_key == current_action_trigger_key
+        and isinstance(action_level, int)
+        and not isinstance(action_level, bool)
+        and action_level > 0
+    ):
         return action_level, "current_action_level"
     return None, "skill_level_missing_for_trigger_key"
 
@@ -1793,18 +1869,35 @@ def _select_skill_param_slot(
     param_index: int,
     action_level: int,
 ) -> Any | None:
+    if (
+        not isinstance(param_index, int)
+        or isinstance(param_index, bool)
+        or param_index < 0
+        or not isinstance(action_level, int)
+        or isinstance(action_level, bool)
+        or action_level <= 0
+    ):
+        return None
     matches = [
         slot
         for slot in slots
         if slot.semantics.get("skill_trigger_key") == trigger_key
+        and isinstance(slot.semantics.get("param_index"), int)
+        and not isinstance(slot.semantics.get("param_index"), bool)
         and slot.semantics.get("param_index") == param_index
     ]
     if not matches:
         return None
-    level_matches = [slot for slot in matches if slot.semantics.get("level") == action_level]
-    if not level_matches:
+    level_matches = [
+        slot
+        for slot in matches
+        if isinstance(slot.semantics.get("level"), int)
+        and not isinstance(slot.semantics.get("level"), bool)
+        and slot.semantics.get("level") == action_level
+    ]
+    if len(level_matches) != 1:
         return None
-    return sorted(level_matches, key=lambda item: str(item.mechanism_slot_id))[0]
+    return level_matches[0]
 
 
 def _slot_param_value(slot: Any) -> float | None:

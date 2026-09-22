@@ -45,6 +45,8 @@ from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import (
     binding_source_from_status_detail,
     binding_source_from_store,
+    character_skill_param_declared_keys,
+    character_skill_param_binding_sources,
     find_status_detail,
     status_binding_sources,
     store_from_state,
@@ -1238,6 +1240,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if (
             not evaluation.ok
@@ -1601,6 +1604,7 @@ class StatusCallbackSystem:
                 detail,
                 task,
                 self.rules.engine_rule_registry(),
+                self.rules,
             )
             if not evaluation.ok or evaluation.value is None:
                 reason = evaluation.blocked_reason or "loop_count_not_resolved"
@@ -1698,6 +1702,7 @@ class StatusCallbackSystem:
                 detail,
                 task,
                 self.rules.engine_rule_registry(),
+                self.rules,
             )
             if not evaluation.ok or evaluation.value is None or evaluation.value < 0:
                 reason = evaluation.blocked_reason or "random_config_weight_not_resolved"
@@ -1978,6 +1983,7 @@ class StatusCallbackSystem:
                 self.evaluator.evaluate_condition_result(
                     condition,
                     _condition_context(
+                        self.rules,
                         state,
                         detail,
                         trigger_event,
@@ -2007,6 +2013,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None or not 0.0 <= evaluation.value <= 1.0:
             blocked = ConditionEvaluationResult(
@@ -2100,6 +2107,7 @@ class StatusCallbackSystem:
         result = self.evaluator.evaluate_condition_result(
             condition,
             _condition_context(
+                self.rules,
                 state,
                 detail,
                 evaluated_event,
@@ -2183,6 +2191,17 @@ class StatusCallbackSystem:
                     trigger_event.target_id if trigger_event is not None else None
                 ),
                 turn_owner_id=committed_turn_owner_id(state),
+                action_event_id=(
+                    trigger_event.event_id if trigger_event is not None else None
+                ),
+                action_window=(
+                    trigger_event.window if trigger_event is not None else None
+                ),
+                admitted_action_target_fact=(
+                    trigger_event.admitted_action_target_fact
+                    if trigger_event is not None
+                    else None
+                ),
             ),
             condition_event_payload=event_payload,
             binding_sources=tuple(
@@ -2345,7 +2364,7 @@ class StatusCallbackSystem:
             reason = f"effect_not_executable:{coverage}"
             result = self.effect_registry.execute(
                 effect,
-                _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+                _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
             )
             return StatusCallbackExecutionResult(
                 ok=False,
@@ -2356,7 +2375,7 @@ class StatusCallbackSystem:
             )
         result = self.effect_registry.execute(
             effect,
-            _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+            _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
         )
         after_state = self.reducer.apply_all(state, result.mutations)
         records = (
@@ -2422,6 +2441,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = evaluation.blocked_reason or "current_skill_delay_cost_value_unresolved"
@@ -2552,6 +2572,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if (
             not maximum.ok
@@ -2777,6 +2798,7 @@ class StatusCallbackSystem:
         empty_group_admitted = False
         if expression is not None:
             context = _effect_context(
+                self.rules,
                 state,
                 task,
                 detail,
@@ -2795,6 +2817,13 @@ class StatusCallbackSystem:
                     event_source_id=(trigger_event.source_id if trigger_event is not None else None),
                     event_target_id=(trigger_event.target_id if trigger_event is not None else None),
                     turn_owner_id=committed_turn_owner_id(state),
+                    action_event_id=(trigger_event.event_id if trigger_event is not None else None),
+                    action_window=(trigger_event.window if trigger_event is not None else None),
+                    admitted_action_target_fact=(
+                        trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
                 ),
                 target_resolution=context.target_resolution,
                 condition_event_payload=context.event_payload,
@@ -2875,7 +2904,7 @@ class StatusCallbackSystem:
         for target_id in target_ids:
             patched_standard = {**standard, "target_alias": "ParamEntity"}
             patched_effect = replace(effect, payload={**effect.payload, "standard": patched_standard})
-            context = _effect_context(current_state, task, detail, trigger_event, damage_window_ledger)
+            context = _effect_context(self.rules, current_state, task, detail, trigger_event, damage_window_ledger)
             context = replace(context, param_entity_id=target_id, current_action_target_id=target_id)
             result = self.effect_registry.execute(patched_effect, context)
             if result.unsupported:
@@ -2946,6 +2975,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = (
@@ -3438,6 +3468,7 @@ class StatusCallbackSystem:
         )
         if expression is not None:
             context = _effect_context(
+                self.rules,
                 state,
                 task,
                 detail,
@@ -3456,6 +3487,13 @@ class StatusCallbackSystem:
                     event_source_id=(trigger_event.source_id if trigger_event is not None else None),
                     event_target_id=(trigger_event.target_id if trigger_event is not None else None),
                     turn_owner_id=committed_turn_owner_id(state),
+                    action_event_id=(trigger_event.event_id if trigger_event is not None else None),
+                    action_window=(trigger_event.window if trigger_event is not None else None),
+                    admitted_action_target_fact=(
+                        trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
                 ),
                 target_resolution=context.target_resolution,
                 condition_event_payload=context.event_payload,
@@ -5237,6 +5275,7 @@ def _evaluate_callback_numeric(
     detail: dict[str, JSONValue],
     task: StatusCallbackTaskIR,
     engine_rules: EngineRuleRegistry,
+    rules: RuleBook,
 ) -> NumericEvaluationResult:
     source_trace = {
         "status_task_source": task.source.to_json(),
@@ -5259,7 +5298,7 @@ def _evaluate_callback_numeric(
             source_trace,
             engine_reason,
         )
-    context = _condition_context(state, detail, None)
+    context = _condition_context(rules, state, detail, None)
     return resolve_runtime_numeric_expression(
         cast(JSONValue, expression),
         binding_sources=(
@@ -5271,6 +5310,7 @@ def _evaluate_callback_numeric(
 
 
 def _condition_context(
+    rules: RuleBook,
     state: BattleState,
     detail: dict[str, JSONValue],
     event: GameEvent | None,
@@ -5326,14 +5366,14 @@ def _condition_context(
             else ()
         )
     )
-    callback_binding_sources = (
-        *((current_status_binding_source,) if current_status_binding_source is not None else ()),
-        binding_source_from_store(
-            store_from_state(state),
-            excluded_status_instance_ids=(current_status_instance_id,),
-            excluded_hashes=current_hashes,
-            excluded_names=current_names,
-        ),
+    callback_binding_sources = _callback_binding_sources(
+        rules,
+        state,
+        detail,
+        current_status_binding_source,
+        current_status_instance_id,
+        current_hashes,
+        current_names,
     )
     if condition is not None and targets is not None:
         return targets.condition_evaluation_context(
@@ -5348,6 +5388,11 @@ def _condition_context(
                 event_source_id=(event.source_id if event is not None else None),
                 event_target_id=(event.target_id if event is not None else None),
                 turn_owner_id=committed_turn_owner_id(state),
+                action_event_id=(event.event_id if event is not None else None),
+                action_window=(event.window if event is not None else None),
+                admitted_action_target_fact=(
+                    event.admitted_action_target_fact if event is not None else None
+                ),
             ),
             condition_event_payload=payload,
             binding_sources=callback_binding_sources,
@@ -5375,6 +5420,7 @@ def _condition_context(
 
 
 def _effect_context(
+    rules: RuleBook,
     state: BattleState,
     task: StatusCallbackTaskIR,
     detail: dict[str, JSONValue],
@@ -5421,6 +5467,19 @@ def _effect_context(
         detail,
         detail.get("dynamic_values"),
     )
+    current_hashes, current_names = _binding_source_keys(
+        current_status_binding_source
+    )
+    callback_binding_sources = _callback_binding_sources(
+        rules,
+        state,
+        detail,
+        current_status_binding_source,
+        current_status_instance_id,
+        current_hashes,
+        current_names,
+        include_ambient=False,
+    )
     return EffectExecutionContext(
         state=state,
         caster_id=caster_id,
@@ -5439,16 +5498,107 @@ def _effect_context(
         current_action_target_id=target_id or None,
         event_payload=payload,
         dynamic_values=None,
-        binding_sources=(
-            (current_status_binding_source,)
-            if current_status_binding_source is not None
-            else ()
-        ),
+        binding_sources=callback_binding_sources,
         include_ambient_status_bindings=False,
         shadowed_status_instance_ids=(
             (current_status_instance_id,) if current_status_instance_id else ()
         ),
         damage_window_ledger=damage_window_ledger,
+    )
+
+
+def _callback_binding_sources(
+    rules: RuleBook,
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    current_status_binding_source: dict[str, JSONValue] | None,
+    current_status_instance_id: str,
+    current_hashes: tuple[str, ...],
+    current_names: tuple[str, ...],
+    *,
+    include_ambient: bool = True,
+) -> tuple[dict[str, JSONValue], ...]:
+    """Compose callback bindings without allowing outer-action ownership to leak in."""
+
+    caster_id = str(detail.get("caster_id") or detail.get("owner_id") or "")
+    character_sources = character_skill_param_binding_sources(
+        rules,
+        state,
+        (caster_id,) if caster_id else (),
+        excluded_hashes=current_hashes,
+        excluded_names=current_names,
+    )
+    declared_hashes, declared_names = character_skill_param_declared_keys(
+        rules,
+        state,
+        caster_id,
+    ) if caster_id else ((), ())
+    explicit_sources = (
+        *((current_status_binding_source,) if current_status_binding_source is not None else ()),
+        *character_sources,
+    )
+    if not include_ambient:
+        return explicit_sources
+    shadowed_hashes = tuple(
+        dict.fromkeys(
+            (*current_hashes, *declared_hashes)
+            + tuple(
+                str(key)
+                for source in explicit_sources
+                for key in (
+                    source.get("by_hash", {}).keys()
+                    if isinstance(source.get("by_hash"), dict)
+                    else ()
+                )
+            )
+        )
+    )
+    shadowed_names = tuple(
+        dict.fromkeys(
+            (*current_names, *declared_names)
+            + tuple(
+                str(key)
+                for source in explicit_sources
+                for key in (
+                    source.get("by_name", {}).keys()
+                    if isinstance(source.get("by_name"), dict)
+                    else ()
+                )
+            )
+        )
+    )
+    return (
+        *explicit_sources,
+        binding_source_from_store(
+            store_from_state(state),
+            excluded_status_instance_ids=(current_status_instance_id,),
+            excluded_hashes=shadowed_hashes,
+            excluded_names=shadowed_names,
+            excluded_scopes=("character_skill_param",),
+        ),
+    )
+
+
+def _binding_source_keys(
+    source: dict[str, JSONValue] | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return (
+        tuple(
+            str(key)
+            for key in (
+                source.get("by_hash", {}).keys()
+                if source is not None and isinstance(source.get("by_hash"), dict)
+                else ()
+            )
+        ),
+        tuple(
+            str(key)
+            for key in (
+                source.get("by_name", {}).keys()
+                if source is not None and isinstance(source.get("by_name"), dict)
+                else ()
+            )
+        ),
     )
 def _current_status_detail(
     state: BattleState,
