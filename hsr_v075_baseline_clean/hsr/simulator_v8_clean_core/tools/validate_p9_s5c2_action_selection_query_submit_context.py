@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.model import ActionCommand, BattleState, UnitState
+from ..core.executor import CombatExecutor
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.action_target_contract import (
@@ -452,16 +453,30 @@ def _real_source_matrix(
         state, "ally:actor", selected["blocked"].action_id, selected["blocked"].level,
     )
     dynamic = selected["dynamic"]
-    dynamic_query = automatic_system.query(state, "ally:actor", dynamic.action_id, dynamic.level)
-    dynamic_accept = automatic_system.accept(state, dynamic_query, ()) if dynamic_query.selection_mode == "automatic" else automatic_system.accept(state, dynamic_query, (dynamic_query.candidate_ids[0],))
+    dynamic_event = _event(
+        dynamic,
+        target_mode="aoe" if dynamic.selection_mode == "automatic" else "single",
+    )
+    dynamic_rules = RuleBook(
+        replace(query_rules.ir, action_events=(dynamic_event,))
+    )
+    dynamic_system = ActionTargetSelectionSystem(dynamic_rules)
+    dynamic_query = dynamic_system.query(
+        state, "ally:actor", dynamic.action_id, dynamic.level
+    )
+    dynamic_accept = dynamic_system.accept(state, dynamic_query, ()) if dynamic_query.selection_mode == "automatic" else dynamic_system.accept(state, dynamic_query, (dynamic_query.candidate_ids[0],))
     dynamic_reason = ""
     if dynamic_accept.accepted and dynamic_accept.context is not None:
-        event = _event(dynamic, target_mode="aoe" if dynamic.selection_mode == "automatic" else "single")
         command = ActionCommand(
             actor_id="ally:actor", action_id=dynamic.action_id, action_level=dynamic.level,
             target_ids=dynamic_accept.context.accepted.submitted_target_ids,
         )
-        dynamic_reason = automatic_system.resolve_impact(state, command, dynamic_accept.context, event).blocked_reason
+        dynamic_reason = dynamic_system.resolve_impact(
+            state,
+            command,
+            dynamic_accept.context,
+            dynamic_event,
+        ).blocked_reason
     return {
         "ok": all((
             len(definitions) == 1,
@@ -472,7 +487,7 @@ def _real_source_matrix(
             automatic_accept.accepted,
             not automatic_injection.accepted,
             not blocked_query.resolved and not blocked_query.candidate_ids,
-            dynamic_reason == "action_dynamic_target_deferred_to_p9_s5d",
+            dynamic_reason == "action_dynamic_target_control_flow_deferred_to_p9_s8",
         )),
         "source_slice_projection": source_slice.metadata.get("projection"),
         "explicit": explicit_query.to_json(),
@@ -595,9 +610,11 @@ def _negative_matrix(rules: RuleBook, explicit: ActionTargetContractIR) -> dict[
         actor_id="ally:actor", action_id=explicit.action_id, action_level=explicit.level,
         target_ids=("enemy:actor",),
     )
-    executor_result = __import__(
-        "simulator_v8_clean_core.core.executor", fromlist=["CombatExecutor"]
-    ).CombatExecutor(rules).execute(command, state, target_selection_context=unsigned)
+    executor_result = CombatExecutor(rules).execute(
+        command,
+        state,
+        target_selection_context=unsigned,
+    )
     decision = DecisionSystem(rules).current_decision(state)
     forged = DecisionSubmissionAuthorization(
         decision_id=decision.token.decision_id,  # type: ignore[union-attr]
@@ -661,7 +678,11 @@ def _field_and_consumer_matrix(catalog: ActionTargetContractCatalogIR) -> dict[s
     checks = {
         "field_denominator_closed": not unknown and bool(counts),
         "all_current_duplicate_policies_false": all(item.allow_duplicates is False for item in lowered),
-        "dynamic_sources_owned_by_s5d": counts.get("is_dynamic_target", 0) > 0 and "action_dynamic_target_deferred_to_p9_s5d" in texts["systems/action_selection.py"],
+        "dynamic_sources_fail_closed_at_current_owner": (
+            counts.get("is_dynamic_target", 0) > 0
+            and "action_dynamic_target_control_flow_deferred_to_p9_s8"
+            in texts["systems/action_selection.py"]
+        ),
         "old_action_target_runtime_removed": all(not paths for paths in old_hits.values()),
         "action_choice_single_owner": action_choice_paths == ("systems/action_availability.py",),
         "enemy_candidate_single_owner": enemy_candidate_paths == ("systems/enemy_action.py",),

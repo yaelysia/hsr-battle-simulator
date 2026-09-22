@@ -28,7 +28,7 @@ from ..equipment.models import EquipmentBuildInput
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.ir import CanonicalIR, build_external_task_topology_dependency_ledger
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphQueryResult
+from ..rules.task_graph import TaskGraphIR
 from ..scenarios.build_state import _project_character_skill_level_flags
 from ..systems.action_contract import ActionContractSystem
 from ..systems.action_event_contract import (
@@ -222,42 +222,6 @@ def _fast_action_window_scope(event_id: str) -> tuple[Any, Any]:
     return fact.bind_invocation(scope), scope
 
 
-def _install_formal_query(rules: _B5Rules) -> None:
-    def query_formal_task_graph(
-        self: _B5Rules,
-        entry_kind: str,
-        owner_id: str,
-        callback_kind: str,
-        formal_task_ids: Iterable[str],
-    ) -> TaskGraphQueryResult:
-        expected = tuple(formal_task_ids)
-        entry_result = self.query_task_graph_entry(entry_kind, owner_id, callback_kind)
-        entry = entry_result.value
-        if entry_result.status != "resolved" or entry is None:
-            return TaskGraphQueryResult(
-                "blocked",
-                "graph",
-                (),
-                None,
-                entry_result.blocked_reason or "fixture_formal_entry_missing",
-            )
-        graph_result = self.query_task_graph(entry.graph_id)
-        graph = graph_result.value
-        if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
-            return graph_result
-        if tuple(graph.root_formal_task_ids) != expected:
-            return TaskGraphQueryResult(
-                "blocked",
-                "graph",
-                (graph.graph_id,),
-                None,
-                "fixture_formal_root_task_identity_mismatch",
-            )
-        return graph_result
-
-    rules.query_formal_task_graph = types.MethodType(query_formal_task_graph, rules)  # type: ignore[attr-defined]
-
-
 def _request(
     graph: TaskGraphIR,
     root_graph_id: str,
@@ -306,7 +270,6 @@ def _single_graph_request(
 
 def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
     rules = _B5Rules()
-    _install_formal_query(rules)
     child_graph = _b5_install_ability(rules, "A")
     callback, detail, root_graph = _b5_install_callback(
         rules, "C", child_graph.owner_id

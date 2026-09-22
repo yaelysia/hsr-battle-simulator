@@ -6,7 +6,7 @@ import json
 import resource
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Iterable, cast
 
 from ..core.model import BattleState, GameEvent, TargetResolution, UnitState
 from ..ir_types import IRSource
@@ -128,6 +128,40 @@ class _Rules:
 
     def query_task_graph_node(self, node_id: str) -> TaskGraphQueryResult:
         return self._query("node", self.nodes.get(node_id), node_id)
+
+    def query_formal_task_graph(
+        self,
+        entry_kind: str,
+        owner_id: str,
+        callback_kind: str,
+        formal_task_ids: Iterable[str],
+    ) -> TaskGraphQueryResult:
+        expected = tuple(formal_task_ids)
+        entry_result = self.query_task_graph_entry(
+            entry_kind, owner_id, callback_kind
+        )
+        entry = entry_result.value
+        if entry_result.status != "resolved" or entry is None:
+            return TaskGraphQueryResult(
+                "blocked",
+                "graph",
+                (),
+                None,
+                entry_result.blocked_reason or "fixture_formal_entry_missing",
+            )
+        graph_result = self.query_task_graph(entry.graph_id)
+        graph = graph_result.value
+        if graph_result.status != "resolved" or type(graph) is not TaskGraphIR:
+            return graph_result
+        if tuple(graph.root_formal_task_ids) != expected:
+            return TaskGraphQueryResult(
+                "blocked",
+                "graph",
+                (graph.graph_id,),
+                None,
+                "fixture_formal_root_task_identity_mismatch",
+            )
+        return graph_result
 
     def status_callback(self, callback_id: str) -> StatusCallbackIR | None:
         return self.callbacks.get(callback_id)
@@ -394,14 +428,25 @@ def _run() -> tuple[dict[str, bool], dict[str, Any]]:
         state, event=_event((callback_c.callback_id,), "event:invalid"),
         task_graph_continuation=cast(Any, object()),
     )
-    sample_projection = next(item for item in success.node_projections if item.graph_id == graph_b.graph_id)
+    sample_projection = next(
+        (
+            item
+            for item in success.node_projections
+            if item.graph_id == graph_b.graph_id
+        ),
+        None,
+    )
     result_guard = False
-    try:
-        StatusCallbackExecutionResult(
-            False, state, errors=("blocked",), task_graph_projections=(sample_projection,)
-        )
-    except ValueError:
-        result_guard = True
+    if sample_projection is not None:
+        try:
+            StatusCallbackExecutionResult(
+                False,
+                state,
+                errors=("blocked",),
+                task_graph_projections=(sample_projection,),
+            )
+        except ValueError:
+            result_guard = True
 
     no_channels = lambda result: result.after_state is result.before_state \
         and not (result.mutations or result.events or result.rng_events \

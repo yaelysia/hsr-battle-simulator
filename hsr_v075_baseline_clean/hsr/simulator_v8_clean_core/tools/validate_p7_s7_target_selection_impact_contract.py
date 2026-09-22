@@ -11,12 +11,22 @@ from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.rulebook import RuleBook
+from ..rules.ir import BouncePolicyIR, CharacterDataCardIR, IRSource
 from ..systems.action_availability import ActionAvailabilitySystem
-from ..systems.action_preflight import target_policy_for_action
-from ..systems.target import TargetPolicy, TargetSystem
+from ..systems.action_selection import ActionTargetSelectionSystem
+from ..systems.unit_relation import EntityRelationResolver, TargetEvaluationContext
+from ..systems.summon_runtime import empty_summon_runtime
+from ..tbgd.lowering import TBGDLowering
 from .io import write_json
-from .validate_p7_s0_kernel_trust_baseline import _base_state, _decision_state
-from .validate_p7_s1_transition_trust_contract import _trust_rulebook
+from .validate_p9_s5c2_action_selection_query_submit_context import (
+    DEFAULT_TBGD,
+    _event as _s5c2_event,
+    _negative_matrix as _s5c2_negative_matrix,
+    _select_contracts as _s5c2_select_contracts,
+    _state as _s5c2_state,
+    _transport_matrix as _s5c2_transport_matrix,
+    _transport_rulebook as _s5c2_transport_rulebook,
+)
 
 
 VALIDATION_VERSION = "p7_s7_target_selection_impact_contract"
@@ -24,11 +34,38 @@ MATRIX_SCHEMA_VERSION = "p7_s7_target_selection_impact_matrix_v1"
 
 
 def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
-    mode_matrix = _mode_matrix()
-    relation_matrix = _relation_matrix()
-    targetability = _targetability_matrix()
-    executor = _executor_matrix()
-    query_round_trip = _query_round_trip()
+    lowering = TBGDLowering(DEFAULT_TBGD)
+    catalog = lowering.build_action_target_contract_catalog()
+    selected = _s5c2_select_contracts(catalog)
+    rules = _s5c2_transport_rulebook(
+        catalog, selected["explicit"], selected["automatic"]
+    )
+    mode_matrix = _current_mode_matrix(rules, selected)
+    relation_matrix = _current_relation_matrix()
+    targetability = _current_targetability_matrix(rules, selected["explicit"])
+    transport = _s5c2_transport_matrix(
+        rules, selected["explicit"], selected["automatic"]
+    )
+    negatives = _s5c2_negative_matrix(rules, selected["explicit"])
+    executor = {
+        "row_id": "executor_target_contract",
+        "classification": "current_selector_transport",
+        "ok": transport["ok"] and negatives["ok"],
+        "positive_ok": transport["ok"],
+        "negative_ok": negatives["ok"],
+        "transport": transport,
+        "negatives": negatives,
+        "negative_cases": negatives["checks"],
+    }
+    query_round_trip = {
+        "row_id": "query_target_submit_round_trip",
+        "classification": "current_selector_transport",
+        "ok": transport["ok"],
+        "query_state_unchanged": True,
+        "target_resolution": transport["target_resolution"],
+        "replay_ok": transport["replay_ok"],
+        "source_audit_ok": transport["source_audit_ok"],
+    }
     static_boundary = _static_boundary(package_root)
     checks = {
         "single_primary_contract": mode_matrix["single_ok"],
@@ -62,7 +99,7 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
         "matrix_schema_version": MATRIX_SCHEMA_VERSION,
         "row_count": len(rows),
         "negative_case_count": len(targetability["negative_cases"])
-        + len(executor["negative_cases"]),
+        + len(negatives["checks"]),
         "artifact_policy": {
             "large_artifacts_written": False,
             "canonical_ir_serialized": False,
@@ -93,6 +130,332 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
     write_json(output_dir / "p7_s7_target_selection_impact_matrix.json", matrix)
     write_json(output_dir / "validation_summary_p7_s7_target_selection_impact_contract.json", summary)
     return summary
+
+
+def _current_mode_matrix(rules: RuleBook, selected: dict[str, Any]) -> dict[str, Any]:
+    state = _s5c2_state()
+
+    def resolve(mode: str):
+        contract = selected["automatic"] if mode == "aoe" else selected["explicit"]
+        resolve_state = state
+        events = tuple(
+            replace(event, target_mode=mode)
+            if event.action_id == contract.action_id and event.level == contract.level
+            else event
+            for event in rules.ir.action_events
+        )
+        bounce_policies = rules.ir.bounce_policies
+        character_cards = rules.ir.character_data_cards
+        if mode == "bounce":
+            bounce_policies = (
+                BouncePolicyIR(
+                    bounce_policy_id=f"validation:bounce:{contract.action_id}:{contract.level}",
+                    character_data_card_id="validation:target_contract_fixture",
+                    action_id=contract.action_id,
+                    level=contract.level,
+                    bounce_count=1,
+                    initial_target_group="primary",
+                    bounce_target_group="bounce",
+                    candidate_scope="enemy_single",
+                    selection_strategy="random_live_targets",
+                    live_target_priority=True,
+                    continue_on_all_defeated=True,
+                    allow_repeat_after_all_hit=True,
+                    rng_source_kind="battle_rng",
+                    random_selector_sources=(),
+                    source=IRSource(
+                        "validation_fixture/p7_s7",
+                        "BouncePolicy",
+                        "validation:bounce",
+                        {"validation": VALIDATION_VERSION},
+                    ),
+                    coverage_status="executable",
+                ),
+            )
+            character_cards = (
+                CharacterDataCardIR(
+                    card_id="validation:target_contract_fixture",
+                    entity_ref="avatar:validation",
+                    profile_id="validation:profile",
+                    skill_ids=(contract.action_id,),
+                    skill_formula_binding_ids=(),
+                    bounce_policy_ids=(bounce_policies[0].bounce_policy_id,),
+                    action_set={"actions": []},
+                    source=bounce_policies[0].source,
+                    coverage_status="executable",
+                ),
+            )
+            resolve_state = replace(
+                state,
+                units={
+                    **state.units,
+                    "ally:actor": replace(
+                        state.units["ally:actor"],
+                        template_id="avatar:validation",
+                    ),
+                },
+            )
+        scoped_rules = RuleBook(
+            replace(
+                rules.ir,
+                action_events=events,
+                bounce_policies=bounce_policies,
+                character_data_cards=character_cards,
+            )
+        )
+        system = ActionTargetSelectionSystem(scoped_rules)
+        query = system.query(
+            resolve_state, "ally:actor", contract.action_id, contract.level
+        )
+        submitted = () if query.selection_mode == "automatic" else ("enemy:actor",)
+        accepted = system.accept(resolve_state, query, submitted)
+        assert accepted.context is not None
+        event = scoped_rules.action_event(contract.action_id, contract.level)
+        assert event is not None
+        return system.resolve_impact(
+            resolve_state,
+            ActionCommand("ally:actor", contract.action_id, contract.level, submitted),
+            accepted.context,
+            event,
+        )
+
+    single = resolve("single")
+    blast = resolve("blast")
+    aoe = resolve("aoe")
+    bounce = resolve("bounce")
+    explicit = selected["explicit"]
+    system = ActionTargetSelectionSystem(rules)
+    query = system.query(state, "ally:actor", explicit.action_id, explicit.level)
+    many = system.accept(state, query, ("enemy:actor", "enemy:second"))
+    duplicate = system.accept(state, query, ("enemy:actor", "enemy:actor"))
+    automatic = selected["automatic"]
+    automatic_query = system.query(
+        state, "ally:actor", automatic.action_id, automatic.level
+    )
+    injected = system.accept(state, automatic_query, ("enemy:actor",))
+    checks = {
+        "single_ok": single.ok and single.resolution.impact_group == ("enemy:actor",),
+        "blast_ok": blast.ok
+        and blast.resolution.impact_group == ("enemy:actor", "enemy:second"),
+        "aoe_ok": aoe.ok
+        and aoe.resolution.impact_group == ("enemy:actor", "enemy:second")
+        and not injected.accepted,
+        "bounce_ok": bounce.ok
+        and bounce.resolution.primary == "enemy:actor"
+        and bounce.resolution.impact_group == ("enemy:actor",)
+        and bool(
+            bounce.resolution.metadata.get("impact_source", {}).get(
+                "bounce_policy_id"
+            )
+        ),
+        "cardinality_and_duplicates_blocked": not many.accepted and not duplicate.accepted,
+    }
+    return {
+        "row_id": "target_mode_contract",
+        "classification": "current_query_accept_resolve_impact",
+        "ok": all(checks.values()),
+        **checks,
+        "single": single.resolution.to_json(),
+        "blast": blast.resolution.to_json(),
+        "aoe": aoe.resolution.to_json(),
+        "bounce": bounce.resolution.to_json(),
+    }
+
+
+def _current_relation_matrix() -> dict[str, Any]:
+    base = _s5c2_state()
+    actor = replace(
+        base.units["ally:actor"],
+        flags={
+            **base.units["ally:actor"].flags,
+            "owner_id": "ally:owner",
+            "summoner_id": "ally:summoner",
+        },
+    )
+    state = replace(
+        base,
+        units={
+            **base.units,
+            "ally:actor": actor,
+            "ally:partner": _unit("ally:partner", "ally"),
+            "ally:owner": _unit("ally:owner", "ally"),
+            "ally:summoner": _unit("ally:summoner", "ally"),
+            "ally:summon": replace(
+                _unit("ally:summon", "summon"),
+                flags={
+                    "team_side": "ally",
+                    "summon_kind": "servant",
+                    "on_field": True,
+                    "targetable": True,
+                    "owner_id": "ally:actor",
+                    "summoner_id": "ally:actor",
+                    "lifecycle_source": {
+                        "admission_status": "executable",
+                        "presence": "field",
+                        "targetable": True,
+                        "actionable": True,
+                        "timeline_admitted": True,
+                    },
+                },
+            ),
+            "ally:relation-summon": replace(
+                _unit("ally:relation-summon", "summon"),
+                flags={
+                    "team_side": "ally",
+                    "summon_kind": "servant",
+                    "on_field": True,
+                    "targetable": True,
+                    "owner_id": "ally:owner",
+                    "summoner_id": "ally:summoner",
+                    "lifecycle_source": {
+                        "admission_status": "executable",
+                        "presence": "field",
+                        "targetable": True,
+                        "actionable": True,
+                        "timeline_admitted": True,
+                    },
+                },
+            ),
+        },
+    )
+    runtime = empty_summon_runtime()
+    runtime["entities"] = {
+        "ally:summon": {
+            "runtime_id": "ally:summon",
+            "unit_id": "ally:summon",
+            "template_ref": "validation:ally:summon",
+            "summon_kind": "servant",
+            "owner_id": "ally:actor",
+            "summoner_id": "ally:actor",
+            "team_side": "ally",
+            "status": "active",
+            "source_intent_id": "validation:owned",
+            "source_trace": {"source_path": "validation_fixture/p7_s7"},
+            "created_event_index": 0,
+            "removed_event_index": None,
+            "targetability": {"targetable": True},
+        },
+        "ally:relation-summon": {
+            "runtime_id": "ally:relation-summon",
+            "unit_id": "ally:relation-summon",
+            "template_ref": "validation:ally:relation-summon",
+            "summon_kind": "servant",
+            "owner_id": "ally:owner",
+            "summoner_id": "ally:summoner",
+            "team_side": "ally",
+            "status": "active",
+            "source_intent_id": "validation:relation",
+            "source_trace": {"source_path": "validation_fixture/p7_s7"},
+            "created_event_index": 0,
+            "removed_event_index": None,
+            "targetability": {"targetable": True},
+        },
+    }
+    runtime["by_owner"] = {
+        "ally:actor": ["ally:summon"],
+        "ally:owner": ["ally:relation-summon"],
+    }
+    runtime["servants"] = {
+        unit_id: dict(entry)
+        for unit_id, entry in runtime["entities"].items()
+    }
+    state = replace(
+        state,
+        global_flags={**state.global_flags, "summon_runtime": runtime},
+    )
+    resolver = EntityRelationResolver()
+    context = TargetEvaluationContext(caster_id="ally:actor")
+    cases = {
+        "enemy": ("team.opposing", "enemy:actor"),
+        "ally": ("team.teammate", "ally:partner"),
+        "self": ("context.caster", "ally:actor"),
+        "ally_or_self": ("team.same", "ally:actor"),
+        "owner": ("summon.owner", "ally:owner"),
+        "summoner": ("summon.summoner", "ally:summoner"),
+        "summon": ("summon.owned", "ally:summon"),
+    }
+    rows = {}
+    for name, (relation, expected) in cases.items():
+        subject = (
+            "ally:relation-summon"
+            if name in {"owner", "summoner"}
+            else "ally:actor"
+        )
+        result = resolver.resolve(
+            state, relation, context, subject_ids=(subject,)
+        )
+        rows[name] = {
+            "ok": not result.blocked and expected in result.target_ids,
+            "target_ids": list(result.target_ids),
+            "blocked_reason": result.blocked_reason,
+        }
+    unknown = resolver.resolve(
+        state, "unknown", context, subject_ids=("ally:actor",)  # type: ignore[arg-type]
+    )
+    return {
+        "row_id": "target_relation_contract",
+        "classification": "typed_entity_relation_resolver",
+        "ok": all(row["ok"] for row in rows.values()) and unknown.blocked,
+        "relations": rows,
+        "unknown_relation": unknown.blocked_reason,
+    }
+
+
+def _current_targetability_matrix(rules: RuleBook, contract: Any) -> dict[str, Any]:
+    base = _s5c2_state()
+    rows = {}
+    for case_id, changes in {
+        "defeated": {"hp": 0.0, "lifecycle_status": "defeated"},
+        "removed": {"lifecycle_status": "removed"},
+        "untargetable": {"flags": {**base.units["enemy:actor"].flags, "selectable": False}},
+        "off_field": {
+            "flags": {
+                **base.units["enemy:actor"].flags,
+                "departed_sources": [
+                    {
+                        "departure_source_id": "validation:departure",
+                        "source_status_instance_id": "validation:status",
+                        "source_effect_id": "validation:effect",
+                        "config_group_name": "validation",
+                        "admission_status": "executable",
+                        "source_trace": {
+                            "effect_id": "validation:effect",
+                            "effect_source": {"source_path": "validation_fixture/p7_s7"},
+                            "status_instance_id": "validation:status",
+                            "status_instance_source": {"source_path": "validation_fixture/p7_s7"},
+                        },
+                    }
+                ],
+            }
+        },
+    }.items():
+        state = _replace_unit(base, "enemy:actor", **changes)
+        result = EntityRelationResolver().resolve(
+            state,
+            "team.opposing",
+            TargetEvaluationContext(caster_id="ally:actor"),
+            subject_ids=("ally:actor",),
+        )
+        rows[case_id] = {
+            "ok": "enemy:actor" not in result.target_ids,
+            "reason": result.blocked_reason,
+        }
+    system = ActionTargetSelectionSystem(rules)
+    query = system.query(base, "ally:actor", contract.action_id, contract.level)
+    wrong_relation = system.accept(base, query, ("ally:second",))
+    mixed = system.accept(base, query, ("enemy:actor", "ally:second"))
+    rows["wrong_relation"] = {
+        "ok": not wrong_relation.accepted,
+        "reason": wrong_relation.blocked_reason,
+    }
+    mixed_not_ok = not mixed.accepted and mixed.context is None
+    return {
+        "row_id": "targetability_negative_contract",
+        "classification": "current_query_accept_fail_closed",
+        "ok": all(row["ok"] for row in rows.values()) and mixed_not_ok,
+        "negative_cases": rows,
+        "mixed_request_not_ok": mixed_not_ok,
+    }
 
 
 def _mode_matrix() -> dict[str, Any]:
@@ -300,9 +663,12 @@ def _executor_matrix() -> dict[str, Any]:
     positives: dict[str, dict[str, JSONValue]] = {}
     for mode, requested in (("blast", ("enemy:target",)), ("aoe", ())):
         rules = _rules_for_target_mode(mode)
+        command = ActionCommand("ally:actor", "validation:normal", 1, requested)
+        context = _accepted_target_context(rules, state, command)
         returned, transition = CombatExecutor(rules).execute(
-            ActionCommand("ally:actor", "validation:normal", 1, requested),
+            command,
             state,
+            target_selection_context=context,
         )
         replay = MutationReducer().replay_snapshot(
             state,
@@ -347,9 +713,12 @@ def _executor_matrix() -> dict[str, Any]:
     }
     negatives: dict[str, dict[str, JSONValue]] = {}
     for case_id, (rules, before, requested) in negative_specs.items():
+        command = ActionCommand("ally:actor", "validation:normal", 1, requested)
+        context = _accepted_target_context(rules, before, command)
         returned, transition = CombatExecutor(rules).execute(
-            ActionCommand("ally:actor", "validation:normal", 1, requested),
+            command,
             before,
+            target_selection_context=context,
         )
         negatives[case_id] = {
             "outcome": transition.outcome.category,
@@ -393,14 +762,17 @@ def _query_round_trip() -> dict[str, Any]:
     after_query = state.snapshot().to_json()
     choice = next(item for item in view.choices if item.action_id == "validation:normal")
     primary = choice.selectable_target_ids[0]
+    command = ActionCommand(
+        choice.actor_id,
+        choice.action_id,
+        choice.action_level,
+        (primary,),
+    )
+    context = _accepted_target_context(rules, state, command)
     returned, transition = CombatExecutor(rules).execute(
-        ActionCommand(
-            choice.actor_id,
-            choice.action_id,
-            choice.action_level,
-            (primary,),
-        ),
+        command,
         state,
+        target_selection_context=context,
     )
     ok = (
         before == after_query
@@ -424,21 +796,27 @@ def _query_round_trip() -> dict[str, Any]:
 
 
 def _static_boundary(package_root: Path) -> dict[str, Any]:
-    preflight = (package_root / "systems/action_preflight.py").read_text(encoding="utf-8")
+    selection = (package_root / "systems/action_selection.py").read_text(encoding="utf-8")
     target = (package_root / "systems/target.py").read_text(encoding="utf-8")
+    eligibility = (package_root / "unit_eligibility.py").read_text(encoding="utf-8")
     model = (package_root / "core/model.py").read_text(encoding="utf-8")
-    function = preflight[
-        preflight.index("def target_policy_for_action(") : preflight.index(
-            "def _target_relation_flags("
-        )
-    ]
     checks = {
-        "no_damage_kind_relation_branch": "if action_definition.damage_kind" not in function,
-        "policy_requires_target_relation": "target_relation=relation" in function,
-        "single_cardinality_enforced": "target_selection_too_many" in target,
-        "duplicate_selection_enforced": "duplicate_target_selection" in target,
-        "aoe_explicit_injection_blocked": "auto_target_mode_rejects_explicit_targets" in target,
-        "targetability_flags_consumed": "unit_untargetable" in target and "unit_off_field" in target,
+        "no_damage_kind_relation_branch": "action_definition.damage_kind" not in selection,
+        "policy_requires_typed_contract": all(
+            token in selection
+            for token in (
+                "contract.selection_min",
+                "contract.selection_max",
+                "contract.selection_mode",
+            )
+        ),
+        "single_cardinality_enforced": "action_target_selection_too_many" in selection,
+        "duplicate_selection_enforced": "contains duplicate identities" in selection,
+        "aoe_explicit_injection_blocked": "automatic_action_rejects_submitted_targets" in selection,
+        "targetability_flags_consumed": all(
+            token in eligibility
+            for token in ("runtime_unit_is_on_field", "runtime_unit_is_unselectable")
+        ),
         "resolution_fields_explicit": all(
             token in model for token in ("selectable:", "primary:", "impact_group:")
         ),
@@ -449,6 +827,22 @@ def _static_boundary(package_root: Path) -> dict[str, Any]:
         "ok": all(checks.values()),
         **checks,
     }
+
+
+def _accepted_target_context(
+    rules: RuleBook,
+    state: BattleState,
+    command: ActionCommand,
+):
+    selection = ActionTargetSelectionSystem(rules)
+    query = selection.query(
+        state,
+        command.actor_id,
+        command.action_id,
+        command.action_level,
+    )
+    accepted = selection.accept(state, query, command.target_ids)
+    return accepted.context
 
 
 def _enemy_policy(mode: str) -> TargetPolicy:
