@@ -7,10 +7,13 @@ import resource
 import sys
 import time
 import types
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 from unittest.mock import patch
+
+from ..builds.character_assembler import assemble_character_build
+from ..builds.models import CharacterBuildAssemblyResult, CharacterBuildInput
 
 if __package__ in {None, ""}:
     _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
@@ -21,10 +24,12 @@ from ..core.action_plan import build_action_execution_plan
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, GameEvent, TargetResolution, UnitState
 from ..core.reducer import MutationReducer
+from ..equipment.models import EquipmentBuildInput
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.ir import CanonicalIR, build_external_task_topology_dependency_ledger
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import TaskGraphIR, TaskGraphQueryResult
+from ..scenarios.build_state import _project_character_skill_level_flags
 from ..systems.action_contract import ActionContractSystem
 from ..systems.action_selection import ActionTargetSelectionSystem
 from ..systems.ability import (
@@ -33,6 +38,7 @@ from ..systems.ability import (
     StatusNestedAbilityHookProvider,
 )
 from ..systems.event_dispatch import EventDispatchSystem, _event_aliases
+from ..systems.dynamic_values import character_skill_param_binding_source
 from ..systems.scheduler import CombatScheduler
 from ..systems.status import StatusSystem, status_control_gate_for_actor
 from ..systems.status_callbacks import StatusCallbackExecutionResult
@@ -49,7 +55,19 @@ from ..systems.task_graph import (
     TaskGraphWeightedSelectionResult,
 )
 from ..tbgd.action_target_contracts import build_action_target_contract_catalog
-from ..tbgd.lowering import build_character_action_definition_ir
+from ..tbgd.character_cards import (
+    CHARACTER_ACTION_DEFINITION_TABLES,
+    CharacterCardBuildResult,
+    build_character_card_ir,
+)
+from ..tbgd.lowering import (
+    _link_status_effect_runtime_fields,
+    _lower_status_event_families,
+    _runtime_source_mode,
+    _synchronize_effect_target_expression_metadata,
+    build_character_action_definition_ir,
+)
+from ..tbgd.target_source import close_target_expression_language
 from ..tbgd.task_graph_materializer import (
     build_complete_task_graph_catalog,
     materialize_ability_phase_task_graph,
@@ -83,6 +101,42 @@ _FAST_RSS_LIMIT_KIB = 512 * 1024
 _DIRECT_HARD_SECONDS = 120.0
 _DIRECT_DISCOVERY_GUARD_SECONDS = 100.0
 _DIRECT_RSS_LIMIT_KIB = int(1.5 * 1024 * 1024)
+
+
+@dataclass(frozen=True)
+class _DirectStaticBuildContext:
+    build: CharacterBuildInput
+    assembly: CharacterBuildAssemblyResult
+    cards: CharacterCardBuildResult
+    owner_card: Any
+    owner_profile: Any
+    owner_eligibility: Any
+    projected_flags: Mapping[str, Any]
+
+
+def _static_character_ir(
+    ir: CanonicalIR,
+    cards: CharacterCardBuildResult,
+    source_graph: Any,
+) -> CanonicalIR:
+    return replace(
+        ir,
+        avatar_profiles=tuple(cards.avatar_profiles),
+        character_data_cards=tuple(cards.character_data_cards),
+        character_equipment_eligibilities=tuple(
+            cards.character_equipment_eligibilities
+        ),
+        character_mechanism_slots=tuple(cards.character_mechanism_slots),
+        character_trace_nodes=tuple(cards.character_trace_nodes),
+        character_eidolon_slots=tuple(cards.character_eidolon_slots),
+        character_build_selector_relations=tuple(
+            cards.character_build_selector_relations
+        ),
+        character_build_selector_gaps=tuple(cards.character_build_selector_gaps),
+        skill_formula_bindings=tuple(cards.skill_formula_bindings),
+        bounce_policies=tuple(cards.bounce_policies),
+        character_ability_source_graph_catalog=source_graph,
+    )
 
 
 def _state(detail: Mapping[str, Any] | None = None) -> BattleState:
@@ -749,23 +803,71 @@ def _merge_ir(values: Iterable[Any], field: str) -> tuple[Any, ...]:
     return tuple(merged[key] for key in sorted(merged))
 
 
-def _direct_state_for_admission(admission: Any) -> BattleState:
+def _direct_state_for_admission(
+    rules: RuleBook,
+    admission: Any,
+    static_build: _DirectStaticBuildContext,
+) -> BattleState:
+    del rules
+    panel = static_build.assembly.base_panel
+    if panel is None:
+        raise AssertionError("direct static character panel is missing")
+    flags = {
+        "position": 0,
+        "damage_type": static_build.owner_profile.damage_type,
+        "avatar_base_type": static_build.owner_profile.base_type,
+        **{
+            key: dict(value) if isinstance(value, Mapping) else value
+            for key, value in static_build.projected_flags.items()
+        },
+    }
+    resources = {
+        "critical_chance": float(panel.critical_chance),
+        "critical_damage": float(panel.critical_damage),
+        "base_aggro": float(panel.base_aggro),
+        **{
+            item.property_type: float(item.exact_value)
+            for item in panel.additional_resources
+        },
+    }
+    if panel.resource_mode == "standard_energy":
+        if panel.max_energy is None:
+            raise AssertionError("direct standard-energy panel has no maximum")
+        energy = max_energy = float(panel.max_energy)
+        flags["standard_energy_active"] = True
+    else:
+        binding = panel.special_resource_binding
+        if binding is None:
+            raise AssertionError("direct special-resource panel has no binding")
+        energy = max_energy = 0.0
+        maximum_value = resources.get(binding.maximum_property)
+        if maximum_value is None:
+            raise AssertionError("direct special-resource maximum is missing")
+        resources[binding.current_resource_key] = maximum_value
+        resources[binding.maximum_resource_key] = maximum_value
+        flags.update(
+            {
+                "standard_energy_active": False,
+                "special_resource_definition_id": binding.resource_definition_id,
+                "special_resource_current_key": binding.current_resource_key,
+                "special_resource_maximum_key": binding.maximum_resource_key,
+            }
+        )
     return BattleState(
         units={
             "validation:actor": UnitState(
                 unit_id="validation:actor",
                 side="ally",
-                template_id=admission.owner_entity_ref,
-                max_hp=100000.0,
-                hp=100000.0,
-                energy=100000.0,
-                max_energy=100000.0,
-                flags={"position": 0},
-                resources={
-                    "special_energy": 100000.0,
-                    "special_resource": 100000.0,
-                    "charge": 100000.0,
-                },
+                template_id=static_build.owner_card.entity_ref,
+                max_hp=float(panel.max_hp),
+                hp=float(panel.max_hp),
+                attack=float(panel.attack),
+                defense=float(panel.defense),
+                speed=float(panel.speed),
+                energy=energy,
+                max_energy=max_energy,
+                flags=flags,
+                resources=resources,
             ),
             "validation:enemy": UnitState(
                 unit_id="validation:enemy",
@@ -776,8 +878,8 @@ def _direct_state_for_admission(admission: Any) -> BattleState:
                 flags={"position": 1},
             ),
         },
-        skill_points=99,
-        max_skill_points=99,
+        skill_points=5,
+        max_skill_points=5,
         global_flags={
             "turn_owner_id": "validation:actor",
             "current_window": (
@@ -786,6 +888,25 @@ def _direct_state_for_admission(admission: Any) -> BattleState:
             "phase": "combat",
         },
     )
+
+
+def _direct_skill_param_entries(
+    rules: RuleBook,
+    state: BattleState,
+    static_build: _DirectStaticBuildContext,
+) -> Mapping[str, Any]:
+    actor = state.units.get("validation:actor")
+    if actor is None or actor.template_id != static_build.owner_card.entity_ref:
+        raise AssertionError("direct static build owner identity mismatch")
+    source = character_skill_param_binding_source(
+        rules,
+        state,
+        actor.unit_id,
+    )
+    entries = source.get("entries") if isinstance(source, Mapping) else None
+    if not isinstance(entries, Mapping) or not entries:
+        raise AssertionError("direct static build has no executable SkillParam entries")
+    return entries
 
 
 def _production_direct_modes(admission: Any) -> tuple[str, ...]:
@@ -803,6 +924,7 @@ def _production_direct_modes(admission: Any) -> tuple[str, ...]:
 
 def _build_runtime_direct_rulebook() -> tuple[
     RuleBook,
+    _DirectStaticBuildContext,
     tuple[dict[str, Any], ...],
     tuple[dict[str, Any], ...],
     dict[str, Any],
@@ -819,6 +941,159 @@ def _build_runtime_direct_rulebook() -> tuple[
         same_event_transitions,
     ) = _a2p0_build_focused_direct_ir()
     del _focused_rules
+    finalized_callbacks_by_id = {
+        callback.callback_id: callback for callback in focused_ir.status_callbacks
+    }
+    finalized_callback_tasks_by_id = {
+        task.task_id: task for task in focused_ir.status_callback_tasks
+    }
+    focused_modifier_names = {
+        callback.modifier_name
+        for callback in focused_ir.status_callbacks
+        if callback.modifier_name
+    }
+    focused_modifier_sources = {
+        callback.source.source_path
+        for callback in focused_ir.status_callbacks
+        if callback.modifier_name
+    }
+    focused_modifier_entities = []
+    focused_modifier_callbacks = []
+    focused_modifier_callback_tasks = []
+    focused_modifier_watchers = []
+    queue_priority_lookup = {
+        (priority.priority_table, priority.priority_key): priority
+        for priority in lowerer._lower_queue_priorities()
+        if priority.coverage_status == "executable"
+    }
+    formal_context = lowerer._character_formal_task_source_context()
+    for ability_file_order, path in enumerate(lowerer._ability_files()):
+        if path.relative_to(TBGD_ROOT).as_posix() not in focused_modifier_sources:
+            continue
+        lowered = lowerer._lower_ability_file(
+            path,
+            queue_priority_lookup,
+            ability_file_order=ability_file_order,
+            formal_status_source_context=formal_context,
+        )
+        focused_modifier_entities.extend(
+            entity
+            for entity in lowered.entities
+            if entity.entity_type == "modifier_definition"
+            and entity.fields.get("modifier_name") in focused_modifier_names
+        )
+        focused_modifier_callbacks.extend(
+            callback
+            for callback in lowered.status_callbacks
+            if callback.modifier_name in focused_modifier_names
+        )
+        focused_modifier_callback_tasks.extend(lowered.status_callback_tasks)
+        focused_modifier_watchers.extend(
+            watcher
+            for watcher in lowered.ability_property_watchers
+            if watcher.modifier_name in focused_modifier_names
+        )
+    if {
+        str(entity.fields.get("modifier_name") or "")
+        for entity in focused_modifier_entities
+    } != focused_modifier_names:
+        raise AssertionError("focused_status_modifier_definition_denominator_incomplete")
+    focused_callback_ids = {
+        callback.callback_id for callback in focused_modifier_callbacks
+    }
+    focused_modifier_callback_tasks = [
+        finalized_callback_tasks_by_id.get(task.task_id, task)
+        for task in focused_modifier_callback_tasks
+        if task.callback_id in focused_callback_ids
+    ]
+    focused_modifier_callbacks = [
+        finalized_callbacks_by_id.get(callback.callback_id, callback)
+        for callback in focused_modifier_callbacks
+    ]
+    target_language_definitions = lowerer._strict_target_language_definitions()
+    focused_target_expressions = [
+        *lowerer._lower_global_target_expressions(),
+        *focused_ir.target_expressions,
+    ]
+    finalized_target_expressions = tuple(
+        close_target_expression_language(expression, target_language_definitions)
+        for expression in focused_target_expressions
+    )
+    synchronized_effects = _synchronize_effect_target_expression_metadata(
+        list(focused_ir.effects),
+        list(finalized_target_expressions),
+    )
+    linked_effects = _link_status_effect_runtime_fields(
+        synchronized_effects,
+        focused_modifier_entities,
+        focused_modifier_callbacks,
+        focused_modifier_watchers,
+    )
+    linked_definitions = {entity.entity_id: entity for entity in focused_modifier_entities}
+    linked_callbacks = {callback.callback_id: callback for callback in focused_modifier_callbacks}
+    linked_watchers = {watcher.watcher_id: watcher for watcher in focused_modifier_watchers}
+    linked_effect_rows = []
+    for effect in linked_effects:
+        standard = effect.payload.get("standard") if isinstance(effect.payload, Mapping) else None
+        modifier_name = standard.get("modifier_name") if isinstance(standard, Mapping) else None
+        if effect.opcode != "AddModifier" or modifier_name not in focused_modifier_names:
+            continue
+        expected_callback_ids = tuple(
+            callback.callback_id
+            for callback in sorted(
+                (
+                    callback
+                    for callback in focused_modifier_callbacks
+                    if callback.modifier_name == modifier_name
+                    and callback.source.source_path == effect.source.source_path
+                ),
+                key=lambda callback: callback.callback_id,
+            )
+        )
+        expected_watcher_ids = tuple(
+            watcher.watcher_id
+            for watcher in sorted(
+                (
+                    watcher
+                    for watcher in focused_modifier_watchers
+                    if watcher.modifier_name == modifier_name
+                    and watcher.source.source_path == effect.source.source_path
+                ),
+                key=lambda watcher: watcher.watcher_id,
+            )
+        )
+        definition = linked_definitions.get(effect.modifier_definition_id)
+        if (
+            effect.source_mode != _runtime_source_mode(effect.source.source_path)
+            or definition is None
+            or definition.source.source_path != effect.source.source_path
+            or effect.status_callback_ids != expected_callback_ids
+            or any(callback_id not in linked_callbacks for callback_id in effect.status_callback_ids)
+            or effect.ability_property_watcher_ids != expected_watcher_ids
+            or any(watcher_id not in linked_watchers for watcher_id in effect.ability_property_watcher_ids)
+            or effect.link_blocked_reason
+        ):
+            raise AssertionError(f"focused_status_runtime_link_invalid:{effect.effect_id}")
+        linked_effect_rows.append(
+            {
+                "effect_id": effect.effect_id,
+                "source_mode": effect.source_mode,
+                "modifier_definition_id": effect.modifier_definition_id,
+                "status_callback_ids": list(effect.status_callback_ids),
+                "ability_property_watcher_ids": list(effect.ability_property_watcher_ids),
+            }
+        )
+    if not linked_effect_rows:
+        raise AssertionError("focused_status_runtime_link_denominator_empty")
+    focused_ir = replace(
+        focused_ir,
+        entities=tuple(focused_modifier_entities),
+        effects=tuple(synchronized_effects),
+        target_expressions=finalized_target_expressions,
+        ability_property_watchers=tuple(focused_modifier_watchers),
+        task_graph_catalog=None,
+        external_task_topology_dependencies=(),
+    )
 
     lowerer.build_character_ability_source_resolution_catalog()
     snapshot = getattr(lowerer, "_character_ability_raw_snapshot", None)
@@ -876,6 +1151,122 @@ def _build_runtime_direct_rulebook() -> tuple[
         )
     focused_status_owner_id = focused_status_owner_ids[0]
 
+    owners = frozenset(
+        graph.owner_avatar_id
+        for graph in source_graph.graphs
+        if graph.source_kind == "character_main"
+    )
+    cards = build_character_card_ir(
+        TBGD_ROOT,
+        max_records_per_table=None,
+        skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+        avatar_ids=owners,
+        ability_source_graph_catalog=source_graph,
+        ability_scope_catalog=scope,
+    )
+    static_action_ids = frozenset(
+        str(action.get("action_id"))
+        for card in cards.character_data_cards
+        for action in card.action_set.get("actions", ())
+        if isinstance(action, Mapping) and action.get("action_id")
+    )
+    static_definitions = tuple(
+        definition
+        for definition in character_action_definitions
+        if definition.action_id in static_action_ids
+    )
+    if {definition.action_id for definition in static_definitions} != static_action_ids:
+        raise AssertionError("direct static character action definition closure is incomplete")
+    static_ir = CanonicalIR(
+        version="p9_a2_direct_static_character_projection",
+        action_definitions=static_definitions,
+    )
+    static_ir = _static_character_ir(static_ir, cards, source_graph)
+    static_rules = RuleBook(static_ir)
+    owner_cards = tuple(
+        card
+        for card in cards.character_data_cards
+        if card.entity_ref == f"avatar:{focused_status_owner_id}"
+    )
+    if len(owner_cards) != 1:
+        raise AssertionError("focused status owner character card is missing or ambiguous")
+    owner_card = owner_cards[0]
+    owner_profile = static_rules.avatar_profile_by_profile_id(owner_card.profile_id)
+    owner_eligibilities = tuple(
+        item
+        for item in cards.character_equipment_eligibilities
+        if item.character_card_id == owner_card.card_id
+    )
+    if owner_profile is None or len(owner_eligibilities) != 1:
+        raise AssertionError("focused status owner static build identity is incomplete")
+    build = CharacterBuildInput(
+        build_id=f"p9_a2_direct:{owner_card.card_id}:level1_e0",
+        character_card_id=owner_card.card_id,
+        level=1,
+        promotion=0,
+        eidolon_level=0,
+        unlocked_trace_node_ids=(),
+        equipment_build=EquipmentBuildInput(
+            build_id=f"p9_a2_direct:{owner_card.card_id}:equipment",
+            character_card_id=owner_card.card_id,
+            identity_labels={"validation_scope": "p9_a2_direct"},
+        ),
+    )
+    assembly = assemble_character_build(static_rules, build)
+    dynamic_ref_ids = {
+        item.dynamic_graph_ref_id for item in assembly.dynamic_graph_refs
+    }
+    diagnostic_ref_ids = {
+        item.target_ref_id for item in assembly.unadmitted_mechanism_diagnostics
+    }
+    if (
+        assembly.assembly_status != "assembled"
+        or assembly.base_panel is None
+        or not assembly.effective_skill_levels
+        or assembly.equipment_assembly_result is None
+        or assembly.equipment_assembly_result.assembly_status != "assembled"
+        or assembly.equipment_assembly_result.battle_admission_status != "admitted"
+        or any(
+            item.battle_admission_status != "admitted"
+            for item in assembly.owned_combatant_results
+        )
+        or any(
+            item.mechanism_kind != "character_dynamic_graph_root"
+            for item in assembly.unadmitted_mechanism_diagnostics
+        )
+        or diagnostic_ref_ids != dynamic_ref_ids
+        or (
+            assembly.battle_admission_status == "blocked"
+            and not assembly.unadmitted_mechanism_diagnostics
+        )
+    ):
+        raise AssertionError(
+            "focused status owner static build is not projection-safe:"
+            + json.dumps(assembly.to_json(), sort_keys=True)[:4000]
+        )
+    static_build = _DirectStaticBuildContext(
+        build=build,
+        assembly=assembly,
+        cards=cards,
+        owner_card=owner_card,
+        owner_profile=owner_profile,
+        owner_eligibility=owner_eligibilities[0],
+        projected_flags=_project_character_skill_level_flags(static_rules, assembly),
+    )
+    static_param_entries = _direct_skill_param_entries(
+        static_rules,
+        _direct_state_for_admission(
+            static_rules,
+            types.SimpleNamespace(allowed_windows=()),
+            static_build,
+        ),
+        static_build,
+    )
+    effective_levels = {
+        item.action_id: item.effective_level
+        for item in assembly.effective_skill_levels
+    }
+
     gap_action_source_ids: set[str] = set()
     for gap in source_graph.gaps:
         if gap.expected_binding_kind == "presentation":
@@ -919,8 +1310,11 @@ def _build_runtime_direct_rulebook() -> tuple[
         levels = tuple(sorted(source.levels))
         if not levels:
             continue
-        minimum_level = levels[0]
-        for level in levels:
+        effective_level = effective_levels.get(source.action_id)
+        if effective_level not in levels:
+            continue
+        minimum_level = effective_level
+        for level in (effective_level,):
             definition = definitions_by_key.get((source.action_id, level))
             if definition is None or definition.target_mode == "bounce":
                 continue
@@ -971,6 +1365,7 @@ def _build_runtime_direct_rulebook() -> tuple[
                 scope_catalog=scope,
                 source_graph_catalog=source_graph,
             )
+            candidate_ir = _static_character_ir(candidate_ir, cards, source_graph)
             candidate_admissions = tuple(
                 sorted(
                     (
@@ -1099,7 +1494,9 @@ def _build_runtime_direct_rulebook() -> tuple[
             candidate_context = None
             producer_attempts: list[dict[str, Any]] = []
             for admission, mode in producer_admission_modes:
-                state = _direct_state_for_admission(admission)
+                state = _direct_state_for_admission(
+                    candidate_rules, admission, static_build
+                )
                 accepted = _accepted_action_on_state(
                     candidate_rules,
                     state,
@@ -1258,13 +1655,14 @@ def _build_runtime_direct_rulebook() -> tuple[
         )
 
     action_ir = selected_action_ir
+    entities = _merge_ir((*focused_ir.entities, *action_ir.entities), "entity_id")
     standalone_graphs = _merge_ir(
         (*focused_ir.standalone_ability_graphs, *action_ir.standalone_ability_graphs),
         "standalone_ability_graph_id",
     )
     phases = _merge_ir((*focused_ir.ability_phases, *action_ir.ability_phases), "phase_id")
     ability_tasks = _merge_ir((*focused_ir.ability_tasks, *action_ir.ability_tasks), "task_id")
-    effects = _merge_ir((*focused_ir.effects, *action_ir.effects), "effect_id")
+    effects = _merge_ir((*linked_effects, *action_ir.effects), "effect_id")
     conditions = _merge_ir((*focused_ir.conditions, *action_ir.conditions), "condition_id")
     formulas = _merge_ir((*focused_ir.formulas, *action_ir.formulas), "formula_id")
     targets = _merge_ir(
@@ -1275,9 +1673,20 @@ def _build_runtime_direct_rulebook() -> tuple[
         (*focused_ir.queue_intents, *action_ir.queue_intents),
         "queue_intent_id",
     )
+    ability_property_watchers = _merge_ir(
+        (*focused_ir.ability_property_watchers, *action_ir.ability_property_watchers),
+        "watcher_id",
+    )
+    status_callbacks = tuple(focused_modifier_callbacks)
+    status_callback_tasks = tuple(focused_modifier_callback_tasks)
+    status_event_families = _lower_status_event_families(
+        list(status_callbacks),
+        list(status_callback_tasks),
+    )
     engine_rules = build_engine_rule_registry()
     view = replace(
         action_ir,
+        entities=entities,
         standalone_ability_graphs=standalone_graphs,
         ability_phases=phases,
         ability_tasks=ability_tasks,
@@ -1285,21 +1694,25 @@ def _build_runtime_direct_rulebook() -> tuple[
         conditions=conditions,
         formulas=formulas,
         target_expressions=targets,
-        status_callbacks=focused_ir.status_callbacks,
-        status_callback_tasks=focused_ir.status_callback_tasks,
-        status_event_families=focused_ir.status_event_families,
+        status_callbacks=status_callbacks,
+        status_callback_tasks=status_callback_tasks,
+        status_event_families=status_event_families,
         queue_intents=queue_intents,
+        ability_property_watchers=ability_property_watchers,
         timeline_rules=engine_rules.timeline_rules,
         resource_rules=engine_rules.resource_rules,
         damage_formula_rules=engine_rules.damage_formula_rules,
         damage_route_rules=engine_rules.damage_route_rules,
         shield_priority_rules=engine_rules.shield_priority_rules,
+        task_graph_catalog=None,
+        external_task_topology_dependencies=(),
         metadata={
             **dict(action_ir.metadata),
             "validation_scope": "p9_a2_pr12_finalized_status_plus_production_action_slice",
             "full_tbgd_lowering_build_count": 0,
         },
     )
+    view = _static_character_ir(view, cards, source_graph)
 
     formal_slices = []
     formal_roles = {"action_root", "nested_only"}
@@ -1328,10 +1741,10 @@ def _build_runtime_direct_rulebook() -> tuple[
             ability_slice_keys.append((phase.phase_id, callback_kind))
 
     status_slice_ids: list[str] = []
-    for callback in focused_ir.status_callbacks:
+    for callback in status_callbacks:
         if not any(
             task.callback_id == callback.callback_id
-            for task in focused_ir.status_callback_tasks
+            for task in status_callback_tasks
         ):
             continue
         formal_slices.append(
@@ -1362,6 +1775,7 @@ def _build_runtime_direct_rulebook() -> tuple[
     )
     return (
         RuleBook(canonical),
+        static_build,
         finalizer_audit,
         reconciled_denominator,
         {
@@ -1369,6 +1783,30 @@ def _build_runtime_direct_rulebook() -> tuple[
             "character_action_definition_count": len(character_action_definitions),
             "focused_status_source_paths": list(focused_status_source_paths),
             "focused_status_owner_id": focused_status_owner_id,
+            "direct_static_build": {
+                "build_id": build.build_id,
+                "input_fingerprint": build.input_fingerprint,
+                "result_fingerprint": assembly.result_fingerprint,
+                "assembly_status": assembly.assembly_status,
+                "battle_admission_status": assembly.battle_admission_status,
+                "diagnostics": [
+                    item.to_json()
+                    for item in assembly.unadmitted_mechanism_diagnostics
+                ],
+                "effective_skill_levels": [
+                    item.to_json() for item in assembly.effective_skill_levels
+                ],
+                "owner_card_id": owner_card.card_id,
+                "owner_profile_id": owner_profile.avatar_profile_id,
+                "owner_eligibility_id": owner_eligibilities[0].definition_key.stable_id,
+                "character_card_build_count": 1,
+                "skill_param_entry_count": len(static_param_entries),
+                "skill_param_hashes": sorted(
+                    str(item.get("hash") or "")
+                    for item in static_param_entries.values()
+                    if isinstance(item, Mapping)
+                ),
+            },
             "ranked_action_candidate_count": len(ranked_action_definitions),
             "selected_action_kind": selected_action_kind,
             "selected_action_definition_id": selected_action_definition.definition_id,
@@ -1385,6 +1823,7 @@ def _build_runtime_direct_rulebook() -> tuple[
             "combined_ability_phase_count": len(phases),
             "combined_ability_task_count": len(ability_tasks),
             "combined_effect_count": len(effects),
+            "focused_status_runtime_links": linked_effect_rows,
             "ability_formal_slice_count": len(ability_slice_keys),
             "status_formal_slice_count": len(status_slice_ids),
             "combined_task_graph_entry_count": len(catalog.entry_materializations),
@@ -1544,7 +1983,10 @@ def _action_windows(rules: RuleBook, definition: Any) -> tuple[str, ...]:
     )
 
 
-def _action_candidates_by_window(rules: RuleBook) -> dict[str, list[tuple[Any, Any]]]:
+def _action_candidates_by_window(
+    rules: RuleBook,
+    static_build: _DirectStaticBuildContext,
+) -> dict[str, list[tuple[Any, Any]]]:
     result: dict[str, list[tuple[Any, Any]]] = {}
     for definition in sorted(
         rules.ir.action_definitions,
@@ -1570,7 +2012,7 @@ def _action_candidates_by_window(rules: RuleBook) -> dict[str, list[tuple[Any, A
         context = None
         for admission in admissions:
             for mode in _production_direct_modes(admission):
-                state = _direct_state_for_admission(admission)
+                state = _direct_state_for_admission(rules, admission, static_build)
                 accepted = _accepted_action_on_state(
                     rules,
                     state,
@@ -2043,6 +2485,7 @@ def _attempt_direct(
     return {
         "ok": producer_authorized and selected_window and real_root and ability_authority and expected_terminal,
         "stage": "combat_executor_execute",
+        "reason": ",".join(transition.outcome.reason_codes),
         "action": {
             "action_id": command.action_id,
             "action_level": command.action_level,
@@ -2062,6 +2505,10 @@ def _attempt_direct(
             "settlement_record_count": len(records),
             "successful_task_graph_node_count": len(success_task_nodes),
             "state_changed": after != before,
+            "selected_window": selected_window,
+            "real_root": real_root,
+            "ability_authority": ability_authority,
+            "weighted_hit_count": len(weighted_hits),
         },
     }
 
@@ -2070,6 +2517,7 @@ def _run_direct() -> dict[str, Any]:
     started = time.perf_counter()
     (
         rules,
+        static_build,
         finalizer_audit,
         reconciled_denominator,
         build_evidence,
@@ -2085,7 +2533,7 @@ def _run_direct() -> dict[str, Any]:
         raise AssertionError("A2 real-source status->nested ability denominator is empty")
     weighted = [row for row in denominator if row["weighted_selection_ids"]]
     nonweighted = [row for row in denominator if not row["weighted_selection_ids"]]
-    action_candidates = _action_candidates_by_window(rules)
+    action_candidates = _action_candidates_by_window(rules, static_build)
 
     attempts: list[dict[str, Any]] = []
     weighted_success: dict[str, Any] | None = None
