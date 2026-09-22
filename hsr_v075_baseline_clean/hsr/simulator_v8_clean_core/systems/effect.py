@@ -24,6 +24,7 @@ from .dynamic_values import (
     upsert_dynamic_value,
 )
 from .mutation_events import events_for_mutation
+from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
 from .shield import NORMAL_SHIELD_FAMILIES, ShieldSystem
 from .target import TargetSystem
@@ -68,6 +69,8 @@ class EffectExecutionContext:
     include_ambient_status_bindings: bool = True
     shadowed_status_instance_ids: tuple[str, ...] = ()
     damage_window_ledger: DamageWindowLedger | None = None
+    admitted_action_target_fact: AdmittedActionTargetFact | None = None
+    expected_action_window_scope: ActionWindowExpectedScope | None = None
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -235,6 +238,8 @@ class EffectRegistry:
             event_payload=context.event_payload,
             dynamic_values=context.dynamic_values,
             binding_sources=_binding_sources(context),
+            admitted_action_target_fact=context.admitted_action_target_fact,
+            expected_action_window_scope=context.expected_action_window_scope,
         )
         return EffectResult(
             events=result.events,
@@ -1548,6 +1553,8 @@ def _execute_trigger_modifier_custom_event(
             ),
             current_target_id=context.current_action_target_id,
             turn_owner_id=committed_turn_owner_id(context.state),
+            admitted_action_target_fact=context.admitted_action_target_fact,
+            expected_action_window_scope=context.expected_action_window_scope,
         ),
         target_resolution=context.target_resolution,
         condition_event_payload=context.event_payload,
@@ -1732,6 +1739,8 @@ def _execute_stack_weakness(
             ),
             current_target_id=context.current_action_target_id,
             turn_owner_id=committed_turn_owner_id(context.state),
+            admitted_action_target_fact=context.admitted_action_target_fact,
+            expected_action_window_scope=context.expected_action_window_scope,
         ),
         target_resolution=context.target_resolution,
         condition_event_payload=context.event_payload,

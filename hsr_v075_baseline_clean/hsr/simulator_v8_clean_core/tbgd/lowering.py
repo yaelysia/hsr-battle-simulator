@@ -926,6 +926,7 @@ class TBGDLowering:
             character_equipment_eligibilities=tuple(
                 character_cards.character_equipment_eligibilities
             ),
+            character_mechanism_slots=tuple(character_cards.character_mechanism_slots),
             triggers=tuple(lowered.triggers),
             effects=tuple(lowered.effects),
             conditions=tuple(lowered.conditions),
@@ -2294,6 +2295,10 @@ class TBGDLowering:
             close_target_expression_language(expression, target_language_definitions)
             for expression in target_expressions
         ]
+        effects = _synchronize_effect_target_expression_metadata(
+            effects,
+            target_expressions,
+        )
         control_flow_catalog = self.build_character_control_flow_contract_catalog(
             snapshot=self._character_ability_raw_snapshot,
             scope_catalog=self._character_ability_scope_catalog,
@@ -16606,6 +16611,135 @@ def _attach_target_expressions_to_effect_payload(
     return updated, expressions
 
 
+def _synchronize_effect_target_expression_metadata(
+    effects: list[EffectIR],
+    target_expressions: list[TargetExpressionIR],
+) -> list[EffectIR]:
+    """Refresh existing effect target-reference metadata after source closure."""
+
+    finalized = _dedupe_target_expressions(target_expressions)
+    synchronized: list[EffectIR] = []
+    for effect in effects:
+        payload = effect.payload
+        standard_value = payload.get("standard")
+        if not isinstance(standard_value, dict):
+            synchronized.append(effect)
+            continue
+
+        updated_payload = dict(payload)
+        updated_standard = dict(standard_value)
+        payload_refs, payload_refs_changed = _synchronize_target_expression_refs(
+            payload.get("target_expression_refs"),
+            finalized,
+        )
+        standard_refs, standard_refs_changed = _synchronize_target_expression_refs(
+            standard_value.get("target_expression_refs"),
+            finalized,
+        )
+        if payload_refs_changed:
+            updated_payload["target_expression_refs"] = payload_refs
+        if standard_refs_changed:
+            updated_standard["target_expression_refs"] = standard_refs
+
+        target_expression_id = standard_value.get("target_expression_id")
+        expression = (
+            finalized.get(target_expression_id)
+            if isinstance(target_expression_id, str) and target_expression_id
+            else None
+        )
+        if expression is not None and _effect_target_reference_source_matches(
+            standard_value,
+            expression,
+            payload_refs,
+            standard_refs,
+        ):
+            updated_standard.update(
+                {
+                    "target_expression_kind": expression.expression_kind,
+                    "target_expression_coverage_status": expression.coverage_status,
+                    "target_expression_blocked_reason": expression.blocked_reason,
+                    "target_expression_source": expression.source.to_json(),
+                }
+            )
+
+        if updated_standard != standard_value:
+            updated_payload["standard"] = updated_standard
+        synchronized.append(
+            replace(effect, payload=updated_payload)
+            if updated_payload != payload
+            else effect
+        )
+    return synchronized
+
+
+def _synchronize_target_expression_refs(
+    value: Any,
+    finalized: Mapping[str, TargetExpressionIR],
+) -> tuple[Any, bool]:
+    if not isinstance(value, Mapping):
+        return value, False
+    updated = dict(value)
+    changed = False
+    for key, reference in value.items():
+        if not isinstance(key, str) or not isinstance(reference, Mapping):
+            continue
+        target_expression_id = reference.get("target_expression_id")
+        expression = (
+            finalized.get(target_expression_id)
+            if isinstance(target_expression_id, str) and target_expression_id
+            else None
+        )
+        if expression is None or not _target_expression_reference_source_matches(
+            reference,
+            expression,
+        ):
+            continue
+        refreshed = dict(reference)
+        refreshed.update(
+            {
+                "expression_kind": expression.expression_kind,
+                "coverage_status": expression.coverage_status,
+                "blocked_reason": expression.blocked_reason,
+                "source": expression.source.to_json(),
+            }
+        )
+        if "alias" in refreshed:
+            refreshed["alias"] = expression.alias
+        if refreshed != reference:
+            updated[key] = refreshed
+            changed = True
+    return updated, changed
+
+
+def _effect_target_reference_source_matches(
+    standard: Mapping[str, Any],
+    expression: TargetExpressionIR,
+    payload_refs: Any,
+    standard_refs: Any,
+) -> bool:
+    source = standard.get("target_expression_source")
+    if isinstance(source, Mapping):
+        return dict(source) == expression.source.to_json()
+    if "target_expression_source" in standard:
+        return False
+    return any(
+        _target_expression_reference_source_matches(reference, expression)
+        for refs in (payload_refs, standard_refs)
+        if isinstance(refs, Mapping)
+        for reference in refs.values()
+        if isinstance(reference, Mapping)
+        and reference.get("target_expression_id") == expression.target_expression_id
+    )
+
+
+def _target_expression_reference_source_matches(
+    reference: Mapping[str, Any],
+    expression: TargetExpressionIR,
+) -> bool:
+    source = reference.get("source")
+    return isinstance(source, Mapping) and dict(source) == expression.source.to_json()
+
+
 def _iter_target_expression_fields(task: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     pairs: list[tuple[str, Any]] = []
     for field_name in sorted(TARGET_EXPRESSION_FIELD_NAMES):
@@ -17006,6 +17140,8 @@ def _target_fetch_field_reason(kind: str, name: str, unique_name: str) -> str:
 
 
 def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
+    if kind == "TargetMapAttackTargetList":
+        return "" if set(raw) == {"$type"} else "target_attack_target_list_payload_invalid"
     if kind == "TargetFilterAliveState":
         mask = _target_string_field(raw, "Mask")
         return "" if mask in {"Mask_AliveOnly", "Mask_AliveOrLimbo", "Mask_DiedButNotDispose", "Bit_Died", "Anyone"} else "target_alive_state_mask_invalid"
@@ -17451,6 +17587,12 @@ def _target_expression_execution_node(
         return TargetExpressionNodeIR.build(
             kind, node_source, {"side": side, "counting_option": counting_option}
         )
+    if kind == "TargetMapAttackTargetList":
+        if set(raw) != {"$type"}:
+            return _target_unsupported_node(
+                node_source, kind, "target_attack_target_list_payload_invalid"
+            )
+        return TargetExpressionNodeIR.build(kind, node_source, {})
     if kind == "TargetMapSummoner":
         recursive = raw.get("Recursive", False)
         if type(recursive) is not bool:

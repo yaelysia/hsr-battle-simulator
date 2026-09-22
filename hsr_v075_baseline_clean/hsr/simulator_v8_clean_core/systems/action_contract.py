@@ -24,6 +24,7 @@ from .status import status_control_gate_for_actor
 from .unit_lifecycle import UnitLifecycleSystem
 from .ability_task_contract import (
     ability_task_runtime_blocked_reason,
+    emission_backed_damage_audit_reference_admitted,
     is_process_only_ability_task,
 )
 
@@ -250,52 +251,9 @@ def _stable_unique(values: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
-def _is_emission_backed_damage_audit_reference(
-    rules: RuleBook,
-    task: AbilityTaskIR,
-    node: TaskGraphNodeIR,
-    unresolved: tuple[TaskGraphDefinitionReferenceIR, ...],
-) -> bool:
-    if (
-        task.opcode != "DamageByAttackProperty"
-        or task.execution_mode != "runtime_effect"
-        or task.coverage_status != "executable"
-        or task.blocked_reason
-        or task.parent_task_id
-        or node.node_kind != "leaf"
-        or node.materialization_status != "materialized"
-        or node.owner_domains != ("task_graph_execution",)
-        or len(unresolved) != 1
-        or not task.effect_id
-        or not rules.damage_emissions_for_task(task.task_id)
-    ):
-        return False
-    reference = unresolved[0]
-    if (
-        reference.reference_kind != "effect"
-        or reference.definition_id != task.effect_id
-        or reference.resolution_status != "deferred"
-        or reference.blocked_reason
-        != "task_graph_definition_not_admitted:effect:audit_only"
-    ):
-        return False
-    effect = rules.effect(task.effect_id)
-    task_evidence = task.source.evidence
-    if (
-        effect is None
-        or effect.opcode != task.opcode
-        or effect.coverage_status != "audit_only"
-        or "parent_task_id" in task_evidence
-        or "child_task_count" in task_evidence
-        or effect.source.source_path != task.source.source_path
-        or effect.source.raw_type != task.source.raw_type
-        or effect.source.raw_id != task.source.raw_id
-    ):
-        return False
-    return effect.source.evidence == {
-        **task_evidence,
-        "parent_task_id": "",
-    }
+_is_emission_backed_damage_audit_reference = (
+    emission_backed_damage_audit_reference_admitted
+)
 
 
 def _formal_action_task_graph_projection(

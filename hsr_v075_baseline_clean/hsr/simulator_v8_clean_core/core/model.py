@@ -5,10 +5,16 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
+
+if TYPE_CHECKING:
+    from ..systems.action_event_contract import (
+        AdmittedActionTargetFact,
+        ActionWindowExpectedScope,
+    )
 
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
@@ -582,6 +588,16 @@ class GameEvent:
     window: str = "unspecified"
     process_only: bool = True
     payload: dict[str, JSONValue] = field(default_factory=dict)
+    admitted_action_target_fact: AdmittedActionTargetFact | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    expected_action_window_scope: ActionWindowExpectedScope | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def to_json(self) -> dict[str, JSONValue]:
         event_id = self.event_id or _stable_id(

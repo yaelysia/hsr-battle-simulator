@@ -12,7 +12,7 @@ from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphIR, TaskGraphNumericDefinitionIR, TaskGraphWeightedSelectionIR
+from ..rules.task_graph import TaskGraphIR, TaskGraphNodeIR, TaskGraphNumericDefinitionIR, TaskGraphWeightedSelectionIR
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
@@ -23,6 +23,8 @@ from .dynamic_values import (
 from .effect import EffectExecutionContext, EffectRegistry
 from .event_dispatch import EventDispatchResult, EventDispatchSystem
 from .action_event_contract import (
+    AdmittedActionTargetFact,
+    ActionWindowExpectedScope,
     admitted_action_condition_fact_provider,
     damage_listener_window_event,
 )
@@ -30,6 +32,7 @@ from .summon import SummonSystem
 from .toughness import ToughnessPacket, ToughnessSystem
 from .ability_task_contract import (
     ability_task_runtime_blocked_reason,
+    emission_backed_damage_audit_reference_admitted,
     is_process_only_ability_task,
 )
 from .target import TargetSystem
@@ -117,6 +120,8 @@ class StatusNestedAbilityContext:
     root_graph_id: str
     trigger_event_id: str
     target_resolution: TargetResolution
+    admitted_action_target_fact: AdmittedActionTargetFact | None = None
+    expected_action_window_scope: ActionWindowExpectedScope | None = None
 
     def __post_init__(self) -> None:
         if type(self) is not StatusNestedAbilityContext:
@@ -133,6 +138,15 @@ class StatusNestedAbilityContext:
                 raise ValueError("status nested ability context identity is incomplete")
         if type(self.target_resolution) is not TargetResolution:
             raise TypeError("status nested ability target resolution type is invalid")
+        if bool(self.admitted_action_target_fact) != bool(
+            self.expected_action_window_scope
+        ):
+            raise ValueError("status nested ability target capability is incomplete")
+        if self.admitted_action_target_fact is not None:
+            if type(self.admitted_action_target_fact) is not AdmittedActionTargetFact:
+                raise TypeError("status nested ability target fact type is invalid")
+            if type(self.expected_action_window_scope) is not ActionWindowExpectedScope:
+                raise TypeError("status nested ability window scope type is invalid")
 
 
 @dataclass(frozen=True, init=False)
@@ -176,6 +190,8 @@ class _FormalAbilityInvocation:
     standalone: StandaloneAbilityInvocation | None = None
     execution_path: str = ""
     iteration_index: int | None = None
+    admitted_action_target_fact: AdmittedActionTargetFact | None = None
+    expected_action_window_scope: ActionWindowExpectedScope | None = None
 
     def __post_init__(self) -> None:
         if type(self) is not _FormalAbilityInvocation:
@@ -219,6 +235,15 @@ class _FormalAbilityInvocation:
                 raise ValueError("formal status nested invocation is inconsistent")
         else:
             raise ValueError("formal ability invocation kind is invalid")
+        if bool(self.admitted_action_target_fact) != bool(
+            self.expected_action_window_scope
+        ):
+            raise ValueError("formal ability target capability is incomplete")
+        if self.admitted_action_target_fact is not None:
+            if type(self.admitted_action_target_fact) is not AdmittedActionTargetFact:
+                raise TypeError("formal ability target fact type is invalid")
+            if type(self.expected_action_window_scope) is not ActionWindowExpectedScope:
+                raise TypeError("formal ability window scope type is invalid")
 
 
 class AbilityTaskSystem:
@@ -835,6 +860,8 @@ class AbilityTaskSystem:
                 scoped_resolution,
                 execution_path=_task_graph_execution_path(request),
                 iteration_index=request.iteration_index,
+                admitted_action_target_fact=context.admitted_action_target_fact,
+                expected_action_window_scope=context.expected_action_window_scope,
             ),
             "",
         )
@@ -874,7 +901,24 @@ class AbilityTaskSystem:
                 for reference in request.references
                 if reference.resolution_status != "resolved"
             )
-            if unresolved:
+            node_result = self.rules.query_task_graph_node(request.graph_node_id)
+            admitted_audit_reference = (
+                invocation.invocation_kind == "action"
+                and node_result.status == "resolved"
+                and type(node_result.value) is TaskGraphNodeIR
+                and not ability_task_runtime_blocked_reason(
+                    self.rules,
+                    task,
+                    topology_authority="task_graph",
+                )
+                and emission_backed_damage_audit_reference_admitted(
+                    self.rules,
+                    task,
+                    node_result.value,
+                    unresolved,
+                )
+            )
+            if unresolved and not admitted_audit_reference:
                 return TaskGraphLeafResult(
                     "blocked",
                     outcome_kind="",
@@ -1096,6 +1140,8 @@ class AbilityTaskSystem:
                     action_level=invocation.ability_level,
                     current_action_trigger_key=_formal_action_trigger_key(invocation),
                 ),
+                admitted_action_target_fact=invocation.admitted_action_target_fact,
+                expected_action_window_scope=invocation.expected_action_window_scope,
             ),
         )
         after = (
@@ -1143,6 +1189,8 @@ class AbilityTaskSystem:
             selected_target_ids=target_resolution.selected,
             current_target_id=primary_target,
             turn_owner_id=committed_turn_owner_id(state),
+            admitted_action_target_fact=invocation.admitted_action_target_fact,
+            expected_action_window_scope=invocation.expected_action_window_scope,
         )
         result = self.evaluator.evaluate_condition_result(
             condition,
@@ -1312,6 +1360,8 @@ class AbilityTaskSystem:
             selected_target_ids=scoped.selected,
             current_target_id=primary,
             turn_owner_id=committed_turn_owner_id(state),
+            admitted_action_target_fact=invocation.admitted_action_target_fact,
+            expected_action_window_scope=invocation.expected_action_window_scope,
         )
         result = self.targets.resolve_target_expression(
             state,

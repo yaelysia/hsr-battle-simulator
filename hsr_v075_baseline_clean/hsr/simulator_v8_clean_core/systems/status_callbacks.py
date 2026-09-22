@@ -41,6 +41,7 @@ from ..unit_eligibility import (
     runtime_units_share_combat_team,
 )
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
+from .action_event_contract import ActionWindowExpectedScope
 from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import (
     binding_source_from_status_detail,
@@ -221,6 +222,7 @@ class StatusCallbackSystem:
         damage_window_ledger: DamageWindowLedger | None = None,
         detail_override: dict[str, JSONValue] | None = None,
         nested_ability_provider: object,
+        expected_window_scope: ActionWindowExpectedScope | None,
     ) -> StatusCallbackExecutionResult:
         from .ability import StatusNestedAbilityContext, StatusNestedAbilityHookProvider
 
@@ -239,6 +241,21 @@ class StatusCallbackSystem:
                 callback_id,
                 "action_window_formal_root_event_invalid",
             )
+        if (
+            type(expected_window_scope) is not ActionWindowExpectedScope
+            or trigger_event.expected_action_window_scope is not expected_window_scope
+            or trigger_event.admitted_action_target_fact is None
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_scope_mismatch",
+            )
+        scope_reason = trigger_event.admitted_action_target_fact.invocation_blocked_reason(
+            expected_scope=expected_window_scope
+        )
+        if scope_reason:
+            return _selected_callback_blocked(state, callback_id, scope_reason)
         trigger_event_id = trigger_event.event_id or str(
             trigger_event.to_json().get("event_id") or ""
         )
@@ -343,6 +360,8 @@ class StatusCallbackSystem:
             root_graph_id=graph.graph_id,
             trigger_event_id=trigger_event_id,
             target_resolution=target_resolution,
+            admitted_action_target_fact=trigger_event.admitted_action_target_fact,
+            expected_action_window_scope=expected_window_scope,
         )
         try:
             nested_ability_hooks = nested_ability_provider.hooks_for(context)
@@ -2202,6 +2221,11 @@ class StatusCallbackSystem:
                     if trigger_event is not None
                     else None
                 ),
+                expected_action_window_scope=(
+                    trigger_event.expected_action_window_scope
+                    if trigger_event is not None
+                    else None
+                ),
             ),
             condition_event_payload=event_payload,
             binding_sources=tuple(
@@ -2821,6 +2845,11 @@ class StatusCallbackSystem:
                     action_window=(trigger_event.window if trigger_event is not None else None),
                     admitted_action_target_fact=(
                         trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
+                    expected_action_window_scope=(
+                        trigger_event.expected_action_window_scope
                         if trigger_event is not None
                         else None
                     ),
@@ -3491,6 +3520,11 @@ class StatusCallbackSystem:
                     action_window=(trigger_event.window if trigger_event is not None else None),
                     admitted_action_target_fact=(
                         trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
+                    expected_action_window_scope=(
+                        trigger_event.expected_action_window_scope
                         if trigger_event is not None
                         else None
                     ),
@@ -4566,12 +4600,23 @@ def _retarget_event(event: GameEvent | None, target_id: str) -> GameEvent:
             "retarget_source_event_id": event.event_id if event is not None else "",
         }
     )
+    if event is not None:
+        return replace(
+            event,
+            target_id=target_id,
+            event_id=(
+                f"{event.event_id}:retarget:{target_id}"
+                if event.event_id
+                else f"event:retarget:{target_id}"
+            ),
+            process_only=True,
+            payload=payload,
+        )
     return GameEvent(
-        event.event_type if event is not None else "status.retarget",
-        source_id=event.source_id if event is not None else "",
+        "status.retarget",
         target_id=target_id,
-        event_id=f"{event.event_id}:retarget:{target_id}" if event is not None and event.event_id else f"event:retarget:{target_id}",
-        window=event.window if event is not None else "Retarget",
+        event_id=f"event:retarget:{target_id}",
+        window="Retarget",
         process_only=True,
         payload=payload,
     )
@@ -4591,16 +4636,22 @@ def _callback_scoped_event(
         }
     )
     base_id = event.event_id if event is not None else ""
+    scoped_id = (
+        f"{base_id}:scope:{callback_scope}:{decision_index}"
+        if base_id
+        else f"event:scope:{callback_scope}:{decision_index}"
+    )
+    if event is not None:
+        return replace(
+            event,
+            event_id=scoped_id,
+            process_only=True,
+            payload=payload,
+        )
     return GameEvent(
-        event.event_type if event is not None else "status.callback.scope",
-        source_id=event.source_id if event is not None else "",
-        target_id=event.target_id if event is not None else "",
-        event_id=(
-            f"{base_id}:scope:{callback_scope}:{decision_index}"
-            if base_id
-            else f"event:scope:{callback_scope}:{decision_index}"
-        ),
-        window=event.window if event is not None else "status_callback",
+        "status.callback.scope",
+        event_id=scoped_id,
+        window="status_callback",
         process_only=True,
         payload=payload,
     )
@@ -5393,6 +5444,9 @@ def _condition_context(
                 admitted_action_target_fact=(
                     event.admitted_action_target_fact if event is not None else None
                 ),
+                expected_action_window_scope=(
+                    event.expected_action_window_scope if event is not None else None
+                ),
             ),
             condition_event_payload=payload,
             binding_sources=callback_binding_sources,
@@ -5504,6 +5558,12 @@ def _effect_context(
             (current_status_instance_id,) if current_status_instance_id else ()
         ),
         damage_window_ledger=damage_window_ledger,
+        admitted_action_target_fact=(
+            event.admitted_action_target_fact if event is not None else None
+        ),
+        expected_action_window_scope=(
+            event.expected_action_window_scope if event is not None else None
+        ),
     )
 
 

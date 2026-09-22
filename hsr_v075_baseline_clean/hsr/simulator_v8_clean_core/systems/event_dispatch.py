@@ -14,6 +14,7 @@ from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
 from .ability_property_watchers import AbilityPropertyWatcherSystem
+from .action_event_contract import ActionWindowExpectedScope
 from .effect import EffectRegistry
 from .mutation_events import (
     MUTATION_BACKED_EVENT_TYPES,
@@ -189,6 +190,7 @@ class EventDispatchSystem:
         event: GameEvent,
         damage_window_ledger: DamageWindowLedger | None,
         nested_ability_provider: StatusNestedAbilityHookProvider,
+        expected_window_scope: ActionWindowExpectedScope,
     ) -> EventDispatchResult:
         from .ability import StatusNestedAbilityHookProvider
 
@@ -210,11 +212,37 @@ class EventDispatchSystem:
                 reason="action_window_formal_root_event_invalid",
                 metadata={"event_type": event.event_type},
             )
+        fact = event.admitted_action_target_fact
+        if type(expected_window_scope) is not ActionWindowExpectedScope or fact is None:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="action_window_formal_root_transport",
+                scope=_event_scope_kind(event),
+                reason="action_window_target_scope_missing",
+                metadata={"event_type": event.event_type},
+            )
+        scope_reason = fact.invocation_blocked_reason(
+            expected_scope=expected_window_scope
+        )
+        if scope_reason:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="action_window_formal_root_transport",
+                scope=_event_scope_kind(event),
+                reason=scope_reason,
+                metadata={"event_type": event.event_type},
+            )
         return self._dispatch_event(
             state,
-            event=event,
+            event=replace(
+                event,
+                expected_action_window_scope=expected_window_scope,
+            ),
             damage_window_ledger=damage_window_ledger,
             status_nested_ability_provider=nested_ability_provider,
+            expected_window_scope=expected_window_scope,
         )
 
     def dispatch_event(
@@ -264,6 +292,7 @@ class EventDispatchSystem:
         task_graph_continuation: TaskGraphContinuation | None = None,
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
         status_nested_ability_provider: StatusNestedAbilityHookProvider | None = None,
+        expected_window_scope: ActionWindowExpectedScope | None = None,
     ) -> EventDispatchResult:
         from .ability import StatusNestedAbilityHookProvider
 
@@ -376,6 +405,7 @@ class EventDispatchSystem:
                 task_graph_continuation=task_graph_continuation,
                 nested_ability_hooks=nested_ability_hooks,
                 status_nested_ability_provider=status_nested_ability_provider,
+                expected_window_scope=expected_window_scope,
             )
         result = self._reconcile_ability_property_watchers(
             result,
@@ -593,6 +623,7 @@ class EventDispatchSystem:
         task_graph_continuation: TaskGraphContinuation | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
         status_nested_ability_provider: StatusNestedAbilityHookProvider | None,
+        expected_window_scope: ActionWindowExpectedScope | None,
     ) -> EventDispatchResult:
         aliases = _event_aliases(event, self.rules)
         dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
@@ -710,6 +741,7 @@ class EventDispatchSystem:
                     damage_window_ledger=damage_window_ledger,
                     detail_override=match.status_detail,
                     nested_ability_provider=status_nested_ability_provider,
+                    expected_window_scope=expected_window_scope,
                 )
             else:
                 result = self.status_callbacks.execute(

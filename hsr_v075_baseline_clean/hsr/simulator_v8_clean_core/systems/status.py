@@ -22,6 +22,7 @@ from ..rules.task_graph import TaskGraphIR
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..unit_presence import plan_unit_departure_end
 from .mutation_events import events_for_mutation
+from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -315,6 +316,8 @@ class StatusSystem:
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
         retained_runtime_hashes: tuple[str, ...] = (),
+        admitted_action_target_fact: AdmittedActionTargetFact | None = None,
+        expected_action_window_scope: ActionWindowExpectedScope | None = None,
         _addition_chain: tuple[str, ...] = (),
         _resolved_target_ids: tuple[str, ...] | None = None,
         _halo_projection: dict[str, JSONValue] | None = None,
@@ -356,6 +359,8 @@ class StatusSystem:
                 event_payload=event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                admitted_action_target_fact=admitted_action_target_fact,
+                expected_action_window_scope=expected_action_window_scope,
             )
         else:
             target_ids = tuple(dict.fromkeys(_resolved_target_ids))
@@ -1433,6 +1438,8 @@ class StatusSystem:
         event_payload: dict[str, JSONValue] | None,
         dynamic_values: dict[str, float] | None,
         binding_sources: tuple[dict[str, JSONValue], ...],
+        admitted_action_target_fact: AdmittedActionTargetFact | None,
+        expected_action_window_scope: ActionWindowExpectedScope | None,
     ) -> tuple[tuple[str, ...], str, dict[str, JSONValue], tuple[RNGEvent, ...]]:
         target_expression_id = standard.get("target_expression_id")
         if isinstance(target_expression_id, str) and target_expression_id and self.rules is not None:
@@ -1465,6 +1472,8 @@ class StatusSystem:
                     ),
                     current_target_id=current_action_target_id,
                     turn_owner_id=committed_turn_owner_id(state),
+                    admitted_action_target_fact=admitted_action_target_fact,
+                    expected_action_window_scope=expected_action_window_scope,
                 ),
                 target_resolution=target_resolution,
                 condition_event_payload=event_payload,

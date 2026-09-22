@@ -31,6 +31,10 @@ from ..rules.rulebook import RuleBook
 from ..rules.task_graph import TaskGraphIR, TaskGraphQueryResult
 from ..scenarios.build_state import _project_character_skill_level_flags
 from ..systems.action_contract import ActionContractSystem
+from ..systems.action_event_contract import (
+    _issue_action_window_expected_scope,
+    _issue_admitted_action_target_fact,
+)
 from ..systems.action_selection import ActionTargetSelectionSystem
 from ..systems.ability import (
     AbilityTaskSystem,
@@ -188,6 +192,34 @@ def _target_resolution(*targets: str) -> TargetResolution:
         reason="a2_validation",
         source="p9_a2_validator",
     )
+
+
+def _fast_action_window_scope(event_id: str) -> tuple[Any, Any]:
+    token = object()
+    scope = _issue_action_window_expected_scope(
+        execution_token=token,
+        actor_id="outer",
+        action_id="fixture:fast",
+        action_level=1,
+        canonical_action_event_id="fixture:fast:event",
+        impact_fingerprint="fixture:fast:impact",
+        event_id=event_id,
+        window="action.window.after_attack",
+        step_id="0:after_attack:action.window.after_attack",
+        step_index=0,
+    )
+    fact = _issue_admitted_action_target_fact(
+        actor_id="outer",
+        action_id="fixture:fast",
+        action_level=1,
+        selection_context_fingerprint="fixture:fast:selection",
+        contract_fingerprint="fixture:fast:contract",
+        impact_fingerprint="fixture:fast:impact",
+        canonical_action_event_id="fixture:fast:event",
+        target_mode="single",
+        target_ids=("target",),
+    )
+    return fact.bind_invocation(scope), scope
 
 
 def _install_formal_query(rules: _B5Rules) -> None:
@@ -546,6 +578,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         ),
         damage_window_ledger=None,
         nested_ability_provider=cast(Any, object()),
+        expected_window_scope=cast(Any, None),
     )
 
     ordinary_dispatcher = _B5Dispatcher(
@@ -584,6 +617,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
 
     root_probe = _RootProbe(rules)
     root_dispatcher = _B5Dispatcher(rules, root_probe, generic_details)
+    root_fact, root_scope = _fast_action_window_scope("event:a2:root-probe")
     root_dispatch = root_dispatcher.dispatch_action_window_listeners(
         state,
         event=GameEvent(
@@ -597,9 +631,11 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
                 "selected_target_ids": ["target", "outer"],
                 "primary_target_id": "target",
             },
+            admitted_action_target_fact=root_fact,
         ),
         damage_window_ledger=None,
         nested_ability_provider=provider,
+        expected_window_scope=root_scope,
     )
 
     forged_provider_rejected = False
@@ -2207,6 +2243,8 @@ def _install_direct_executor_probes(
                 "step": "action_window_event_dispatched",
                 "event_type": event.event_type,
                 "event_id": event.event_id,
+                "target_fact_present": event.admitted_action_target_fact is not None,
+                "expected_scope_present": kwargs.get("expected_window_scope") is not None,
             }
         )
         return original_window(current_state, **kwargs)
@@ -2238,6 +2276,8 @@ def _install_direct_executor_probes(
                     "status_instance_id": str(detail["instance_id"]),
                     "real_detail_present": real_detail is not None,
                     "status_root_graph_id": str(row["status_root_graph_id"]),
+                    "target_fact_present": kwargs["trigger_event"].admitted_action_target_fact is not None,
+                    "expected_scope_present": kwargs.get("expected_window_scope") is not None,
                 }
             )
         return original_root(current_state, **kwargs)
@@ -2262,6 +2302,14 @@ def _install_direct_executor_probes(
                     "actor_id": invocation.actor_id if invocation is not None else "",
                     "target_ids": list(invocation.target_resolution.selected) if invocation is not None else [],
                     "blocked_reason": reason,
+                    "target_fact_present": (
+                        invocation is not None
+                        and invocation.admitted_action_target_fact is not None
+                    ),
+                    "expected_scope_present": (
+                        invocation is not None
+                        and invocation.expected_action_window_scope is not None
+                    ),
                 }
             )
         return invocation, reason
@@ -2284,6 +2332,35 @@ def _install_direct_executor_probes(
         return result
 
     executor.ability_tasks._resolve_formal_weighted_selection = weighted_probe  # type: ignore[method-assign]
+
+    for target_system in (
+        executor.ability_tasks.targets,
+        executor.event_dispatcher.status_callbacks.targets,
+    ):
+        original_resolve = target_system.resolve_target_expression
+
+        def target_probe(
+            current_state: BattleState,
+            expression: Any,
+            *,
+            _original: Any = original_resolve,
+            **kwargs: Any,
+        ) -> Any:
+            result = _original(current_state, expression, **kwargs)
+            if result.blocked_reason.startswith("action_target_fact_"):
+                context = kwargs.get("context")
+                ordered.append(
+                    {
+                        "step": "action_target_fact_consumer_blocked",
+                        "target_expression_id": getattr(expression, "target_expression_id", ""),
+                        "blocked_reason": result.blocked_reason,
+                        "target_fact_present": getattr(context, "admitted_action_target_fact", None) is not None,
+                        "expected_scope_present": getattr(context, "expected_action_window_scope", None) is not None,
+                    }
+                )
+            return result
+
+        target_system.resolve_target_expression = target_probe  # type: ignore[method-assign]
 
 
 def _attempt_direct(
@@ -2553,6 +2630,7 @@ def _run_direct() -> dict[str, Any]:
                         "ok": attempt.get("ok", False),
                         "stage": attempt.get("stage", ""),
                         "reason": attempt.get("reason", ""),
+                        "ordered_evidence": attempt.get("ordered_evidence", ()),
                     }
                 )
                 if attempt.get("ok"):
