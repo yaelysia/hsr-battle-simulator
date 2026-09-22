@@ -13,6 +13,8 @@ from ..rules.rulebook import RuleBook
 from .summon_runtime import validate_summon_runtime
 from .action_event_contract import (
     ActionConditionFactProvider,
+    AdmittedActionTargetFact,
+    _issue_admitted_action_target_fact,
     action_condition_fact_provider,
 )
 from .target import TargetSystem, resolve_action_bounce_policy
@@ -386,6 +388,11 @@ class ActionTargetImpactResult:
     resolution: TargetResolution
     blocked_reason: str = ""
     impact_fingerprint: str = field(init=False)
+    admitted_action_target_fact: AdmittedActionTargetFact | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if type(self) is not ActionTargetImpactResult:
@@ -394,6 +401,11 @@ class ActionTargetImpactResult:
             raise ValueError("action target impact context identity is required")
         if type(self.resolution) is not TargetResolution:
             raise TypeError("action target impact requires an exact target resolution")
+        if (
+            self.admitted_action_target_fact is not None
+            and type(self.admitted_action_target_fact) is not AdmittedActionTargetFact
+        ):
+            raise TypeError("action target impact fact has an invalid type")
         if self.status == "resolved":
             if self.blocked_reason or not self.resolution.selected or not self.resolution.impact_group:
                 raise ValueError("resolved action target impact is inconsistent")
@@ -737,6 +749,13 @@ class ActionTargetSelectionSystem:
         reason = self.context_identity_blocked_reason(command, context)
         if reason:
             return self._blocked_impact(command, context, reason)
+        canonical_event = self.rules.action_event(command.action_id, command.action_level)
+        if canonical_event != action_event:
+            return self._blocked_impact(
+                command,
+                context,
+                "action_target_impact_event_not_canonical",
+            )
         contract_query = self.rules.action_target_contract(
             command.action_id,
             command.action_level,
@@ -862,10 +881,39 @@ class ActionTargetSelectionSystem:
                 },
             },
         )
-        return ActionTargetImpactResult(
+        result = ActionTargetImpactResult(
             status="resolved",
             context_fingerprint=context.context_fingerprint,
             resolution=resolution,
+        )
+        target_mode = str(action_event.target_mode or "")
+        unavailable_reason = ""
+        if context.dynamic_target:
+            unavailable_reason = "action_target_fact_dynamic_unavailable"
+        elif target_mode == "bounce":
+            unavailable_reason = "action_target_fact_bounce_unavailable"
+        elif target_mode not in {"single", "self_or_team", "blast", "aoe"}:
+            unavailable_reason = (
+                f"action_target_fact_mode_unavailable:{target_mode or 'missing'}"
+            )
+        fact = _issue_admitted_action_target_fact(
+            actor_id=command.actor_id,
+            action_id=command.action_id,
+            action_level=command.action_level,
+            selection_context_fingerprint=context.context_fingerprint,
+            contract_fingerprint=context.accepted.contract_fingerprint,
+            impact_fingerprint=result.impact_fingerprint,
+            canonical_action_event_id=action_event.action_event_id,
+            target_mode=target_mode or "unknown",
+            target_ids=resolution.impact_group if not unavailable_reason else (),
+            unavailable_reason=unavailable_reason,
+        )
+        return ActionTargetImpactResult(
+            status=result.status,
+            context_fingerprint=result.context_fingerprint,
+            resolution=result.resolution,
+            blocked_reason=result.blocked_reason,
+            admitted_action_target_fact=fact,
         )
 
     def _candidate_ids(

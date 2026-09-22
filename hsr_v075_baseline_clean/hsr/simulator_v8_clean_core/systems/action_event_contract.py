@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..core.model import (
     ActionCommand,
@@ -15,6 +15,169 @@ from ..rules.condition_state import (
 )
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+
+
+_ACTION_TARGET_FACT_ISSUER = object()
+
+
+@dataclass(frozen=True)
+class AdmittedActionTargetFact:
+    """Immutable static impact facts issued by the accepted-action boundary."""
+
+    actor_id: str
+    action_id: str
+    action_level: int
+    selection_context_fingerprint: str
+    contract_fingerprint: str
+    impact_fingerprint: str
+    canonical_action_event_id: str
+    target_mode: str
+    target_ids: tuple[str, ...] = ()
+    unavailable_reason: str = ""
+    event_id: str = ""
+    window: str = ""
+    _issuer: object | None = field(default=None, repr=False, compare=False)
+    _claims: tuple[object, ...] = field(default=(), repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not AdmittedActionTargetFact:
+            raise TypeError("action target fact must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.actor_id,
+                self.action_id,
+                self.selection_context_fingerprint,
+                self.contract_fingerprint,
+                self.impact_fingerprint,
+                self.canonical_action_event_id,
+                self.target_mode,
+            )
+        ):
+            raise ValueError("action target fact identity is incomplete")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level <= 0
+        ):
+            raise ValueError("action target fact level is invalid")
+        targets = tuple(self.target_ids)
+        if any(not isinstance(value, str) or not value for value in targets):
+            raise ValueError("action target fact target identity is invalid")
+        if len(targets) != len(set(targets)):
+            raise ValueError("action target fact target identities are duplicated")
+        if self.unavailable_reason:
+            if targets:
+                raise ValueError("unavailable action target fact carries targets")
+        elif not targets:
+            raise ValueError("available action target fact has no targets")
+        if bool(self.event_id) != bool(self.window):
+            raise ValueError("action target fact invocation binding is incomplete")
+        object.__setattr__(self, "target_ids", targets)
+        if self._issuer is _ACTION_TARGET_FACT_ISSUER and self._claims != self._claim_values():
+            raise ValueError("action target fact claims do not match content")
+
+    def _claim_values(self) -> tuple[object, ...]:
+        return (
+            self.actor_id,
+            self.action_id,
+            self.action_level,
+            self.selection_context_fingerprint,
+            self.contract_fingerprint,
+            self.impact_fingerprint,
+            self.canonical_action_event_id,
+            self.target_mode,
+            self.target_ids,
+            self.unavailable_reason,
+            self.event_id,
+            self.window,
+        )
+
+    def bind_invocation(self, *, event_id: str, window: str) -> "AdmittedActionTargetFact":
+        if self._issuer is not _ACTION_TARGET_FACT_ISSUER:
+            raise ValueError("action target fact was not issued")
+        if self.event_id or self.window:
+            raise ValueError("action target fact is already invocation-bound")
+        return _issue_admitted_action_target_fact(
+            actor_id=self.actor_id,
+            action_id=self.action_id,
+            action_level=self.action_level,
+            selection_context_fingerprint=self.selection_context_fingerprint,
+            contract_fingerprint=self.contract_fingerprint,
+            impact_fingerprint=self.impact_fingerprint,
+            canonical_action_event_id=self.canonical_action_event_id,
+            target_mode=self.target_mode,
+            target_ids=self.target_ids,
+            unavailable_reason=self.unavailable_reason,
+            event_id=event_id,
+            window=window,
+        )
+
+    def blocked_reason(
+        self,
+        *,
+        event_id: str | None,
+        window: str | None,
+    ) -> str:
+        if self._issuer is not _ACTION_TARGET_FACT_ISSUER:
+            return "action_target_fact_not_issued"
+        if self._claims != self._claim_values():
+            return "action_target_fact_claims_mismatch"
+        if not self.event_id or not self.window:
+            return "action_target_fact_invocation_unbound"
+        if event_id != self.event_id or window != self.window:
+            return "action_target_fact_invocation_mismatch"
+        return self.unavailable_reason
+
+
+def _issue_admitted_action_target_fact(
+    *,
+    actor_id: str,
+    action_id: str,
+    action_level: int,
+    selection_context_fingerprint: str,
+    contract_fingerprint: str,
+    impact_fingerprint: str,
+    canonical_action_event_id: str,
+    target_mode: str,
+    target_ids: tuple[str, ...] = (),
+    unavailable_reason: str = "",
+    event_id: str = "",
+    window: str = "",
+) -> AdmittedActionTargetFact:
+    fields = {
+        "actor_id": actor_id,
+        "action_id": action_id,
+        "action_level": action_level,
+        "selection_context_fingerprint": selection_context_fingerprint,
+        "contract_fingerprint": contract_fingerprint,
+        "impact_fingerprint": impact_fingerprint,
+        "canonical_action_event_id": canonical_action_event_id,
+        "target_mode": target_mode,
+        "target_ids": target_ids,
+        "unavailable_reason": unavailable_reason,
+        "event_id": event_id,
+        "window": window,
+    }
+    claims = (
+        actor_id,
+        action_id,
+        action_level,
+        selection_context_fingerprint,
+        contract_fingerprint,
+        impact_fingerprint,
+        canonical_action_event_id,
+        target_mode,
+        tuple(target_ids),
+        unavailable_reason,
+        event_id,
+        window,
+    )
+    return AdmittedActionTargetFact(
+        **fields,
+        _issuer=_ACTION_TARGET_FACT_ISSUER,
+        _claims=claims,
+    )
 
 
 @dataclass(frozen=True)
