@@ -1,5 +1,33 @@
 # PR11-A2-RUNTIME-RESUME / Revision 35 收尾执行报告
 
+## Revision 46：三个审核 finding 的收尾准备
+
+本轮只修改 S8C1B Harness、两份 PR workflow 和本报告/执行卡；原 A2 业务链与
+RandomConfig gameplay RNG 未改。审核基线 `3ae3912590d126f97c27e8a8ce770fb8402a78f1`
+的三个 finding 仍待独立 CLOSURE_AUDIT 核验。本节是提交前开发记录，不冒充最终 HEAD CI。
+
+- `s8c1b-direct-materialization-contract-red`：旧“所有 RandomConfig 均 deferred”
+  断言迁移为 D2/D3 精确分类。满足来源、域、唯一 weighted ledger 和 own-effect 条件的
+  branch 必须 materialized；其他节点必须与原 `_node_status` 分类精确一致。原 raw、
+  numeric、choice、branch、source 检查及非随机/status 对照保留，新增反向提升/降级负例。
+- `final-head-fixed-gate-incomplete`：A2 workflow 增加独立 `fixed_closeout` job，按原命令
+  分四 step 运行 P8-S2 fixture-only、P7-S7、S5C2、S8B5C；A2 原 job 与 S8C1B
+  workflow 均固定 checkout PR head SHA，并核实际 HEAD。最终 SHA 和每个 job/step 结果
+  以提交后的 PR 证据评论记录。
+- `ci-external-download-without-approval`：本轮批准卡
+  `pr-workflow/PR11-A2-RUNTIME-RESUME-REPLAN-46.md` 仅事前授权后续 A2 GitHub
+  runner 在 `RUNNER_TEMP` 一次性 venv 中安装 PyPI wheel-only `pytest==8.3.5` 及必要
+  运行依赖；旧 SHA 未授权下载的历史事实不变，本地未安装依赖。
+
+本地 `.venv/bin/python`、`PYTHONPATH=$PWD/hsr_v075_baseline_clean`：scoped compile 通过；
+新增迁移测试与 weighted materializer bridge 合计 28 passed，其他 S8C2/P3/P5/A2
+固定测试 121 passed；S8C1B Fast 6 cases、真实 Direct `ok=true`（13.04s、
+460968 KiB，代表 branch/materialized，三个真实 choice、own-effect reference 保留，
+未运行 gameplay RNG）。P8-S2 fixture-only、P7-S7、S5C2、S8B5C、A1/S8C1C/A2
+Fast 均 `ok=true`；A2 Direct `ok=true`（56.78s、864372 KiB）。这些是提交前本地结果；
+最终完整 SHA 的 CI 结果另见 PR 证据评论。历史 `target_contract_regressions.py` 路径不存在，
+本轮仍由实际存在的 `action_attack_target_context.py` 承担相应回归。
+
 状态：本地实现与规定验证通过，待最终 committed HEAD 的 GitHub required checks 和独立
 `FULL_AUDIT`。分支仍为原 PR #11 的
 `plan/p9-a2-action-window-status-transport-20260907`；启动时远端 HEAD 已精确核验为

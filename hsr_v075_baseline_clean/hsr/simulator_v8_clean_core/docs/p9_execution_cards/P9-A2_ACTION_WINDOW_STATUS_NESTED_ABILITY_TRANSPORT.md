@@ -1,5 +1,13 @@
 # P9-A2 Action-window status callback → nested formal ability transport
 
+> Revision 46 收尾补充：本轮只迁移 S8C1B Harness 的 RandomConfig 选择性材料化断言、
+> 在 PR workflow 加入同一最终 HEAD 的 P8-S2/P7-S7/S5C2/S8B5C 四门，并按
+> `pr-workflow/PR11-A2-RUNTIME-RESUME-REPLAN-46.md` 的限定事前授权在 A2 GitHub
+> runner 临时 venv 供应 wheel-only pytest。旧“所有 RandomConfig deferred”断言
+> 对应改为 D2/D3 满足时 branch/materialized、其余精确 deferred；原来源、choice、
+> own-effect obligation 和 A2 runtime 边界不变。提交后 PR 证据评论记录最终 SHA、
+> CI steps 和三个 open finding 的修复，独立 CLOSURE_AUDIT 决定是否关闭。
+
 ## 0. 执行身份与恢复点
 
 - dispatch id: `P9-NEXT-63a21d6f8bf6c64e`

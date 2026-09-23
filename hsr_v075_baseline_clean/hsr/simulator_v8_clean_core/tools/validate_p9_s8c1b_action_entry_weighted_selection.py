@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, cast
 
 from ..ir_types import IRSource
-from ..rules.ir import ActionDefinitionIR, CanonicalIR
+from ..rules.ir import ActionDefinitionIR, CanonicalIR, EffectIR
 from ..rules.task_graph import (
     TaskGraphBranchIR,
     TaskGraphIR,
@@ -30,6 +30,8 @@ from ..tbgd.character_ability_scope import CharacterAbilityRawSnapshot
 from ..tbgd.expression_lowering import lower_numeric_expression
 from ..tbgd.lowering import TBGDLowering, build_character_action_definition_ir
 from ..tbgd.task_graph_materializer import (
+    _ability_task,
+    _node_status,
     _materialize_weighted_selection,
     materialize_ability_phase_task_graph,
     materialize_ability_task_graph_catalog,
@@ -307,7 +309,110 @@ def _document_value(document: Mapping[str, Any], json_path: str) -> object:
     return current
 
 
-def _verify_selection(snapshot: CharacterAbilityRawSnapshot, graph: TaskGraphIR) -> dict[str, Any]:
+def _verify_materialization_contract(
+    graph: TaskGraphIR,
+    node: TaskGraphNodeIR,
+    source_catalog: Any,
+    canonical: CanonicalIR,
+) -> dict[str, Any]:
+    """Check selective control dispatch without granting gameplay/RNG admission."""
+    controls = [
+        item for item in source_catalog.nodes
+        if item.node_id == node.source_contract_node_id
+    ]
+    tasks = [
+        item for item in canonical.ability_tasks
+        if item.task_id == node.formal_task_id
+    ]
+    if len(controls) != 1 or len(tasks) != 1:
+        raise AssertionError("RandomConfig control/formal task identity is not unique")
+    control, task = controls[0], tasks[0]
+    if (
+        control.family != "RandomConfig"
+        or _family(task) != "RandomConfig"
+        or task.phase_id != graph.owner_id
+        or task.callback_kind != graph.callback_kind
+        or control.coverage_status == "blocked"
+        or any(
+            source.source_path != node.source.source_path
+            or source.evidence.get("json_path") != node.source.evidence.get("json_path")
+            for source in (control.source, task.source)
+        )
+        or control.source.evidence.get("content_sha256")
+        != node.source.evidence.get("content_sha256")
+    ):
+        raise AssertionError("RandomConfig control/formal task source mismatch")
+
+    # Reuse the original domain classification, not the promotion implementation.
+    expected = _node_status(control, _ability_task(task))
+    source_owned = not node.references and not task.effect_id
+    if (
+        task.effect_id and len(node.references) == 1
+        and node.references[0].reference_kind == "effect"
+        and node.references[0].definition_id == task.effect_id
+    ):
+        effects = [item for item in canonical.effects if item.effect_id == task.effect_id]
+        if len(effects) == 1 and type(effects[0]) is EffectIR:
+            effect = effects[0]
+            sources = tuple(
+                replace(source, evidence={
+                    key: value for key, value in source.evidence.items()
+                    if key not in {"parent_task_id", "child_task_count"}
+                })
+                for source in (effect.source, task.source)
+            )
+            source_owned = effect.opcode == "RandomConfig" and sources[0] == sources[1]
+            if source_owned:
+                reference = node.references[0]
+                resolved = effect.coverage_status in {"executable", "lowered"}
+                reference_reason = "" if resolved else (
+                    f"task_graph_definition_not_admitted:effect:{effect.coverage_status}"
+                )
+                if (
+                    reference.resolution_status != ("resolved" if resolved else "deferred")
+                    or reference.blocked_reason != reference_reason
+                    or (not resolved and graph.coverage_status != "lowered_with_obligation")
+                ):
+                    raise AssertionError("RandomConfig own-effect obligation was changed")
+    selections = [
+        item for item in graph.weighted_selections
+        if item.graph_node_id == node.graph_node_id
+    ]
+    dispatch_ready = (
+        control.control_role == "random_branch"
+        and control.coverage_status == "lowered_with_obligation"
+        and task.execution_mode != "process_only"
+        and expected[:3] == ("deferred", "deferred", ("hit_random_sequence",))
+        and source_owned
+        and len(selections) == 1
+        and type(selections[0]) is TaskGraphWeightedSelectionIR
+    )
+    if dispatch_ready:
+        expected = ("branch", "materialized", ("task_graph_execution",), "")
+    actual = (
+        node.node_kind, node.materialization_status, node.owner_domains, node.status_reason
+    )
+    if actual != expected:
+        raise AssertionError(
+            f"RandomConfig selective materialization mismatch:{node.graph_node_id}:"
+            f"expected={expected!r}:actual={actual!r}"
+        )
+    return {
+        "dispatch_ready": dispatch_ready,
+        "node_kind": node.node_kind,
+        "materialization_status": node.materialization_status,
+        "owner_domains": list(node.owner_domains),
+        "retained_reference_count": len(node.references),
+        "gameplay_rng_executed": False,
+    }
+
+
+def _verify_selection(
+    snapshot: CharacterAbilityRawSnapshot,
+    graph: TaskGraphIR,
+    source_catalog: Any,
+    canonical: CanonicalIR,
+) -> dict[str, Any]:
     if not graph.weighted_selections:
         raise AssertionError("representative graph does not contain a weighted selection")
     selection = graph.weighted_selections[0]
@@ -317,11 +422,9 @@ def _verify_selection(snapshot: CharacterAbilityRawSnapshot, graph: TaskGraphIR)
     )
     if node is None or node.source_family != "RandomConfig":
         raise AssertionError("weighted selection is not attached to RandomConfig")
-    if (
-        node.materialization_status != "deferred"
-        or node.owner_domains != ("hit_random_sequence",)
-    ):
-        raise AssertionError("RandomConfig node no longer defers to hit_random_sequence")
+    materialization = _verify_materialization_contract(
+        graph, node, source_catalog, canonical
+    )
     path = node.source.evidence.get("json_path")
     if not isinstance(path, str):
         raise AssertionError("RandomConfig source path is missing")
@@ -397,6 +500,7 @@ def _verify_selection(snapshot: CharacterAbilityRawSnapshot, graph: TaskGraphIR)
         "json_path": path,
         "source_occurrence_id": node.source_occurrence_id,
         "selection_id": selection.selection_id,
+        "materialization": materialization,
         "choices": rows,
     }
 
@@ -683,7 +787,7 @@ def _run_direct(root: Path) -> dict[str, Any]:
             )
 
         canonical, ability_catalog, graph = selected
-        source_evidence = _verify_selection(snapshot, graph)
+        source_evidence = _verify_selection(snapshot, graph, source_catalog, canonical)
         if (
             source_catalog.source_fingerprint != snapshot.source_fingerprint
             or graph.source_fingerprint != snapshot.source_fingerprint
@@ -749,8 +853,9 @@ def _run_direct(root: Path) -> dict[str, Any]:
             "odds_definition_choice_branch_selection_closure": True,
             "non_random_action_unchanged": True,
             "status_callback_unchanged": True,
-            "random_config_still_deferred": True,
-            "runtime_behavior_changed": False,
+            "random_config_materialization_contract_verified": True,
+            "random_config_dispatch_ready": source_evidence["materialization"]["dispatch_ready"],
+            "gameplay_rng_executed": False,
             "full_canonical_ir_build_count": 0,
         },
         "source": source_evidence,

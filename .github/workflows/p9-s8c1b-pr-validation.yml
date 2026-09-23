@@ -22,8 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           submodules: true
+          persist-credentials: false
+
+      - name: Verify exact reviewed head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git submodule status turnbasedgamedata-main
 
       - name: Compile scoped modules
         run: |

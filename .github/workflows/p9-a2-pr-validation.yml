@@ -17,9 +17,16 @@ on:
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_s8c1b_materialization_regression.py'
       - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT_execution_report.md'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT.md'
       - '.github/workflows/p9-a2-pr-validation.yml'
+      - '.github/workflows/p9-s8c1b-pr-validation.yml'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8c1b_action_entry_weighted_selection.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p8_s2_character_build_base_panel.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p7_s7_target_selection_impact_contract.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s5c2_action_selection_query_submit_context.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_s8b5c_cross_entry_runtime_transport.py'
 
 permissions:
   contents: read
@@ -37,6 +44,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
+
+      - name: Verify exact reviewed head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git submodule status turnbasedgamedata-main
 
       - name: Compile scoped A2 files
         run: |
@@ -46,11 +61,12 @@ jobs:
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py
 
-      - name: Install focused test dependency
+      - name: Prepare isolated CI test dependency
         run: |
-          python -m venv .ci-venv
-          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
-          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+          ci_venv="$RUNNER_TEMP/hsr-a2-pytest"
+          python -m venv "$ci_venv"
+          "$ci_venv/bin/python" -m pip --isolated install --no-input --disable-pip-version-check --only-binary=:all: --index-url https://pypi.org/simple pytest==8.3.5
+          echo "$ci_venv/bin" >> "$GITHUB_PATH"
 
       - name: Weighted materializer bridge and executor guards
         run: |
@@ -68,7 +84,8 @@ jobs:
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_action_attack_target_context.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_effect_target_expression_metadata_sync.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p6_damage_audit_reference_admission.py \
-            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_s8c1b_materialization_regression.py
 
       - name: A1 and source-closure Fast regressions
         run: |
@@ -85,3 +102,38 @@ jobs:
         run: |
           git merge-base --is-ancestor 5b222a2fb05970b5d23fd053ffd9beb453e4dfac HEAD
           git diff --check 5b222a2fb05970b5d23fd053ffd9beb453e4dfac...HEAD
+
+  fixed_closeout:
+    name: Fixed final-head closeout gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: ${{ github.workspace }}/hsr_v075_baseline_clean
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout exact PR head and pinned source submodule
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Verify exact reviewed head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git submodule status turnbasedgamedata-main
+
+      - name: P8-S2 character build fixture
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p8_s2_character_build_base_panel --fixture-only --output-dir "$RUNNER_TEMP/pr11-closeout/p8s2"
+
+      - name: P7-S7 target selection and impact
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p7_s7_target_selection_impact_contract --output-dir "$RUNNER_TEMP/pr11-closeout/p7s7"
+
+      - name: S5C2 action selection query and submit
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p9_s5c2_action_selection_query_submit_context --tbgd-root "$GITHUB_WORKSPACE/turnbasedgamedata-main" --output-dir "$RUNNER_TEMP/pr11-closeout/s5c2"
+
+      - name: S8B5C cross-entry runtime transport
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p9_s8b5c_cross_entry_runtime_transport --output-dir "$RUNNER_TEMP/pr11-closeout/s8b5c"
