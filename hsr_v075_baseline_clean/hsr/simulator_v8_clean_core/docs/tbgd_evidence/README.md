@@ -14,7 +14,9 @@ The governing source scope and completeness obligations remain [BATTLE_SCOPE.md]
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
-The [Guinaifen Burn description/application/tick/extra-trigger record](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md) joins Skill121002/121003/121004 description hashes directly to same-pin TextMapCHS, exact level parameters, CharacterConfig bindings and Ability/shared-modifier consumers. It records the ordinary ATK-based Burn equation, affected-enemy turn-start tick, separate Ultimate multiplier, and Firekiss's distinct damage-taken layer. Precise raw percentages are not replaced by formatted web values. A specific Firekiss same-hit timing question remains explicit; it does not erase these positive results.
+The [Guinaifen Burn description/application/tick/extra-trigger record](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md) joins Skill121002/121003/121004 description hashes directly to same-pin TextMapCHS, exact level parameters, CharacterConfig bindings and Ability/shared-modifier consumers. It records the ordinary ATK-based Burn equation, affected-enemy turn-start tick, separate Ultimate multiplier, and Firekiss's distinct damage-taken layer. Precise raw percentages are not replaced by formatted web values.
+
+The [Firekiss timing and E2/E4 follow-up](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_timing_eidolon_attribution_v1.md) continues the recovered checkpoint rather than repeating it. Published talent wording and identifiable community explanations now support the ordinary rule that a triggering Burn does not benefit from its newly generated Firekiss layer; the raw before-hit callback and unspecified internal settlement mapping are preserved. Newly read rank/binding/graph evidence closes E2's conditional `p+0.4`, not `p*1.4`, and E4's separate own-source, Fire/DOT/non-split +2 Energy request. Burn originator, detonator and listener owner remain distinct. These are source/model findings, not new game measurements or backend acceptance.
 
 **Mechanically meaningful skill descriptions are semantic evidence, not merely navigation hints or blanket presentation-only text.** Prefer the exact SkillDesc.Hash -> same-pin TextMap join when available; reconcile the described owner, operands, targets, conditions and timing with the graph. Description and data are complementary, not independent gameplay experiments. This does not promote all localization/UI text or silently resolve unmentioned exceptions. The selected DoT record introduces no backend dependency or whole-package completion claim.
 
@@ -138,6 +140,7 @@ Bounded source records; consult their claim-level limits rather than treating th
 - [R8 startup-effect source chains](../../../../../docs/tbgd_evidence/shared/battle_start_effect_activation_v1.md)
 - [R9 retained servant source facts and scope correction](../../../../../docs/tbgd_evidence/shared/owned_servant_runtime_admission_v1.md)
 - [Guinaifen Burn: skill text, application, tick, extra trigger and Firekiss](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md)
+- [Guinaifen Burn follow-up: Firekiss timing, E2 coefficient and E4 attribution](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_timing_eidolon_attribution_v1.md)
 
 Representative and shared records:
 

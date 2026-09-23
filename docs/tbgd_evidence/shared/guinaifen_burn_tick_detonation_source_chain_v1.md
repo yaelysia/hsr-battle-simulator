@@ -1,5 +1,9 @@
 # Guinaifen Burn: description, application, periodic tick and extra trigger v1
 
+## Follow-up overlay — 2026-09-23
+
+The [timing/E2/E4 follow-up](guinaifen_burn_timing_eidolon_attribution_v1.md) continues this record after its publication at `1f7211ca36bc65c93afbd937fe7f7fe780a190f7`. It adopts the attributed ordinary gameplay rule that a triggering Burn does not benefit from the Firekiss layer it generates, while preserving the raw `OnBeforeBeingHitAll` name and leaving its internal settlement mapping unspecified. It also closes E2's conditional `p+0.4` expression and E4's separate own-damage Energy request. The former same-hit question in sections8/10 below is retained as checkpoint history and superseded at the gameplay-model level, not by claiming a new game test or recovered dispatcher. All other original claims and limits remain unchanged.
+
 ## 1. Scope and result
 
 Reviewed 2026-09-23. Evidence parent: `9582b32287820afed68b788d46ed60c5a455be2c`; PR #8 remains Draft / documentation-evidence only. All raw sources use `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`.
