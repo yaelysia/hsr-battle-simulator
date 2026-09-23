@@ -3662,6 +3662,7 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetFetchPartner": frozenset({"name", "unique_name"}),
     "TargetFetchUniqueNameEntity": frozenset({"name", "unique_name"}),
     "TargetMapAdjoinEntity": frozenset({"side", "counting_option"}),
+    "TargetMapAttackTargetList": frozenset(),
     "TargetMapSummoner": frozenset({"recursive"}),
     "TargetMapSummonedMinions": frozenset(),
     "TargetMapAllTeamMember": frozenset({"allow_unselectable"}),

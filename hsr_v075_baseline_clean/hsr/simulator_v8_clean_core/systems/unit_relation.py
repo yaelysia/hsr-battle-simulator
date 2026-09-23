@@ -17,6 +17,7 @@ from ..unit_eligibility import (
 )
 from .summon_runtime import validate_summon_runtime
 from .unit_lifecycle import UnitLifecycleSystem
+from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 
 if TYPE_CHECKING:
     from .target import TargetExpressionResult
@@ -41,6 +42,10 @@ class TargetEvaluationContext:
     damage_attacker_id: str | None = None
     damage_defender_id: str | None = None
     turn_owner_id: str | None = None
+    action_event_id: str | None = None
+    action_window: str | None = None
+    admitted_action_target_fact: AdmittedActionTargetFact | None = None
+    expected_action_window_scope: ActionWindowExpectedScope | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.caster_id, str) or not self.caster_id:
@@ -49,10 +54,21 @@ class TargetEvaluationContext:
             "effect_owner_id", "current_target_id", "event_source_id",
             "event_subject_id", "event_target_id", "damage_attacker_id",
             "damage_defender_id", "turn_owner_id",
+            "action_event_id", "action_window",
         ):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"target context {field_name} must be a non-empty identity or null")
+        if bool(self.action_event_id) != bool(self.action_window):
+            raise ValueError("target context action invocation binding is incomplete")
+        if self.admitted_action_target_fact is not None and (
+            type(self.admitted_action_target_fact) is not AdmittedActionTargetFact
+        ):
+            raise TypeError("target context action target fact must use the exact contract")
+        if self.expected_action_window_scope is not None and (
+            type(self.expected_action_window_scope) is not ActionWindowExpectedScope
+        ):
+            raise TypeError("target context action window scope must use the exact contract")
         for field_name in ("parameter_entity_ids", "selected_target_ids"):
             raw = getattr(self, field_name)
             if isinstance(raw, str):
@@ -87,6 +103,10 @@ class TargetEvaluationContext:
             damage_attacker_id=self.damage_attacker_id,
             damage_defender_id=self.damage_defender_id,
             turn_owner_id=self.turn_owner_id,
+            action_event_id=self.action_event_id,
+            action_window=self.action_window,
+            admitted_action_target_fact=self.admitted_action_target_fact,
+            expected_action_window_scope=self.expected_action_window_scope,
         )
 
 

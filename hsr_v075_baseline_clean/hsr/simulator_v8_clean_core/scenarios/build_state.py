@@ -2324,34 +2324,63 @@ def _kernel_fixture_exact_numeric(value: object) -> object:
     return float(number) if number.is_finite() else value
 
 
-def _formal_character_activation(
+def _project_character_skill_level_flags(
     rules: RuleBook,
-    unit: UnitSpec,
     assembly: CharacterBuildAssemblyResult,
-) -> tuple[
-    dict[str, Any],
-    list[dict[str, Any]],
-    tuple[DynamicMechanismSelection, ...],
-]:
-    if unit.character_build is None:
-        raise ValueError("formal character activation requires character_build")
-    flags: dict[str, Any] = {
-        "build_mode": "assembled_character_build",
-        "character_data_card_id": unit.character_build.character_card_id,
-        "character_build_id": assembly.build_id,
-        "character_build_input_fingerprint": assembly.input_fingerprint,
-        "character_build_result_fingerprint": assembly.result_fingerprint,
-        "character_build_battle_admission_status": assembly.battle_admission_status,
-        "character_build_selector_source": "character_build_assembly",
-        "selected_trace_node_ids": assembly.selected_trace_node_ids,
-        "selected_eidolon_slot_ids": assembly.selected_eidolon_slot_ids,
-        "source_bound_dynamic_graph_ref_ids": tuple(
-            ref.dynamic_graph_ref_id for ref in assembly.dynamic_graph_refs
-        ),
+) -> dict[str, Any]:
+    """Project canonical skill levels without granting battle admission.
+
+    Callers retain build identity and admission checks. An assembled result may
+    expose static levels while unrelated dynamic mechanisms remain blocked.
+    """
+    if (
+        type(assembly) is not CharacterBuildAssemblyResult
+        or assembly.assembly_status != "assembled"
+    ):
+        raise ValueError("character skill level projection requires an assembled result")
+
+    skill_levels_by_trigger_key: dict[str, int] = {}
+    levels_by_action: dict[str, object] = {}
+    for level in assembly.effective_skill_levels:
+        if (
+            not isinstance(level.effective_level, int)
+            or isinstance(level.effective_level, bool)
+            or level.effective_level <= 0
+        ):
+            raise ValueError("formal character skill level is invalid")
+        candidates = rules.action_definition_candidates(
+            level.action_id, level.effective_level
+        )
+        if len(candidates) != 1:
+            raise ValueError("formal character skill definition is missing or ambiguous")
+        definition = candidates[0]
+        if (
+            definition.action_id != level.action_id
+            or definition.definition_id != level.action_definition_id
+            or definition.level != level.effective_level
+            or definition.source != level.action_definition_source
+            or definition.coverage_status != "executable"
+        ):
+            raise ValueError("formal character skill definition identity mismatch")
+        previous = levels_by_action.get(level.action_id)
+        if previous is not None and previous != level:
+            raise ValueError("formal character skill action level is ambiguous")
+        levels_by_action[level.action_id] = level
+        trigger_key = definition.skill_trigger_key
+        if not isinstance(trigger_key, str):
+            raise ValueError("formal character skill trigger key is invalid")
+        if not trigger_key:
+            continue
+        existing = skill_levels_by_trigger_key.get(trigger_key)
+        if existing is not None and existing != level.effective_level:
+            raise ValueError("formal character skill trigger level is ambiguous")
+        skill_levels_by_trigger_key[trigger_key] = level.effective_level
+    return {
         "effective_skill_levels_by_action_id": {
             level.action_id: level.effective_level
             for level in assembly.effective_skill_levels
         },
+        "skill_levels_by_trigger_key": skill_levels_by_trigger_key,
         "effective_skill_level_sources": {
             level.action_id: tuple(source.to_json() for source in level.sources)
             for level in assembly.effective_skill_levels
@@ -2365,6 +2394,48 @@ def _formal_character_activation(
             }
             for level in assembly.effective_skill_levels
         },
+    }
+
+
+def _formal_character_activation(
+    rules: RuleBook,
+    unit: UnitSpec,
+    assembly: CharacterBuildAssemblyResult,
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    tuple[DynamicMechanismSelection, ...],
+]:
+    if unit.character_build is None:
+        raise ValueError("formal character activation requires character_build")
+    card = rules.character_data_card(unit.character_build.character_card_id)
+    if (
+        card is None
+        or card.entity_ref != unit.entity_ref
+        or unit.level != unit.character_build.level
+        or unit.eidolon_level != unit.character_build.eidolon_level
+        or assembly.build_id != unit.character_build.build_id
+        or assembly.input_fingerprint != unit.character_build.input_fingerprint
+        or assembly.assembly_status != "assembled"
+        or assembly.battle_admission_status != "admitted"
+        or assembly.unadmitted_mechanism_diagnostics
+    ):
+        raise ValueError("formal character activation build identity or admission mismatch")
+    skill_level_flags = _project_character_skill_level_flags(rules, assembly)
+    flags: dict[str, Any] = {
+        "build_mode": "assembled_character_build",
+        "character_data_card_id": unit.character_build.character_card_id,
+        "character_build_id": assembly.build_id,
+        "character_build_input_fingerprint": assembly.input_fingerprint,
+        "character_build_result_fingerprint": assembly.result_fingerprint,
+        "character_build_battle_admission_status": assembly.battle_admission_status,
+        "character_build_selector_source": "character_build_assembly",
+        "selected_trace_node_ids": assembly.selected_trace_node_ids,
+        "selected_eidolon_slot_ids": assembly.selected_eidolon_slot_ids,
+        "source_bound_dynamic_graph_ref_ids": tuple(
+            ref.dynamic_graph_ref_id for ref in assembly.dynamic_graph_refs
+        ),
+        **skill_level_flags,
         "owned_combatant_build_results": {
             item.servant_definition_id: item.to_json()
             for item in assembly.owned_combatant_results

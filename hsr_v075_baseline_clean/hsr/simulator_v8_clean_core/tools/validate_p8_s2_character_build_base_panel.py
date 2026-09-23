@@ -17,6 +17,7 @@ from ..builds.models import (
     CharacterMechanismDiagnostic,
 )
 from ..equipment.models import (
+    CharacterEquipmentEligibilityIR,
     EquipmentBuildInput,
     EquipmentDefinitionKey,
     LightConeInstanceInput,
@@ -28,6 +29,7 @@ from ..rules.ir import (
     AvatarProfileIR,
     AvatarPromotionTierIR,
     CanonicalIR,
+    CharacterBuildBindingIR,
     CharacterDataCardIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
@@ -35,8 +37,10 @@ from ..rules.ir import (
     CombatantActionSetIR,
     IRSource,
     RuleEntity,
+    StatusEventFamilyIR,
 )
 from ..rules.rulebook import RuleBook
+from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.identity import IdentityResolver
 from ..scenarios.loader import ScenarioLoader
@@ -56,6 +60,7 @@ VALIDATION_VERSION = "p8_s2_character_build_base_panel"
 
 
 def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
+    engine_rules = build_engine_rule_registry()
     source = IRSource(
         source_path="validation/AvatarPromotionConfig.json",
         raw_type="AvatarPromotionConfig",
@@ -65,6 +70,10 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
                 "promotion_field_present": False,
                 "promotion_zero_semantic_from_missing_field": True,
                 "stat_raw_paths": ["HPBase", "HPAdd"],
+                "source_fingerprint": {
+                    "kind": "fixture",
+                    "fixture_id": VALIDATION_VERSION,
+                },
             }
         ),
     )
@@ -176,11 +185,45 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
         source=source,
         coverage_status="executable",
     )
+    default_eidolon_slots = tuple(
+        CharacterEidolonSlotIR(
+            eidolon_slot_id=f"character_eidolon_slot:{card.card_id}:rank:{rank}",
+            character_data_card_id=card.card_id,
+            avatar_id=profile.avatar_id,
+            rank=rank,
+            rank_id=f"fixture_rank_{rank}",
+            linked_mechanism_slot_ids=(),
+            source=source,
+            coverage_status="executable",
+        )
+        for rank in range(1, 7)
+    )
+    card = replace(
+        card,
+        equipment_eligibility_id=card.card_id,
+        eidolon_slot_ids=tuple(
+            slot.eidolon_slot_id for slot in default_eidolon_slots
+        ),
+    )
+    equipment_eligibility = CharacterEquipmentEligibilityIR(
+        definition_key=EquipmentDefinitionKey(
+            "character_equipment_eligibility", card.card_id
+        ),
+        character_card_id=card.card_id,
+        character_profile_id=profile.avatar_profile_id,
+        character_path_type=profile.base_type,
+        passive_activation_path_types=(profile.base_type,),
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
     rules = RuleBook(
         CanonicalIR(
             version=BASELINE_VERSION,
             avatar_profiles=(profile,),
             character_data_cards=(card,),
+            character_equipment_eligibilities=(equipment_eligibility,),
+            character_eidolon_slots=default_eidolon_slots,
             action_definitions=fixture_action_definitions,
         )
     )
@@ -200,6 +243,8 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
             version=BASELINE_VERSION,
             avatar_profiles=(duplicate_profile,),
             character_data_cards=(card,),
+            character_equipment_eligibilities=(equipment_eligibility,),
+            character_eidolon_slots=default_eidolon_slots,
             action_definitions=fixture_action_definitions,
         )
     )
@@ -218,6 +263,28 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
         max_level=6,
         default_unlocked=True,
         level_up_skill_ids=("fixture_skill",),
+        build_bindings=(
+            CharacterBuildBindingIR(
+                build_binding_id=(
+                    f"character_build_binding:{card.card_id}:default-skill:1"
+                ),
+                character_data_card_id=card.card_id,
+                owner_avatar_id=profile.avatar_id,
+                selection_kind="trace",
+                selection_ref_id=(
+                    f"character_trace_node:{card.card_id}:default-skill:1"
+                ),
+                mechanism_slot_id=(
+                    f"character_mechanism_slot:{card.card_id}:trace:default-skill:1:skill_level"
+                ),
+                projection_kind="skill_level_change",
+                target_ref_id="fixture_skill",
+                ordinal=0,
+                source=source,
+                skill_level_change_kind="base",
+                skill_level_value=1,
+            ),
+        ),
     )
     default_trace_slot = CharacterMechanismSlotIR(
         mechanism_slot_id=default_trace_node.linked_mechanism_slot_ids[0],
@@ -239,6 +306,28 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
         ),
         level=2,
         default_unlocked=False,
+        build_bindings=(
+            CharacterBuildBindingIR(
+                build_binding_id=(
+                    f"character_build_binding:{card.card_id}:default-skill:2"
+                ),
+                character_data_card_id=card.card_id,
+                owner_avatar_id=profile.avatar_id,
+                selection_kind="trace",
+                selection_ref_id=(
+                    f"character_trace_node:{card.card_id}:default-skill:2"
+                ),
+                mechanism_slot_id=(
+                    f"character_mechanism_slot:{card.card_id}:trace:default-skill:2:skill_level"
+                ),
+                projection_kind="skill_level_change",
+                target_ref_id="fixture_skill",
+                ordinal=0,
+                source=source,
+                skill_level_change_kind="base",
+                skill_level_value=2,
+            ),
+        ),
     )
     upgraded_trace_slot = replace(
         default_trace_slot,
@@ -273,7 +362,9 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
             version=BASELINE_VERSION,
             avatar_profiles=(profile,),
             character_data_cards=(default_trace_card,),
+            character_equipment_eligibilities=(equipment_eligibility,),
             character_trace_nodes=(default_trace_node, upgraded_trace_node),
+            character_eidolon_slots=default_eidolon_slots,
             character_mechanism_slots=(default_trace_slot, upgraded_trace_slot),
             action_definitions=fixture_action_definitions,
         )
@@ -293,7 +384,9 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
             ),
             avatar_profiles=(profile,),
             character_data_cards=(default_trace_card,),
+            character_equipment_eligibilities=(equipment_eligibility,),
             character_trace_nodes=(default_trace_node, upgraded_trace_node),
+            character_eidolon_slots=default_eidolon_slots,
             character_mechanism_slots=(default_trace_slot, upgraded_trace_slot),
             combatant_action_sets=(
                 CombatantActionSetIR(
@@ -312,12 +405,31 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
                 ),
             ),
             action_definitions=fixture_action_definitions,
+            status_event_families=(
+                StatusEventFamilyIR(
+                    status_event_family_id="validation:event_family:OnEnterBattle",
+                    callback_event="OnEnterBattle",
+                    event_family="setup",
+                    default_scope_kind="global_listener",
+                    runtime_event_sources=("battle.setup",),
+                    source_basis="validation_structured_event_family",
+                    source=source,
+                    coverage_status="executable",
+                    admission_status="executable",
+                ),
+            ),
+            timeline_rules=engine_rules.timeline_rules,
         )
     )
     default_trace_result = assemble_character_build(
         default_trace_rules,
         _build(default_trace_card.card_id, level=20, promotion=0),
     )
+    if default_trace_result.assembly_status != "assembled":
+        raise AssertionError(
+            "typed trace fixture assembly failed: "
+            + json.dumps(default_trace_result.to_json(), sort_keys=True)
+        )
     explicit_default_result = assemble_character_build(
         default_trace_rules,
         _build(
@@ -361,7 +473,9 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
                 version=BASELINE_VERSION,
                 avatar_profiles=(profile,),
                 character_data_cards=(default_trace_card,),
+                character_equipment_eligibilities=(equipment_eligibility,),
                 character_trace_nodes=(default_trace_node, node),
+                character_eidolon_slots=default_eidolon_slots,
                 character_mechanism_slots=(default_trace_slot, upgraded_trace_slot),
                 action_definitions=fixture_action_definitions,
             )
@@ -499,10 +613,51 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
         source=source,
         coverage_status="executable",
         blocked_reason="",
+        build_bindings=(
+            CharacterBuildBindingIR(
+                build_binding_id=(
+                    f"character_build_binding:{card.card_id}:eidolon:1:skill-level"
+                ),
+                character_data_card_id=card.card_id,
+                owner_avatar_id=profile.avatar_id,
+                selection_kind="eidolon",
+                selection_ref_id=(
+                    f"character_eidolon_slot:{card.card_id}:rank:1"
+                ),
+                mechanism_slot_id=eidolon_skill_slot.mechanism_slot_id,
+                projection_kind="skill_level_change",
+                target_ref_id="fixture_skill",
+                ordinal=0,
+                source=source,
+                skill_level_change_kind="bonus",
+                skill_level_value=1,
+            ),
+            CharacterBuildBindingIR(
+                build_binding_id=(
+                    f"character_build_binding:{card.card_id}:eidolon:1:extra-effect"
+                ),
+                character_data_card_id=card.card_id,
+                owner_avatar_id=profile.avatar_id,
+                selection_kind="eidolon",
+                selection_ref_id=(
+                    f"character_eidolon_slot:{card.card_id}:rank:1"
+                ),
+                mechanism_slot_id=eidolon_extra_slot.mechanism_slot_id,
+                projection_kind="source_gap",
+                target_ref_id=eidolon_extra_slot.mechanism_slot_id,
+                ordinal=1,
+                source=source,
+                runtime_admission_status="blocked",
+                blocked_reason="eidolon_extra_effect_id_runtime_admission_pending",
+            ),
+        ),
     )
     eidolon_card = replace(
         default_trace_card,
-        eidolon_slot_ids=(eidolon_slot.eidolon_slot_id,),
+        eidolon_slot_ids=(
+            eidolon_slot.eidolon_slot_id,
+            *(slot.eidolon_slot_id for slot in default_eidolon_slots[1:]),
+        ),
         mechanism_slot_ids=(
             default_trace_slot.mechanism_slot_id,
             upgraded_trace_slot.mechanism_slot_id,
@@ -515,8 +670,9 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
             version=BASELINE_VERSION,
             avatar_profiles=(profile,),
             character_data_cards=(eidolon_card,),
+            character_equipment_eligibilities=(equipment_eligibility,),
             character_trace_nodes=(default_trace_node, upgraded_trace_node),
-            character_eidolon_slots=(eidolon_slot,),
+            character_eidolon_slots=(eidolon_slot, *default_eidolon_slots[1:]),
             character_mechanism_slots=(
                 default_trace_slot,
                 upgraded_trace_slot,

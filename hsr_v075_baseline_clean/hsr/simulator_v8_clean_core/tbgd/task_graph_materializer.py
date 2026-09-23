@@ -1002,16 +1002,16 @@ def _build_graph(
             source_topology[task.task_id],
             node_ids,
         )
+        weighted_selection = None
         if control is not None and control.family == "RandomConfig":
-            weighted.append(
-                _materialize_weighted_selection(
-                    source_snapshot,
-                    node_ids[task.task_id],
-                    sources[task.task_id],
-                    occurrences[task.task_id],
-                    branches,
-                )
+            weighted_selection = _materialize_weighted_selection(
+                source_snapshot,
+                node_ids[task.task_id],
+                sources[task.task_id],
+                occurrences[task.task_id],
+                branches,
             )
+            weighted.append(weighted_selection)
         references = list(_references(
             task,
             control,
@@ -1046,6 +1046,26 @@ def _build_graph(
                 control.termination.source,
             ))
         node_kind, status, owner_domains, reason = _node_status(control, task)
+        if (
+            control is not None
+            and control.family == task.family == "RandomConfig"
+            and control.control_role == "random_branch"
+            and control.coverage_status == "lowered_with_obligation"
+            and task.execution_mode != "process_only"
+            and node_kind == "deferred"
+            and status == "deferred"
+            and owner_domains == ("hit_random_sequence",)
+            and _random_config_control_references_are_source_owned(
+                task, references, definitions
+            )
+            and type(weighted_selection) is TaskGraphWeightedSelectionIR
+        ):
+            # The source-validated selection can use the shared weighted hook.
+            # The caller still owns weight evaluation/RNG and may block; other
+            # domain obligations and child/reference admission remain unchanged.
+            node_kind, status, owner_domains, reason = (
+                "branch", "materialized", ("task_graph_execution",), ""
+            )
         nodes.append(TaskGraphNodeIR(
             node_ids[task.task_id],
             graph_id,
@@ -1517,6 +1537,39 @@ def _process_only_settlement_barrier_effect(
     return effect
 
 
+def _random_config_control_references_are_source_owned(
+    task: _FormalTask,
+    references: Sequence[TaskGraphDefinitionReferenceIR],
+    indexes: _DefinitionIndexes,
+) -> bool:
+    """A generic lowering control-effect is evidence, not a second effect to run."""
+    if not references:
+        return not task.effect_id
+    if (
+        not task.effect_id
+        or len(references) != 1
+        or references[0].reference_kind != "effect"
+        or references[0].definition_id != task.effect_id
+    ):
+        return False
+    matches = indexes.effects.get(task.effect_id, ())
+    if len(matches) != 1 or type(matches[0]) is not EffectIR:
+        return False
+    effect = matches[0]
+    if effect.opcode != "RandomConfig":
+        return False
+    # Formal topology owns these two legacy fields. Compare every remaining
+    # source field; do not promote/drop the EffectIR or its deferred reference.
+    sources = tuple(
+        replace(source, evidence={
+            key: value for key, value in source.evidence.items()
+            if key not in {"parent_task_id", "child_task_count"}
+        })
+        for source in (effect.source, task.source)
+    )
+    return sources[0] == sources[1]
+
+
 def _references(
     task: _FormalTask,
     control: CharacterControlFlowNodeIR | None,
@@ -1721,6 +1774,11 @@ def _materialization_dispositions(
     if any(item.formal_materialization_ids for item in base):
         raise ValueError("task graph materialization base already contains formal links")
     graph_by_id = {item.graph_id: item for item in graphs}
+    weighted_node_ids = {
+        selection.graph_node_id
+        for graph in graphs
+        for selection in graph.weighted_selections
+    }
     linked_by_materialization: dict[str, set[str]] = {}
     linked_nodes_by_record: dict[str, list[TaskGraphNodeIR]] = defaultdict(list)
     for entry in entries:
@@ -1811,6 +1869,21 @@ def _materialization_dispositions(
                 for node in linked_nodes
             )
         )
+        retire_random_config_control = (
+            item.source_kind == "control_node"
+            and item.family == "RandomConfig"
+            and bool(linked_nodes)
+            and all(
+                node.source_contract_node_id == item.source_record_id
+                and node.source_family == "RandomConfig"
+                and node.opcode == "RandomConfig"
+                and node.node_kind == "branch"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and node.graph_node_id in weighted_node_ids
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
             domain
             for domain in item.owner_domains
@@ -1822,6 +1895,10 @@ def _materialization_dispositions(
             and not (
                 retire_settlement_barrier
                 and domain == "damage_heal_shield"
+            )
+            and not (
+                retire_random_config_control
+                and domain == "hit_random_sequence"
             )
         )
         result.append(replace(

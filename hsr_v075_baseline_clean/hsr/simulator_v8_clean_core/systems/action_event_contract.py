@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..core.model import (
     ActionCommand,
@@ -15,6 +15,339 @@ from ..rules.condition_state import (
 )
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+
+
+_ACTION_TARGET_FACT_ISSUER = object()
+_ACTION_WINDOW_SCOPE_ISSUER = object()
+
+
+@dataclass(frozen=True)
+class ActionWindowExpectedScope:
+    actor_id: str
+    action_id: str
+    action_level: int
+    canonical_action_event_id: str
+    impact_fingerprint: str
+    event_id: str
+    window: str
+    step_id: str
+    step_index: int
+    _execution_token: object | None = field(default=None, repr=False, compare=False)
+    _issuer: object | None = field(default=None, repr=False, compare=False)
+    _claims: tuple[object, ...] = field(default=(), repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not ActionWindowExpectedScope:
+            raise TypeError("action window scope must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.actor_id,
+                self.action_id,
+                self.canonical_action_event_id,
+                self.impact_fingerprint,
+                self.event_id,
+                self.window,
+                self.step_id,
+            )
+        ):
+            raise ValueError("action window scope identity is incomplete")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level <= 0
+            or not isinstance(self.step_index, int)
+            or isinstance(self.step_index, bool)
+            or self.step_index < 0
+        ):
+            raise ValueError("action window scope numeric identity is invalid")
+        if self._issuer is _ACTION_WINDOW_SCOPE_ISSUER and (
+            self._execution_token is None or self._claims != self._claim_values()
+        ):
+            raise ValueError("action window scope claims do not match content")
+
+    def _claim_values(self) -> tuple[object, ...]:
+        return (
+            self.actor_id,
+            self.action_id,
+            self.action_level,
+            self.canonical_action_event_id,
+            self.impact_fingerprint,
+            self.event_id,
+            self.window,
+            self.step_id,
+            self.step_index,
+            self._execution_token,
+        )
+
+    def blocked_reason(self) -> str:
+        if self._issuer is not _ACTION_WINDOW_SCOPE_ISSUER:
+            return "action_window_scope_not_issued"
+        if self._execution_token is None or self._claims != self._claim_values():
+            return "action_window_scope_claims_mismatch"
+        return ""
+
+
+def _issue_action_window_expected_scope(
+    *,
+    execution_token: object,
+    actor_id: str,
+    action_id: str,
+    action_level: int,
+    canonical_action_event_id: str,
+    impact_fingerprint: str,
+    event_id: str,
+    window: str,
+    step_id: str,
+    step_index: int,
+) -> ActionWindowExpectedScope:
+    fields = (
+        actor_id,
+        action_id,
+        action_level,
+        canonical_action_event_id,
+        impact_fingerprint,
+        event_id,
+        window,
+        step_id,
+        step_index,
+        execution_token,
+    )
+    return ActionWindowExpectedScope(
+        actor_id=actor_id,
+        action_id=action_id,
+        action_level=action_level,
+        canonical_action_event_id=canonical_action_event_id,
+        impact_fingerprint=impact_fingerprint,
+        event_id=event_id,
+        window=window,
+        step_id=step_id,
+        step_index=step_index,
+        _execution_token=execution_token,
+        _issuer=_ACTION_WINDOW_SCOPE_ISSUER,
+        _claims=fields,
+    )
+
+
+@dataclass(frozen=True)
+class AdmittedActionTargetFact:
+    """Immutable static impact facts issued by the accepted-action boundary."""
+
+    actor_id: str
+    action_id: str
+    action_level: int
+    selection_context_fingerprint: str
+    contract_fingerprint: str
+    impact_fingerprint: str
+    canonical_action_event_id: str
+    target_mode: str
+    target_ids: tuple[str, ...] = ()
+    unavailable_reason: str = ""
+    event_id: str = ""
+    window: str = ""
+    step_id: str = ""
+    step_index: int = -1
+    _execution_token: object | None = field(default=None, repr=False, compare=False)
+    _issuer: object | None = field(default=None, repr=False, compare=False)
+    _claims: tuple[object, ...] = field(default=(), repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not AdmittedActionTargetFact:
+            raise TypeError("action target fact must not be subclassed")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.actor_id,
+                self.action_id,
+                self.selection_context_fingerprint,
+                self.contract_fingerprint,
+                self.impact_fingerprint,
+                self.canonical_action_event_id,
+                self.target_mode,
+            )
+        ):
+            raise ValueError("action target fact identity is incomplete")
+        if (
+            not isinstance(self.action_level, int)
+            or isinstance(self.action_level, bool)
+            or self.action_level <= 0
+        ):
+            raise ValueError("action target fact level is invalid")
+        targets = tuple(self.target_ids)
+        if any(not isinstance(value, str) or not value for value in targets):
+            raise ValueError("action target fact target identity is invalid")
+        if len(targets) != len(set(targets)):
+            raise ValueError("action target fact target identities are duplicated")
+        if self.unavailable_reason:
+            if targets:
+                raise ValueError("unavailable action target fact carries targets")
+        elif not targets:
+            raise ValueError("available action target fact has no targets")
+        invocation_parts = (self.event_id, self.window, self.step_id)
+        if len({bool(value) for value in invocation_parts}) != 1:
+            raise ValueError("action target fact invocation binding is incomplete")
+        if bool(self.event_id) != (self.step_index >= 0):
+            raise ValueError("action target fact step binding is incomplete")
+        object.__setattr__(self, "target_ids", targets)
+        if self._issuer is _ACTION_TARGET_FACT_ISSUER and self._claims != self._claim_values():
+            raise ValueError("action target fact claims do not match content")
+
+    def _claim_values(self) -> tuple[object, ...]:
+        return (
+            self.actor_id,
+            self.action_id,
+            self.action_level,
+            self.selection_context_fingerprint,
+            self.contract_fingerprint,
+            self.impact_fingerprint,
+            self.canonical_action_event_id,
+            self.target_mode,
+            self.target_ids,
+            self.unavailable_reason,
+            self.event_id,
+            self.window,
+            self.step_id,
+            self.step_index,
+            self._execution_token,
+        )
+
+    def bind_invocation(
+        self,
+        expected_scope: ActionWindowExpectedScope,
+    ) -> "AdmittedActionTargetFact":
+        if self._issuer is not _ACTION_TARGET_FACT_ISSUER:
+            raise ValueError("action target fact was not issued")
+        if self.event_id or self.window:
+            raise ValueError("action target fact is already invocation-bound")
+        scope_reason = expected_scope.blocked_reason()
+        if scope_reason:
+            raise ValueError(scope_reason)
+        if (
+            self.actor_id != expected_scope.actor_id
+            or self.action_id != expected_scope.action_id
+            or self.action_level != expected_scope.action_level
+            or self.canonical_action_event_id
+            != expected_scope.canonical_action_event_id
+            or self.impact_fingerprint != expected_scope.impact_fingerprint
+        ):
+            raise ValueError("action target fact scope identity mismatch")
+        return _issue_admitted_action_target_fact(
+            actor_id=self.actor_id,
+            action_id=self.action_id,
+            action_level=self.action_level,
+            selection_context_fingerprint=self.selection_context_fingerprint,
+            contract_fingerprint=self.contract_fingerprint,
+            impact_fingerprint=self.impact_fingerprint,
+            canonical_action_event_id=self.canonical_action_event_id,
+            target_mode=self.target_mode,
+            target_ids=self.target_ids,
+            unavailable_reason=self.unavailable_reason,
+            event_id=expected_scope.event_id,
+            window=expected_scope.window,
+            step_id=expected_scope.step_id,
+            step_index=expected_scope.step_index,
+            execution_token=expected_scope._execution_token,
+        )
+
+    def invocation_blocked_reason(
+        self,
+        *,
+        expected_scope: ActionWindowExpectedScope | None,
+    ) -> str:
+        if self._issuer is not _ACTION_TARGET_FACT_ISSUER:
+            return "action_target_fact_not_issued"
+        if self._claims != self._claim_values():
+            return "action_target_fact_claims_mismatch"
+        if not self.event_id or not self.window or self._execution_token is None:
+            return "action_target_fact_invocation_unbound"
+        if type(expected_scope) is not ActionWindowExpectedScope:
+            return "action_window_scope_missing"
+        scope_reason = expected_scope.blocked_reason()
+        if scope_reason:
+            return scope_reason
+        if (
+            expected_scope._execution_token is not self._execution_token
+            or expected_scope.event_id != self.event_id
+            or expected_scope.window != self.window
+            or expected_scope.step_id != self.step_id
+            or expected_scope.step_index != self.step_index
+            or expected_scope.actor_id != self.actor_id
+            or expected_scope.action_id != self.action_id
+            or expected_scope.action_level != self.action_level
+            or expected_scope.canonical_action_event_id
+            != self.canonical_action_event_id
+            or expected_scope.impact_fingerprint != self.impact_fingerprint
+        ):
+            return "action_target_fact_invocation_mismatch"
+        return ""
+
+    def blocked_reason(
+        self,
+        *,
+        expected_scope: ActionWindowExpectedScope | None,
+    ) -> str:
+        return self.invocation_blocked_reason(
+            expected_scope=expected_scope
+        ) or self.unavailable_reason
+
+
+def _issue_admitted_action_target_fact(
+    *,
+    actor_id: str,
+    action_id: str,
+    action_level: int,
+    selection_context_fingerprint: str,
+    contract_fingerprint: str,
+    impact_fingerprint: str,
+    canonical_action_event_id: str,
+    target_mode: str,
+    target_ids: tuple[str, ...] = (),
+    unavailable_reason: str = "",
+    event_id: str = "",
+    window: str = "",
+    step_id: str = "",
+    step_index: int = -1,
+    execution_token: object | None = None,
+) -> AdmittedActionTargetFact:
+    fields = {
+        "actor_id": actor_id,
+        "action_id": action_id,
+        "action_level": action_level,
+        "selection_context_fingerprint": selection_context_fingerprint,
+        "contract_fingerprint": contract_fingerprint,
+        "impact_fingerprint": impact_fingerprint,
+        "canonical_action_event_id": canonical_action_event_id,
+        "target_mode": target_mode,
+        "target_ids": target_ids,
+        "unavailable_reason": unavailable_reason,
+        "event_id": event_id,
+        "window": window,
+        "step_id": step_id,
+        "step_index": step_index,
+        "_execution_token": execution_token,
+    }
+    claims = (
+        actor_id,
+        action_id,
+        action_level,
+        selection_context_fingerprint,
+        contract_fingerprint,
+        impact_fingerprint,
+        canonical_action_event_id,
+        target_mode,
+        tuple(target_ids),
+        unavailable_reason,
+        event_id,
+        window,
+        step_id,
+        step_index,
+        execution_token,
+    )
+    return AdmittedActionTargetFact(
+        **fields,
+        _issuer=_ACTION_TARGET_FACT_ISSUER,
+        _claims=claims,
+    )
 
 
 @dataclass(frozen=True)

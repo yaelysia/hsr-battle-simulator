@@ -48,6 +48,7 @@ from ..systems.action_selection import (
     ActionTargetSelectionSystem,
 )
 from ..systems.action_event_contract import (
+    _issue_action_window_expected_scope,
     condition_skill_type as _condition_skill_type,
     damage_listener_window_event as _damage_listener_window_event,
 )
@@ -363,6 +364,7 @@ class CombatExecutor:
                 command,
                 action_contract,
             )
+        action_execution_token = object()
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
         action_binding = self.rules.action_ability_binding(command.action_id, command.action_level)
@@ -434,6 +436,7 @@ class CombatExecutor:
             target_selection_context,
             action_event_ir,
         )
+        action_target_fact = target_result.admitted_action_target_fact
         action_execution_plan = build_action_execution_plan(
             action_definition,
             action_event_ir,
@@ -701,7 +704,7 @@ class CombatExecutor:
                 runtime_records.extend(dispatch_result.records)
 
         if action_enabled:
-            for step in action_execution_plan.event_steps:
+            for step_index, step in enumerate(action_execution_plan.event_steps):
                 if step.kind == "trigger_window":
                     callback_kind = _callback_kind_for_step(step.phase)
                     if callback_kind and not use_action_damage_plan_fallback:
@@ -718,7 +721,7 @@ class CombatExecutor:
                         ordered_mutations.extend(ability_result.mutations)
                         runtime_records.extend(ability_result.records)
                         dispatch_ability_events(ability_result)
-                    dispatch_event = _action_window_dispatch_event(
+                    dispatch_event, expected_window_scope = _action_window_dispatch_event(
                         current_state,
                         command,
                         action_definition,
@@ -726,6 +729,10 @@ class CombatExecutor:
                         action_event_source=action_event_ir.source.to_json(),
                         step=step,
                         target_resolution=target_result.resolution,
+                        action_target_fact=action_target_fact,
+                        action_execution_token=action_execution_token,
+                        impact_fingerprint=target_result.impact_fingerprint,
+                        step_index=step_index,
                         primary_target_id=(
                             action_execution_plan.primary_action_target_id
                         ),
@@ -743,10 +750,14 @@ class CombatExecutor:
                     trigger_results.append(trigger_result)
                     ordered_mutations.extend(trigger_result.mutations)
                     runtime_records.extend(trigger_result.records)
-                    listener_result = self.event_dispatcher.dispatch_event(
+                    listener_result = self.event_dispatcher.dispatch_action_window_listeners(
                         current_state,
                         event=dispatch_event,
                         damage_window_ledger=damage_window_ledger,
+                        nested_ability_provider=(
+                            self.ability_tasks.formal_status_nested_ability_provider()
+                        ),
+                        expected_window_scope=expected_window_scope,
                     )
                     current_state = listener_result.after_state
                     trigger_results.append(listener_result)
@@ -3461,9 +3472,13 @@ def _action_window_dispatch_event(
     action_event_source: dict[str, JSONValue],
     step,
     target_resolution: TargetResolution,
+    action_target_fact,
+    action_execution_token: object,
+    impact_fingerprint: str,
+    step_index: int,
     primary_target_id: str | None,
-) -> GameEvent:
-    return GameEvent(
+) -> tuple[GameEvent, object]:
+    event = GameEvent(
         event_type=f"action.window.{step.canonical_window}",
         source_id=command.actor_id,
         target_id=(
@@ -3506,6 +3521,24 @@ def _action_window_dispatch_event(
             "source_trace": action_event_source,
         },
     )
+    expected_scope = _issue_action_window_expected_scope(
+        execution_token=action_execution_token,
+        actor_id=command.actor_id,
+        action_id=command.action_id,
+        action_level=command.action_level,
+        canonical_action_event_id=action_event_id,
+        impact_fingerprint=impact_fingerprint,
+        event_id=event.event_id,
+        window=event.window,
+        step_id=(
+            f"{step_index}:{step.phase}:{step.canonical_window}:{step.tbgd_event}"
+        ),
+        step_index=step_index,
+    )
+    return replace(
+        event,
+        admitted_action_target_fact=action_target_fact.bind_invocation(expected_scope),
+    ), expected_scope
 
 
 def _dispatched_event_ids(

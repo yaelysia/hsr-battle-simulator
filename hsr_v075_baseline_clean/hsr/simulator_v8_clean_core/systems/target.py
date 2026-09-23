@@ -32,6 +32,7 @@ from ..rules.rulebook import RuleBook
 from ..unit_eligibility import runtime_unit_is_unselectable
 from .rng import rng_choices_from_payload, rng_mode_from_payload
 from .condition_state import CommittedConditionFactProvider
+from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 from .target_random import TargetRandomPlan, TargetRandomSampler
 from .unit_relation import (
     EntityRelationResolver,
@@ -1712,6 +1713,7 @@ def _resolve_retarget_expression(
 def _is_transform_expression_kind(kind: str) -> bool:
     return kind in {
         "TargetMapAdjoinEntity",
+        "TargetMapAttackTargetList",
         "TargetMapAllTeamMember",
         "TargetMapEnemyTeamEntity",
         "TargetMapCreator",
@@ -1900,7 +1902,11 @@ def _resolve_transform_expression(
                 "presentation_key": raw.payload["presentation_key"],
             }],
         )
-    if not candidate_targets and expression_kind not in {"TargetTake", "TargetIndex"}:
+    if not candidate_targets and expression_kind not in {
+        "TargetTake",
+        "TargetIndex",
+        "TargetMapAttackTargetList",
+    }:
         return _inline_result(path, expression_kind, "", (), "")
     if expression_kind == "TargetReverse":
         return _inline_result(
@@ -1934,6 +1940,27 @@ def _resolve_transform_expression(
                 return _inline_result(path, expression_kind, "", (), result.blocked_reason)
             selected = _dedupe((*selected, *result.target_ids))
         return _inline_result(path, expression_kind, "", selected, "")
+    if expression_kind == "TargetMapAttackTargetList":
+        fact = relation_runtime.context.admitted_action_target_fact
+        expected_scope = relation_runtime.context.expected_action_window_scope
+        if type(fact) is not AdmittedActionTargetFact:
+            return _inline_result(path, expression_kind, "", (), "action_target_fact_missing")
+        reason = fact.blocked_reason(
+            expected_scope=(
+                expected_scope
+                if type(expected_scope) is ActionWindowExpectedScope
+                else None
+            ),
+        )
+        if reason:
+            return _inline_result(path, expression_kind, "", (), reason)
+        if not candidate_targets:
+            return _inline_result(path, expression_kind, "", (), "")
+        if candidate_targets != (fact.actor_id,):
+            return _inline_result(path, expression_kind, "", (), "action_target_fact_subject_mismatch")
+        if any(target_id not in state.units for target_id in fact.target_ids):
+            return _inline_result(path, expression_kind, "", (), "action_target_fact_target_unknown")
+        return _inline_result(path, expression_kind, "", fact.target_ids, "")
     if expression_kind == "TargetMapAllTeamMember":
         result = relation_runtime.relations.resolve(
             state,

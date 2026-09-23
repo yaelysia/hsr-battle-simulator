@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import cast
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -41,10 +41,13 @@ from ..unit_eligibility import (
     runtime_units_share_combat_team,
 )
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
+from .action_event_contract import ActionWindowExpectedScope
 from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import (
     binding_source_from_status_detail,
     binding_source_from_store,
+    character_skill_param_declared_keys,
+    character_skill_param_binding_sources,
     find_status_detail,
     status_binding_sources,
     store_from_state,
@@ -81,6 +84,7 @@ from .task_graph import (
     TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
     TaskGraphTargetResult,
+    TaskGraphWeightedSelectionResult,
 )
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .timeline import TimelineSystem
@@ -136,6 +140,8 @@ def _blocked_task_graph_hook_result(name: str, reason: str) -> object:
         return TaskGraphTargetResult("blocked", blocked_reason=reason)
     if name == "graph":
         return TaskGraphGraphResult("blocked", blocked_reason=reason)
+    if name == "weighted_selection":
+        return TaskGraphWeightedSelectionResult("blocked", blocked_reason=reason)
     raise ValueError("unknown task graph hook channel")
 
 
@@ -200,6 +206,193 @@ class StatusCallbackSystem:
                     node_id=f"{unit_id}:{modifier_name}:{event}",
                     status="complete" if result.ok else "blocked",
                     reason_code=reason or ("" if result.ok else "status_callback_incomplete"),
+                ),
+            ),
+        )
+
+    def execute_action_window_formal_root(
+        self,
+        state: BattleState,
+        *,
+        callback_id: str,
+        unit_id: str,
+        modifier_name: str,
+        event: str,
+        trigger_event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None = None,
+        detail_override: dict[str, JSONValue] | None = None,
+        nested_ability_provider: object,
+        expected_window_scope: ActionWindowExpectedScope | None,
+    ) -> StatusCallbackExecutionResult:
+        from .ability import StatusNestedAbilityContext, StatusNestedAbilityHookProvider
+
+        if type(nested_ability_provider) is not StatusNestedAbilityHookProvider:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_nested_ability_provider_type_invalid",
+            )
+        if (
+            type(trigger_event) is not GameEvent
+            or not trigger_event.event_type.startswith("action.window.")
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_event_invalid",
+            )
+        if (
+            type(expected_window_scope) is not ActionWindowExpectedScope
+            or trigger_event.expected_action_window_scope is not expected_window_scope
+            or trigger_event.admitted_action_target_fact is None
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_scope_mismatch",
+            )
+        scope_reason = trigger_event.admitted_action_target_fact.invocation_blocked_reason(
+            expected_scope=expected_window_scope
+        )
+        if scope_reason:
+            return _selected_callback_blocked(state, callback_id, scope_reason)
+        trigger_event_id = trigger_event.event_id or str(
+            trigger_event.to_json().get("event_id") or ""
+        )
+        if not trigger_event_id:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_event_identity_missing",
+            )
+        callback = self.rules.status_callback(callback_id)
+        if (
+            callback is None
+            or callback.modifier_name != modifier_name
+            or callback.event != event
+            or callback.source_mode != "mainline_avatar_ability"
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_formal_root_callback_identity_mismatch",
+            )
+        if callback.coverage_status != "executable":
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                callback.blocked_reason
+                or f"status_callback_not_executable:{callback.coverage_status}",
+            )
+        if callback.admission_status != "executable":
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                callback.blocking_dependency
+                or f"listener_not_admitted:{callback.admission_status}",
+            )
+        detail = detail_override or find_status_detail(
+            state,
+            unit_id,
+            modifier_name=modifier_name,
+        )
+        if detail is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_missing",
+            )
+        status_instance_id = str(detail.get("instance_id") or "")
+        if (
+            str(detail.get("owner_id") or "") != unit_id
+            or str(detail.get("modifier_name") or "") != modifier_name
+            or not status_instance_id
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_override_identity_mismatch",
+            )
+        attached_ids = _trigger_ids_for_event(detail, event)
+        if attached_ids is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "formal_status_instance_callback_ledger_missing",
+            )
+        if callback_id not in attached_ids:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_callback_not_attached_to_instance",
+            )
+        tasks = tuple(self.rules.status_callback_tasks_for_callback(callback_id))
+        graph_result = self.rules.query_formal_task_graph(
+            "status_callback",
+            callback_id,
+            event,
+            (task.task_id for task in tasks),
+        )
+        graph = graph_result.value
+        if (
+            graph_result.status != "resolved"
+            or type(graph) is not TaskGraphIR
+            or callback.task_ids != graph.root_formal_task_ids
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                graph_result.blocked_reason
+                or "formal_status_callback_task_graph_identity_mismatch",
+            )
+        target_resolution, target_reason = _status_action_window_target_resolution(
+            state,
+            trigger_event,
+            detail,
+        )
+        if target_resolution is None:
+            return _selected_callback_blocked(state, callback_id, target_reason)
+        context = StatusNestedAbilityContext(
+            callback_id=callback_id,
+            modifier_name=modifier_name,
+            status_instance_id=status_instance_id,
+            owner_id=unit_id,
+            root_graph_id=graph.graph_id,
+            trigger_event_id=trigger_event_id,
+            target_resolution=target_resolution,
+            admitted_action_target_fact=trigger_event.admitted_action_target_fact,
+            expected_action_window_scope=expected_window_scope,
+        )
+        try:
+            nested_ability_hooks = nested_ability_provider.hooks_for(context)
+        except (TypeError, ValueError):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "action_window_nested_ability_provider_context_rejected",
+            )
+        staged_damage_ledger = _stage_damage_window_ledger(damage_window_ledger)
+        result = self._execute_callback(
+            state,
+            callback,
+            detail,
+            trigger_event,
+            staged_damage_ledger,
+            None,
+            nested_ability_hooks,
+        )
+        if not result.ok:
+            return result
+        _commit_damage_window_ledger(damage_window_ledger, staged_damage_ledger)
+        if result.node_results:
+            return result
+        return replace(
+            result,
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="status_callback",
+                    node_id=callback_id,
+                    status="complete",
                 ),
             ),
         )
@@ -702,6 +895,10 @@ class StatusCallbackSystem:
             graph=lambda request, state: self._resolve_formal_status_nested_graph(
                 request, state, callback
             ),
+            weighted_selection=lambda _request, _selection, _state: TaskGraphWeightedSelectionResult(
+                "blocked",
+                blocked_reason="status_callback_weighted_selection_not_admitted",
+            ),
         )
 
         def route(name: str, request: TaskGraphHookRequest, *args: object) -> object:
@@ -744,6 +941,10 @@ class StatusCallbackSystem:
             ),
             graph=lambda request, state: cast(
                 TaskGraphGraphResult, route("graph", request, state)
+            ),
+            weighted_selection=lambda request, selection, state: cast(
+                TaskGraphWeightedSelectionResult,
+                route("weighted_selection", request, selection, state),
             ),
         )
 
@@ -1058,6 +1259,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if (
             not evaluation.ok
@@ -1421,6 +1623,7 @@ class StatusCallbackSystem:
                 detail,
                 task,
                 self.rules.engine_rule_registry(),
+                self.rules,
             )
             if not evaluation.ok or evaluation.value is None:
                 reason = evaluation.blocked_reason or "loop_count_not_resolved"
@@ -1518,6 +1721,7 @@ class StatusCallbackSystem:
                 detail,
                 task,
                 self.rules.engine_rule_registry(),
+                self.rules,
             )
             if not evaluation.ok or evaluation.value is None or evaluation.value < 0:
                 reason = evaluation.blocked_reason or "random_config_weight_not_resolved"
@@ -1798,6 +2002,7 @@ class StatusCallbackSystem:
                 self.evaluator.evaluate_condition_result(
                     condition,
                     _condition_context(
+                        self.rules,
                         state,
                         detail,
                         trigger_event,
@@ -1827,6 +2032,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None or not 0.0 <= evaluation.value <= 1.0:
             blocked = ConditionEvaluationResult(
@@ -1920,6 +2126,7 @@ class StatusCallbackSystem:
         result = self.evaluator.evaluate_condition_result(
             condition,
             _condition_context(
+                self.rules,
                 state,
                 detail,
                 evaluated_event,
@@ -2003,6 +2210,22 @@ class StatusCallbackSystem:
                     trigger_event.target_id if trigger_event is not None else None
                 ),
                 turn_owner_id=committed_turn_owner_id(state),
+                action_event_id=(
+                    trigger_event.event_id if trigger_event is not None else None
+                ),
+                action_window=(
+                    trigger_event.window if trigger_event is not None else None
+                ),
+                admitted_action_target_fact=(
+                    trigger_event.admitted_action_target_fact
+                    if trigger_event is not None
+                    else None
+                ),
+                expected_action_window_scope=(
+                    trigger_event.expected_action_window_scope
+                    if trigger_event is not None
+                    else None
+                ),
             ),
             condition_event_payload=event_payload,
             binding_sources=tuple(
@@ -2165,7 +2388,7 @@ class StatusCallbackSystem:
             reason = f"effect_not_executable:{coverage}"
             result = self.effect_registry.execute(
                 effect,
-                _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+                _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
             )
             return StatusCallbackExecutionResult(
                 ok=False,
@@ -2176,7 +2399,7 @@ class StatusCallbackSystem:
             )
         result = self.effect_registry.execute(
             effect,
-            _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+            _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
         )
         after_state = self.reducer.apply_all(state, result.mutations)
         records = (
@@ -2242,6 +2465,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = evaluation.blocked_reason or "current_skill_delay_cost_value_unresolved"
@@ -2372,6 +2596,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if (
             not maximum.ok
@@ -2597,6 +2822,7 @@ class StatusCallbackSystem:
         empty_group_admitted = False
         if expression is not None:
             context = _effect_context(
+                self.rules,
                 state,
                 task,
                 detail,
@@ -2615,6 +2841,18 @@ class StatusCallbackSystem:
                     event_source_id=(trigger_event.source_id if trigger_event is not None else None),
                     event_target_id=(trigger_event.target_id if trigger_event is not None else None),
                     turn_owner_id=committed_turn_owner_id(state),
+                    action_event_id=(trigger_event.event_id if trigger_event is not None else None),
+                    action_window=(trigger_event.window if trigger_event is not None else None),
+                    admitted_action_target_fact=(
+                        trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
+                    expected_action_window_scope=(
+                        trigger_event.expected_action_window_scope
+                        if trigger_event is not None
+                        else None
+                    ),
                 ),
                 target_resolution=context.target_resolution,
                 condition_event_payload=context.event_payload,
@@ -2695,7 +2933,7 @@ class StatusCallbackSystem:
         for target_id in target_ids:
             patched_standard = {**standard, "target_alias": "ParamEntity"}
             patched_effect = replace(effect, payload={**effect.payload, "standard": patched_standard})
-            context = _effect_context(current_state, task, detail, trigger_event, damage_window_ledger)
+            context = _effect_context(self.rules, current_state, task, detail, trigger_event, damage_window_ledger)
             context = replace(context, param_entity_id=target_id, current_action_target_id=target_id)
             result = self.effect_registry.execute(patched_effect, context)
             if result.unsupported:
@@ -2766,6 +3004,7 @@ class StatusCallbackSystem:
             detail,
             task,
             self.rules.engine_rule_registry(),
+            self.rules,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = (
@@ -3258,6 +3497,7 @@ class StatusCallbackSystem:
         )
         if expression is not None:
             context = _effect_context(
+                self.rules,
                 state,
                 task,
                 detail,
@@ -3276,6 +3516,18 @@ class StatusCallbackSystem:
                     event_source_id=(trigger_event.source_id if trigger_event is not None else None),
                     event_target_id=(trigger_event.target_id if trigger_event is not None else None),
                     turn_owner_id=committed_turn_owner_id(state),
+                    action_event_id=(trigger_event.event_id if trigger_event is not None else None),
+                    action_window=(trigger_event.window if trigger_event is not None else None),
+                    admitted_action_target_fact=(
+                        trigger_event.admitted_action_target_fact
+                        if trigger_event is not None
+                        else None
+                    ),
+                    expected_action_window_scope=(
+                        trigger_event.expected_action_window_scope
+                        if trigger_event is not None
+                        else None
+                    ),
                 ),
                 target_resolution=context.target_resolution,
                 condition_event_payload=context.event_payload,
@@ -4163,6 +4415,76 @@ class StatusCallbackSystem:
         )
 
 
+def _status_action_window_target_resolution(
+    state: BattleState,
+    event: GameEvent,
+    detail: dict[str, JSONValue],
+) -> tuple[TargetResolution | None, str]:
+    if type(event) is not GameEvent or not event.event_type.startswith("action.window."):
+        return None, "status_action_window_target_event_invalid"
+    payload = event.payload
+    raw_selected = payload.get("selected_target_ids")
+    if not isinstance(raw_selected, (list, tuple)):
+        return None, "status_action_window_target_scope_missing"
+    selected = tuple(raw_selected)
+    if (
+        not selected
+        or any(type(item) is not str or not item for item in selected)
+        or len(selected) != len(set(selected))
+        or any(item not in state.units for item in selected)
+    ):
+        return None, "status_action_window_target_scope_invalid"
+    primary = ""
+    for key in (
+        "primary_action_target_id",
+        "primary_target_id",
+        "current_hit_target_id",
+        "target_id",
+        "param_entity_id",
+    ):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            primary = value
+            break
+    if not primary and isinstance(event.target_id, str):
+        primary = event.target_id
+    if not primary:
+        primary = selected[0]
+    if primary not in state.units:
+        return None, "status_action_window_primary_target_invalid"
+    if primary not in selected:
+        selected = (primary, *selected)
+    raw_requested = payload.get("requested_target_ids")
+    if isinstance(raw_requested, (list, tuple)):
+        requested = tuple(raw_requested)
+        if (
+            any(type(item) is not str or not item for item in requested)
+            or len(requested) != len(set(requested))
+        ):
+            return None, "status_action_window_requested_target_scope_invalid"
+    else:
+        requested = selected
+    return (
+        TargetResolution(
+            requested=requested,
+            selectable=selected,
+            legal=selected,
+            primary=primary,
+            impact_group=selected,
+            selected=selected,
+            rejected=(),
+            reason="status_action_window_formal_root",
+            source="status_callback_system",
+            metadata={
+                "event_id": event.event_id or str(event.to_json().get("event_id") or ""),
+                "status_instance_id": str(detail.get("instance_id") or ""),
+                "status_owner_id": str(detail.get("owner_id") or ""),
+            },
+        ),
+        "",
+    )
+
+
 def _queue_resource_policy(intent: QueueIntentIR) -> dict[str, JSONValue]:
     policy = intent.abort_policy.get("resource_policy") if isinstance(intent.abort_policy, dict) else None
     return policy if isinstance(policy, dict) else {}
@@ -4278,12 +4600,23 @@ def _retarget_event(event: GameEvent | None, target_id: str) -> GameEvent:
             "retarget_source_event_id": event.event_id if event is not None else "",
         }
     )
+    if event is not None:
+        return replace(
+            event,
+            target_id=target_id,
+            event_id=(
+                f"{event.event_id}:retarget:{target_id}"
+                if event.event_id
+                else f"event:retarget:{target_id}"
+            ),
+            process_only=True,
+            payload=payload,
+        )
     return GameEvent(
-        event.event_type if event is not None else "status.retarget",
-        source_id=event.source_id if event is not None else "",
+        "status.retarget",
         target_id=target_id,
-        event_id=f"{event.event_id}:retarget:{target_id}" if event is not None and event.event_id else f"event:retarget:{target_id}",
-        window=event.window if event is not None else "Retarget",
+        event_id=f"event:retarget:{target_id}",
+        window="Retarget",
         process_only=True,
         payload=payload,
     )
@@ -4303,16 +4636,22 @@ def _callback_scoped_event(
         }
     )
     base_id = event.event_id if event is not None else ""
+    scoped_id = (
+        f"{base_id}:scope:{callback_scope}:{decision_index}"
+        if base_id
+        else f"event:scope:{callback_scope}:{decision_index}"
+    )
+    if event is not None:
+        return replace(
+            event,
+            event_id=scoped_id,
+            process_only=True,
+            payload=payload,
+        )
     return GameEvent(
-        event.event_type if event is not None else "status.callback.scope",
-        source_id=event.source_id if event is not None else "",
-        target_id=event.target_id if event is not None else "",
-        event_id=(
-            f"{base_id}:scope:{callback_scope}:{decision_index}"
-            if base_id
-            else f"event:scope:{callback_scope}:{decision_index}"
-        ),
-        window=event.window if event is not None else "status_callback",
+        "status.callback.scope",
+        event_id=scoped_id,
+        window="status_callback",
         process_only=True,
         payload=payload,
     )
@@ -4987,6 +5326,7 @@ def _evaluate_callback_numeric(
     detail: dict[str, JSONValue],
     task: StatusCallbackTaskIR,
     engine_rules: EngineRuleRegistry,
+    rules: RuleBook,
 ) -> NumericEvaluationResult:
     source_trace = {
         "status_task_source": task.source.to_json(),
@@ -5009,7 +5349,7 @@ def _evaluate_callback_numeric(
             source_trace,
             engine_reason,
         )
-    context = _condition_context(state, detail, None)
+    context = _condition_context(rules, state, detail, None)
     return resolve_runtime_numeric_expression(
         cast(JSONValue, expression),
         binding_sources=(
@@ -5021,6 +5361,7 @@ def _evaluate_callback_numeric(
 
 
 def _condition_context(
+    rules: RuleBook,
     state: BattleState,
     detail: dict[str, JSONValue],
     event: GameEvent | None,
@@ -5076,14 +5417,14 @@ def _condition_context(
             else ()
         )
     )
-    callback_binding_sources = (
-        *((current_status_binding_source,) if current_status_binding_source is not None else ()),
-        binding_source_from_store(
-            store_from_state(state),
-            excluded_status_instance_ids=(current_status_instance_id,),
-            excluded_hashes=current_hashes,
-            excluded_names=current_names,
-        ),
+    callback_binding_sources = _callback_binding_sources(
+        rules,
+        state,
+        detail,
+        current_status_binding_source,
+        current_status_instance_id,
+        current_hashes,
+        current_names,
     )
     if condition is not None and targets is not None:
         return targets.condition_evaluation_context(
@@ -5098,6 +5439,14 @@ def _condition_context(
                 event_source_id=(event.source_id if event is not None else None),
                 event_target_id=(event.target_id if event is not None else None),
                 turn_owner_id=committed_turn_owner_id(state),
+                action_event_id=(event.event_id if event is not None else None),
+                action_window=(event.window if event is not None else None),
+                admitted_action_target_fact=(
+                    event.admitted_action_target_fact if event is not None else None
+                ),
+                expected_action_window_scope=(
+                    event.expected_action_window_scope if event is not None else None
+                ),
             ),
             condition_event_payload=payload,
             binding_sources=callback_binding_sources,
@@ -5125,6 +5474,7 @@ def _condition_context(
 
 
 def _effect_context(
+    rules: RuleBook,
     state: BattleState,
     task: StatusCallbackTaskIR,
     detail: dict[str, JSONValue],
@@ -5171,6 +5521,19 @@ def _effect_context(
         detail,
         detail.get("dynamic_values"),
     )
+    current_hashes, current_names = _binding_source_keys(
+        current_status_binding_source
+    )
+    callback_binding_sources = _callback_binding_sources(
+        rules,
+        state,
+        detail,
+        current_status_binding_source,
+        current_status_instance_id,
+        current_hashes,
+        current_names,
+        include_ambient=False,
+    )
     return EffectExecutionContext(
         state=state,
         caster_id=caster_id,
@@ -5189,16 +5552,113 @@ def _effect_context(
         current_action_target_id=target_id or None,
         event_payload=payload,
         dynamic_values=None,
-        binding_sources=(
-            (current_status_binding_source,)
-            if current_status_binding_source is not None
-            else ()
-        ),
+        binding_sources=callback_binding_sources,
         include_ambient_status_bindings=False,
         shadowed_status_instance_ids=(
             (current_status_instance_id,) if current_status_instance_id else ()
         ),
         damage_window_ledger=damage_window_ledger,
+        admitted_action_target_fact=(
+            event.admitted_action_target_fact if event is not None else None
+        ),
+        expected_action_window_scope=(
+            event.expected_action_window_scope if event is not None else None
+        ),
+    )
+
+
+def _callback_binding_sources(
+    rules: RuleBook,
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    current_status_binding_source: dict[str, JSONValue] | None,
+    current_status_instance_id: str,
+    current_hashes: tuple[str, ...],
+    current_names: tuple[str, ...],
+    *,
+    include_ambient: bool = True,
+) -> tuple[dict[str, JSONValue], ...]:
+    """Compose callback bindings without allowing outer-action ownership to leak in."""
+
+    caster_id = str(detail.get("caster_id") or detail.get("owner_id") or "")
+    character_sources = character_skill_param_binding_sources(
+        rules,
+        state,
+        (caster_id,) if caster_id else (),
+        excluded_hashes=current_hashes,
+        excluded_names=current_names,
+    )
+    declared_hashes, declared_names = character_skill_param_declared_keys(
+        rules,
+        state,
+        caster_id,
+    ) if caster_id else ((), ())
+    explicit_sources = (
+        *((current_status_binding_source,) if current_status_binding_source is not None else ()),
+        *character_sources,
+    )
+    if not include_ambient:
+        return explicit_sources
+    shadowed_hashes = tuple(
+        dict.fromkeys(
+            (*current_hashes, *declared_hashes)
+            + tuple(
+                str(key)
+                for source in explicit_sources
+                for key in (
+                    source.get("by_hash", {}).keys()
+                    if isinstance(source.get("by_hash"), dict)
+                    else ()
+                )
+            )
+        )
+    )
+    shadowed_names = tuple(
+        dict.fromkeys(
+            (*current_names, *declared_names)
+            + tuple(
+                str(key)
+                for source in explicit_sources
+                for key in (
+                    source.get("by_name", {}).keys()
+                    if isinstance(source.get("by_name"), dict)
+                    else ()
+                )
+            )
+        )
+    )
+    return (
+        *explicit_sources,
+        binding_source_from_store(
+            store_from_state(state),
+            excluded_status_instance_ids=(current_status_instance_id,),
+            excluded_hashes=shadowed_hashes,
+            excluded_names=shadowed_names,
+            excluded_scopes=("character_skill_param",),
+        ),
+    )
+
+
+def _binding_source_keys(
+    source: dict[str, JSONValue] | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return (
+        tuple(
+            str(key)
+            for key in (
+                source.get("by_hash", {}).keys()
+                if source is not None and isinstance(source.get("by_hash"), dict)
+                else ()
+            )
+        ),
+        tuple(
+            str(key)
+            for key in (
+                source.get("by_name", {}).keys()
+                if source is not None and isinstance(source.get("by_name"), dict)
+                else ()
+            )
+        ),
     )
 def _current_status_detail(
     state: BattleState,
