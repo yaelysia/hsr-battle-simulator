@@ -12,6 +12,12 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
+## Current source finding — Guinaifen Burn, 2026-09-23
+
+The [Guinaifen Burn description/application/tick/extra-trigger record](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md) joins Skill121002/121003/121004 description hashes directly to same-pin TextMapCHS, exact level parameters, CharacterConfig bindings and Ability/shared-modifier consumers. It records the ordinary ATK-based Burn equation, affected-enemy turn-start tick, separate Ultimate multiplier, and Firekiss's distinct damage-taken layer. Precise raw percentages are not replaced by formatted web values. A specific Firekiss same-hit timing question remains explicit; it does not erase these positive results.
+
+**Mechanically meaningful skill descriptions are semantic evidence, not merely navigation hints or blanket presentation-only text.** Prefer the exact SkillDesc.Hash -> same-pin TextMap join when available; reconcile the described owner, operands, targets, conditions and timing with the graph. Description and data are complementary, not independent gameplay experiments. This does not promote all localization/UI text or silently resolve unmentioned exceptions. The selected DoT record introduces no backend dependency or whole-package completion claim.
+
 ## Public mechanics and result-led research — 2026-09-23
 
 The [healing/shield public-model reconciliation](../../../../../docs/tbgd_evidence/shared/public_mechanics_healing_shield_reconciliation_v1.md) is the first applied checkpoint under the clarified method. It supplies positive equations, source mappings, selected timing and a first-hand community test instead of leaving all arithmetic unknown because the native evaluator was not exported.
@@ -131,6 +137,7 @@ Bounded source records; consult their claim-level limits rather than treating th
 - [R7 targeting and enemy decision boundary](../../../../../docs/tbgd_evidence/shared/action_targeting_enemy_decision_boundary_v1.md)
 - [R8 startup-effect source chains](../../../../../docs/tbgd_evidence/shared/battle_start_effect_activation_v1.md)
 - [R9 retained servant source facts and scope correction](../../../../../docs/tbgd_evidence/shared/owned_servant_runtime_admission_v1.md)
+- [Guinaifen Burn: skill text, application, tick, extra trigger and Firekiss](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md)
 
 Representative and shared records:
 
