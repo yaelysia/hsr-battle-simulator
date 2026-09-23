@@ -102,7 +102,9 @@ def test_eligible_node_cannot_silently_revert_to_old_deferred_shape():
         _verify_materialization_contract(graph, stale, catalog, canonical)
 
 
-@pytest.mark.parametrize("kind", ["missing_control", "duplicate_task", "wrong_source", "blocked_source"])
+@pytest.mark.parametrize("kind", [
+    "missing_control", "duplicate_task", "wrong_source", "wrong_task_digest", "blocked_source",
+])
 def test_harness_rejects_missing_ambiguous_or_mismatched_source_authority(kind):
     graph, node, catalog, canonical = _case()
     if kind == "missing_control":
@@ -112,6 +114,13 @@ def test_harness_rejects_missing_ambiguous_or_mismatched_source_authority(kind):
     elif kind == "wrong_source":
         control = catalog.nodes[0]
         control.source = replace(control.source, source_path="validation_fixture/foreign.json")
+    elif kind == "wrong_task_digest":
+        task = canonical.ability_tasks[0]
+        canonical.ability_tasks = (replace(
+            task, source=replace(task.source, evidence={
+                **task.source.evidence, "content_sha256": "foreign",
+            }),
+        ),)
     else:
         catalog.nodes[0].coverage_status = "blocked"
     with pytest.raises(AssertionError):

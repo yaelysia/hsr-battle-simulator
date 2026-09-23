@@ -340,6 +340,10 @@ def _verify_materialization_contract(
         )
         or control.source.evidence.get("content_sha256")
         != node.source.evidence.get("content_sha256")
+        # Formal task provenance omits the content digest; reject conflicting values if present.
+        or task.source.evidence.get("content_sha256") not in (
+            None, node.source.evidence.get("content_sha256")
+        )
     ):
         raise AssertionError("RandomConfig control/formal task source mismatch")
 

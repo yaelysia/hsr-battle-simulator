@@ -20,7 +20,7 @@ RandomConfig gameplay RNG 未改。审核基线 `3ae3912590d126f97c27e8a8ce770fb
   运行依赖；旧 SHA 未授权下载的历史事实不变，本地未安装依赖。
 
 本地 `.venv/bin/python`、`PYTHONPATH=$PWD/hsr_v075_baseline_clean`：scoped compile 通过；
-新增迁移测试与 weighted materializer bridge 合计 28 passed，其他 S8C2/P3/P5/A2
+新增迁移测试与 weighted materializer bridge 合计 29 passed，其他 S8C2/P3/P5/A2
 固定测试 121 passed；S8C1B Fast 6 cases、真实 Direct `ok=true`（13.04s、
 460968 KiB，代表 branch/materialized，三个真实 choice、own-effect reference 保留，
 未运行 gameplay RNG）。P8-S2 fixture-only、P7-S7、S5C2、S8B5C、A1/S8C1C/A2
