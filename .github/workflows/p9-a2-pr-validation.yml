@@ -46,6 +46,12 @@ jobs:
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py \
             hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py
 
+      - name: Install focused test dependency
+        run: |
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --disable-pip-version-check pytest==8.3.5
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+
       - name: Weighted materializer bridge and executor guards
         run: |
           python -m pytest -q \
