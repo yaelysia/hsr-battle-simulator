@@ -2217,7 +2217,8 @@ def _install_direct_executor_probes(
 
     def root_probe(current_state: BattleState, **kwargs: Any) -> Any:
         callback_id = str(kwargs.get("callback_id") or "")
-        if callback_id == row["callback_id"]:
+        matched = callback_id == row["callback_id"]
+        if matched:
             owner = current_state.units.get(str(kwargs.get("unit_id") or ""))
             real_detail = None
             if owner is not None:
@@ -2243,7 +2244,21 @@ def _install_direct_executor_probes(
                     "expected_scope_present": kwargs.get("expected_window_scope") is not None,
                 }
             )
-        return original_root(current_state, **kwargs)
+        result = original_root(current_state, **kwargs)
+        if matched:
+            projections = tuple(result.task_graph_projections)
+            ordered.append(
+                {
+                    "step": "real_status_formal_root_finished",
+                    "callback_id": callback_id,
+                    "errors": list(result.errors),
+                    "projection_count": len(projections),
+                    "successful_projection_count": sum(
+                        item.status == "complete" for item in projections
+                    ),
+                }
+            )
+        return result
 
     executor.event_dispatcher.status_callbacks.execute_action_window_formal_root = root_probe  # type: ignore[method-assign]
     original_invocation = executor.ability_tasks._status_nested_invocation_for_request
@@ -2317,6 +2332,13 @@ def _install_direct_executor_probes(
                         "step": "action_target_fact_consumer_blocked",
                         "target_expression_id": getattr(expression, "target_expression_id", ""),
                         "blocked_reason": result.blocked_reason,
+                        "event_id": getattr(context, "action_event_id", None),
+                        "event_type": getattr(context, "action_window", None),
+                        "dispatch_path": (
+                            "formal_window"
+                            if getattr(context, "expected_action_window_scope", None) is not None
+                            else "ordinary"
+                        ),
                         "target_fact_present": getattr(context, "admitted_action_target_fact", None) is not None,
                         "expected_scope_present": getattr(context, "expected_action_window_scope", None) is not None,
                     }
@@ -2507,7 +2529,25 @@ def _attempt_direct(
         for item in ordered
         if item.get("step") == "weighted_selection_reached_ability_owned_deferred_hook"
     ]
+    formal_finishes = [
+        item
+        for item in ordered
+        if item.get("step") == "real_status_formal_root_finished"
+    ]
+    ordinary_blocks = [
+        item
+        for item in ordered
+        if item.get("step") == "action_target_fact_consumer_blocked"
+        and item.get("dispatch_path") == "ordinary"
+    ]
+    weighted_before_ordinary = bool(weighted_hits) and all(
+        ordered.index(weighted_hits[-1]) < ordered.index(item)
+        for item in ordinary_blocks
+    )
     top_rng_events = tuple(transition.rng_events)
+    committed_events = tuple(
+        event for event in transition.transaction.events if not event.process_only
+    )
     if expect_weighted:
         expected_terminal = (
             bool(weighted_hits)
@@ -2516,9 +2556,11 @@ def _attempt_direct(
             and after == before
             and not transition.outcome.successor_eligible
             and not transition.transaction.mutations
-            and not transition.transaction.events
+            and not committed_events
             and not top_rng_events
-            and not success_task_nodes
+            and bool(formal_finishes)
+            and all(not item.get("successful_projection_count") for item in formal_finishes)
+            and weighted_before_ordinary
         )
     else:
         expected_terminal = transition.outcome.successor_eligible
@@ -2541,6 +2583,7 @@ def _attempt_direct(
             "reason_codes": list(transition.outcome.reason_codes),
             "mutation_count": len(transition.transaction.mutations),
             "event_count": len(transition.transaction.events),
+            "committed_event_count": len(committed_events),
             "rng_event_count": len(top_rng_events),
             "settlement_record_count": len(records),
             "successful_task_graph_node_count": len(success_task_nodes),
@@ -2549,6 +2592,7 @@ def _attempt_direct(
             "real_root": real_root,
             "ability_authority": ability_authority,
             "weighted_hit_count": len(weighted_hits),
+            "ordinary_block_count": len(ordinary_blocks),
         },
     }
 
@@ -2594,6 +2638,7 @@ def _run_direct() -> dict[str, Any]:
                         "stage": attempt.get("stage", ""),
                         "reason": attempt.get("reason", ""),
                         "ordered_evidence": attempt.get("ordered_evidence", ()),
+                        "outcome": attempt.get("outcome", {}),
                     }
                 )
                 if attempt.get("ok"):

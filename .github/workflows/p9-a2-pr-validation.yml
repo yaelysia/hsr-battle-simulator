@@ -13,7 +13,10 @@ on:
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/event_dispatch.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/status_callbacks.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/systems/ability.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py'
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py'
       - 'hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT_execution_report.md'
       - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p9_execution_cards/P9-A2_ACTION_WINDOW_STATUS_NESTED_ABILITY_TRANSPORT.md'
       - '.github/workflows/p9-a2-pr-validation.yml'
@@ -25,6 +28,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PYTHONPATH: ${{ github.workspace }}/hsr_v075_baseline_clean
     steps:
       - name: Checkout exact PR head and pinned source submodule
         uses: actions/checkout@v4
@@ -34,24 +39,43 @@ jobs:
           submodules: recursive
 
       - name: Compile scoped A2 files
-        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
         run: |
-          python -m compileall -q \
-            core/executor.py \
-            systems/event_dispatch.py \
-            systems/status_callbacks.py \
-            systems/ability.py \
-            tools/validate_p9_a2_action_window_status_nested_ability_transport.py
+          python -m py_compile \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tbgd/task_graph_materializer.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tools/validate_p9_a2_action_window_status_nested_ability_transport.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py
+
+      - name: Weighted materializer bridge and executor guards
+        run: |
+          python -m pytest -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_weighted_materialization_dispatch.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_s8c2_random_config_runtime_executor.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p3_wait_anim_state_process_only_barrier_retirement.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p5_process_only_settlement_barrier_retirement.py
+
+      - name: Fixed A2 focused regressions
+        run: |
+          python -m pytest -q \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_formal_build_param_projection.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_status_skill_param_context.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_action_attack_target_context.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_effect_target_expression_metadata_sync.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_p6_damage_audit_reference_admission.py \
+            hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_p9_a2_direct_static_context.py
+
+      - name: A1 and source-closure Fast regressions
+        run: |
+          python -m hsr.simulator_v8_clean_core.tools.validate_p9_formal_action_graph_admission_authority --fast
+          python -m hsr.simulator_v8_clean_core.tools.validate_p9_s8c1c_remaining_entry_random_config_source_closure --fast
 
       - name: A2 Fast
-        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
-        run: python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --fast
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_nested_ability_transport --fast
 
       - name: A2 real CombatExecutor Direct
-        working-directory: hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
-        run: python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --direct
+        run: python -m hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_nested_ability_transport --direct
 
       - name: Fixed merged-base diff check
         run: |
-          git merge-base --is-ancestor 770a0649926932794585fcd30589c6776892bc3b HEAD
-          git diff --check 770a0649926932794585fcd30589c6776892bc3b HEAD
+          git merge-base --is-ancestor 5b222a2fb05970b5d23fd053ffd9beb453e4dfac HEAD
+          git diff --check 5b222a2fb05970b5d23fd053ffd9beb453e4dfac...HEAD

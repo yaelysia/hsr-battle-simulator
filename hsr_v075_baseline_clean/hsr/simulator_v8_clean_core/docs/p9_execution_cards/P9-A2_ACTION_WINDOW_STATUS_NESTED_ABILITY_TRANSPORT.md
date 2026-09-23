@@ -150,16 +150,35 @@ action admission accepted
 
 动态 representative 的 source/phase/callback/task/graph/owner/target identity 与完整 denominator 都必须写入 evidence。
 
-## 7. Fast / Direct / CI
+## 7. Revision 35：RandomConfig 材料化衔接
+
+真实 nested graph 的 `RandomConfig/random_branch` 已由 materializer 构造完整 weighted
+selection，但旧节点仍因 `hit_random_sequence` owner domain 在共享 executor dispatch 前被拒绝。
+本轮只在来源、角色、coverage、execution mode、唯一 open domain、引用和 weighted ledger
+同时闭合时，将该 control node 接到既有 `branch -> weighted_selection` 派发；权重求值、RNG
+和分支选择仍归 caller，`systems/task_graph.py` 的通用 deferred guard 不变。
+
+formal slice 同步退休已被上述 typed dispatch 承接的 control disposition；同源
+`RandomConfig` own-effect 仍作为 deferred reference/coverage 证据保留，不作为 effect 执行。
+组件测试必须从 `_build_graph` 进入 `TaskGraphExecutor`，真实源图静态门必须证明 weighted
+分母非空；二者都不能替代正式 Direct。
+
+Direct 允许正式 window 命中 weighted deferred 后，后续普通 `OnListenAfterAttack` 因缺少
+专属 window scope 独立 fail closed。验证必须记录两者的 event/type/order，并断言整动作状态
+不变、零 committed mutation/event/RNG、formal root 不泄漏成功 projection；不得删除普通事件
+或从 payload 授权。
+
+## 8. Fast / Direct / CI
 
 从 `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core` 运行。
 
 ### Fast
 
 ```text
-python -m compileall core/executor.py systems/event_dispatch.py systems/status_callbacks.py systems/ability.py tools/validate_p9_a2_action_window_status_nested_ability_transport.py
-python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --fast
-git diff --check 770a0649926932794585fcd30589c6776892bc3b HEAD
+PYTHONPATH=hsr_v075_baseline_clean python -m py_compile <scoped files>
+PYTHONPATH=hsr_v075_baseline_clean python -m pytest -q <bridge and fixed focused regressions>
+PYTHONPATH=hsr_v075_baseline_clean python -m hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_nested_ability_transport --fast
+git diff --check 5b222a2fb05970b5d23fd053ffd9beb453e4dfac...HEAD
 ```
 
 Fast 至少保持：request-bound identity、7-channel routing、wrong owner/entry-kind/provider、no admission、atomic rollback、S8B5 continuation pair/active stack/cycle 回归、A1 admission 回归。
@@ -167,7 +186,7 @@ Fast 至少保持：request-bound identity、7-channel routing、wrong owner/ent
 ### Direct
 
 ```text
-python tools/validate_p9_a2_action_window_status_nested_ability_transport.py --direct
+PYTHONPATH=hsr_v075_baseline_clean python -m hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_nested_ability_transport --direct
 ```
 
 Direct 的入口语义不得变化，仍必须实际命中 `CombatExecutor.execute(ActionCommand)`。A2-P0 的 L0 Direct、synthetic callback、validator-only hook invocation 均不能替代。
@@ -180,7 +199,7 @@ Direct 的入口语义不得变化，仍必须实际命中 `CombatExecutor.execu
 
 `.github/workflows/p9-a2-pr-validation.yml` 使用标准免费 runner、只读权限和既有依赖方式，最终至少执行 scoped compile、Fast、真实 A2 Direct、`git diff --check 770a0649... HEAD`。workflow/validator 的普通诊断或 CI 排障由 EXEC 自行处理，但最终验收必须基于 PR 最终 committed head；不得依赖 workflow 在运行时临时改写 validator 后才成立的业务结论。
 
-## 8. 必须独立断言的负例与回归
+## 9. 必须独立断言的负例与回归
 
 1. `TaskGraphContinuation.from_hook_request` 仍是唯一合法 continuation 铸造路径；`systems/task_graph.py` 相对新 master diff 为零。
 2. action-window formal status root 不携带伪造 parent continuation。
@@ -195,7 +214,7 @@ Direct 的入口语义不得变化，仍必须实际命中 `CombatExecutor.execu
 11. PR #12 admission finalizer 作为基线发挥作用，但本卡不能通过修改 lowering 或把 L0 evidence 替代 runtime evidence。
 12. 失败的 nested execution 不得留下成功 projection 或半提交 side effect。
 
-## 9. 完成条件
+## 10. 完成条件
 
 只有全部成立，EXEC 才可交 REVIEW：
 
@@ -228,7 +247,7 @@ final_committed_head_validated=true
 execution_report_complete=true
 ```
 
-## 10. 执行报告
+## 11. 执行报告
 
 写入：
 
@@ -250,7 +269,7 @@ hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2_ACTION_WINDOW_STATUS_N
 - 最终 committed-head GitHub Actions run URL/id/status；
 - `remaining`: 原 PR #9 RandomConfig caller/RNG ledger 仍 deferred；本卡不得声称其闭合。
 
-## 11. 立即停止 / 正式返回
+## 12. 立即停止 / 正式返回
 
 以下属于真实范围问题，`NEEDS_REPLAN`：
 
@@ -266,6 +285,6 @@ hsr_v075_baseline_clean/hsr/live_validation_reports/P9-A2_ACTION_WINDOW_STATUS_N
 
 普通代码、测试、validator、workflow、Actions、环境与 CI 排障不属于上述情况，由 EXEC 在允许写集合内自行完成。
 
-## 12. 下游边界
+## 13. 下游边界
 
 只有 PR #11 / A2 通过独立 REVIEW 并合并后，PLAN 才能恢复**现有** PR #9。恢复 PR #9 时其真实 Direct 仍必须是既定 `CombatExecutor.execute(ActionCommand)`；本卡不得替 PR #9 实现 RandomConfig weighted caller、RNGEvent、whole-action RNG ledger 或其他 S8C sibling deferred 语义。

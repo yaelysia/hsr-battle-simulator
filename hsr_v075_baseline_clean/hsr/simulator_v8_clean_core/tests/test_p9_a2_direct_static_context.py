@@ -9,6 +9,7 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_neste
     _build_runtime_direct_rulebook,
     _direct_skill_param_entries,
     _direct_state_for_admission,
+    _status_denominator,
 )
 
 
@@ -117,3 +118,27 @@ def test_static_param_projection_rejects_missing_levels_and_wrong_owner(
         _direct_skill_param_entries(rules, missing_levels, context)
     with pytest.raises(AssertionError, match="owner identity mismatch"):
         _direct_skill_param_entries(rules, wrong_owner, context)
+
+
+def test_real_nested_weighted_nodes_can_reach_the_shared_dispatch(direct_projection):
+    rules, _context, _evidence = direct_projection
+    denominator, _events = _status_denominator(rules)
+    weighted_rows = [row for row in denominator if row["weighted_selection_ids"]]
+    assert weighted_rows, "real weighted denominator must not be vacuous"
+    checked = set()
+    for row in weighted_rows:
+        query = rules.query_task_graph(row["nested_graph_id"])
+        assert query.status == "resolved" and query.value is not None
+        graph = query.value
+        selections = {item.selection_id: item for item in graph.weighted_selections}
+        nodes = {item.graph_node_id: item for item in graph.nodes}
+        for selection_id in row["weighted_selection_ids"]:
+            selection = selections[selection_id]
+            node = nodes[selection.graph_node_id]
+            assert node.source_family == selection.family == "RandomConfig"
+            assert node.node_kind == "branch", (node.graph_node_id, node.status_reason)
+            assert node.materialization_status == "materialized"
+            assert node.owner_domains == ("task_graph_execution",)
+            assert not node.status_reason
+            checked.add((graph.graph_id, selection_id))
+    assert checked
