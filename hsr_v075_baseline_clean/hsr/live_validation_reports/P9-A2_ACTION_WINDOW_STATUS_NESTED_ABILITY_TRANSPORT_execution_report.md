@@ -27,6 +27,9 @@ RandomConfig gameplay RNG 未改。审核基线 `3ae3912590d126f97c27e8a8ce770fb
 Fast 均 `ok=true`；A2 Direct `ok=true`（56.78s、864372 KiB）。这些是提交前本地结果；
 最终完整 SHA 的 CI 结果另见 PR 证据评论。历史 `target_contract_regressions.py` 路径不存在，
 本轮仍由实际存在的 `action_attack_target_context.py` 承担相应回归。
+按 A2 workflow 原顺序合并运行的固定 pytest 集为 85 passed。新增测试在此进程中只核
+S8C1B 的六项语义谓词；Fast 独立入口保留原 512 MiB RSS 门并单独 `ok=true`，避免前序
+重型 pytest 的进程峰值 RSS 误伤测试断言。
 
 状态：本地实现与规定验证通过，待最终 committed HEAD 的 GitHub required checks 和独立
 `FULL_AUDIT`。分支仍为原 PR #11 的
