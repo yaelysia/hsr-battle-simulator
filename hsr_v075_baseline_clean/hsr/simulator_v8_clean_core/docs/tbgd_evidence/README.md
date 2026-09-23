@@ -12,6 +12,18 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
+## Public mechanics and result-led research — 2026-09-23
+
+The [healing/shield public-model reconciliation](../../../../../docs/tbgd_evidence/shared/public_mechanics_healing_shield_reconciliation_v1.md) is the first applied checkpoint under the clarified method. It supplies positive equations, source mappings, selected timing and a first-hand community test instead of leaving all arithmetic unknown because the native evaluator was not exported.
+
+For an established mechanic, first consult relevant game-data publications and original community theorycraft/testing. Extract the formula, operands, owners, conditions, timing and important exceptions; use their predicted consequences to navigate the pinned data. Return with a source-to-model map and a supported result, not just a list of numeric fields.
+
+Keep pinned raw facts, public gameplay evidence and their reconciled interpretation explicit. Reliable public models and controlled experiments are usable evidence for observable mechanics, not merely navigation hints. A missing native function body does not invalidate that knowledge. Do not require a native implementation dump or a fresh personal replay of every established test before recording an attributed, adequately supported gameplay model.
+
+This does not permit changing pinned coefficients, fabricating a missing reference or promoting community formulas to native code. Record source/version/test scope, distinguish independently observed results from calculated examples, and examine conflicting or underdetermined interpretations. Sites copying the same database do not constitute independent experiments. Negative results should name the remaining question, not erase an established basic equation.
+
+The former R3/March blanket restrictions on deriving a usable equation from public descriptions/formulas are superseded by this checkpoint. Selected base healing, base shielding and recipient-turn-start HOT are now reconciled; native snapshot internals, exact rounding and universal callback order remain separately scoped questions. Public experiments, not only new engine sources, can advance those questions too.
+
 ## Current scope correction — 2026-09-23
 
 The [PR #8 scope-drift audit](../../../../../docs/tbgd_evidence/shared/pr8_scope_drift_audit_2026-09-23.md) restores the original research charter after the owner explicitly rejected the backend workflow that had entered R9.
@@ -23,7 +35,7 @@ This correction supersedes the **research-status and sequencing authority** of e
 - The R9-added W13 backend caller checklist item has been removed by restoring that worklist's exact pre-R9 blob. This removes only the implementation item, not the servant source findings or any other research leaves. The audit records the old item and its disposition.
 - W13 remains `active` for actual unresolved source semantics. A missing local CreateServant handler does not make the pinned creation occurrence unknown, and it does not block unrelated research.
 - R0-R8 retain their recorded bounded source claims. C/D/E observations remain restricted to their inspected/tested SHA and actual scope. No package is newly promoted to `mechanism_closed`.
-- No next archaeology slice, R9A implementation or R10 execution is authorized by this correction. Old numbered sequences and worklist `Next closure` suggestions are historical input, not automatic task assignments.
+- The scope correction did not authorize the old numbered implementation sequence. The subsequent public-model checkpoint above is separately requested archaeology, not R9A or an automatic R10 continuation.
 
 The full prior README and R9 review remain available at immutable evidence head [8daa6a8](https://github.com/yaelysia/hsr-battle-simulator/tree/8daa6a8abb9a15e423ecf987356dcc0a936565ba). No history is erased or backend defect declared repaired.
 
@@ -36,10 +48,10 @@ A source claim requires manual semantic inspection of pinned raw rows/graphs, th
 The research chain is:
 
 ```text
-gameplay question and source scope
+gameplay question, public model and observed consequences
 -> exact pinned producer / reference / binding / authored consumer
--> interpreted battle consequence
--> reviewed evidence or a named source uncertainty
+-> source-to-model reconciliation and useful battle semantics
+-> reviewed evidence plus precisely named remaining uncertainties
 -> reusable facts for later backend consumption and implementation
 ```
 
@@ -47,7 +59,7 @@ An authored consumer in this chain can be a TBGD Ability task, Modifier, selecto
 
 The downstream architecture remains `TBGD -> compiler/lowering -> Canonical IR -> Combat Core`. That architecture explains how research may be consumed; it is not an obligation to make the entire path execute inside this evidence PR.
 
-Gameplay knowledge guides questions and completeness checks but cannot fill missing pinned values or hidden native behavior. External/runtime disagreement is a reason to inspect and document the discrepancy, not to force either source to match the other.
+Gameplay knowledge guides questions and completeness checks and may independently support a behavior model. It cannot silently fill missing pinned values or claim recovery of hidden native code. External/runtime disagreement is a reason to inspect and document the discrepancy, not to force either source to match the other.
 
 ## Local implementation comparison is supplementary
 
@@ -58,16 +70,18 @@ Keep the independent axes when relevant:
 | Axis | Meaning | Consequence for this ledger |
 | --- | --- | --- |
 | A | TBGD source-facing claim closed | State the exact source-supported claim, not whole-mechanism completion. |
-| B | Pinned export/native-engine gap | Name the missing source contract; preserve uncertainty without inventing an engine body. |
+| B | Pinned export/native-engine gap | Name the missing source contract; distinguish an unavailable body from an externally established behavior model. |
 | C | Local implementation exists | Optional implementation observation, not proof of A. |
 | D | Inspected local contract agrees with source evidence | Optional comparison, not a prerequisite for a source fact to be recorded. |
-| E | Actual matching-scope, SHA-bound execution evidence | Required only for a runtime-verified claim, not for archaeological progress. |
+| E | Actual matching-scope, SHA-bound execution evidence | Required only for a local runtime-verified claim, not for archaeological progress. |
+
+External gameplay tests have their own attribution and version/scope. They are positive evidence but are not automatically local-runtime E. A source-plus-public-model interpretation can be `cross_validated` while the native body is still unavailable and local execution remains untested.
 
 A local gap is a **backend consumption note**, separate from source uncertainties and the research queue. Record its source anchor and inspected SHA if useful, then leave implementation ownership outside PR #8. Do not attach a repair card, merge dependency or runtime acceptance gate to the next archaeology step. If comparison challenges a source interpretation, reopen only that evidenced interpretation question; a missing local implementation by itself is not such a contradiction.
 
 Local `engine_convention` remains a convention. Existing code is not native GameCore authority. Test-file existence is not execution, and `skipped != passed`; neither an absent E nor a skipped workflow makes a reviewed raw fact fail.
 
-Generic scheduler, RNG, AI, callback-total-order and native formula boundaries stay explicitly unresolved where the pinned artifact does not expose them. Do not repeatedly scan the same corpus to guess hidden bodies, and do not use a local implementation to claim those native bodies were recovered.
+Generic scheduler, RNG, AI, callback-total-order and native formula bodies stay explicitly unresolved where the pinned artifact does not expose them. This does not freeze every observable rule in those domains. Use credible experiments and source discriminators for the behavior actually in question; do not repeatedly scan the same corpus to guess hidden bodies.
 
 ## Research status and evidence maturity
 
@@ -81,15 +95,15 @@ A checked leaf covers only its exact statement. No completion percentage or glob
 
 ## Required record contents
 
-Every source record should state the gameplay concept/scope, exact revision/path/blob/occurrence, entity and binding identities, producer/reference/authored-consumer chain, interpreted battle consequence, authority class/maturity, negative evidence, and unresolved source questions. Include version context and corroboration where relevant.
+Every source record should state the gameplay concept/scope, public model/test provenance where relevant, exact revision/path/blob/occurrence, entity and binding identities, producer/reference/authored-consumer chain, interpreted equation or battle consequence, authority class/maturity, negative evidence, and unresolved source questions. Include version context, a useful numerical or behavioral discriminator, and whether any stated numbers are observations or predictions.
 
 When local code is inspected, put its SHA, behavior, comparison and validation level in a separately labeled implementation note. Do not make such a note mandatory for every raw fact or turn its unresolved items into research blockers.
 
-Source roles remain `battle_authoritative`, `battle_supporting`, `mixed_requires_filter`, `progression_only`, `presentation_only`, `editor_tooling`, `telemetry_only` and `unknown_unreviewed`. Explicit `export_gap` / `engine_consumer_unavailable` annotations refer to pinned source boundaries, not backend readiness.
+Source roles remain `battle_authoritative`, `battle_supporting`, `mixed_requires_filter`, `progression_only`, `presentation_only`, `editor_tooling`, `telemetry_only` and `unknown_unreviewed`. Explicit `export_gap` / `engine_consumer_unavailable` annotations refer to pinned source boundaries, not backend readiness or proof that no public behavior model exists.
 
 ## Version discipline
 
-All raw authority uses the fixed TBGD revision. Default-branch or live data may aid navigation but cannot silently fill pinned gaps. Large-file search/read failures are not omission proof. A source occurrence and its semantic interpretation must remain distinguishable from normalized local representations.
+All raw authority uses the fixed TBGD revision. Default-branch or live data may aid navigation and comparison but cannot silently fill pinned gaps. Large-file search/read failures are not omission proof. A source occurrence and its semantic interpretation must remain distinguishable from normalized local representations and externally measured behavior.
 
 Implementation observations are dated and SHA-bound. Old inspection or execution evidence is not a claim about every later master. This does not require continuously revalidating the backend before publishing source research.
 
@@ -103,6 +117,7 @@ Governance and research ledgers:
 - [PINNED_SOURCE_INDEX.md](PINNED_SOURCE_INDEX.md) — navigation cache, not independent semantic authority.
 - [EVIDENCE_RECORD_TEMPLATE.md](EVIDENCE_RECORD_TEMPLATE.md)
 - [Scope-drift audit and correction](../../../../../docs/tbgd_evidence/shared/pr8_scope_drift_audit_2026-09-23.md)
+- [Public mechanics models: healing/shield reconciliation](../../../../../docs/tbgd_evidence/shared/public_mechanics_healing_shield_reconciliation_v1.md)
 
 Bounded source records; consult their claim-level limits rather than treating them as backend acceptance gates:
 
@@ -139,4 +154,4 @@ R6's retained implementation validation remains limited to the recorded tested S
 
 ## Publication boundary
 
-Keep PR #8 open/Draft and docs/evidence-only. Do not modify runtime, lowering, IR, tests, CI or the TBGD pin. A checkpoint reports new source knowledge, exact anchors, remaining source uncertainties, affected documents and any separately scoped corroboration. It must not become a backend repair/merge handoff.
+Keep PR #8 open/Draft and docs/evidence-only. Do not modify runtime, lowering, IR, tests, CI or the TBGD pin. A checkpoint reports new source/model knowledge, exact anchors, remaining uncertainties, affected documents and separately scoped public or runtime verification. It must not become a backend repair/merge handoff.
