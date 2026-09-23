@@ -12,6 +12,14 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
+## Current priority — foundations before character completion, 2026-09-23
+
+The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md) is the current priority overlay. Research reusable rules, shared inputs and applicability first; characters, monsters, equipment and stages serve as discriminating samples, not the default unit of kit completion. The existing W worklist remains the obligation ledger, not a backend gate or a fixed denominator.
+
+The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
+
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. The next primary research target is shared weakness/toughness/Break/Super Break (F03), not another Guinaifen kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
 The [Guinaifen Burn description/application/tick/extra-trigger record](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md) joins Skill121002/121003/121004 description hashes directly to same-pin TextMapCHS, exact level parameters, CharacterConfig bindings and Ability/shared-modifier consumers. It records the ordinary ATK-based Burn equation, affected-enemy turn-start tick, separate Ultimate multiplier, and Firekiss's distinct damage-taken layer. Precise raw percentages are not replaced by formatted web values.
@@ -119,6 +127,8 @@ Implementation observations are dated and SHA-bound. Old inspection or execution
 
 Governance and research ledgers:
 
+- [Foundation-first research roadmap and claim ledger](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md)
+- [General damage formula and input layers](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
