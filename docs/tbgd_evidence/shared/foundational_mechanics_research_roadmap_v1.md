@@ -1,6 +1,14 @@
 # Foundation-first battle mechanics research roadmap v1
 
-## Current checkpoint — F01, 2026-09-24
+## Current checkpoint — integrated foundation review, 2026-09-24
+
+[The integrated foundation-gap and source-coverage review][REVIEW] reconciles F01-F10 with W01-W18 and the source-family inventory. Ten first-pass records provide reusable ordinary rules, not complete common behavior or a corpus census. The review separates materially unknown behavior, source transport, unavailable native bodies, special branches, evidence-replay qualifications and coverage debt. Existing source facts and public models retain their stated strength; no runtime E or whole-package completion is added.
+
+**Next primary investigation: DIVE-BREAK-TRANSITION-ACCOUNTING-V1 — threshold-crossing hits and Super Break toughness accumulation.** The execution card is in review section 8. Investigate the ordinary nonlethal crossing hit, credited per-target Q, reset and reader/enabler context; do not expand into all callbacks, special bars, progression or backend implementation. The integrated review is complete; this deep dive is selected but not started by the review checkpoint.
+
+The review also recognizes F09's selected distribution-source join as progress on F04, and preserves F05's published-table discrepancy instead of calling the entire table exactly reproduced. Historical first-pass handoffs below remain checkpoint context; the current selection above governs the next task.
+
+## Prior checkpoint — F01, 2026-09-24
 
 [F01: general parameters and effective properties][PARAMETERS] is now delivered as a first shared-rule/source map. It separates completed-build combat inputs from progression costs and prerequisites, typed parameter/level/index routing from working values, ordinary base/ratio/flat composition from capped cross-entity grants, and conversion-sensitive inputs from flattened displayed totals. Actual property reads and writes override misleading variable or modifier names. F01/W01/W02/W03 remain active for precise resolution, conversion/sampling, override and coverage questions; no whole-package completion or runtime E is claimed.
 
@@ -70,7 +78,7 @@ The order is an initial dependency-informed route, not a claim that the game has
 | F09 | Target and damage-source context | W11/W15; R7, general source/frame evidence and F04 source ownership | **Active; first shared-rule map delivered 2026-09-24.** Per-effect targets, bounded bounce validity, weighted-primary versus collateral exposure, split destinations and inherited ownership are mapped. Invalid-target, policy, formation and context-propagation residuals remain explicit. |
 | F10 | Event, entity and encounter lifecycle | W10/W13/W16/W17; R6, retained servant/source records and F09 context distinctions | **Active; first shared-rule map delivered 2026-09-24.** Activation/trigger/recheck, lethal recovery/shared quota, death-rattle/forced cleanup, phase/wave/result/leave boundaries are mapped. Exact arbitration, state retention, muting and exceptional scenario routes remain explicit. |
 
-F01 facts have been reused as the other foundations proceeded; its first synthesis is now delivered. An integrated assessment of unresolved common behaviors and source coverage is the next obligation, not a result already claimed by the ten first-pass records. Any subsequent bounded closure must explain the mechanism reason rather than follow an actor's remaining kit or import a progression workflow.
+F01 facts have been reused as the other foundations proceeded; its first synthesis is now delivered. The integrated assessment is now recorded in [the review][REVIEW], whose W crosswalk and coverage analysis preserve obligations not completed by the ten records. The selected next closure addresses the F02/F03 transition-hit and Q-accounting boundary, not an actor's remaining kit or a progression workflow.
 
 ## 5. Current F02 claim ledger
 
@@ -119,7 +127,7 @@ A published or measured amount can establish observable units even while a parti
 - [x] Trace a control-category StackStatusResistance contribution separately from StatusResistanceBase writes and reject direct addition of general and category resistance.
 - [x] Read shared behavior-flag and status-type immunity maps, preserving actual owner/activation requirements and named override boundaries.
 - [x] Trace one-use protection installation, ImmuneDebuff classification, OnImmuneDebuff self-removal and parent-state cleanup without inventing a Count field or cleanse operation.
-- [x] Give the conditional independent-attempt equation and reproduce a published calculation table without labeling it gameplay testing.
+- [x] Give the conditional independent-attempt equation; reproduce the published98.3% entry and retain the approximately65.27% versus printed65.2% discrepancy, without labeling the calculations gameplay testing.
 - [ ] Resolve overlapping category aggregation, AntiDebuffResist/forced-status numeric behavior and fixed-debuff override applicability where concretely needed.
 - [ ] Resolve immunity-charge versus resistance-check ordering, simultaneous requests and overlapping protection consumption.
 - [ ] Resolve application-source/snapshot selection and state-dependent or multiple-source attempt allocation beyond the selected examples.
@@ -198,7 +206,7 @@ The common equations and named branches are usable evidence; these unchecked res
 - [ ] Resolve remaining positive incoming-heal combinations, extreme factors, special conversions and offered/effective/overheal event payloads.
 - [ ] Reconcile exact per-family sampling and changed-cap/mixed-grant behavior beyond fixed-input accumulation.
 - [ ] Complete multi-shield draining/expiry arbitration, special team/shared shields and shield-depletion visibility.
-- [ ] Resolve exact distribution/source joins, direct-loss event consequences, rounding and concurrent HP/cleanup transitions.
+- [ ] Complete distribution-event attribution beyond F09's selected input/ratio/recipient/guard join; resolve direct-loss event consequences, rounding and concurrent HP/cleanup transitions.
 
 The checked leaves cover these shared rules and contrasting branches, not every sustain effect or W05 mechanism_closed. Native implementation absence does not erase their supported gameplay meanings.
 
@@ -258,11 +266,11 @@ These are bounded common-rule results, not a universal lifecycle census, complet
 - [ ] Resolve remaining family/working-slot resolution, initialization defaults and effective-level/override precedence through specific evidence.
 - [ ] Reconcile additional conversion eligibility, snapshot/refresh interaction and same-time property propagation.
 - [ ] Close exact bounds/precision and remaining base-loader/affix-source questions only at the combat-input boundary, without progression simulation.
-- [ ] Reconcile the foundation results with W obligations and the in-scope source-family coverage ledger.
+- [x] Reconcile the foundation results with W obligations and source-family coverage in the integrated review; the review identifies, rather than closes, remaining corpus and behavior gaps.
 
-### Next research frame — integrated foundation gaps and coverage
+### Next research frame — crossing-hit and Super Break accounting
 
-Review F01-F10's claim-level residuals against the W worklist and source-family scope. Separate materially unknown common behavior, known behavior with an unexported native body, exceptional branches and missing corpus coverage. Retire superseded blanket unknowns only with precise supporting records; preserve actual uncertainties. Choose the next bounded common-mechanism closure using reusable value and discriminating evidence, not actor completion, backend readiness or progression completeness. This integrated review is not performed by the F01 checkpoint.
+The integrated review is delivered in [the current review][REVIEW]. Its section 8 selects one bounded F02/F03/W04/W06 investigation: ordinary crossing-hit state, credited toughness input, per-target accumulator update/reset and source/enabler invocation. Start from descriptions and discriminating public evidence, then re-read the actual common producer/consumer chain at the pin. The card's illustrative Q alternatives are hypotheses, not results. No whole-kit completion, progression, generic scheduler/RNG reconstruction or backend repair is part of this task. The deep dive has not been executed by the review checkpoint.
 
 ## 7. What counts as finishing the foundation pass
 
@@ -276,7 +284,9 @@ Only then should the default activity become actor/equipment completion: instant
 
 The 2026-09-23 checkpoint added this roadmap and general damage. The 2026-09-24 continuations added F03, F05, F06, F08, F07, F04, F09, F10 and now F01, with corresponding roadmap/README updates. The existing W worklist, older source records, scope, inventory and pin are preserved; claim-level results do not silently check package-wide obligations. Prior roadmap content remains auditable at evidence parents `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`, `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`, `b1b1db9fabb04926dd2669e44d93c830fd784397`, `96896f677eaf14eaaa0b7692289801f69b4fcb8c`, `e392081bd2c016ca686923b2e619d0a2564510d2`, `1a814ca21efc28e0af9aaac7a1e7220eff29938e`, `2718b77036a7085f67fd66814af2268ea3882f8d`, `adc555818592fd62556d4fc93d8be1bd020e79ea` and `98bc2a3db82756519816c7c577f274821cc68ba4`.
 
-No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. The PR checkpoint records the actual final evidence head and Markdown-only diff. Stop this checkpoint after publication; integrated foundation-gap/coverage review is next, not automatic character completion, progression research or a repair handoff.
+The integrated review continues from `fd3fbbd1e4a3ea88b14eb9ba7f8389f32e2e8a8a`. It updates current navigation and cross-record residual accounting, not old source evidence or whole-package closure. W and inventory historical snapshots remain traceable beneath their current-review overlays.
+
+No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. Stop this review checkpoint after publication; the single selected crossing-hit/Super Break archaeology card is next, not automatic character completion, progression research or a repair handoff.
 
 [WORKLIST]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_RESEARCH_WORKLIST.md
 [SCOPE]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_SCOPE.md
@@ -290,3 +300,4 @@ No runtime, lowering, IR, tests, CI or backend task is changed. Existing public 
 [TARGETS]: general_target_selection_expansion_source_context_v1.md
 [LIFECYCLE]: general_event_entity_encounter_lifecycle_v1.md
 [PARAMETERS]: general_parameter_effective_property_semantics_v1.md
+[REVIEW]: foundational_mechanics_gap_coverage_review_v1.md

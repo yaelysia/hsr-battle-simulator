@@ -1,5 +1,15 @@
 # TBGD battle research living worklist
 
+## Current integrated review — 2026-09-24
+
+The [integrated foundation-gap and source-coverage review](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_gap_coverage_review_v1.md), reviewed at evidence parent `fd3fbbd1e4a3ea88b14eb9ba7f8389f32e2e8a8a`, is the current cross-record reconciliation. Its section 5 supplies the current W01-W18 evidence/residual crosswalk, and sections 6-8 distinguish gap types, coverage debt and the selected next card. All eighteen W packages remain `active`; no broad checkbox or whole-package completion is promoted by this review.
+
+The historical summary, detailed checkboxes and old serial sequence below are retained for auditability. They must be read with the current review and foundation roadmap: ordinary healing/shield mathematics, status probability, AV/rescaling and selected source chains are no longer wholly unknown merely because a native evaluator is unavailable. Compound leaves that also require exact timing or a corpus census still have real remaining obligations. Earlier stop-at-R7, native-body-only freeze and implementation-card wording is not current research authorization or a backend repair prerequisite.
+
+**Next bounded research: DIVE-BREAK-TRANSITION-ACCOUNTING-V1**, the review's section 8 card. Investigate ordinary nonlethal threshold-crossing damage state, credited per-target Super Break toughness and accumulator reset/reader context. The review is complete; this card is selected but not started in this checkpoint. Other residuals remain explicitly tracked rather than being silently completed or expanded into parallel work.
+
+Only finished-build combat inputs and effects are in scope. Costs, EXP, acquisition, unlock requirements and roll history remain excluded; actual consumers and battle consequences, not names, determine a field's role. Public descriptions/models/tests retain their provenance and can establish observable rules without becoming raw source or new runtime E.
+
 ## Purpose
 
 This document is the **living work ledger** for the normal-combat archaeology tracked by Issue #7 and PR #8.
@@ -131,7 +141,7 @@ If progress is summarized, report instead:
 
 A percentage may be used only after the source-family inventory and mechanism taxonomy have stabilized enough to define the denominator explicitly.
 
-## Current work-package summary
+## Historical work-package summary — pre-foundation snapshot
 
 | ID | Work package | Priority | Work status | Strongest current evidence | Last reviewed | Next closure |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -585,8 +595,9 @@ Retirement requires a durable negative-evidence note. “We did not find a consu
 | 2026-09-09 | Integrated second boundary-focused archaeology pass. | Closed Aglaea natural pre-death/death-rattle/death-listener surfaces plus priority-tiered muted forced cleanup; proved HardLevel typed property access while freezing the generic spawn-stat constructor; froze W10/W12 dispatcher/RNG implementation gaps and W17 AssistantTrigger ownership/ID producer at the exact pinned release-data boundary. |
 | 2026-09-09 | Compacted post-integration stale leaves and reset the next research sequence. | Promoted March main-shield `CanDispel=true` and the OneMore/OneMorePerTurn source-facing protocol, preserved their generic engine boundaries, and made W03 Battle Language Core v1 the first single-thread closure before mechanism-specific vertical slices. |
 | 2026-09-14 | Added bounded R7 W11/W15 leaves; parent statuses remain active. | Selected explicit/automatic/impact/internal target separation, Monster1002011 fixed candidate and Monster1002041 complex-policy non-admission are source/static consumer closed against master f8e8a053ef591e1aeeb99956d46acd8390676c6f. No runtime E, generic AI or formation closure; see the R7 record and its claim matrix. |
+| 2026-09-24 | Added current integrated foundation review and selected one bounded crossing-hit/Super Break card. | F01-F10 results are reconciled against every W package in the linked review. Old summaries and sequencing are labeled historical; broad leaves, actual unresolved source questions and all active parent statuses are retained. No backend or progression gate is introduced. |
 
-## Current single-thread research sequence
+## Historical single-thread research sequence
 
 **2026-09-14 sequencing overlay:** the numbered preference below is retained historical planning context. R0–R7 bounded status is maintained in README.md and the durable records, not inferred from that old ordering. R7 is now bounded complete for the narrow target/candidate/controller boundary; it did not close generic native enemy AI. Stop at R7 and return to integration/planning for the R8 decision.
 
@@ -597,7 +608,7 @@ This is a sequencing preference for the next serial archaeology pass, not a new 
 3. **W06 — Toughness/Break vertical slice:** close hit -> stance mutation -> broken state -> elemental consequence -> recovery using source-facing arithmetic/order where exported.
 4. **W05 + W09 — Healing/Modifier lifecycle:** close one independent healing chain and reusable stack/replace/refresh/extend/dispel/control/DoT semantics; do not reopen March numeric/dispellability discovery.
 5. **W08 — Resource economy:** close Energy and shared Skill Point initialization/gain/cost/caps plus one actor-specific gauge.
-6. **W11 + W15 — Targeting/Enemy AI:** close battle state -> AI decision -> external/internal target selection -> selected skill -> execution, consuming W12 random primitives only where needed.
+6. **W11 + W15 — Targeting/Enemy AI:** close battle state -> AI decision -> external/internal target selection -> selected skill -> execution, consuming W12 random primitives only when needed.
 7. **W16 — Encounter/Spawn/Phase/Termination:** close wave, reinforcement, phase and battle-end source-facing chains without restarting hidden W14 final-stat arithmetic.
 8. **W01 + W18 — Battle-start build construction:** close avatar base/build/equipment/relic/Technique inputs into battle-start properties.
 

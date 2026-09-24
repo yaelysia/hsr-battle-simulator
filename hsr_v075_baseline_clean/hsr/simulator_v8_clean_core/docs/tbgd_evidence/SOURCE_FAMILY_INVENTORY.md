@@ -1,5 +1,23 @@
 # TBGD normal-combat source-family inventory
 
+## Current integrated review — 2026-09-24
+
+The [integrated foundation-gap and source-coverage review](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_gap_coverage_review_v1.md) reconciles this inventory with F01-F10 at evidence parent `fd3fbbd1e4a3ea88b14eb9ba7f8389f32e2e8a8a`. Its sections 5-6 retain the remaining W obligations and coverage debt; section 8 selects the next bounded crossing-hit/Super Break accounting investigation. This is a review of the existing evidence, not a new whole-tree scan or re-audit of every upstream row.
+
+The family rows below remain representative triage, not a complete reachable-record census. Their native-consumer annotations describe source availability, not a current claim that all related gameplay is unknown. In particular, F02/F03/F04/F05/F07/F08 provide supported ordinary damage, Break, sustain, application, resource and AV models. Unavailable native bodies and unresolved exceptions remain separate. The former checkpoint-gap section is labeled historical; its blanket native-body-only stopping rules do not govern current research.
+
+Actual ordinary ownership, source transport and exceptional behavior gaps remain: AssistantTrigger ownership, the CommonSkillPool consumer-present export gap, monster final-property/context construction, secondary-entity synchronization and source-specific activation/target policies. No family is marked globally complete or excluded merely because a sample or a field name looks familiar. Finished-build combat values are in scope; costs, EXP, unlock economy and roll history are not.
+
+### Current source-navigation additions — existing evidence reused
+
+These entries expose already-reviewed source families that the older broad labels did not navigate explicitly. They are not new raw extractions in this review.
+
+| Family / surface | Existing evidence | Current interpretation and limit |
+| --- | --- | --- |
+| `ExcelOutput/AvatarBreakDamage.json` | [F03 shared Break record](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md) | Selected level-to-Break-base rows are combat inputs. This does not certify every row, final target mitigation or a native lookup body. |
+| `ExcelOutput/AvatarPromotionConfig.json` / `EquipmentPromotionConfig.json` | [R5 construction](../../../../../docs/tbgd_evidence/shared/battle_start_build_construction_v1.md), [F01 parameter/property synthesis](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md) | Mixed tables with selected finished-build coefficients and excluded progression neighbors. Known base-to-effective composition does not silently prove all base-loader/affix equations. |
+| Mechanically informative skill descriptions and exact TextMap joins | [Pinned Burn description join](../../../../../docs/tbgd_evidence/shared/guinaifen_burn_tick_detonation_source_chain_v1.md), [F01](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md) and README method | Semantic interpretation evidence when tied to the actual skill/parameters/consumer; not a runtime rule source or automatic promotion of all localization. Public copies retain a different revision/provenance from same-pin text. |
+
 ## Purpose
 
 This is the living corpus-audit ledger for PR #8. It is intended to converge on **all TBGD source families and reachable records that materially affect ordinary Honkai: Star Rail combat** at the pinned revision, not merely a representative sample.
@@ -167,7 +185,7 @@ The current phase does not require exhaustive archaeology of:
 
 These are `deferred`, not `non_battle`. Shared lower-level primitives independently reached by ordinary combat remain in scope.
 
-## Current checkpoint gaps
+## Historical checkpoint gaps — 2026-09-09
 
 After the 2026-09-09 post-integration compaction, the highest-value unresolved source-family boundaries are:
 

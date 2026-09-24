@@ -14,13 +14,21 @@ The governing source scope and completeness obligations remain [BATTLE_SCOPE.md]
 
 **Combat-input boundary, clarified 2026-09-24:** the selected finished build's properties, effective skill parameters and activated effects are in scope; acquisition, EXP, material costs, ascension/unlock prerequisites and relic roll history are not. Classify mixed tables below file level using actual consumers and battle consequences. A progression-associated filename neither admits its costs nor excludes its proven combat inputs; a plausible property/variable name does not establish its meaning.
 
-## Current shared result — F01, 2026-09-24
+## Current integrated review — 2026-09-24
+
+The [integrated foundation-gap and source-coverage review](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_gap_coverage_review_v1.md) reconciles the ten first-pass records with W01-W18, source-family triage and the combat-only scope. Ordinary formulas and selected source chains are retained as positive knowledge; materially unknown behavior, source transport, unavailable native bodies, special branches, evidence-strength qualifications and corpus coverage are separately tracked. The W worklist and source inventory now carry current-review overlays above their historical summaries, rather than silently treating old native-body-only freezes as current tasks.
+
+The review recognizes F09's selected distribution input/ratio/recipient/guard join as progress on F04, while preserving full split-event attribution as open. It also narrows the roadmap's F05 calculation-table claim to retain the main record's65.27% versus printed65.2% discrepancy. This is existing-evidence reconciliation, not a new game test, whole-corpus rescan or wholesale revalidation of prior raw anchors. All F families and W packages retain their actual remaining obligations.
+
+**Next selected task: DIVE-BREAK-TRANSITION-ACCOUNTING-V1 — threshold-crossing hits and Super Break toughness accumulation.** Review section 8 contains the bounded card: ordinary nonlethal crossing-hit damage state, credited per-target Q, reset and enabler/reader context. Its competing numerical policies are proposed discriminators, not accepted outcomes. This checkpoint completes the review and selects the dive; it does not execute it, start character completion or introduce a backend/progression dependency.
+
+## Shared result — F01, 2026-09-24
 
 The [general parameter/effective-property record](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md) unifies family/owner/level/index routing and working-value scope with ordinary base/percentage/flat composition. Empty-Param rank rows can still change effective skill levels; those effects remain separate from UnlockCost. Selected table coefficients are not new live buffs, and public stat equations do not silently certify R5's different local base-loader or affix arithmetic.
 
 Exact consumers resolve misleading names: MDF_Target_CurrentAttack reads recipient BaseAttack and participates in a grant capped by provider Attack; Avatar_Gepard_Passive02_AttackDeltaUp actually writes AttackConvert after an explicit Defence-minus-DefenceConvert calculation. Refresh sites, actual property components, static set contributions and matching-hit contexts remain distinct. Repeated parameter values are not extra grants. Public formulas/descriptions, pinned fields and synthetic calculations retain separate provenance.
 
-F01/W01/W02/W03 remain active for resolution/defaults, level/override precedence, additional conversion/sampling rules, exact bounds and source coverage. **Integrated foundation-gap and coverage review** is next: reconcile F01-F10 with the W worklist and source-family scope before choosing another bounded common-mechanism closure. Ten first-pass records are not proof of foundational completeness or authorization to default to character completion. No progression workflow, backend gate or runtime E is introduced.
+F01/W01/W02/W03 remain active for resolution/defaults, level/override precedence, additional conversion/sampling rules, exact bounds and source coverage. Its integrated-review handoff is now completed above. Ten first-pass records still do not prove foundational completeness; the selected next task deepens one common boundary rather than defaulting to character completion. No progression workflow, backend gate or runtime E is introduced.
 
 ## Shared result — F10, 2026-09-24
 
@@ -92,7 +100,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F01-F10 now have first-pass records; the roadmap sets integrated common-gap and source-coverage review as the next priority, not automatic character completion. The foundation roadmap records the remaining obligations and their exit criteria; no native-code recovery, progression simulation or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F01-F10 now have first-pass records and the integrated review above selects crossing-hit/Super Break accounting as the next bounded priority, not automatic character completion. The foundation roadmap records the remaining obligations and their exit criteria; no native-code recovery, progression simulation or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -201,6 +209,7 @@ Implementation observations are dated and SHA-bound. Old inspection or execution
 
 Governance and research ledgers:
 
+- [Integrated foundation-gap review and next deep-dive card](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_gap_coverage_review_v1.md)
 - [Foundation-first research roadmap and claim ledger](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md)
 - [General parameters and effective properties: combat, not progression](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md)
 - [General damage formula and input layers](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md)
