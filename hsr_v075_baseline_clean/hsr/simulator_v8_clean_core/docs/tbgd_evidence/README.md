@@ -12,13 +12,21 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
+## Current shared result — F03, 2026-09-24
+
+The [general weakness/toughness/Break/Super Break record](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md) delivers a reusable shared-rule map: old/displayed toughness units, the exact level-based Break table, initial Break versus attack-Q-based Super Break, seven elemental branches, and common versus elemental action-delay inputs. It preserves the distinction between a supported observable amount/formula and an unidentified native context-injection edge. Level80 uses the exact pinned `BreakBaseDamage=3767.5535`; the shared Super Break expression has a literal denominator30 in old units.
+
+Physical capped target-HP scaling, Wind layer-dependent damage, Frozen/Entangle Pursued damage versus DOT, and separate Quantum/Imaginary delay inputs are traced through shared installers and modifier consumers. Existing R2/F02 ownership and state chains are reused, not replaced by another whole-character study. The first common-rule pass is delivered; F03/W06 remain active for threshold/accumulator allocation, special toughness regimes, source injection and specific state-sampling questions. Calculations are predictions, not new game/runtime tests.
+
+The roadmap now prioritizes **F05: effect application, resistance and immunity**, prompted by the shared elemental Chance1.5 inputs. This supersedes the former F03-next wording below, not its source evidence. F05 is not executed by this checkpoint, and no backend admission, repair or merge dependency is introduced.
+
 ## Current priority — foundations before character completion, 2026-09-23
 
 The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md) is the current priority overlay. Research reusable rules, shared inputs and applicability first; characters, monsters, equipment and stages serve as discriminating samples, not the default unit of kit completion. The existing W worklist remains the obligation ledger, not a backend gate or a fixed denominator.
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. The next primary research target is shared weakness/toughness/Break/Super Break (F03), not another Guinaifen kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03's first pass is now recorded above, and the roadmap's 2026-09-24 checkpoint sets F05 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -129,6 +137,7 @@ Governance and research ledgers:
 
 - [Foundation-first research roadmap and claim ledger](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md)
 - [General damage formula and input layers](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md)
+- [General weakness, toughness, Break and Super Break](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
