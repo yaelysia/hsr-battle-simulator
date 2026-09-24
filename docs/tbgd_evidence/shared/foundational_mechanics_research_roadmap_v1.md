@@ -1,14 +1,14 @@
 # Foundation-first battle mechanics research roadmap v1
 
-## Current checkpoint — F06, 2026-09-24
+## Current checkpoint — F08, 2026-09-24
 
-[F06: general modifier identity, stacking, lifetime and removal][MODIFIERS] is now delivered as a first shared-rule/source map. It distinguishes effect identity from display/category labels, layers from duration, cap-refresh from explicit lifetime addition, recipient-side state from a caster-owned clock, and timer updates from property sampling. A source-timed parent supplies child installation, late-member installation and named cleanup. F06/W09/W10 remain active for explicitly named matching, update-precedence, first-step, sampling and removal-visibility questions; no whole-package completion or runtime E is claimed.
+[F08: general Speed, Action Value, action categories and clocks][TIMING] is now delivered as a first shared-rule/source map. It supplies the ordinary gauge/AV and remaining-time rescale model; distinguishes full-interval advance from scaling the remaining timer; and maps speed mutation, a typed relic advance and absolute zeroing to different raw operations. Normal, extra and inserted actions are separated from duration clocks. F08/W07/W10 remain active for precise unit-transport, clamp/ordering, exceptional action-slot and clock questions; no whole-package completion or runtime E is claimed.
 
-The interrupted [F05][APPLICATION] had already published at `b1b1db9fabb04926dd2669e44d93c830fd784397` with checkpoint `5805904952`; this continuation recovered and reused it rather than repeating it. [F03][BREAK]'s units, level table, seven elemental branches and shared Super Break contract also remain established with their existing residuals. The next primary target is **F08: time, turn and action categories**, because duration ownership now needs a reusable account of which actions and lifecycle events advance each clock. F04's shared healing/shield questions and F07's resource questions remain queued; no backend repair or native-code recovery is a prerequisite.
+[F06][MODIFIERS]'s identity, stacking, timer and cleanup results remain established, alongside [F05][APPLICATION]'s admission rules and [F03][BREAK]'s units/formula families. The next primary target is **F07: shared resource economy**, using the timing distinctions to explain Energy/Skill Point generation, cost, regeneration and availability without equating every action with a natural turn. F04's shared healing/shield questions remain queued; no backend repair or native-code recovery is a prerequisite.
 
 ## 1. Current direction
 
-Originally reviewed 2026-09-23, at evidence parent `2100d31cbfb3425907ccacfedb564265f764768c`; F03 updated 2026-09-24 from parent `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`; F05 continued from `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`; F06 continued from `b1b1db9fabb04926dd2669e44d93c830fd784397`. The owner requested general, low-level combat research before filling individual character kits. This document makes that the current research priority for PR #8.
+Originally reviewed 2026-09-23, at evidence parent `2100d31cbfb3425907ccacfedb564265f764768c`; F03 updated 2026-09-24 from parent `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`; F05 continued from `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`; F06 continued from `b1b1db9fabb04926dd2669e44d93c830fd784397`; F08 continued from `96896f677eaf14eaaa0b7692289801f69b4fcb8c`. The owner requested general, low-level combat research before filling individual character kits. This document makes that the current research priority for PR #8.
 
 The research object is a reusable mechanic, not a character. A character, monster, equipment effect or stage may be inspected only as a concrete producer, a contrasting case or a counterexample needed to explain that mechanic. Completing an actor's remaining Eidolons or kit details is not the default next task.
 
@@ -27,6 +27,8 @@ For explicitly covered toughness/Break rules, [F03][BREAK] likewise supersedes R
 For the covered application rules, [F05][APPLICATION] supersedes the old RNG record's native-evaluator-only stopping rule. Known probability mathematics does not reveal the PRNG, immunity-charge arbitration or every category override; those precise residuals stay separate. Public wording is labeled as such when a same-pin localization join was not completed.
 
 For the lifecycle rules it actually covers, [F06][MODIFIERS] likewise supplies observable update and clock semantics without claiming the complete native matching/dispatcher implementation. Stacking policy tokens remain literal source facts, not substitutes for the accompanying layer, duration, payload and ownership rules.
+
+For the ordinary timing claims it covers, [F08][TIMING] supersedes W07 and the older timeline record's native-body-only freeze. The raw `SpeedToDelayDistance=1000` is not rewritten to the public normalization10000. Initial-order models, explicit delay operations and unknown mixed-insertion arbitration remain separately attributed.
 
 ## 3. Reusable deliverable for each foundation
 
@@ -53,12 +55,12 @@ The order is an initial dependency-informed route, not a claim that the game has
 | F04 | Healing, shielding and damage-to-HP interfaces | W05; R3, March and public-model reconciliation | General scale/flat/healing-bonus roles, shield creation versus mitigation/consumption, overflow and explicit special formulas. Preserve already recovered equations; investigate shared residuals, not another isolated healer. |
 | F05 | Effect application, immunity and random-choice classes | W09/W12; ordinary RNG/callback record and F03 application inputs | **Active; first shared-rule map delivered 2026-09-24.** Base/fixed probability, EHR/general/category resistance, shared immunity and consumed protection, actual attempt count and conditional repeated-attempt model. Exact override/charge/context questions remain open. |
 | F06 | Modifier instances and lifetime | W09/W10; R3, shared modifiers and F05 admission/consumption boundary | **Active; first shared-rule map delivered 2026-09-24.** Identity, layer/cap-refresh, lifetime addition, caster-timed parent/recipient children and cleanup are mapped. Matching/update precedence, clock exceptions and exact sampling remain named residuals. |
-| F07 | Shared resource economy | W08; R4 and linked skill descriptions | Energy versus team Skill Points, initial/max values, gain/cost/regen, recipient and timing rules, with character gauges as later extensions. A raw SP name alone does not identify the public resource. |
-| F08 | Time, turn and action categories | W07/W10; OneMore/timeline source record and F06 clock distinctions | **Next primary research target.** SPD/AV, advance/delay, natural versus extra/insert/follow-up actions, action start/end and duration-driving events. Adopt supported public timing models while keeping exact unsupported tie-breaks separate. |
+| F07 | Shared resource economy | W08; R4, linked skill descriptions and F08 action/clock distinctions | **Next primary research target.** Energy versus team Skill Points, initial/max values, gain/cost/regen, recipient and timing rules, with character gauges as later extensions. A raw SP name alone does not identify the public resource. |
+| F08 | Time, turn and action categories | W07/W10; OneMore/timeline source record and F06 clock distinctions | **Active; first shared-rule map delivered 2026-09-24.** Ordinary SPD/AV, rescaling, full-gauge advance/delay, absolute zero and action/clock distinctions are mapped. Exact unit transport, exceptional scheduling and first-step rules remain named questions. |
 | F09 | Target and damage-source context | W11/W15; R7 and general source/frame evidence | Explicit/automatic targets, adjacency, internal traversal, retargeting, target validity, original/current target and caster/actual damage owner. AI policy need not be implemented to document its source constraints. |
 | F10 | Event, entity and encounter lifecycle | W10/W13/W16/W17; R6 and retained servant/source records | Registration versus triggering, supported local causal order, death/limbo/revive, secondary-entity ownership, spawn/wave/phase/termination. Source facts and actual observable events, not Python admission readiness. |
 
-F01 facts are prerequisites reused as other foundations proceed; this does not require an artificial complete-every-property preflight. F04 and F07-F10 retain their pending general obligations, not results claimed by F06. The first-pass order may be adjusted for a concrete missing foundational dependency; changes must explain the mechanism reason rather than follow an actor's remaining kit.
+F01 facts are prerequisites reused as other foundations proceed; this does not require an artificial complete-every-property preflight. F04, F07 and F09-F10 retain their pending general obligations, not results claimed by F08. The first-pass order may be adjusted for a concrete missing foundational dependency; changes must explain the mechanism reason rather than follow an actor's remaining kit.
 
 ## 5. Current F02 claim ledger
 
@@ -132,11 +134,27 @@ A published or measured amount can establish observable units even while a parti
 
 The checked leaves cover selected reusable rules and counterexamples, not a complete modifier corpus or W09 mechanism_closed. New source operations and credible public behavior evidence can advance the remaining questions; no backend repair or native dispatcher dump is required first.
 
-### F08 next research frame
+## 6C. F08 shared-rule result and remaining research
 
-Identify the common meanings of speed, action value, advance/delay, natural turn, extra turn/action, inserted Ultimate and follow-up, then relate those categories to duration-driving events. Start from supported public timing mathematics and the existing OneMore/timeline records. F06's caster-timed parent and specific first-turn exceptions are discriminators, not an invitation to complete those characters' kits.
+[F08 v1][TIMING] follows the previous timing frame while preserving the actual scope of the prior OneMore/lifecycle records. Supported public mathematics is positive knowledge; exact raw constants, operations and unpublished native transport remain separate evidence claims.
 
-Keep unit conversion, action-entry conditions, clock owner, eligible first/subsequent steps, and explicit exceptions separate. State the reusable equations and behavior where supported; preserve exact unknown tie-breaks or source transport without making the entire timeline unknown. F08 has not been executed by the F06 checkpoint.
+- [x] State the ordinary positive-speed full-gauge/remaining-AV model and distinguish flat from percentage Speed.
+- [x] Derive remaining-AV rescaling from unchanged remaining distance rather than resetting progress after a Speed mutation.
+- [x] Distinguish full-gauge advance/delay from proportional reduction of remaining AV, with lower-bound and sequential-operation discriminators.
+- [x] Trace Asta's typed flat-Speed/lifetime inputs and a separate preshow surface without inventing an explicit scheduler-rescale call.
+- [x] Trace exact Set110 four-piece0.25 -> SkillRelic -> post-Ultra negative normalized delay; distinguish the typed Equip file from its differently serialized root sibling.
+- [x] Trace the selected immediate allied-action branch to SetActionDelay0, retaining its actual ByIsTurnActionEntity predicate.
+- [x] Separate normal, advanced-normal, extra, Ultimate, inserted and coordinated entries from damage/hit categories and duration-driving events.
+- [x] Reuse OneMore's own action-bound lifetime and F06's clock ownership to reject a universal decrement/reset hook after every action.
+- [x] Record the attributed ordinary initial-deployment tie model without claiming a native stable-sort implementation or universal mixed-insert order.
+- [ ] Resolve the native/display unit transport for SpeedToDelayDistance and exact internal precision/boundary handling.
+- [ ] Resolve same-time Speed/advance/clamp ordering, oversized-delay full advances, ready ties and pending-insert arbitration for concrete cases.
+- [ ] Resolve exceptional speed/turn locks, action-slot renewal and coordinated/new-entity slot accounting.
+- [ ] Complete first-eligible-step/control exceptions and the event-to-clock matrix beyond the selected rules.
+
+### F07 next research frame
+
+Explain shared Energy and team Skill Points as different resources: initial/max values, gain/cost, regeneration modifiers, recipient/source roles, availability and their actual triggering events. Reuse R4 and mechanically meaningful descriptions; use the F08 distinction between elapsed time, natural turns and skill execution to avoid invented per-turn resource rules. Character-exclusive gauges are contrasts only when they reveal a new primitive. F04 remains queued and F07 has not been executed by this checkpoint.
 
 ## 7. What counts as finishing the foundation pass
 
@@ -148,9 +166,9 @@ Only then should the default activity become actor/equipment completion: instant
 
 ## 8. Publication and history
 
-The 2026-09-23 checkpoint added this roadmap and general damage. The 2026-09-24 continuations added F03, F05 and now F06, with corresponding roadmap/README updates. The existing W worklist, older source records, scope, inventory and pin are preserved; claim-level results do not silently check package-wide obligations. Prior roadmap content remains auditable at evidence parents `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`, `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace` and `b1b1db9fabb04926dd2669e44d93c830fd784397`.
+The 2026-09-23 checkpoint added this roadmap and general damage. The 2026-09-24 continuations added F03, F05, F06 and now F08, with corresponding roadmap/README updates. The existing W worklist, older source records, scope, inventory and pin are preserved; claim-level results do not silently check package-wide obligations. Prior roadmap content remains auditable at evidence parents `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`, `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`, `b1b1db9fabb04926dd2669e44d93c830fd784397` and `96896f677eaf14eaaa0b7692289801f69b4fcb8c`.
 
-No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. The PR checkpoint records the actual final evidence head and Markdown-only diff. Stop this checkpoint after publication; F08 is the next mechanism priority, not another character follow-up or R9A repair.
+No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. The PR checkpoint records the actual final evidence head and Markdown-only diff. Stop this checkpoint after publication; F07 is the next mechanism priority, not another character follow-up or R9A repair.
 
 [WORKLIST]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_RESEARCH_WORKLIST.md
 [SCOPE]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_SCOPE.md
@@ -158,3 +176,4 @@ No runtime, lowering, IR, tests, CI or backend task is changed. Existing public 
 [BREAK]: general_weakness_toughness_break_super_break_v1.md
 [APPLICATION]: general_effect_application_hit_resistance_immunity_v1.md
 [MODIFIERS]: general_modifier_identity_stacking_lifetime_v1.md
+[TIMING]: general_speed_action_value_turn_clock_v1.md

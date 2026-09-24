@@ -12,13 +12,21 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
-## Current shared result — F06, 2026-09-24
+## Current shared result — F08, 2026-09-24
+
+The [general Speed/Action Value/action-clock record](../../../../../docs/tbgd_evidence/shared/general_speed_action_value_turn_clock_v1.md) supplies the ordinary timing model and concrete source distinctions: speed-only rescaling preserves remaining distance; normalized advance/delay applies to a full interval rather than a percentage of remaining AV; absolute zeroing, current-action cost and insertion remain different operations. Normal turns, extra actions, Ultimates, hits and modifier clocks are not interchangeable events.
+
+New source chains include typed Asta SpeedDelta/lifetime inputs, exact relic Set110 four-piece0.25 through Equip/RelicAbility's SkillRelic binding to post-Ultra advance, and Bronya's selected SetActionDelay0 branch. The root RelicAbility sibling has different serialization and is not spliced into the typed chain. Preshow is not a second mutation. Public normalization10000 is retained separately from raw SpeedToDelayDistance1000 without an invented native unit conversion.
+
+This first F08 pass supersedes the older W07/timeline blanket restriction on public formulas only for the supported ordinary rules. Initial-order models and first-step exceptions retain attribution; same-time clamps, exceptional zero-ready/insertion ordering, native unit transport and the complete event-to-clock map remain named questions. F08/W07/W10 are not globally closed and no runtime E is added. **F07: shared resource economy** is now the next primary foundation; F04 remains queued.
+
+## Shared result — F06, 2026-09-24
 
 The [general modifier identity/stacking/lifetime record](../../../../../docs/tbgd_evidence/shared/general_modifier_identity_stacking_lifetime_v1.md) continues the F05 checkpoint that was already published before the interruption. It separates state identity, caster/holder, layers/caps, remaining duration, sampling and removal dependencies. Selected source/model chains distinguish refreshing a capped stack group from explicitly adding to an existing timer, natural ticking from extra activation, and a caster-timed parent from recipient-side child effects.
 
 New pinned operations include SetModifierValueByBehaviorFlag(Add,LifeTime), a parent installing children on current and newly appearing eligible members, and named cleanup when that parent ends. Public skill text and authored explanations identify the observable timer/stack behavior without inventing unread pinned numerical rows or native matching/dispatcher code. The ordinary dynamic-DoT explanation and the limited snapshot report retain their actual evidence strength; no new gameplay experiment is claimed.
 
-F06/W09/W10 remain active for specific same-template matching, stronger/weaker and already-extended update precedence, first-step/action exceptions, property sampling and overlapping removal visibility. The next primary foundation is **F08: time, turn and action categories**, to explain which events advance these clocks. F04 and F07 remain queued; no backend implementation dependency is introduced.
+F06/W09/W10 remain active for specific same-template matching, stronger/weaker and already-extended update precedence, first-step/action exceptions, property sampling and overlapping removal visibility. F06 handed off to F08's action/clock boundary, whose first shared result is now above. The prior handoff remains checkpoint history rather than an unexecuted current assignment; no backend implementation dependency is introduced.
 
 ## Shared result — F05, 2026-09-24
 
@@ -42,7 +50,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05 and F06 now have first-pass records above; the roadmap sets F08 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06 and F08 now have first-pass records above; the roadmap sets F07 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -156,6 +164,7 @@ Governance and research ledgers:
 - [General weakness, toughness, Break and Super Break](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md)
 - [General effect application, resistance, immunity and attempts](../../../../../docs/tbgd_evidence/shared/general_effect_application_hit_resistance_immunity_v1.md)
 - [General modifier identity, stacking, lifetime and removal](../../../../../docs/tbgd_evidence/shared/general_modifier_identity_stacking_lifetime_v1.md)
+- [General Speed, Action Value, action categories and clocks](../../../../../docs/tbgd_evidence/shared/general_speed_action_value_turn_clock_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
