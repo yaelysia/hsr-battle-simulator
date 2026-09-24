@@ -1,14 +1,14 @@
 # Foundation-first battle mechanics research roadmap v1
 
-## Current checkpoint — F10, 2026-09-24
+## Current checkpoint — F01, 2026-09-24
 
-[F10: general event, entity and encounter lifecycle][LIFECYCLE] is now delivered as a first shared-rule/source map. It separates installed listeners, eligible triggers, pending requests and execution rechecks; lethal recovery, provider-owned quotas and readiness markers; natural death work, selective carry-over and muted cleanup; and phase, birth, wave and battle-result scopes. Published once-per-battle descriptions and exact reactivation/eligibility inputs establish reusable behavior without inventing counter defaults or a universal dispatcher. F10/W10/W13/W16/W17 remain active for competing recovery, precise state/event retention and exceptional spawn/result questions; no whole-package completion or runtime E is claimed.
+[F01: general parameters and effective properties][PARAMETERS] is now delivered as a first shared-rule/source map. It separates completed-build combat inputs from progression costs and prerequisites, typed parameter/level/index routing from working values, ordinary base/ratio/flat composition from capped cross-entity grants, and conversion-sensitive inputs from flattened displayed totals. Actual property reads and writes override misleading variable or modifier names. F01/W01/W02/W03 remain active for precise resolution, conversion/sampling, override and coverage questions; no whole-package completion or runtime E is claimed.
 
-[F09][TARGETS]'s source/recipient distinctions and [F06][MODIFIERS]'s state clocks remain reusable. The next primary target is **F01: shared parameter and effective-property synthesis**, using R0/R5 and the foundation records rather than rebuilding a sample kit. The numbered first passes do not by themselves certify foundational completeness; remaining common-rule gaps still need an integrated review before systematic character completion. This remains source research, not backend admission work.
+The owner's explicit clarification is retained: research combat consequences of the selected finished build, not acquisition, leveling, ascension, unlock economy or relic roll history. Classify mixed tables below file level using actual consumers. The next primary task is an **integrated foundation-gap and coverage review** across F01-F10, the W worklist and source-family scope. All ten first-pass records now exist, but that does not certify foundational completeness or authorize default character completion. No backend admission or repair sequence is introduced.
 
 ## 1. Current direction
 
-Originally reviewed 2026-09-23, at evidence parent `2100d31cbfb3425907ccacfedb564265f764768c`; F03 updated 2026-09-24 from parent `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`; F05 continued from `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`; F06 continued from `b1b1db9fabb04926dd2669e44d93c830fd784397`; F08 continued from `96896f677eaf14eaaa0b7692289801f69b4fcb8c`; F07 continued from `e392081bd2c016ca686923b2e619d0a2564510d2`; F04 continued from `1a814ca21efc28e0af9aaac7a1e7220eff29938e`; F09 continued from `2718b77036a7085f67fd66814af2268ea3882f8d`; F10 continued from `adc555818592fd62556d4fc93d8be1bd020e79ea`. The owner requested general, low-level combat research before filling individual character kits. This document makes that the current research priority for PR #8.
+Originally reviewed 2026-09-23, at evidence parent `2100d31cbfb3425907ccacfedb564265f764768c`; F03 updated 2026-09-24 from parent `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`; F05 continued from `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`; F06 continued from `b1b1db9fabb04926dd2669e44d93c830fd784397`; F08 continued from `96896f677eaf14eaaa0b7692289801f69b4fcb8c`; F07 continued from `e392081bd2c016ca686923b2e619d0a2564510d2`; F04 continued from `1a814ca21efc28e0af9aaac7a1e7220eff29938e`; F09 continued from `2718b77036a7085f67fd66814af2268ea3882f8d`; F10 continued from `adc555818592fd62556d4fc93d8be1bd020e79ea`; F01 continued from `98bc2a3db82756519816c7c577f274821cc68ba4`. The owner requested general, low-level combat research before filling individual character kits. This document makes that the current research priority for PR #8.
 
 The research object is a reusable mechanic, not a character. A character, monster, equipment effect or stage may be inspected only as a concrete producer, a contrasting case or a counterexample needed to explain that mechanic. Completing an actor's remaining Eidolons or kit details is not the default next task.
 
@@ -38,6 +38,8 @@ For the resource claims it covers, [F07][RESOURCES] supersedes R4's blanket with
 
 [F10][LIFECYCLE] reuses R6, W10 and the servant death/entry surfaces without their former backend gates. Known staged recovery is explicitly a reused finding; new eligibility, reactivation, execution-recheck and quota-scope distinctions are joined to descriptions. A missing total-order implementation does not erase these local causal edges or the stage's actual result/leave routes.
 
+[F01][PARAMETERS] synthesizes R0/R5 without treating their local loader/affix arithmetic as newly proven native behavior. Public base-to-effective stat equations are a different claim from the selected base-value loader. Finished-build selectors, combat skill-level increments and activated effects remain distinct from excluded costs/prerequisites; field names alone do not establish either inclusion or algebra.
+
 ## 3. Reusable deliverable for each foundation
 
 Each foundation record should answer:
@@ -57,7 +59,7 @@ The order is an initial dependency-informed route, not a claim that the game has
 
 | ID | General research unit | W obligations / existing anchors | Deliverable and current position |
 | --- | --- | --- | --- |
-| F01 | Parameter and property semantics | W01/W02/W03; R0, R5, current healing/shield reconciliation and F02-F10 | **Next primary research target.** Synthesize family-qualified parameters, description placeholders, dynamic environments, base/flat/ratio/conversion/override/effective values and source ownership. Reuse existing material rather than rebuild another full character panel. |
+| F01 | Parameter and property semantics | W01/W02/W03; R0, R5, current healing/shield reconciliation and F02-F10 | **Active; first shared-rule map delivered 2026-09-24.** Combat/progression field separation, qualified parameters, base/ratio/flat composition, capped grants and conversion-sensitive sampling are mapped. Resolution, overrides and coverage remain explicit. |
 | F02 | Ordinary damage layers and damage-kind routing | W04; R1, shared constants/behavior templates, R8 | Active; first general formula/input-layer record delivered 2026-09-23. Retain named caps/overrides/rounding/transition-hit questions. Do not mark all damage complete. |
 | F03 | Weakness, toughness, Break and Super Break | W06/W14; R2 and shared templates | **Active; first shared-rule map delivered 2026-09-24.** Units, level table, initial/seven-element/Super Break bases and applicability are recorded. Remaining injection, accumulator/threshold, special-bar and state-sampling questions are explicit. |
 | F04 | Healing, shielding and damage-to-HP interfaces | W05; R3, March and public-model reconciliation, F06 lifecycle | **Active; first shared-rule map delivered 2026-09-24.** Healing eligibility/realized gain, creator bonuses, ordinary absorption, explicit named-shield accumulation and direct-loss distinctions are mapped. Sampling, multi-pool overlap, overflow payloads and special routes remain explicit. |
@@ -68,7 +70,7 @@ The order is an initial dependency-informed route, not a claim that the game has
 | F09 | Target and damage-source context | W11/W15; R7, general source/frame evidence and F04 source ownership | **Active; first shared-rule map delivered 2026-09-24.** Per-effect targets, bounded bounce validity, weighted-primary versus collateral exposure, split destinations and inherited ownership are mapped. Invalid-target, policy, formation and context-propagation residuals remain explicit. |
 | F10 | Event, entity and encounter lifecycle | W10/W13/W16/W17; R6, retained servant/source records and F09 context distinctions | **Active; first shared-rule map delivered 2026-09-24.** Activation/trigger/recheck, lethal recovery/shared quota, death-rattle/forced cleanup, phase/wave/result/leave boundaries are mapped. Exact arbitration, state retention, muting and exceptional scenario routes remain explicit. |
 
-F01 facts have been reused as the other foundations proceeded; its remaining synthesis is now the primary obligation, not a result claimed by F10. An integrated assessment of unresolved common behaviors still precedes a decision to default to character completion. The first-pass order may be adjusted for a concrete missing foundational dependency; changes must explain the mechanism reason rather than follow an actor's remaining kit.
+F01 facts have been reused as the other foundations proceeded; its first synthesis is now delivered. An integrated assessment of unresolved common behaviors and source coverage is the next obligation, not a result already claimed by the ten first-pass records. Any subsequent bounded closure must explain the mechanism reason rather than follow an actor's remaining kit or import a progression workflow.
 
 ## 5. Current F02 claim ledger
 
@@ -241,9 +243,26 @@ The selected Fu Xuan source join advances F04's named distribution question, not
 
 These are bounded common-rule results, not a universal lifecycle census, complete native dispatcher or broad W-package closure. Public descriptions and credible tests can advance the residuals without a backend repair prerequisite.
 
-### F01 next research frame
+## 6H. F01 shared-rule result and remaining research
 
-Synthesize shared parameter and effective-property semantics using R0/R5 and F02-F10: typed parameter family/index/level, description placeholders, dynamic working scopes, base/flat/ratio/conversion/override contributions and the entity supplying each value. Reuse established equations and source chains, then select only the contrasts needed for missing common rules. Do not rebuild an individual character panel or derive arbitrary defaults from field names. After this synthesis, review the still-open common branches before deciding on systematic character completion. F01 has not been executed by this checkpoint.
+[F01 v1][PARAMETERS] follows the former synthesis frame with the owner's explicit exclusion of progression research. It uses the actual read, expression, write and consequence rather than a name-based property taxonomy.
+
+- [x] Separate selected combat coefficient/effect fields from colocated costs, materials, account prerequisites and presentation metadata.
+- [x] Reuse family/owner/level-qualified parameter routing, zero-based typed indices, one-based description/servant slots and scoped working values.
+- [x] Read empty-Param rank rows with nonempty SkillAddLevelList; distinguish combat parameter-level changes from acquisition and direct stat addition.
+- [x] State an attributed ordinary character-plus-Light-Cone base, additive percentage and flat-amount composition without promoting unrelated native loader equations.
+- [x] Trace a capped grant using recipient BaseAttack and provider Attack, including its misleading CurrentAttack working name and final AttackDelta consumer.
+- [x] Trace Defence minus DefenceConvert, a typed conversion ratio and actual AttackConvert write despite an AttackDeltaUp modifier name.
+- [x] Pair explicit OnStack/OnPhase1 reads with described refresh behavior; do not infer instant recomputation or a global conversion order.
+- [x] Separate set PropertyList, repeated parameters and normal-hit context mutation instead of counting each numeric occurrence as a new stat grant.
+- [ ] Resolve remaining family/working-slot resolution, initialization defaults and effective-level/override precedence through specific evidence.
+- [ ] Reconcile additional conversion eligibility, snapshot/refresh interaction and same-time property propagation.
+- [ ] Close exact bounds/precision and remaining base-loader/affix-source questions only at the combat-input boundary, without progression simulation.
+- [ ] Reconcile the foundation results with W obligations and the in-scope source-family coverage ledger.
+
+### Next research frame — integrated foundation gaps and coverage
+
+Review F01-F10's claim-level residuals against the W worklist and source-family scope. Separate materially unknown common behavior, known behavior with an unexported native body, exceptional branches and missing corpus coverage. Retire superseded blanket unknowns only with precise supporting records; preserve actual uncertainties. Choose the next bounded common-mechanism closure using reusable value and discriminating evidence, not actor completion, backend readiness or progression completeness. This integrated review is not performed by the F01 checkpoint.
 
 ## 7. What counts as finishing the foundation pass
 
@@ -255,9 +274,9 @@ Only then should the default activity become actor/equipment completion: instant
 
 ## 8. Publication and history
 
-The 2026-09-23 checkpoint added this roadmap and general damage. The 2026-09-24 continuations added F03, F05, F06, F08, F07, F04, F09 and now F10, with corresponding roadmap/README updates. The existing W worklist, older source records, scope, inventory and pin are preserved; claim-level results do not silently check package-wide obligations. Prior roadmap content remains auditable at evidence parents `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`, `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`, `b1b1db9fabb04926dd2669e44d93c830fd784397`, `96896f677eaf14eaaa0b7692289801f69b4fcb8c`, `e392081bd2c016ca686923b2e619d0a2564510d2`, `1a814ca21efc28e0af9aaac7a1e7220eff29938e`, `2718b77036a7085f67fd66814af2268ea3882f8d` and `adc555818592fd62556d4fc93d8be1bd020e79ea`.
+The 2026-09-23 checkpoint added this roadmap and general damage. The 2026-09-24 continuations added F03, F05, F06, F08, F07, F04, F09, F10 and now F01, with corresponding roadmap/README updates. The existing W worklist, older source records, scope, inventory and pin are preserved; claim-level results do not silently check package-wide obligations. Prior roadmap content remains auditable at evidence parents `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`, `d1ff8c9dd8df90eefd7134f7374b1faee78c5ace`, `b1b1db9fabb04926dd2669e44d93c830fd784397`, `96896f677eaf14eaaa0b7692289801f69b4fcb8c`, `e392081bd2c016ca686923b2e619d0a2564510d2`, `1a814ca21efc28e0af9aaac7a1e7220eff29938e`, `2718b77036a7085f67fd66814af2268ea3882f8d`, `adc555818592fd62556d4fc93d8be1bd020e79ea` and `98bc2a3db82756519816c7c577f274821cc68ba4`.
 
-No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. The PR checkpoint records the actual final evidence head and Markdown-only diff. Stop this checkpoint after publication; F01 synthesis is the next mechanism priority, not another character follow-up or R9A repair.
+No runtime, lowering, IR, tests, CI or backend task is changed. Existing public reports and calculations are not claimed as new gameplay runs. The PR checkpoint records the actual final evidence head and Markdown-only diff. Stop this checkpoint after publication; integrated foundation-gap/coverage review is next, not automatic character completion, progression research or a repair handoff.
 
 [WORKLIST]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_RESEARCH_WORKLIST.md
 [SCOPE]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_SCOPE.md
@@ -270,3 +289,4 @@ No runtime, lowering, IR, tests, CI or backend task is changed. Existing public 
 [SUSTAIN]: general_healing_shield_hp_resolution_v1.md
 [TARGETS]: general_target_selection_expansion_source_context_v1.md
 [LIFECYCLE]: general_event_entity_encounter_lifecycle_v1.md
+[PARAMETERS]: general_parameter_effective_property_semantics_v1.md

@@ -12,13 +12,23 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
-## Current shared result — F10, 2026-09-24
+**Combat-input boundary, clarified 2026-09-24:** the selected finished build's properties, effective skill parameters and activated effects are in scope; acquisition, EXP, material costs, ascension/unlock prerequisites and relic roll history are not. Classify mixed tables below file level using actual consumers and battle consequences. A progression-associated filename neither admits its costs nor excludes its proven combat inputs; a plausible property/variable name does not establish its meaning.
+
+## Current shared result — F01, 2026-09-24
+
+The [general parameter/effective-property record](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md) unifies family/owner/level/index routing and working-value scope with ordinary base/percentage/flat composition. Empty-Param rank rows can still change effective skill levels; those effects remain separate from UnlockCost. Selected table coefficients are not new live buffs, and public stat equations do not silently certify R5's different local base-loader or affix arithmetic.
+
+Exact consumers resolve misleading names: MDF_Target_CurrentAttack reads recipient BaseAttack and participates in a grant capped by provider Attack; Avatar_Gepard_Passive02_AttackDeltaUp actually writes AttackConvert after an explicit Defence-minus-DefenceConvert calculation. Refresh sites, actual property components, static set contributions and matching-hit contexts remain distinct. Repeated parameter values are not extra grants. Public formulas/descriptions, pinned fields and synthetic calculations retain separate provenance.
+
+F01/W01/W02/W03 remain active for resolution/defaults, level/override precedence, additional conversion/sampling rules, exact bounds and source coverage. **Integrated foundation-gap and coverage review** is next: reconcile F01-F10 with the W worklist and source-family scope before choosing another bounded common-mechanism closure. Ten first-pass records are not proof of foundational completeness or authorization to default to character completion. No progression workflow, backend gate or runtime E is introduced.
+
+## Shared result — F10, 2026-09-24
 
 The [general event/entity/encounter-lifecycle record](../../../../../docs/tbgd_evidence/shared/general_event_entity_encounter_lifecycle_v1.md) distinguishes installed listeners, eligible events, pending requests and execution rechecks; lethal recovery, shared provider quotas and recipient readiness; natural death work and muted cleanup; and phase, wave and battle-result scopes. It explicitly reuses W10's known staged rescue and servant findings rather than presenting rereads as first discoveries. Exact ActivateAfterRevive=false, control/source/target exclusions and a guarded inserted heal supply additional reusable distinctions.
 
 Published skill descriptions establish the selected once-per-battle recovery limits. Count and update sites retain their raw omissions; UI counters and new-member callbacks do not become extra charges. Shared stage graphs separately author enemy birth with passive suppression, later passive/entry requests, dying/turn-end wave guards and provisional-win rechecks. Phase reset acts on an existing Caster; leave callbacks also occur on loss and manual quit. None of these observations supplies a universal cross-event total order or an inferred muted-event set.
 
-F10/W10/W13/W16/W17 remain active for competing recoveries, exact buff/action-slot retention, counter defaults, forced-departure triggers and exceptional spawn/result rules. **F01: shared parameter and effective-property synthesis** is the next primary foundation, using the existing records rather than completing the sample kits. The numbered first-pass records do not by themselves certify foundation completeness; remaining common-rule gaps still need review. No backend gate or runtime E is introduced.
+F10/W10/W13/W16/W17 remain active for competing recoveries, exact buff/action-slot retention, counter defaults, forced-departure triggers and exceptional spawn/result rules. Its F01 handoff has now produced the bounded parameter/property synthesis above. Prior next-task wording is checkpoint history rather than an unexecuted assignment. The numbered first-pass records do not by themselves certify foundation completeness; remaining common-rule gaps still need review. No backend gate or runtime E is introduced.
 
 ## Shared result — F09, 2026-09-24
 
@@ -38,7 +48,7 @@ F04/W05 remain active for positive incoming-heal combinations, overflow event pa
 
 ## Shared result — F07, 2026-09-24
 
-The [general Energy/Skill Point economy record](../../../../../docs/tbgd_evidence/shared/general_energy_skill_point_economy_v1.md) reconciles selected raw SP/BP families with actor Energy and shared team Skill Points. It distinguishes ordinary rate-amplified generation, fixed absolute grants, fixed recipient-maximum grants, cost versus capacity, and offered versus realized gain. Existing Natasha rows are paired with explicitly labeled public skill data; new typed Tingyun/Huohuo requests preserve their distinct operands and recipients instead of applying one formula to every ModifySPNew.
+The [general Energy/Skill Point economy record](../../../../../docs/tbgd_evidence/shared/general_energy_skill_point_economy_v1.md) reconciles selected raw SP/BP families with actor Energy and shared team Skill Points. It distinguishes ordinary rate-amplified generation, fixed absolute grants, fixed recipient-maximum grants, cost/capacity, signed spending and offered versus realized gain. Existing Natasha rows are paired with explicitly labeled public skill data; new typed Tingyun/Huohuo requests preserve their distinct operands and recipients instead of applying one formula to every ModifySPNew.
 
 New shared distinctions include a direct SPRatioBase0.05 input, separate team balance/capacity operations, signed per-point expenditure and a first-wave entry grant. The published memosprite redirection/one-per-memomaster rule explains the actual OnlyAddSPOnceForServant selector without inventing its native body. Credited historical ERR testing is retained while its contested rounding inference is rejected. Public skill values, exact pinned rows, source expressions and synthetic calculations remain separately identified.
 
@@ -82,7 +92,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06, F08, F07, F04, F09 and F10 now have first-pass records above; the roadmap sets F01 synthesis as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F01-F10 now have first-pass records; the roadmap sets integrated common-gap and source-coverage review as the next priority, not automatic character completion. The foundation roadmap records the remaining obligations and their exit criteria; no native-code recovery, progression simulation or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -192,6 +202,7 @@ Implementation observations are dated and SHA-bound. Old inspection or execution
 Governance and research ledgers:
 
 - [Foundation-first research roadmap and claim ledger](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md)
+- [General parameters and effective properties: combat, not progression](../../../../../docs/tbgd_evidence/shared/general_parameter_effective_property_semantics_v1.md)
 - [General damage formula and input layers](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md)
 - [General weakness, toughness, Break and Super Break](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md)
 - [General effect application, resistance, immunity and attempts](../../../../../docs/tbgd_evidence/shared/general_effect_application_hit_resistance_immunity_v1.md)
