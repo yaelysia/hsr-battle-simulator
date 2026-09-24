@@ -12,13 +12,21 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
-## Current shared result — F07, 2026-09-24
+## Current shared result — F04, 2026-09-24
+
+The [general healing/shield/HP-resolution record](../../../../../docs/tbgd_evidence/shared/general_healing_shield_hp_resolution_v1.md) reuses the recovered base equations and separates offered healing from realized HP gain, shield creation from recipient mitigation/absorption, ordinary non-additive shields from explicit accumulation, and incoming damage from direct HP loss. The selected Sam healing penalty is paired with an actual-healing-owner condition and a signed Target_HealTakenRatio request; its reported additive relationship does not become a permanent healer-property mutation or an unread pinned numeric row.
+
+New exact source chains include the Set103 four-piece0.2 -> SkillRelic -> ShieldAddedRatio contribution, a named CurrentShield read with an explicit zero fallback, and separate StackShield amount/cap operands followed by dependent-state cleanup. Public skill text explains repeated-shield accumulation, while the credited mitigation-before-shield experiment is explicitly reused rather than claimed newly performed. Ordinary single-shield absorption and a separately attributed distribution model retain their applicability limits.
+
+F04/W05 remain active for positive incoming-heal combinations, overflow event payloads, changed-property/cap sampling, multi-shield draining/expiry and special HP routes. These specific questions do not erase the ordinary rules. **F09: target selection, affected-target expansion and source context** is the next primary foundation, reusing R7 and the source/holder/actual-owner distinctions rather than expanding the sample kits. No backend gate or runtime E is introduced.
+
+## Shared result — F07, 2026-09-24
 
 The [general Energy/Skill Point economy record](../../../../../docs/tbgd_evidence/shared/general_energy_skill_point_economy_v1.md) reconciles selected raw SP/BP families with actor Energy and shared team Skill Points. It distinguishes ordinary rate-amplified generation, fixed absolute grants, fixed recipient-maximum grants, cost versus capacity, and offered versus realized gain. Existing Natasha rows are paired with explicitly labeled public skill data; new typed Tingyun/Huohuo requests preserve their distinct operands and recipients instead of applying one formula to every ModifySPNew.
 
 New shared distinctions include a direct SPRatioBase0.05 input, separate team balance/capacity operations, signed per-point expenditure and a first-wave entry grant. The published memosprite redirection/one-per-memomaster rule explains the actual OnlyAddSPOnceForServant selector without inventing its native body. Credited historical ERR testing is retained while its contested rounding inference is rejected. Public skill values, exact pinned rows, source expressions and synthetic calculations remain separately identified.
 
-F07/W08 remain active for initial Energy/carry-over, per-hit allocation, native input transport, per-family rate/owner sampling, special resources and transaction-order/precision questions. The covered resource names and models supersede R4's blanket native-only withholding, not its actual source gaps. **F04: healing, shielding and damage-to-HP interfaces** is the next primary foundation; reuse its established equations and investigate the remaining common interfaces, not another individual kit. No backend gate or runtime E is introduced.
+F07/W08 remain active for initial Energy/carry-over, per-hit allocation, native input transport, per-family rate/owner sampling, special resources and transaction-order/precision questions. The covered resource names and models supersede R4's blanket native-only withholding, not its actual source gaps. Its F04 handoff has now produced the bounded sustain record above; the prior handoff remains checkpoint history rather than an unexecuted assignment. No backend gate or runtime E is introduced.
 
 ## Shared result — F08, 2026-09-24
 
@@ -58,7 +66,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06, F08 and F07 now have first-pass records above; the roadmap sets F04 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06, F08, F07 and F04 now have first-pass records above; the roadmap sets F09 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -174,6 +182,7 @@ Governance and research ledgers:
 - [General modifier identity, stacking, lifetime and removal](../../../../../docs/tbgd_evidence/shared/general_modifier_identity_stacking_lifetime_v1.md)
 - [General Speed, Action Value, action categories and clocks](../../../../../docs/tbgd_evidence/shared/general_speed_action_value_turn_clock_v1.md)
 - [General Energy, regeneration, Skill Points and capacity](../../../../../docs/tbgd_evidence/shared/general_energy_skill_point_economy_v1.md)
+- [General healing, shields and HP resolution](../../../../../docs/tbgd_evidence/shared/general_healing_shield_hp_resolution_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
