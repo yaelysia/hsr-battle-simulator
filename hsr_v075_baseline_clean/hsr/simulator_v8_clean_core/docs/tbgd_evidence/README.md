@@ -12,13 +12,21 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
-## Current shared result — F03, 2026-09-24
+## Current shared result — F05, 2026-09-24
+
+The [general effect-application record](../../../../../docs/tbgd_evidence/shared/general_effect_application_hit_resistance_immunity_v1.md) supplies an attributed ordinary base-chance equation and inverse threshold, fixed-proc versus status-request routing, general versus category resistance, shared immunity maps, consumed protection and actual-attempt counting. A two-hit/one-Freeze-request source discriminator prevents equating damage hits with debuff rolls. A control-category contribution is distinct from general Effect RES; one-use ImmuneDebuff protection is expressed through event removal, not a fabricated100% resistance or Count field.
+
+Published skill wording, source operations, formula interpretations and calculated examples remain separately identified. No same-pin glossary join is claimed where large-file transport did not expose the text. The old native-evaluator-only stopping rule is superseded for the probability model actually covered; immunity-charge arbitration, overlapping categories, explicit overrides, application-source sampling and special Break applicability remain precise questions. F05/W09/W12 are not globally closed and no local-runtime E is added.
+
+The next primary target is **F06: modifier instances and lifetime**, following successful admission into state identity, layers, replacement/refresh, duration and removal. F03's former F05-next checkpoint is now completed at this bounded level; this is not a new character-completion sequence or a backend dependency.
+
+## Shared result — F03, 2026-09-24
 
 The [general weakness/toughness/Break/Super Break record](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md) delivers a reusable shared-rule map: old/displayed toughness units, the exact level-based Break table, initial Break versus attack-Q-based Super Break, seven elemental branches, and common versus elemental action-delay inputs. It preserves the distinction between a supported observable amount/formula and an unidentified native context-injection edge. Level80 uses the exact pinned `BreakBaseDamage=3767.5535`; the shared Super Break expression has a literal denominator30 in old units.
 
 Physical capped target-HP scaling, Wind layer-dependent damage, Frozen/Entangle Pursued damage versus DOT, and separate Quantum/Imaginary delay inputs are traced through shared installers and modifier consumers. Existing R2/F02 ownership and state chains are reused, not replaced by another whole-character study. The first common-rule pass is delivered; F03/W06 remain active for threshold/accumulator allocation, special toughness regimes, source injection and specific state-sampling questions. Calculations are predictions, not new game/runtime tests.
 
-The roadmap now prioritizes **F05: effect application, resistance and immunity**, prompted by the shared elemental Chance1.5 inputs. This supersedes the former F03-next wording below, not its source evidence. F05 is not executed by this checkpoint, and no backend admission, repair or merge dependency is introduced.
+F03 prioritized F05 because of its shared elemental Chance1.5 inputs. The F05 result and next priority are now recorded above; the earlier F03 checkpoint remains historical evidence, not an unexecuted current assignment. No backend admission, repair or merge dependency is introduced.
 
 ## Current priority — foundations before character completion, 2026-09-23
 
@@ -26,7 +34,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03's first pass is now recorded above, and the roadmap's 2026-09-24 checkpoint sets F05 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03 and F05 now have first-pass records above; the roadmap sets F06 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -138,6 +146,7 @@ Governance and research ledgers:
 - [Foundation-first research roadmap and claim ledger](../../../../../docs/tbgd_evidence/shared/foundational_mechanics_research_roadmap_v1.md)
 - [General damage formula and input layers](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md)
 - [General weakness, toughness, Break and Super Break](../../../../../docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md)
+- [General effect application, resistance, immunity and attempts](../../../../../docs/tbgd_evidence/shared/general_effect_application_hit_resistance_immunity_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
