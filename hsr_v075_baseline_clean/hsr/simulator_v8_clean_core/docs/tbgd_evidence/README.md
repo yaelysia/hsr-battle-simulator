@@ -12,13 +12,21 @@ Pinned TBGD revision: `14c1d18f91a8101d610e6c523447a7517de3fae1`.
 
 The governing source scope and completeness obligations remain [BATTLE_SCOPE.md](BATTLE_SCOPE.md). Representative slices are milestones, not a substitute for accounting for the in-scope battle-reachable corpus. Deferred modes remain deferred, not non-battle.
 
-## Current shared result — F09, 2026-09-24
+## Current shared result — F10, 2026-09-24
+
+The [general event/entity/encounter-lifecycle record](../../../../../docs/tbgd_evidence/shared/general_event_entity_encounter_lifecycle_v1.md) distinguishes installed listeners, eligible events, pending requests and execution rechecks; lethal recovery, shared provider quotas and recipient readiness; natural death work and muted cleanup; and phase, wave and battle-result scopes. It explicitly reuses W10's known staged rescue and servant findings rather than presenting rereads as first discoveries. Exact ActivateAfterRevive=false, control/source/target exclusions and a guarded inserted heal supply additional reusable distinctions.
+
+Published skill descriptions establish the selected once-per-battle recovery limits. Count and update sites retain their raw omissions; UI counters and new-member callbacks do not become extra charges. Shared stage graphs separately author enemy birth with passive suppression, later passive/entry requests, dying/turn-end wave guards and provisional-win rechecks. Phase reset acts on an existing Caster; leave callbacks also occur on loss and manual quit. None of these observations supplies a universal cross-event total order or an inferred muted-event set.
+
+F10/W10/W13/W16/W17 remain active for competing recoveries, exact buff/action-slot retention, counter defaults, forced-departure triggers and exceptional spawn/result rules. **F01: shared parameter and effective-property synthesis** is the next primary foundation, using the existing records rather than completing the sample kits. The numbered first-pass records do not by themselves certify foundation completeness; remaining common-rule gaps still need review. No backend gate or runtime E is introduced.
+
+## Shared result — F09, 2026-09-24
 
 The [general target-selection/expansion/source-context record](../../../../../docs/tbgd_evidence/shared/general_target_selection_expansion_source_context_v1.md) separates selectable primaries, automatic sets, actual per-effect recipients, internal traversal and actual source ownership. Exact examples distinguish primary/adjacent healing from primary-only explicit cleanse, bounded bounce selection from an all-target impact envelope, and a damage-distribution destination from the original attack target. The bounce template retains its opaque type, full validity predicate and IncludeLimbo rather than being replaced by a guessed generic selector.
 
 The attributed positive-weight aggro model is paired with a pinned BaseAggro input and reused conditional AggroAddedRatio evidence. Collateral exposure is derived separately under a stated geometry; taunt and special policies are not reduced to a universal weighted draw. A guarded HitDamageSplit chain advances F04's distribution question, while InheritCaster=TargetSelf and a credited stat/kill-Energy report distinguish parameter donor from additional-damage owner. R7's Asta/shared-template cached-anchor discrepancy is explicitly recorded with actual exact-pin reread blobs, without inventing a version change.
 
-F09/W11/W15 remain active for target invalidation, terminal/empty pools, special policy precedence, formation changes and full context/event attribution. Public descriptions, historical observations and synthetic calculations retain separate provenance. **F10: event, entity and encounter lifecycle** is the next primary foundation; F01's remaining property synthesis stays on the map. No backend gate, generic AI implementation or runtime E is introduced.
+F09/W11/W15 remain active for target invalidation, terminal/empty pools, special policy precedence, formation changes and full context/event attribution. Public descriptions, historical observations and synthetic calculations retain separate provenance. Its F10 handoff has now produced the bounded lifecycle record above; prior next-task wording is checkpoint history rather than an unexecuted assignment. No backend gate, generic AI implementation or runtime E is introduced.
 
 ## Shared result — F04, 2026-09-24
 
@@ -50,7 +58,7 @@ The [general modifier identity/stacking/lifetime record](../../../../../docs/tbg
 
 New pinned operations include SetModifierValueByBehaviorFlag(Add,LifeTime), a parent installing children on current and newly appearing eligible members, and named cleanup when that parent ends. Public skill text and authored explanations identify the observable timer/stack behavior without inventing unread pinned numerical rows or native matching/dispatcher code. The ordinary dynamic-DoT explanation and the limited snapshot report retain their actual evidence strength; no new gameplay experiment is claimed.
 
-F06/W09/W10 remain active for specific same-template matching, stronger/weaker and already-extended update precedence, first-step/action exceptions, property sampling and overlapping removal visibility. F06 handed off to F08's action/clock boundary, whose first shared result is now above. The prior handoff remains checkpoint history rather than an unexecuted current assignment; no backend implementation dependency is introduced.
+F06/W09/W10 remain active for specific same-template matching, stronger/weaker and already-extended update precedence, first-step/action exceptions, property sampling and overlapping removal visibility. F06 handed off to F08's action/clock boundary, whose first-pass result is now above. The prior handoff remains checkpoint history rather than an unexecuted current assignment; no backend implementation dependency is introduced.
 
 ## Shared result — F05, 2026-09-24
 
@@ -74,7 +82,7 @@ The [foundation-first research roadmap](../../../../../docs/tbgd_evidence/shared
 
 The [general damage formula/input-layer record](../../../../../docs/tbgd_evidence/shared/general_damage_formula_and_input_layers_v1.md) starts this pass. It joins attributed ordinary damage mathematics to exact shared DEF constants, common monster reduction/break/restoration and existing parameter/context/property evidence. It separates outgoing bonus from vulnerability, additive DEF reduction/ignore from their ownership, and the common toughness reduction from duplicate counting. Ordinary formulas are positive knowledge; exact cap quantities, special modes, rounding and transition-hit timing remain named questions.
 
-This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06, F08, F07, F04 and F09 now have first-pass records above; the roadmap sets F10 as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
+This record supersedes R1's historical blanket restriction on public formulas for the claims it covers, without rewriting R1's exact source evidence. No global W04 closure or local-runtime validation is claimed. F03, F05, F06, F08, F07, F04, F09 and F10 now have first-pass records above; the roadmap sets F01 synthesis as the next priority rather than an individual kit follow-up. The foundation roadmap records the remaining modules and their exit criteria; no native-code recovery or implementation repair is a prerequisite.
 
 ## Current source finding — Guinaifen Burn, 2026-09-23
 
@@ -192,6 +200,7 @@ Governance and research ledgers:
 - [General Energy, regeneration, Skill Points and capacity](../../../../../docs/tbgd_evidence/shared/general_energy_skill_point_economy_v1.md)
 - [General healing, shields and HP resolution](../../../../../docs/tbgd_evidence/shared/general_healing_shield_hp_resolution_v1.md)
 - [General target selection, expansion, aggro and source context](../../../../../docs/tbgd_evidence/shared/general_target_selection_expansion_source_context_v1.md)
+- [General event, entity and encounter lifecycle](../../../../../docs/tbgd_evidence/shared/general_event_entity_encounter_lifecycle_v1.md)
 - [BATTLE_SCOPE.md](BATTLE_SCOPE.md)
 - [SOURCE_FAMILY_INVENTORY.md](SOURCE_FAMILY_INVENTORY.md)
 - [BATTLE_RESEARCH_WORKLIST.md](BATTLE_RESEARCH_WORKLIST.md)
