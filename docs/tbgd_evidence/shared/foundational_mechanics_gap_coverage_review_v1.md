@@ -1,5 +1,13 @@
 # Integrated foundation-gap and source-coverage review v1
 
+## Current execution follow-through — 2026-09-26
+
+[Break-transition hits and source-qualified Super Break accounting v1][DIVE] is now the persisted FG-01 investigation result. It consolidates the preceding uncommitted readings and adds one independent ordinary source/window contrast. Shared target-side eligibility, ParamValue2 addition, two explicit resets and named-state copying are mapped; Rappa's source-specific named-hit reset and explicit input show why one global pool or one universal attack-end trigger is insufficient. Explicit zero does not fall back to the shared total; an omitted input is still not an observed -1 default.
+
+The ordinary crossing-hit/unused-portion exclusion remains a carried-forward attributed model, not a new gameplay experiment or a raw-only proof of dispatch ordering. The ordinary direct-damage hit's exact mitigation sample, ParamValue2 construction, omitted-input transport and nested reset/read interleaving remain precise FG-01 residuals. The new explicit-input branch is not used to pretend those questions are closed. F02/F03/W04/W06 remain active; no backend or progression task is introduced.
+
+The original review and execution card below are retained as the 2026-09-24 planning snapshot. Their `selected / not_started` and review-time next-task wording no longer describe current execution progress. Continue from the new record's remaining questions rather than repeating its two accounting chains or starting another character kit. The review, roadmap, README and worklist's existing links to this document now lead to this dated follow-through; their historical source claims and broad checkboxes are not rewritten.
+
 ## 1. Review decision and scope
 
 Reviewed 2026-09-24 at evidence parent `fd3fbbd1e4a3ea88b14eb9ba7f8389f32e2e8a8a`, following F01 checkpoint `5810890380`. PR #8 was read as open, Draft and unmerged; its 43 changed paths were evidence Markdown. TBGD authority remains `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`.
@@ -245,3 +253,4 @@ Next step is the single selected card above. Other candidates remain tracked, no
 [INVENTORY]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/SOURCE_FAMILY_INVENTORY.md
 [SCOPE]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_SCOPE.md
 [README]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/README.md
+[DIVE]: break_transition_hit_super_break_accounting_v1.md
