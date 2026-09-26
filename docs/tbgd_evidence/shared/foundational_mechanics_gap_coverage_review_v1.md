@@ -1,6 +1,14 @@
 # Integrated foundation-gap and source-coverage review v1
 
-## Current execution follow-through — 2026-09-26
+## Current focus — FG-02 first lifetime step, 2026-09-26
+
+Following the user's approval to switch research priorities, [First modifier lifetime step: application turn, clock owner and delayed grants v1][FIRST-STEP] advances the first-step portion of FG-02 from evidence parent `1b3ed9e96adda5e21702392e414e142ebf576c7c` and checkpoint `5842523823`. It does not start a full refresh/control/extra-action census. The bounded result distinguishes recipient application-turn counting from grace, the first future recipient turn from an already-running application turn, and a pending listener from the later timed property effect.
+
+Asta and Bronya's selected Ultimate grants have replayed entry/parameter/recipient/property chains and different serialized first-step inputs: Bronya explicitly sets `LifeStepImmediately=true`, whereas Asta's request omits it. Public explanations and a historical same-recipient/no-Resurgence reported comparison support effect-specific first-step behavior. This is not proof of a universal native default or of subtracting duration at the instant of installation. The already inspected Bronya source also supplies an explicit listener -> OnAfterSkillUse -> one-turn speed grant -> listener-removal chain; preview metadata is not the live speed grant. Public Hanya/Seele contrasts prevent inferring policy from a speed-versus-damage label or whether the effect already benefited an attack.
+
+FG-01's ordinary chain is now phase-concluded for prioritization, with its precise transport/interleaving/exception residuals preserved below and in its main record. It is not the standing next task, and no whole F/W package is promoted to mechanism_closed. The new FG-02 record leaves reapplication's treatment of first-step exemption, exact phase-edge/queued-action context, other lifecycle families and removal ordering open. A useful next discriminator is one same-effect reapplication before its first eligible decrement, not another broad overview or a backend repair. Historical next-task wording in the linked roadmap, README and worklist must be read with this current focus; it does not reauthorize repeated FG-01 scans.
+
+## Prior FG-01 execution follow-through — 2026-09-26
 
 [Break-transition hits and source-qualified Super Break accounting v1][DIVE] is now the persisted FG-01 investigation result. It consolidates the preceding uncommitted readings and adds one independent ordinary source/window contrast. Shared target-side eligibility, ParamValue2 addition, two explicit resets and named-state copying are mapped; Rappa's source-specific named-hit reset and explicit input show why one global pool or one universal attack-end trigger is insufficient. Explicit zero does not fall back to the shared total; an omitted input is still not an observed -1 default.
 
@@ -151,7 +159,7 @@ These labels describe a claim's remaining question; they are not new workflow st
 | FG-02 | First eligible duration step and refresh/extend behavior under normal, advanced, extra and inserted actions | F06/F08/F10; follow-up candidate, not solved by action names |
 | FG-03 | Per-family property/component sampling and nested/inherited source propagation | F01/F04/F06/F09; distinguish stored coefficient from sampled source stat |
 | FG-04 | Energy per-hit allocation and entry/carry-over; debit/refund/grant/availability boundaries | F07/F10; not a new RNG or progression task |
-| FG-05 | Multi-shield and consumed-protection arbitration | F04/F05/F06; split shield-pool and immunity questions into separate cards when selected |
+| FG-05 | Multi-shield and consumed-protection arbitration | F04/F05/F06; split shield-pool and immunity questions into separate cards |
 | FG-06 | Ordinary enemy final-property composition and contextual overrides | W14/R6; still lacks a dedicated completed common construction model |
 | FG-07 | Secondary-entity synchronization/slot rules, unowned shared definitions and source-specific target policies | W13/W15/W17; no automatic return to runtime admission |
 | FG-08 | Special ordinary damage kinds, non-deferred encounter clocks/limits and reachable-source coverage | F02/F08/F10 + W16/W17/W18; retain without expanding into deferred modes |
@@ -256,3 +264,4 @@ Next step is the single selected card above. Other candidates remain tracked, no
 [SCOPE]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/BATTLE_SCOPE.md
 [README]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/README.md
 [DIVE]: break_transition_hit_super_break_accounting_v1.md
+[FIRST-STEP]: modifier_first_lifetime_step_v1.md
