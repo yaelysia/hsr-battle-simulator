@@ -2,13 +2,13 @@
 
 ## 1. Scope, publication state and result
 
-Reviewed 2026-09-26. Evidence parent: `a987d2607f135799a9427c9341ebdf002a1b2c90`; preceding published checkpoint: `5811382763`. Raw authority remains `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`. PR #8 remains open/Draft and docs/evidence-only.
+Reviewed 2026-09-26. Initial evidence parent: `a987d2607f135799a9427c9341ebdf002a1b2c90`; initial preceding published checkpoint: `5811382763`. The mitigation continuation starts from `9976cfcc0e8bd0bdd939c74f61bbffcdea633e40` and checkpoint `5842413717`. Raw authority remains `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`. PR #8 remains open/Draft and docs/evidence-only.
 
-This executes the selected `DIVE-BREAK-TRANSITION-ACCOUNTING-V1` from [the integrated review][REVIEW], rather than starting another foundation overview or completing a character kit. It is the first persisted record of the preceding read-only investigation and this continuation. The earlier investigation did not publish a commit; its source readings and attributed interpretation are explicitly distinguished below from this continuation's new contrast.
+This executes the selected `DIVE-BREAK-TRANSITION-ACCOUNTING-V1` from [the integrated review][REVIEW], rather than starting another foundation overview or completing a character kit. The first persisted version consolidated the preceding read-only investigation and an independent source/window contrast. This continuation adds an explicit public explanation of the ordinary crossing hit, rereads the corresponding pinned reduction lifecycle, and updates the previously open behavioral claim in section 9. The previous complete record remains auditable at `9976cfcc0e8bd0bdd939c74f61bbffcdea633e40`.
 
-**Result:** the shared target-side accumulator's eligibility, addition, two explicit reset callbacks and named-state reader are mapped. A second ordinary source has its own named-hit window and passes a nonnegative value explicitly, demonstrating that one global accumulator or one universal attack-end trigger is insufficient. Zero, negative sentinel and omitted inputs are different cases. The ordinary crossing-hit exclusion model is retained with its public provenance; the ordinary direct-damage hit's exact mitigation sampling remains open.
+**Result:** the shared target-side accumulator's eligibility, addition, two explicit reset callbacks and named-state reader are mapped. A second ordinary source has its own named-hit window and passes a nonnegative value explicitly, demonstrating that one global accumulator or one universal attack-end trigger is insufficient. Zero, negative sentinel and omitted inputs are different cases. The ordinary crossing-hit exclusion model remains attributed; the ordinary direct hit that causes Weakness Break now has a supported public-model answer: it still receives the common 10% reduction. Exact native sampling/dispatch implementation is not thereby recovered.
 
-FG-01/F02/F03/W04/W06 remain active for the named residuals, not a backend repair. No finished-build acquisition, progression, generic scheduler/RNG reconstruction, special-bar survey, simultaneous death/revive, production-code modification or runtime acceptance is part of this record.
+FG-01/F02/F03/W04/W06 remain active for the named transport, interleaving and exceptional-behavior residuals, not for an unqualified unknown about the ordinary crossing hit's common reduction. No finished-build acquisition, progression, generic scheduler/RNG reconstruction, special-bar survey, simultaneous death/revive, production-code modification or runtime acceptance is part of this record.
 
 ## 2. Evidence register and strength
 
@@ -16,24 +16,29 @@ All S paths are relative to the fixed TBGD repository. Named occurrences, full b
 
 | Ref | Source and selected occurrence | Complete blob / treatment |
 | --- | --- | --- |
-| S1 | [Level_BattleCommonRule_Ability][S1], entire `StageAbility_BattleCommonRule`, especially its SuperBreak parent and SubOnEnemy definition | `2ae50c06ac149b49b1f8fa4547000b0fc3f0b142`; full reread |
-| S2 | [GlobalTaskListTemplate][S2], complete `DealSuperBreakDamage` and `BeingDealSuperBreakDamage` entries | `d1da985fbac1bcf4e23f3c1dcdf7dfd11bcb5c96`; reread around lines 4150-4590 |
-| S3 | [Sam Ability][S3], `MAvatar_Sam_00_PointB2_SuperBreakBuff` and earlier inspected `Skill21_Phase02` | `dc815e85ba03509a158b7b4e1c7f79e3e81c9879`; caller reread 6600-6740, carrier reused from preceding exact-pin read |
-| S4 | [Rappa Ability][S4], Skill03 entry/installation, UltraMode child configuration, selected Skill11 request, complete `MAvatar_Rappa_00_PointB2_Enemy` | `03c55bdd09e158cd23dade24c9fbefab83e9d46b`; new independent source/window contrast |
-| S5 | [Rappa CharacterConfig][S5], Skill03/Skill11 entries and `745450807` binding | `86e978a5bc045736342b70ff9d4d0c367a5778cd`; new owner/parameter qualification |
-| S6 | [Common Specific modifiers][S6], `StanceBreakState` and `MonsterAllDamageReduce` | `2db782ddc81b7a1328e4086dc71c8a23295b06a8`; reread 1-298 |
-| S7 | [Monster Common Ability][S7], `Local_ListenStanceBreak.OnBeingBreak` and installing passive | `fa02f6ab070fb8da16ebd2f5976503446d633e0e`; reused preceding exact-pin read and F02/R2 |
+| S1 | [Level_BattleCommonRule_Ability][S1], entire `StageAbility_BattleCommonRule`, especially its SuperBreak parent and SubOnEnemy definition | `2ae50c06ac149b49b1f8fa4547000b0fc3f0b142`; full reread in the initial persisted pass |
+| S2 | [GlobalTaskListTemplate][S2], complete `DealSuperBreakDamage` and `BeingDealSuperBreakDamage` entries | `d1da985fbac1bcf4e23f3c1dcdf7dfd11bcb5c96`; initial pass reread around lines 4150-4590 |
+| S3 | [Sam Ability][S3], `MAvatar_Sam_00_PointB2_SuperBreakBuff` and earlier inspected `Skill21_Phase02` | `dc815e85ba03509a158b7b4e1c7f79e3e81c9879`; initial pass caller reread 6600-6740, carrier reused from preceding exact-pin read |
+| S4 | [Rappa Ability][S4], Skill03 entry/installation, UltraMode child configuration, selected Skill11 request, complete `MAvatar_Rappa_00_PointB2_Enemy` | `03c55bdd09e158cd23dade24c9fbefab83e9d46b`; independent source/window contrast from the initial persisted pass |
+| S5 | [Rappa CharacterConfig][S5], Skill03/Skill11 entries and `745450807` binding | `86e978a5bc045736342b70ff9d4d0c367a5778cd`; owner/parameter qualification from that pass |
+| S6 | [Common Specific modifiers][S6], `StanceBreakState` and `MonsterAllDamageReduce` | `2db782ddc81b7a1328e4086dc71c8a23295b06a8`; mitigation continuation reread 1-298 |
+| S7 | [Monster Common Ability][S7], `Local_ListenStanceBreak.OnBeingBreak` and installing passive | `fa02f6ab070fb8da16ebd2f5976503446d633e0e`; mitigation continuation reread 1-173 |
 | S8 | [StageCommonTemplate][S8], OnStartSequece adding `StageAbility_BattleCommonRule` | `d76c3f1d8a2536da6a6f79e4bb44b79f48b91c5a`; reused preceding exact-pin read |
 | S9 | [Sam CharacterConfig][S9], PointB2 indices 0-3 | `0f682c63600b996e63ebfc24e761a1a6d28fec10`; reused preceding exact-pin read |
+| N1 | [DamageBehaviorTemplateListConfig][N1], complete three-entry configuration | `cee384c25587819c64b36dfe1b485ff0e797ada3`; bounded negative for the omitted-template-argument question, not new Super Break semantics |
+| N2 | [GameCoreConfigPathInfo][N2], complete path registry | `6eca8f5e8a406f37ee8e14a5b1e21438b5663f25`; directory registration, not argument-default data |
 
 S4 replay ranges: 670-910 for the selected named attack; 2820-3340 for Skill03 Phase01 -> Phase02 and mode installation; 4600-5150 for UltraMode/child configuration; 5110-5470 for the complete PointB2 enemy-state callbacks and declarations. Camera, visual and unrelated resource neighbors are not promoted into the accounting chain.
 
 | Ref | Public/source-model evidence | Actual use and qualification |
 | --- | --- | --- |
-| P1 | [KQM SRL damage formula][P1] at `de0e5c09c8dbba9577367ad86e991fe91c4f0e36`, blob `2928c24daa92422d90df5cf3ef1766932779f4d2` | Reread here. Supplies the ordinary 0.9/1 toughness-state model, but no explicit crossing-hit sampling instant. It is marked under construction and credits arkkus; not an independent new test. |
-| P2 | [Previously cited TapTap split-hit explanation][P2] | Carried forward from the immediately preceding read-only investigation, which used it to adopt exclusion of the crossing hit and its unused toughness. Not independently reread through the GitHub-only continuation; no new empirical corroboration or exact-pin numerical-row claim. |
+| P1 | [KQM SRL damage formula][P1] at `de0e5c09c8dbba9577367ad86e991fe91c4f0e36`, blob `2928c24daa92422d90df5cf3ef1766932779f4d2` | Reread in the initial persisted pass. Supplies the ordinary 0.9/1 toughness-state model, but no explicit crossing-hit sampling instant. It is marked under construction and credits arkkus; not an independent new test. |
+| P2 | [TapTap V2.3 split-hit explanation][P2], 小橙子阿, published 2024-06-19 | Actually retrieved in the mitigation continuation, particularly the enhanced-skill toughness section. Supports the previously attributed post-break-segment interpretation and stated five-part example. This reread is not a second experiment or an exact-pin numerical-row extraction. |
+| P3 | [KQM Honkai: Star Rail Teambuilding Guide][P3], the paragraph about a heavy hit causing Weakness Break | Retrieved 2026-09-26. Explicitly addresses the breaking hit's common reduction. Authored explanation, not a newly replayed test or native source. No article-specific publication/update date was established. |
 
-The P2 interpretation is kept as an attributed ordinary behavior model, not elevated to a raw-only theorem about native event dispatch. S1's predicate is compatible with it, but the callback name alone cannot prove the precise native state visible at every event. The former hypothetical Q10/Q15/Q20/Q30 comparison therefore has a preferred ordinary model with stated support, not a newly performed four-way experiment.
+P3 credits writers jas#6562, Meowreii (Meow#0217), NeirodTheSeal#2104, Sitri, and skylarke#0001; editors Cyn, fourmana, and Sushou; transcription by Nyte. Its page contains legacy/version-1.0 context. Retrieval date and footer copyright are not a game-version stamp. Only the identified combat-mechanic statement is adopted, not its investment advice or all surrounding early-game generalizations. Earlier F09 used this guide for a different claim; locating its crossing-hit paragraph is new claim extraction, not discovery of an independent experiment.
+
+P2's interpretation remains an attributed ordinary behavior model, not a raw-only theorem about native event dispatch. S1's predicate is compatible with it, but the callback name alone cannot prove the precise native state visible at every event. P3 supplies an independent explanation of the direct hit's reduction boundary, not another experiment validating P2's Super Break allocation. Source compatibility, public explanation and synthetic arithmetic retain different evidence roles.
 
 Existing [R0][R0] arithmetic/context vocabulary, [F01][F01] source-qualified values, [F02][F02] damage-state distinctions, [F03][F03] formula/unit roles and [R2][R2] source reachability are reused. This record does not recertify all of their raw files or external tests.
 
@@ -187,7 +192,7 @@ The final-use name/source/mode predicates also prevent interpreting this as an u
 
 ## 8. Ordinary crossing model and required controls
 
-Retain the preceding P2-attributed ordinary model: with no force override, no intervening recovery/lock, a valid ordinary bar and nonlethal matching hits, the crossing hit and its unused toughness are excluded; later eligible hit inputs are included. Write `r` for initial remaining toughness and `q_i` for each correctly resolved hit input in one consistent unit. If `k` is the first hit whose cumulative reduction reaches r, the ordinary model is:
+Retain the P2-attributed ordinary model: with no force override, no intervening recovery/lock, a valid ordinary bar and nonlethal matching hits, the crossing hit and its unused toughness are excluded; later eligible hit inputs are included. Write `r` for initial remaining toughness and `q_i` for each correctly resolved hit input in one consistent unit. If `k` is the first hit whose cumulative reduction reaches r, the ordinary model is:
 
 ```text
 Q = sum(q_i for i > k)
@@ -208,17 +213,68 @@ This summarizes an observable allocation rule under those assumptions. It is not
 
 All entries are model/source-conditional predictions, not executed tests. The final row depends on the relevant reset event actually occurring, not on a fabricated universal action boundary.
 
-The preceding Sam carrier read records four primary requests with HitSplitRatio .15 followed by one .4 request. Its previously quoted total45/displayed-unit example and q=[6.75,6.75,6.75,6.75,18] remain public-example inputs, not a solved loader-to-1659254037 mapping. At r=25 that model yields Q=18, not45-25=20. Different weakness, efficiency, source or split rules require independently resolved q_i.
+The preceding Sam carrier read records four primary requests with HitSplitRatio .15 followed by one .4 request. Its quoted total45/displayed-unit example and q=[6.75,6.75,6.75,6.75,18] remain P2 public-example inputs, not a solved loader-to-1659254037 mapping. At r=25 that model yields Q=18, not45-25=20. Different weakness, efficiency, source or split rules require independently resolved q_i.
 
-## 9. Crossing eligibility is not ordinary direct-damage sampling
+## 9. Ordinary crossing-hit mitigation: public behavior resolved, native internals separate
 
-S7's `OnBeingBreak` authors AddModifier(StanceBreakState), then RemoveModifier(MonsterAllDamageReduce). S6 shows that the former carries `Break` and has an `OnCreate -> TriggerBreak(Caster)` request; the latter independently contributes `AllDamageReduce=.1`.
+### 9.1 Directly relevant explanation and pinned reconciliation
 
-Thus presence of Break, presence/withdrawal of the reduction contribution, and the damage context's sampled reduction are different facts. Installation can have its own callbacks; serialized task order does not establish that all nested work is synchronously complete before the next task, or when the current ordinary hit fixes its damage operands.
+P3 explicitly states: "this damage reduction also applies to the hit that causes the Weakness Break." Its surrounding paragraph concerns the damage dealer's ability hit, so it directly addresses the ordinary crossing hit rather than merely restating the before/after state formula. The covered ordinary hit retains the common 10% reduction, giving a factor of 0.9. This replaces the earlier unqualified open behavioral claim; it is not a fresh measurement.
 
-P1 describes a 0.9 factor before break and 1 afterward, but does not explicitly resolve the ordinary hit that crosses the threshold. A separate initial-Break damage request is not that ordinary hit. This record does not assign a new conclusive 0.9 or1 outcome to either request from the stage accumulator's eligibility predicate.
+S7's `OnBeingBreak` authors AddModifier(StanceBreakState), then RemoveModifier(MonsterAllDamageReduce). S6 shows that the former carries `Break` and has an `OnCreate -> TriggerBreak(Caster)` request; the latter independently contributes `AllDamageReduce=.1`. The specific replay anchors are:
 
-A clean missing discriminator is the *same ordinary hit* with unchanged offensive/defensive inputs and crit outcome, differing only in remaining toughness so that it is noncrossing versus crossing. Identify its damage separately from initial Break, later hits and Super Break; do not compare a summed UI total. An adequately scoped original report can settle the observable rule without a native engine dump. No such directly discriminating report was newly obtained through this continuation's GitHub source checks.
+```text
+S7 $.AbilityList[0].OnStart[2]
+  installs MonsterAllDamageReduce
+S7 $.AbilityList[0].Modifiers.Local_ListenStanceBreak._CallbackList[1]
+  OnBeingBreak: install StanceBreakState; request reduction-state removal
+S6 $.ModifierMap.MonsterAllDamageReduce._CallbackList[0].CallbackConfig[0]
+  StackProperty(AllDamageReduce, 0.1)
+S6 $.ModifierMap.StanceBreakState._CallbackList[1].CallbackConfig[3]
+  OnDestroy: reinstall MonsterAllDamageReduce
+```
+
+These existing source facts were reread for reconciliation, not claimed as new discoveries. They identify the contribution and its transition lifecycle. P3 determines the observable boundary the raw sequence alone did not determine. Neither source is rewritten to simulate the other.
+
+### 9.2 A joint ordinary-hit and toughness model
+
+For a sequence of separately resolved, nonlethal ordinary hits with matching weaknesses, one normal bar, no forced-Super-Break override, no intervening recovery and no other changing modifiers, let k be the crossing hit defined in section 8. Write C_i for the ordinary damage of hit i after its other applicable factors, but before this common reduction. The reconciled model is:
+
+```text
+ordinary_damage_i = C_i * m_i
+m_i = 0.9 for i <= k; 1 for i > k
+Q = sum(q_i for i > k)
+```
+
+This is a behavioral summary, not a recovered call stack. The common contribution is counted once: do not retain it in a general reduction pool and also multiply another toughness factor. C_i may differ between hits; holding it fixed below is a deliberate calculation setup, not a claim that real skill segments all have equal damage.
+
+For the original synthetic q=[10,10,10], r=15 and C_i=1000 setup:
+
+| Hit | Relevant bar transition | Ordinary damage | Q contribution |
+| --- | --- | ---: | ---: |
+| 1 | 15 -> 5 | 900 | 0 |
+| 2 | 5 -> broken; crossing segment | 900 | 0 |
+| 3 | already broken | 1000 | 10 |
+
+Ordinary subtotal is 2800. Switching off reduction on the crossing segment too early would instead predict2900; freezing it for the entire three-hit sequence would predict2700. Those alternatives are discriminators, not observed game outputs. Initial Break damage and any generated Super Break damage are separate outputs, excluded from all three subtotals.
+
+| Control with the same supplied q and C_i | Ordinary subtotal | Q |
+| --- | ---: | ---: |
+| r=20, exact zero on hit2 | 2800 | 10 |
+| r=30, break on final hit | 2700 | 0 |
+| r>30, no break | 2700 | 0 |
+| already broken before hit1 | 3000 | 30 |
+| r=15, no applicable Super Break enabler | 2800 | No Super Break emission follows merely from recorded Q |
+
+The r=30 and r>30 rows share the ordinary subtotal and zero Q, but are not equivalent full outcomes: one has a break transition and the other does not. This is why total UI damage or the ordinary subtotal alone cannot identify every output channel. These are synthetic predictions from the stated model, not new gameplay tests.
+
+### 9.3 What this does not prove
+
+Presence of Break, withdrawal of a reduction contribution and a sampled damage context remain distinct. Retaining the pre-transition common factor does not locate the native sampling instruction, prove HP mutation precedes toughness mutation, require every nested callback to finish synchronously, or establish a universal event order. It also does not freeze every offensive stat for the whole action or settle whether a different newly triggered vulnerability applies to the current hit.
+
+The separate initial-Break request is not the ordinary hit. This continuation does not assign that request a new mitigation value by analogy; its own formula/source evidence must be preserved. Special bars, lethal/phase transitions, forced paths, bypass flags and independently changing modifiers remain outside the controlled ordinary model.
+
+P3 is a credited public explanation, not a controlled test supplied with measured hit-by-hit data. A future contradictory, properly isolated observation should reopen the affected applicability question. Missing native code alone is not a reason to demote this usable behavior model back to wholly unknown.
 
 ## 10. Claim accounting and precise residuals
 
@@ -228,23 +284,26 @@ A clean missing discriminator is the *same ordinary hit* with unchanged offensiv
 | Negative-copy versus explicit-input selection and zero guard | Complete S2 bodies, source-facing confirmed | Omitted-argument setup in callers that do not serialize the input |
 | Read is not an explicitly authored consume operation | Complete S2 bodies | Resulting nested event side effects are not excluded |
 | Selected Sam source thresholds and mutually exclusive coefficient branches | S3/S9 | No newly read numeric point row; missing StanceValue bridge remains |
-| Independent Rappa parent/child, named-hit reset and explicit-input reader | S4/S5/S2, new source-facing contrast | Per-native-hit grouping and additional callback/context propagation |
+| Independent Rappa parent/child, named-hit reset and explicit-input reader | S4/S5/S2, source-facing contrast | Per-native-hit grouping and additional callback/context propagation |
 | Same names/hashes are insufficient pool identity | Different containing definitions, reset/use chains and named-source copy | Not a recovered universal native scope resolver |
-| Ordinary crossing-hit and unused-portion exclusion | Carried-forward P2 interpretation, source-compatible | Not new testing or a raw-only proof of event visibility |
-| Ordinary crossing-hit direct-damage reduction sample | Open | Requires a properly separated observed result or exact authoritative evaluation sequence |
+| Ordinary crossing-hit and unused-portion exclusion | P2 interpretation, now directly reread; source-compatible | Not new testing or a raw-only proof of event visibility |
+| Ordinary crossing hit retains the common 0.9 factor | P3's explicit breaking-hit statement, reconciled with reread S6/S7 | Public-model result, not a native sampling instruction or exception census |
+| Exact internal timing that realizes the result | Still unresolved | Does not invalidate the ordinary observable boundary above |
 | Whole FG-01 or local runtime correctness | Not claimed | F02/F03/W04/W06 remain active; no new C/D/E |
 
 Additional specific residuals are ParamValue2's complete numerical construction; native template defaults for omitted inputs; read/reset ordering across multiple enablers and nested requests; and the observable native-hit grouping needed to apply each source's window. Do not expand these into a universal scheduler census or erase the supported explicit-input branch.
 
-Navigation checks for OnBeforeBeingStanceDamage found the new ordinary contrast; deferred GridFight results were not admitted. A default-branch StanceValue/DefaultValue search supplied no bridge and is not pin-wide absence proof. A narrow KQM SRL issue search supplied no additional toughness report; it is not proof that no public report exists. The P1 page was actually reread, not its uninspected linked Google document or video evidence.
+The initial persisted pass's navigation checks for OnBeforeBeingStanceDamage found the independent contrast; deferred GridFight results were not admitted. Its default-branch StanceValue/DefaultValue search and narrow KQM SRL issue search supplied no bridge/report, not pin-wide or public-web absence proof. This continuation's successful P3 lookup supersedes any inference that no relevant public explanation can be found.
+
+A bounded metadata check at the pin inspected the ExcelOutput and Config/GlobalConfig directory listings, then N1 and N2. N1 contains TrueDamage, DirectlyLoseHp and DirectlyLoseHpHit behavior flags, not a StanceValue default. N2 registers paths, including Config/ExcelOutputGameCore, but contains no per-template argument values. The Config tree does not expose that registered directory, consistent with the earlier export-boundary record; no fresh all-corpus absence theorem follows. Neither file closes the omitted-argument or ParamValue2 bridge. Stop this metadata route unless a concrete new source supplies the missing assignment; do not add more identical callers to manufacture a default.
 
 ## 11. Publication and continuation boundary
 
-Persist this main record and link the current result from the integrated review. Preserve its original execution card and historical review beneath the dated follow-through. A PR checkpoint records actual commits, diffs and readbacks; no publication is inferred from an uncommitted conversation answer.
+This mitigation continuation updates this main record and the current follow-through in the integrated review. It adds the P3 behavioral result and P2 direct-retrieval provenance, not another character sample. Prior versions and the original planning card remain auditable. A PR checkpoint records actual commits, diffs and readbacks; no publication is inferred from an uncommitted conversation answer.
 
-Validation is manual GitHub source/document reading, exact-pin/blob and predicate/owner/expression checks, labeled model arithmetic, and Git diff/head/Draft checks. No game, simulator, Direct, test suite or workflow is intentionally run for this investigation. Runtime, lowering, IR, tests, CI, broad W checkboxes, mode scope and the TBGD pin remain unchanged. Source facts and external interpretations are not local-runtime E.
+Validation is manual GitHub source/document reading, exact-pin/blob and predicate/owner/expression checks, public-author/text/scope inspection, labeled model arithmetic, and Git diff/head/Draft checks. No game, simulator, Direct, test suite or workflow is intentionally run for this investigation. Runtime, lowering, IR, tests, CI, broad W checkboxes, mode scope and the TBGD pin remain unchanged. Source facts and external interpretations are not local-runtime E.
 
-**Next within FG-01:** prioritize directly discriminating evidence for the ordinary crossing hit's reduction sample, or a concrete bridge for ParamValue2 / omitted template input. Reuse the now-persisted two source/window contracts; do not start another identical accumulator scan or another character kit. Other foundation gaps remain queued rather than automatically dispatched. A native-body absence does not prohibit a credible public behavior result, and a missing local handler is not a research gate.
+**Continuation decision:** the ordinary crossing hit's common-reduction behavior is no longer the next unanswered 0.9-versus1 question. Pursue ParamValue2, omitted input or interleaving only through a new concrete assignment or a discriminating public behavior source. Without such an entry, retain those narrow residuals and return to the integrated common-mechanism queue rather than repeat the two accounting chains or hold all research for native-code recovery. Other foundation tasks are not executed in this checkpoint. No backend repair or progression prerequisite is introduced.
 
 [S1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Level/Level_BattleCommonRule_Ability.json
 [S2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json
@@ -255,8 +314,11 @@ Validation is manual GitHub source/document reading, exact-pin/blob and predicat
 [S7]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Monster/Monster_Common_Ability.json
 [S8]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/Level/StageCommonTemplate.json
 [S9]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Avatar/Avatar_Sam_00_Config.json
+[N1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/DamageBehaviorTemplateListConfig.json
+[N2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/GameCoreConfigPathInfo.json
 [P1]: https://github.com/KQM-git/SRL/blob/de0e5c09c8dbba9577367ad86e991fe91c4f0e36/docs/combat-mechanics/damage/damage-formula.md
 [P2]: https://www.taptap.cn/moment/552526368189974727
+[P3]: https://hsr.keqingmains.com/misc/teambuilding-guide/
 [REVIEW]: foundational_mechanics_gap_coverage_review_v1.md
 [R0]: battle_execution_language_core_v1.md
 [R2]: weakness_toughness_break_vertical_slice_v1.md
