@@ -1,5 +1,11 @@
 # General weakness, toughness, Weakness Break and Super Break v1
 
+## Notification clarification — 2026-09-28
+
+[Break notification dispatch and full-chain status v1](break_notification_dispatch_and_full_chain_status_v1.md) addresses the user's explicit notification/deduplication question from evidence parent `bd417912e57f1e8196ae6a6ebbdf7b2e4509675b`. Section 4.1's former "distinct TriggerBreak notification surface" meant a separately serialized task; it did not establish an additional logical Break event. The native TriggerBreak-to-callback mapping, attribution, multiplicity and cross-callback order remain unresolved. The new record adds source-owned pre-Break/property and proc-damage consumers, not a claim that the full dispatch chain is closed.
+
+The later [ordinary transition/accounting record](break_transition_hit_super_break_accounting_v1.md) remains the authority for the crossing-hit mitigation and selected Super Break follow-through. The original first-pass result and next-foundation wording below are historical; this clarification does not reopen settled ordinary numerical scans or change the pin.
+
 ## 1. Scope and result
 
 Reviewed **2026-09-24**. Evidence parent: `21c3d13a47d36dea57a25aa82b0915f4e6c4f3ea`. Raw authority is `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`. PR #8 remains Draft and documentation/evidence-only.
@@ -81,10 +87,12 @@ Reuse the ordinary common-passive chain from R2/F02:
 ordinary monster -> common break listener
   OnBeingBreak -> StanceBreakState + remove MonsterAllDamageReduce
   StanceBreakState.OnCreate -> holder ModifyActionDelay(+0.25 normalized)
-                           -> distinct TriggerBreak notification surface
+                           -> explicit TriggerBreak(Caster) task; notification mapping unresolved
   OnEndBreak -> RemoveSelfModifier
   OnDestroy -> ResetStance / SetStanceCount / restore common reduction
 ```
+
+The task's relationship to OnTriggerBreak/OnBeingBreak, native attribution and multiplicity remain open as detailed in [R2] sections 10/14 and the notification clarification above. Local task order does not prove a total order across nested callbacks, and this diagram does not authorize an additional full Break-notification pass.
 
 The zero-depletion interpretation comes from the gameplay model, not from an invented `Stance <= 0` JSON predicate. Restoration requests are explicit; special recovery interception and detailed multi-action timing are separate. P3's Ultimate description shows why the next attempted recovery cannot always be treated as an unconditional transition.
 
