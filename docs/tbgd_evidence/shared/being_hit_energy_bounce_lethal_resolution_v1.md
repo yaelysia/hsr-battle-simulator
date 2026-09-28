@@ -151,6 +151,7 @@ Gepard_00_PassiveSkill_1_Insert
     SetDynamicValueByProperty(MDF_MaxSP, Caster, MaxSP)
     ModifySPNew(Caster, AddValue = single-hash read -1657931065)
 ```
+
 P4 explicitly describes Commander as restoring Energy to100% when Unyielding Will triggers. Thus the recovery sequence has its own conditionally authored Energy source; it is not merely the enemy attack's SPHitBase arriving late. The raw AddValue request is preserved, not rewritten into an invented native SetEnergy command or a claim about its exact recovery-rate bypass.
 
 **A full Energy bar after this rescue cannot discriminate whether the killing hit also granted its ordinary5/10/15.** With a refill and capacity limit, both grant and no-grant hypotheses can produce the same visible full bar. This is an identifiability argument from the separate source, not a new experimental finding.
