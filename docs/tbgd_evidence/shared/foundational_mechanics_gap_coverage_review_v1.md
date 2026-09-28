@@ -1,6 +1,14 @@
 # Integrated foundation-gap and source-coverage review v1
 
-## Current focus — FG-02 first lifetime step, 2026-09-26
+## Current focus — FG-04 enemy-hit Energy, 2026-09-28
+
+At the user's request, buff first-step research is paused. The caution added to [the first-step record][FIRST-STEP] at `a1e1304efa800321372ef74aed15206ef5054d18` remains applicable; neither its disputed Bronya interpretation nor universal turn-start decrement is promoted by this continuation. The prior FG-02 focus below is history, not the next task.
+
+[Enemy-hit Energy: bounce weights, lethal hits and rescue confounders v1][HIT-ENERGY] advances the requested part of FG-04/F07/W08. The selected ordinary Decaying Shadow rows have SPHitBase10/15/5; actual single, double and bounce requests carry weights1,0.5+0.5 and1 respectively. Public skill data and ordinary recovery-rate explanations support recipient-specific weighted Energy, not one award per enemy action or full Energy for every visual hit. Numeric predictions are not new gameplay tests, and the native final resource consumer is not claimed recovered.
+
+The selected projectile checks target HP before damage. A landing on an already-zero-HP target does not issue that guarded hit, but the hit that itself makes HP zero passes the precondition: its final ordinary Energy award remains a real unresolved behavior question. The reread Gepard recovery branch has a separate trace-gated Energy request, so a full bar after rescue cannot prove the lethal-hit award. The new record isolates terminal-hit settlement, knockout preservation and rescue bonuses rather than conflating them. Continue from that discriminating question; do not repeat the ordinary bounce-weight scan or return to paused buff timing. No whole F/W package, backend implementation or test acceptance is declared complete.
+
+## Prior focus — FG-02 first lifetime step, 2026-09-26
 
 Following the user's approval to switch research priorities, [First modifier lifetime step: application turn, clock owner and delayed grants v1][FIRST-STEP] advances the first-step portion of FG-02 from evidence parent `1b3ed9e96adda5e21702392e414e142ebf576c7c` and checkpoint `5842523823`. It does not start a full refresh/control/extra-action census. The bounded result distinguishes recipient application-turn counting from grace, the first future recipient turn from an already-running application turn, and a pending listener from the later timed property effect.
 
@@ -265,3 +273,4 @@ Next step is the single selected card above. Other candidates remain tracked, no
 [README]: ../../../hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/tbgd_evidence/README.md
 [DIVE]: break_transition_hit_super_break_accounting_v1.md
 [FIRST-STEP]: modifier_first_lifetime_step_v1.md
+[HIT-ENERGY]: being_hit_energy_bounce_lethal_resolution_v1.md
