@@ -255,7 +255,7 @@ P5 supplies equal public amounts for these separately bound grant families. No u
 
 ### 10.5 Calculated cases that distinguish the models
 
-For an isolated ordinary calculation, use P5's described DEF=4000, no shield-generation bonus, so each offered grant is `0.072*4000+96=384`. Supply enough named-pool capacity to avoid all saturation below, no incoming damage/removal between steps, no stale mark, and two other living teammates with actor Shield values above 1500. These are deliberately constructed states and predictions, not game observations or pinned numeric rows.
+For an isolated ordinary calculation, use P5's described coefficient and flat amount with a supplied hypothetical DEF=4000 and no shield-generation bonus, so each offered grant is `0.072*4000+96=384`. Supply enough named-pool capacity to avoid all saturation below, no incoming damage/removal between steps, no stale mark, and two other living teammates with actor Shield values above 1500. These are deliberately constructed states and predictions, not game observations or pinned numeric rows.
 
 | State | A: own Fortified Wager / unrelated shield | B: own Fortified Wager / unrelated shield | Consequence |
 | --- | --- | --- | --- |
