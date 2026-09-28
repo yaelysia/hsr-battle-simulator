@@ -1,5 +1,9 @@
 # Enemy-hit Energy: bounce weights, lethal hits and rescue confounders v1
 
+## Current continuation — rescue-path Energy isolation, 2026-09-28
+
+The continuation from `01d6b98d5588f3264b42d23a8901cab8459e2859` / checkpoint `5861793650` adds the targeted Bailu resource audit in section 10. **The ordinary lethal hit's final Energy award and death/rescue preservation remain unresolved.** New source facts separate the direct rescue body, its rescue-charge display, and an independently conditioned recipient Energy grant when Invigoration ends. They improve source isolation; they are not a yes/no answer to the lethal-hit question. The first-pass findings below are retained, and neither paused buff timing nor another character kit is reopened.
+
 ## 1. Scope and current result
 
 Reviewed 2026-09-28 at evidence parent `a1e1304efa800321372ef74aed15206ef5054d18`, following checkpoint `5861348420`. Raw authority is `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`. PR #8 remains open/Draft and docs/evidence-only.
@@ -179,16 +183,96 @@ This is a bounded result on the ordinary base/weight distinction and the precise
 
 Publication consists of this record plus current integrated-review navigation and a checkpoint with actual head/diff/readback. Existing first-step and break records are unchanged. Validation is manual GitHub pin/blob/row/predicate review, attributed public-semantic comparison, labeled synthetic arithmetic and publication checks. No runtime/lowering/IR/tests/CI, TBGD pin, broad W checkbox or mode scope changes; no new C/D/E or passing test is claimed.
 
+## 10. Continuation: distinguish the rescued recipient's Energy from rescue work
+
+### 10.1 Additional source register
+
+This continuation rereads the already reachable Bailu rescue family for its resource consequences. F10's rescue reachability is reused, not claimed newly discovered. S6/S7 remain at the unchanged TBGD pin; P5 is an external publication at its own immutable revision.
+
+| Ref | Inspected occurrence | Full blob / evidence role |
+| --- | --- | --- |
+| S6 | [Bailu Ability][S6]: complete Avatar_Bailu_00_InsertSkill_Revive; selected Skill03 new-Invigoration branch; complete Heal_Mark OnDestroy; adjacent OnAfterBeingAttacked HP predicate | `24ec3e9dfe4bc00291367648f019b9ffb19d479d`; ranges1040-1460,1770-2140,2350-2845 |
+| S7 | [Bailu CharacterConfig][S7]: SkillP01 rescue operands, SkillRank(Rank01,0), working declarations | `e43961381a0dca5b30f9a89f31925dc247afe42e`; range245-530 |
+| P5 | [KQM SRL Bailu skill publication][P5], Gourdful of Elixir and Ambrosial Aqua | `0b434c0fd3aa2fea9a63b96d7f2affa87a4bc2c4` at `de0e5c09c8dbba9577367ad86e991fe91c4f0e36`; skill-description semantics, not a lethal-hit test |
+
+### 10.2 The direct rescue body has no explicit Energy mutation
+
+S6 `$.AbilityList[?(@.Name=='Avatar_Bailu_00_InsertSkill_Revive')].OnStart[0]` checks AbilityTargetEntity HP<=0. Its complete successful body updates the provider's rescue budget, requests presentation, cleanses and heals the target, updates the rescue-budget display, removes the pending rescue marker, and finishes its presentation work.
+
+The healing request is `HealHP(AbilityTargetEntity,AliveOnly=false,HealByHealerMaxHP)`, with percentage677042698 and flat1314703783. S7 binds those to SkillP01 indices2/3. The direct body does not contain ModifySPNew, an explicit SP refill/reset, or a serialized SPHitRatio on that HealHP request.
+
+This is a bounded absence claim about the inspected direct body, not about every task's native implementation, a called camera Ability, all heal listeners or all active equipment. It does not prove that the victim's ordinary lethal-hit Energy is canceled, that Energy is preserved through rescue, or that every possible side effect of HealHP is absent. P5 describes saving a target from a killing blow; it does not state a resource reset or lethal-hit award rule. An omitted energyGain field in published Talent data is also not quoted as an explicit zero.
+
+The body contains `SetEnergyBarState(BarType=3)`, but its values come from `MAvatar_Bailu_00_ReviveEvent`, MDF_ReviveTime and MDF_ReviveTime2, with the passive icon. These operations update the rescue-charge display, not the rescued character's current Ultimate Energy. The preceding `TriggerAnimState(...Revive...)` likewise is not a documented SP-preservation instruction.
+
+### 10.3 Invigoration's ending has a separate, conditioned Energy grant
+
+S7 maps hash-1351111378 to `SkillRank(Rank01,0)`. In S6's `Avatar_Bailu_00_Skill03_Phase02.OnStart[5]`, the per-target branch for a missing Heal_Mark prepares MDF_Rank01_AddSP: the active rank branch reads that parameter; the inactive branch explicitly writes0. The installer injects MDF_AddSP through working hash-1177881702 into MAvatar_Bailu_Heal_Mark.
+
+The corresponding consumer is:
+
+```text
+$.GlobalModifiers.MAvatar_Bailu_Heal_Mark._CallbackList[0]
+  Event = OnDestroy
+  require ModifierOwnerEntity HPRatio == 1
+  require MDF_AddSP (ContextModifier) > 0
+  -> ModifySPNew(ModifierOwnerEntity,
+       FixedAddValue = AQAR / hash-636281976)
+```
+
+P5's first Eidolon explains the ordinary meaning: when Invigoration ends with the ally at full HP, that target receives8 extra Energy. The8 is the public description's parameter in this continuation; no new same-pin AvatarRankConfig numeric row or native hash algorithm is claimed recovered. This is a recipient grant, not Energy earned by Bailu for executing a rescue. Its FixedAddValue operand is retained separately from the enemy's SPHitBase/SPHitRatio route; no new universal ERR rule is derived here.
+
+This grant is not automatic at every hit or every rescue. With the inspected inactive-rank injection0, its positive-value guard fails. With a non-full-HP holder at the OnDestroy evaluation, its full-HP guard fails. If HP is still0 at that evaluation it fails as well; the source does not thereby decide whether some later removal happens before or after healing. Neither this continuation nor the rescue body establishes that rescue itself destroys Invigoration. That causal edge must not be invented to make the extra8 occur.
+
+The same Heal_Mark's OnAfterBeingAttacked callback separately requires holder HP>0 before its ordinary Invigoration healing and use update. This is an effect-specific post-hit survival condition. It must not be transplanted into the unrelated ordinary being-hit Energy evaluator. The ready-for-rescue listener, by contrast, tests HP<=0 at OnBeingLimbo. These opposed conditions help separate which effect is being examined; they do not supply the missing Energy admission predicate.
+
+### 10.4 A cleaner discriminator, not a claimed experiment
+
+A target rescued by Bailu without Invigoration, extra Energy equipment/effects, capacity saturation or subsequent hits avoids the explicitly identified Invigoration-ending grant and the Gepard refill. The already inspected rescue readiness does not require Invigoration. This makes it a more discriminating candidate, not proof of the eventual Energy result or proof of all indirect native side effects being absent.
+
+An original observation must identify the **victim's** resource, not the healer's gauge or the rescue-charge icon. A comment that Bailu gained no Energy while rescuing someone does not answer whether the rescued character gained Energy from the lethal impact. Similarly, a post-rescue full bar or an unusable Ultimate button cannot alone resolve grant versus preservation.
+
+The original one-baseline40->40/45 test is strengthened by two initial Energy values. For the same hypothetical5-base impact at rate1, capacities safely above65, no independent changes and otherwise matched setups:
+
+| Hypothesis under those controls | Post-rescue results for initial40 / initial60 |
+| --- | --- |
+| Preserve Energy and award the terminal5 | 45 / 65 |
+| Preserve Energy but omit the terminal5 | 40 / 60 |
+| A reset/refill overwrites both histories to a fixed amount | The same value in both runs; terminal award may remain hidden |
+
+These are competing predictions, not observed outputs or an exported execution sequence. An intervening refund, rate change, state-dependent reset or an extra ordinary hit can invalidate the simplified comparison. No user-run test is being assumed or requested by recording these controls.
+
+### 10.5 What the continuation established, and where it stops
+
+| Question | Result of this continuation |
+| --- | --- |
+| Does the selected Bailu rescue directly author a victim Energy refill/reset? | No such operation in the complete inspected direct body; indirect/native behavior remains separate |
+| Is its SetEnergyBarState a victim-Energy write? | No; the operands and icon identify the rescue-budget display |
+| Is there another explicit victim Energy source nearby? | Yes; the separately installed Invigoration-ending/full-HP/rank-parameter grant is mapped |
+| Does Invigoration's HP>0 healing predicate decide ordinary lethal-hit Energy? | No; it belongs to a different effect and resource pathway |
+| Does the terminal hit finally grant ordinary Energy, and is it preserved? | Still not determined by the acquired evidence |
+
+Targeted public searches for lethal-hit awards and death/rescue Energy preservation did not yield a sufficiently isolated original trace. Skill descriptions and guides obtained explain rescue and its separately triggered grants, not the terminal ordinary award. Indexed forum comments about the healer's own gauge, other characters' alternate resources, and other rescue/version contexts were not promoted into that answer. No inaccessible video, preview text or repeated reproduction was counted as an inspected experiment. These search limits are not proof that a suitable public report cannot exist.
+
+The continuation also checked the global constants/enum surfaces and a common departure/formation branch as navigation. Their names and presentation/formation operations supplied no concrete ordinary lethal-Energy consumer or reset assignment; they are not a corpus-wide absence result. This route should not be repeated without a new specific producer/consumer anchor.
+
+The central unresolved edge remains `issued lethal damage request -> ordinary victim-Energy admission -> observed value through the particular life-state transition`. The new rescue audit removes specific interpretation hazards but does not close that edge. Further progress needs a directly relevant observation or concrete evaluator, not another character's generic rescue description. The ordinary bounce-weight model is retained; no whole FG-04/F07/W08 completion or backend acceptance is claimed. Buff timing remains paused.
+
+Publication updates this existing main record only; the integrated review already links here and correctly identifies lethal settlement as open. Prior source findings remain intact. Validation is manual immutable-source reading, exact-predicate and resource-owner comparison, attributed skill-text reconciliation and Git content/diff/head/Draft checks. No game, simulator, tests or workflow is run; no runtime, lowering, IR, tests, CI, pin, mode scope or broad worklist checkbox is changed.
+
 [S1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/ExcelOutput/MonsterSkillConfig.json
 [S2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/ExcelOutput/MonsterTemplateConfig.json
 [S3]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Monster/Monster_XP_Elite02_01_Config.json
 [S4]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Monster/Monster_XP_Elite02_01_Ability.json
 [S5]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json
+[S6]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Bailu_00_Ability.json
+[S7]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Avatar/Avatar_Bailu_00_Config.json
 [P1]: https://starrail.honeyhunterworld.com/decaying-shadow-enemy/?lang=EN
 [P1a]: https://starrail.honeyhunterworld.com/liberation-of-the-golden-age-monster_skill/?lang=EN
 [P2]: https://hsr.keqingmains.com/misc/beginner-guide/
 [P3]: https://github.com/KQM-git/SRL/blob/de0e5c09c8dbba9577367ad86e991fe91c4f0e36/src/data/enemies/Decaying_Shadow.json
 [P4]: https://srl.keqingmains.com/characters/ice/gepard
+[P5]: https://github.com/KQM-git/SRL/blob/de0e5c09c8dbba9577367ad86e991fe91c4f0e36/src/data/characters/Bailu.json
 [F07]: general_energy_skill_point_economy_v1.md
 [R4]: resource_economy_core_v1.md
 [F10]: general_event_entity_encounter_lifecycle_v1.md
