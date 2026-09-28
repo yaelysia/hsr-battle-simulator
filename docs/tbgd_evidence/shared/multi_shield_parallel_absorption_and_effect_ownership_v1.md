@@ -1,6 +1,10 @@
 # Multiple shields: parallel absorption, effect ownership and pre-hit eligibility v1
 
-## Current continuation — top-up target selection and balance sampling, 2026-09-28
+## Current continuation — depletion callbacks and changing caps, 2026-09-28
+
+[Shield depletion callbacks and changing stack caps: evidence v1](shield_depletion_callbacks_and_stack_cap_evidence_v1.md) continues from `b811950b88d95c3309e634740bb27441933f09e1` / checkpoint `5864174021`. New fixed-pin chains distinguish shield-qualified removal notifications followed by an entity recount from mixed companion removal/rebuilding during a top-up. The unsuffixed ShieldEffect has a rank-conditioned combat-property consumer, qualifying section 5.1's display shorthand. The bonus-inclusive cap is a preferred description-backed model with an explicit contrary source, not a newly measured or conclusively verified rule. Exact global dispatch order and the next grant's treatment of an existing balance above a reduced cap remain unresolved. Earlier sections retain their original provenance and scope.
+
+## Previous continuation — top-up target selection and balance sampling, 2026-09-28
 
 Section 10 continues from `53cfdb35a979f113bc1edeef302b9170956bfce0` / checkpoint `5862671994`. It distinguishes actor-level Shield selection from named-shield balance reads, traces selection before the party grant and a fresh balance read before the marked extra grant, and separates CurrentHP from HPRatio in the unshielded branch. These are new selected source/behavior distinctions, not another parallel-absorption overview or a claim to have resolved shield-cap changes. Sections 1-9 retain the first-pass record and its provenance.
 
