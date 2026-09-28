@@ -1,5 +1,9 @@
 # Multiple shields: parallel absorption, effect ownership and pre-hit eligibility v1
 
+## Current continuation — top-up target selection and balance sampling, 2026-09-28
+
+Section 10 continues from `53cfdb35a979f113bc1edeef302b9170956bfce0` / checkpoint `5862671994`. It distinguishes actor-level Shield selection from named-shield balance reads, traces selection before the party grant and a fresh balance read before the marked extra grant, and separates CurrentHP from HPRatio in the unshielded branch. These are new selected source/behavior distinctions, not another parallel-absorption overview or a claim to have resolved shield-cap changes. Sections 1-9 retain the first-pass record and its provenance.
+
 ## 1. Decision and bounded result
 
 Reviewed 2026-09-28 from evidence parent `23ae6e26fea5744ca7a746b28044ab6524e3e61d`, following checkpoint `5862417895`. Raw authority remains `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`. PR #8 is open/Draft, docs/evidence-only.
@@ -180,6 +184,97 @@ Publish this record and the integrated review's current-focus overlay only. Pres
 
 Actual validation here is manual fixed-pin source reading, consumer/recipient/event comparison, attributed public-text review and calculated accounting. No game session, simulator, automated test, CI workflow or local implementation was run. Failed page/media retrieval is not a passed experiment; no inaccessible image or video is reported as inspected. No runtime, lowering, IR, tests or CI configuration is changed, and no backend repair dependency is introduced.
 
+## 10. Continuation: top-up target selection is not the shield balance snapshot
+
+Reviewed 2026-09-28 from `53cfdb35a979f113bc1edeef302b9170956bfce0`, after checkpoint `5862671994`; startup and pre-write PR reads matched that head and open/Draft state. The selected question is how an automatic party shield plus one additional grant chooses its recipient and preserves the correct pool balance. It advances FG-05 with a bounded F09/F01 sampling contrast, not a complete Aventurine kit or a return to modifier clocks.
+
+### 10.1 Additional evidence and reuse
+
+| Ref | Exact read / role | Identity and limit |
+| --- | --- | --- |
+| S3 | InsertAbilityPhase02 PointB3 installer; complete SkillTree03_Trigger callbacks; ShieldMark definition; RecordCurrentShield template | Same blob `67212a729fcfbae03093549b69194e6987968d6c`; replay ranges 1800-2000, 5430-6250 and 6340-6508. Selection/grant sequencing is new; named carry and StackShield existence are reused |
+| S4 | [Aventurine CharacterConfig][S4], SkillP01 membership and typed PointB3/Skill02 bindings, lines 250-620 | Blob `092c497b64e381ac3e49f6bfc3198d755e7e326f`; no new pinned numeric-row extraction |
+| S2 | March Rank02_Shield_pre selected Retarget, lines 3250-3340 | Same March blob; minimal contrast between PropertyRatioType=HPRatio and S3's PropertyType=CurrentHP, not new E2 kit research |
+| P5 | [Star Rail Station's reproduced Bingo! skill text][P5], consulted 2026-09-28 | Describes a party grant plus an extra grant to the lowest-shield ally, both 7.2% DEF+96. Description semantics, not an original experiment or same-pin localization/numeric join |
+| P4 | KQM March E2 description, Version 1.5, reread | Explicit lowest HP percentage corroborates S2's ratio selector; unrelated guide paragraphs remain excluded |
+
+### 10.2 Entry, eligibility and two differently scoped readers
+
+S4 lists `Avatar_Aventurine_00_PassiveSkill01_InsertAbilityPhase02` under SkillP01. In that execution body, `BySkillPointActivated(PointB3)` gates `AddModifier(Caster,MAvatar_Aventurine_SkillTree03_Trigger)`. Its `OnAfterAttackEnd` callback first reads Caster.Defence into MDF_CurrentDefence2, then selects the extra recipient before either shield grant.
+
+The first `Retarget(AllLightTeam)` uses `ByAny` over these exact arms:
+
+| Arm | Required flag state | ByIsPropertyValueMinOrMax input | Comparison population |
+| --- | --- | --- | --- |
+| A | ParamEntity does not contain Shield | PropertyType=CurrentHP | AllLightTeam filtered to entities without Shield |
+| B | ParamEntity contains Shield | PropertyType=Shield | AllLightTeam |
+
+The request has `ByRandom=true`, `MaxNumber=1`; its task adds `MAvatar_Aventurine_PointB3_ShieldMark` to ParamEntity. It does not compare `MAvatar_Aventurine_StackableShield.CurrentShield`, shield percentage, missing HP or Caster identity. The extra recipient is not hard-wired to Aventurine.
+
+The minimum interpretation is a source/public reconciliation: P5 specifies lowest shield, and P4's independently identified lowest-HP-percentage selector uses the same predicate family with HPRatio. The occurrences do not serialize an explicit min/max switch; this record does not invent a literal default flag or claim to have recovered its native constructor. The **CurrentHP versus HPRatio distinction and the filtered comparison population are literal source facts**.
+
+For ordinary living recipients with positive Shield values when the flag is present and zero when absent, the reconciled model selects a lowest-CurrentHP member of the unshielded subset when that subset is nonempty; otherwise it selects a lowest actor-Shield member. Equal candidates are subject to the authored randomized, at-most-one selection. No uniform probability, seed, first-slot tie-break or guarantee for zero-valued-but-still-flagged shields is established. The serialized union of arms, rather than an invented unconditional lowest-HP rule, remains the source authority.
+
+By contrast, `Aventurine_RecordCurrentShield` checks the **named** stackable modifier and reads its `ValueType=CurrentShield`, then writes AventurineShieldValue in TargetEntity scope; the absent-name branch writes zero. The actor-level Shield used to rank recipients and this named-pool carry read are different operations. Under section 4's ordinary effective-shield model, an unrelated shield can alter the selection while contributing nothing to the named carry amount.
+
+### 10.3 Capture the recipient early, reread balances later
+
+The authored order within the complete selected callback is:
+
+```text
+read Caster.Defence -> MDF_CurrentDefence2
+select extra recipient by the two-arm predicate -> add ShieldMark
+IncludeTaskListTemplate(Aventurine_RecordCurrentShield)
+AddModifier(AllLightTeam, MAvatar_Aventurine_StackableShield, party operands)
+Retarget(AllLightTeam, contains ShieldMark, ByRandom=true, MaxNumber=1):
+  IncludeTaskListTemplate(Aventurine_RecordCurrentShield)
+  AddModifier(ParamEntity, MAvatar_Aventurine_StackableShield, extra operands)
+Retarget(AllLightTeam): remove ShieldMark; separate display-state work
+```
+
+Both branches of the intervening named-shield-presence condition author the party grant; their lifetime inputs differ, but that condition does not restrict the party grant to the marked entity. No lifetime-step interpretation is added.
+
+The second selection checks the mark, **not current Shield or CurrentHP again**. Meanwhile the named-balance template is called again inside that marked-target task list, after the party grant. Its body still traverses AllLightTeam and reads each named pool; it is not a read of the arbitrary displayed maximum. Thus recipient identity is retained while balance-read requests are renewed. Reusing one pre-both-grants balance snapshot or reranking recipients after the party grant would not reproduce this authored sequence.
+
+The mark has `Stacking=ReplaceByCaster`. The normal callback explicitly removes it; the trigger modifier also has `OnInsertAbilityFinish -> RemoveSelfModifier`. These are local cleanup sites, not a universal nested-callback ordering, interruption-recovery or stale-mark guarantee. The template's existing working-slot/native carry boundary remains as recorded by F04; a fresh read request is not a recovered generic StackShield implementation.
+
+### 10.4 Separate grant operands, one authored DEF read
+
+S4 and the two S3 installers distinguish the inputs:
+
+| Operand | Typed source / hashes |
+| --- | --- |
+| Party grant coefficient and flat | SkillTreeParam(PointB3,0/1): 1623238753 / -1198431344 |
+| Extra grant coefficient and flat | SkillTreeParam(PointB3,3/4): 126518748 / 880721815 |
+| Skill-sized MDF_ForceShield basis in both installers | SkillParam(Skill02,0/1): 583785975 / 1089505780 |
+| MDF_MaxShieldRatio in both installers | SkillParam(Skill02,3): -1317091266 |
+
+Both MDF_InitShieldValue expressions use `AQABAQQBAgIR` with the shared working DEF hash 995479797 followed by their own coefficient and flat hashes. The callback supplies one explicit Caster.Defence read before selection; the extra-grant task does not issue a second property read. This is selected read-site/operand evidence, not a claim that every shield or every property is permanently snapshotted, or that uninspected nested effects cannot change working state.
+
+P5 supplies equal public amounts for these separately bound grant families. No unread AvatarSkillTreeConfig row is promoted by that equality. The source does not give one doubled grant to Caster: it authors a party grant and then a second grant to the marked recipient. Stored gains can still be capped. Shield-bonus participation in the cap and changes to cap/balance when DEF changes remain separate unresolved questions; no new cap rule is inferred here.
+
+### 10.5 Calculated cases that distinguish the models
+
+For an isolated ordinary calculation, use P5's described DEF=4000, no shield-generation bonus, so each offered grant is `0.072*4000+96=384`. Supply enough named-pool capacity to avoid all saturation below, no incoming damage/removal between steps, no stale mark, and two other living teammates with actor Shield values above 1500. These are deliberately constructed states and predictions, not game observations or pinned numeric rows.
+
+| State | A: own Fortified Wager / unrelated shield | B: own Fortified Wager / unrelated shield | Consequence |
+| --- | --- | --- | --- |
+| Before selection | 0 / 1000 | 800 / 0 | Actor Shield is 1000 versus 800, so B is marked; ranking only own pools would incorrectly choose A |
+| After party +384 | 384 / 1000 | 1184 / 0 | A now has the smaller effective Shield, but the existing mark remains on B |
+| After marked extra +384 | 384 / 1000 | 1568 / 0 | B receives the second grant; post-party reranking would instead grant it to A |
+
+The external 1000 is not added to A's named balance. The second grant uses the updated B balance rather than overwriting the first grant by reusing the original 800. This example simultaneously distinguishes actor-level ranking, named-pool storage, pre-grant target capture and post-party balance resampling.
+
+For the unshielded branch, let A have HP1600/4000 and B HP1800/6000, with neither carrying Shield and all other teammates shielded. The minimum-CurrentHP interpretation chooses A even though B's HP percentage is lower (30% versus 40%). S2's March E2 HPRatio selector would prefer B under an otherwise matching unique-minimum comparison. This is an input-domain discriminator, not a new experiment or a general rule that every emergency shield targets absolute HP.
+
+### 10.6 Result and publication boundary
+
+New fixed-pin facts are the PointB3-gated installer, two-arm target predicate, pre-grant mark and post-grant mark consumer, repeated named-balance template calls, distinct party/extra parameter slots, and the selected DEF read site. The ordinary minimum/actor-protection interpretation has explicit description/model support; hypothetical values remain calculation-only. Existing parallel absorption, named carry and March's counter chain are not counted again as new discoveries.
+
+Only this main record is updated; the integrated review already identifies this shield-pool direction and links here. No whole FG-05/F04/W05/F09 closure is claimed. Open edges include special/zero-valued shield states, exact RNG/ties beyond the authored request, interruptions or stale marks, native carry transport, shield-cap/DEF-change handling, and arbitrary depletion-to-destruction ordering. The cap route was not resolved by the acquired evidence and is not presented as the result of this continuation.
+
+Repository access and publication use the GitHub connector. Validation is fixed-pin blob/occurrence reading, public skill-text reconciliation, scoped arithmetic, and commit diff/content/head/Draft checks. No game, simulator, automated tests or CI workflow was run or manually started; no skipped result is called passed. Runtime, lowering, IR, tests, CI, pin and broad coverage checkboxes are unchanged. Lethal Energy remains parked, buff timing paused, and the ordinary Break chain phase-concluded.
+
 [REVIEW]: foundational_mechanics_gap_coverage_review_v1.md
 [F01]: general_parameter_effective_property_semantics_v1.md
 [F04]: general_healing_shield_hp_resolution_v1.md
@@ -188,7 +283,9 @@ Actual validation here is manual fixed-pin source reading, consumer/recipient/ev
 [S1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Avatar/Avatar_Mar_7th_00_Config.json
 [S2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json
 [S3]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Aventurine_00_Ability.json
+[S4]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Avatar/Avatar_Aventurine_00_Config.json
 [P1]: https://hsr.keqingmains.com/fire-trailblazer/
 [P2]: https://honkai-star-rail.fandom.com/wiki/Shield
 [P3]: https://news.17173.com/content/04112024/171802075.shtml
+[P5]: https://starrailstation.com/en/character/aventurine
 [P4]: https://hsr.keqingmains.com/march-7th/
