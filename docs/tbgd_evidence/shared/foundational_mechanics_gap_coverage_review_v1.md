@@ -1,6 +1,16 @@
 # Integrated foundation-gap and source-coverage review v1
 
-## Current focus — FG-04 enemy-hit Energy, 2026-09-28
+## Current focus — FG-05 parallel shields and effect ownership, 2026-09-28
+
+Following the user's request to stop pursuing the unresolved lethal-Energy edge and reassess the major directions, [Multiple shields: parallel absorption, effect ownership and pre-hit eligibility v1][MULTI-SHIELD] records the new direction review and its executed investigation. Startup parent was `23ae6e26fea5744ca7a746b28044ab6524e3e61d`, following checkpoint `5862417895`. The direction comparison reuses this integrated map and checks the current F04/F01, ordinary-monster and March records; it is not a new census of every foundation or upstream source.
+
+**Select the shield-pool portion of FG-05; do not bundle in immunity-charge arbitration.** The ordinary parallel-depletion model is now explicitly attributed to public mechanism explanation, with preview/public-compilation provenance retained. Different shields neither add into one pool nor leave smaller shields untouched in reserve. The record separates that arithmetic from named-shield benefits, independent state removal and consumers accepting any Shield flag. Existing March formulas and Aventurine named carry/stack/cleanup are reused rather than reported as newly discovered.
+
+The new fixed-pin source chain is March's actual Talent listener: passive installation on teammates -> OnBeforeBeingAttacked checks Shield, attacking team and available counter allowance -> mark on the attacker -> OnAfterAttack requests the inserted counter and removes the mark. The latter callback has no shield recheck. This distinguishes pre-hit eligibility from post-hit reaction scheduling and from the unrelated EnergyBar display listener. It is a source-backed local request path, not a guarantee that every queued reaction executes despite control, death or target removal. Exact arbitrary-consumer depletion/event ordering, special pools and changed-cap cases remain open; no whole FG-05/F04/W05 completion is claimed.
+
+Lethal-hit Energy admission and death/rescue preservation are **parked, not solved**. Buff timing remains paused with the existing Bronya caution. The ordinary Break/Super Break chain remains phase-concluded. These decisions supersede all older next-task wording below and in linked historical records. Enemy final-property construction remains a high-value later candidate, but no backend repair dependency, native-body-only freeze or automatic character-kit survey is introduced. Publication is limited to this focus overlay and the new shield record; no game, simulator, test or CI workflow is run.
+
+## Prior focus — FG-04 enemy-hit Energy, 2026-09-28
 
 At the user's request, buff first-step research is paused. The caution added to [the first-step record][FIRST-STEP] at `a1e1304efa800321372ef74aed15206ef5054d18` remains applicable; neither its disputed Bronya interpretation nor universal turn-start decrement is promoted by this continuation. The prior FG-02 focus below is history, not the next task.
 
@@ -51,7 +61,7 @@ Every repository record below was inspected at the evidence parent above. Relati
 | [F07 resources][F07] | Per-event grants, capacity/balance, owner redirection, per-hit and initialization residuals |
 | [F08 timing][F08] | Action/category/clock matrix, ordinary AV rules and remaining first-step/ready-order questions |
 | [F09 targeting][F09] | Per-effect recipients, split-source join, attribution and cached-anchor discrepancy |
-| [F10 lifecycle][F10] | Registration/eligibility/recheck, quotas, phase/wave/result scopes and unresolved competing effects |
+| [F10 lifecycle][F10] | Registration/eligibility/recheck, quotas, phase/wave/result scopes and explicit exits |
 | [Roadmap][ROADMAP] | Current foundation summaries and checked/unchecked claim overlay |
 | [W worklist][WORKLIST] | W01-W18 and L01-L08 obligations, historical summaries and freezes |
 | [Source-family inventory][INVENTORY] | Owner-backed family triage, representative coverage, unresolved owners and export boundaries |
@@ -113,7 +123,7 @@ All F families remain active at the mechanism level. The following are retained 
 | F06 modifiers | Instance/source/holder distinctions; cap-refresh versus extension; parent clocks and cleanup; sampling separated from duration | Stronger/weaker and extended-timer arbitration, per-layer variants, first eligible step and exact sampling |
 | F07 resources | Energy versus BP; ordinary/fixed/max-relative grants; cost/capacity; signed spending and named owner deduplication | Initial/carry-over policy, per-hit allocation, debit/refund/availability ordering and special capacity teardown |
 | F08 timing | Ordinary AV/rescaling/full-gauge movement; zeroing versus insertion; normal/extra/Ultimate clocks | First-step/control matrix, exceptional ready ordering, concurrent changes and coordinated/new-entity slot accounting |
-| F09 targets/owners | Selected versus affected/traversed recipients; conditional aggro; split destination and inherited-owner contrasts | Invalidation, empty/terminal selectors, taunt/script precedence, formation changes and complete nested attribution |
+| F09 targets/owners | Selected versus affected/traversed recipients; split destination and inherited-owner contrasts | Invalidation, empty/terminal selectors, taunt/script precedence, formation changes and complete nested attribution |
 | F10 lifecycle | Listener/request/execution separation; shared recovery quotas; phase/wave/result scopes and explicit exits | Competing recoveries, state/slot retention, exact muting and exceptional spawn/result participation |
 
 The common weakness is no longer lack of every basic equation. It is incomplete agreement between **the equation, the exact event or hit that supplies its inputs, the sampled state, and the resulting next state**. This diagnosis follows the repeated residuals in F02/F03/F06/F07/F08/F09/F10; it does not assert that all those domains must be solved in one task.
@@ -274,3 +284,4 @@ Next step is the single selected card above. Other candidates remain tracked, no
 [DIVE]: break_transition_hit_super_break_accounting_v1.md
 [FIRST-STEP]: modifier_first_lifetime_step_v1.md
 [HIT-ENERGY]: being_hit_energy_bounce_lethal_resolution_v1.md
+[MULTI-SHIELD]: multi_shield_parallel_absorption_and_effect_ownership_v1.md
