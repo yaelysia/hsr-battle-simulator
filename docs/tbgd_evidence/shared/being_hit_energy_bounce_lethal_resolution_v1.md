@@ -1,6 +1,10 @@
 # Enemy-hit Energy: bounce weights, lethal hits and rescue confounders v1
 
-## Current continuation — rescue-path Energy isolation, 2026-09-28
+## Current continuation — source-provenance follow-up, 2026-09-28
+
+The follow-up from `c605e82f174618b81158393d820a196c01d9b199` / checkpoint `5861984356` adds section 11. It records a preservation-specific public lead that has not passed source verification, two bounded shared-source candidate checks, and an inaccessible original-video lead. **No new accepted answer to lethal-hit Energy admission or death/rescue preservation is established.** This is a source-quality/navigation increment, not a mechanism closure or a new gameplay test.
+
+## Previous continuation — rescue-path Energy isolation, 2026-09-28
 
 The continuation from `01d6b98d5588f3264b42d23a8901cab8459e2859` / checkpoint `5861793650` adds the targeted Bailu resource audit in section 10. **The ordinary lethal hit's final Energy award and death/rescue preservation remain unresolved.** New source facts separate the direct rescue body, its rescue-charge display, and an independently conditioned recipient Energy grant when Invigoration ends. They improve source isolation; they are not a yes/no answer to the lethal-hit question. The first-pass findings below are retained, and neither paused buff timing nor another character kit is reopened.
 
@@ -147,7 +151,6 @@ Gepard_00_PassiveSkill_1_Insert
     SetDynamicValueByProperty(MDF_MaxSP, Caster, MaxSP)
     ModifySPNew(Caster, AddValue = single-hash read -1657931065)
 ```
-
 P4 explicitly describes Commander as restoring Energy to100% when Unyielding Will triggers. Thus the recovery sequence has its own conditionally authored Energy source; it is not merely the enemy attack's SPHitBase arriving late. The raw AddValue request is preserved, not rewritten into an invented native SetEnergy command or a claim about its exact recovery-rate bypass.
 
 **A full Energy bar after this rescue cannot discriminate whether the killing hit also granted its ordinary5/10/15.** With a refill and capacity limit, both grant and no-grant hypotheses can produce the same visible full bar. This is an identifiability argument from the separate source, not a new experimental finding.
@@ -260,6 +263,45 @@ The central unresolved edge remains `issued lethal damage request -> ordinary vi
 
 Publication updates this existing main record only; the integrated review already links here and correctly identifies lethal settlement as open. Prior source findings remain intact. Validation is manual immutable-source reading, exact-predicate and resource-owner comparison, attributed skill-text reconciliation and Git content/diff/head/Draft checks. No game, simulator, tests or workflow is run; no runtime, lowering, IR, tests, CI, pin, mode scope or broad worklist checkbox is changed.
 
+## 11. Continuation: preservation lead and consumer-search limits
+
+Reviewed 2026-09-28 from parent `c605e82f174618b81158393d820a196c01d9b199`, after checkpoint `5861984356`. Remote startup and pre-publication reads matched that head and open/Draft status. **This continuation establishes no new accepted lethal-award or preservation rule.** Its durable increment is the provenance boundary on a directly relevant public claim and the identity of two checked shared-path candidates, rather than another generic revive description.
+
+### 11.1 A preservation-specific public claim, not an accepted observation
+
+| Lead | What was actually obtained | Admission status |
+| --- | --- | --- |
+| U1 | [3DM healer comparison][U1] explicitly claims that the rescued character's Energy is not cleared by Bailu's revival. The page labels both source and author unknown; its displayed date is2025-09-17. | Unverified secondary lead; not an original test or an accepted behavior rule |
+| U2 | [RedUnion copy][U2], displayed2023-06-01 and sourced to the internet, carries the same Energy-preservation wording. | A dated reproduction, not independent confirmation or the original experiment's date |
+| U3 | [Duote copy][U3], displayed2024-06-07 and sourced to the network, repeats that wording. | Duplicate transmission, not a third measurement |
+
+The original author and a controlled victim-Energy trace were not recovered. U1 contains a GIF filename in its prose, but the associated media were not successfully inspected; no before/after Energy reading is claimed. Publication/update dates are not game-version or experiment timestamps. These copies must not be aggregated into independent evidence. Their adjacent claims about buff retention are outside this continuation and are not adopted.
+
+Even if the preservation claim were independently established, it would answer only the particular rescue's persistence question. It would not by itself distinguish a newly awarded terminal-hit increment from previously stored Energy, or establish the rule for final knockout. The claim remains a lead to trace, not permission to mark either40/45 prediction in section10.4 as observed.
+
+### 11.2 Two shared-source candidates checked at the fixed pin
+
+| Ref | Actual read and complete blob identity | Bounded result |
+| --- | --- | --- |
+| S8 | [Common_Additional_Ability][S8], complete returned file; blob `28b0d6bf2a4f802c9cd837b9a7d160a23042df28` | Three named abilities: Common_Servant_Forcekill, Common_LockHP and CommonActiveSkill_Fire_Single_Phase02. The SPHitRatio occurrence is on the last ability's fire-damage request, not a recovered generic Energy-settlement body |
+| S9 | [GlobalModifier_Avatar][S9], lines1-400 only; blob `64ec2011a0d57730376fb4456b85376279139cc0` | The inspected M_Ultra_ExtraSP resource branch is an OnAfterSkillUse / Ultra-conditioned grant, not an ordinary victim-hit callback |
+
+S8's active fire request targets AbilityTargetEntity and carries AttackData.SPHitRatio=1. The separate ForceKill and LockHP abilities in the same file do not turn that occurrence into a death-to-Energy consumer. No installation/reachability or universal native policy is inferred from the filename Common.
+
+S9 `ModifierMap.M_Ultra_ExtraSP._CallbackList[0]` has Event=OnAfterSkillUse, then ByCurrentSkillType(SkillType=Ultra), then ModifySPNew(ModifierOwnerEntity,AddValue=AQAR/hash901482104). The OnAfterBeingAttacked occurrence elsewhere in the inspected range belongs to Modifier_BattleEventAbility_Challenge_Month_21_sub and its own condition/counter work. File-level co-occurrence is not a callback edge. This is not a full-file absence claim, nor a finding that the missing ordinary evaluator does not exist elsewhere.
+
+Default-branch code-search results were navigation only; both selected paths were reread at `14c1d18f91a8101d610e6c523447a7517de3fae1`. Search misses, uninspected result entries and the rest of S9 are not counted as negative source evidence. Previously inspected constants/common-departure material is not promoted again as a new result.
+
+### 11.3 Original EP-test video: access failure, not experimental evidence
+
+An indexed original-video lead, [EP recovery test][U4], was associated with Gentoo and a chapter at08:03 about events that do not recover EP. A read-only browser inspection on2026-09-28 returned YouTube's private-video access restriction. Neither that chapter's frames nor a transcript was inspected. The [associated HoYoLAB page][U5] yielded no usable article body in the attempted readers. Consequently no claim about fatal hits, rescued recipients or Energy preservation is attributed to this video's experimental contents. An indexed title/chapter is not a positive or negative test result.
+
+### 11.4 Remaining evidence gap and publication boundary
+
+The unresolved questions remain separate: admission of ordinary Energy from the hit crossing HP to0; persistence through pending rescue and that rescue's completion; and preservation/reset on final knockout. No new isolated original observation, native admission predicate, resource assignment or death/reset ordering was obtained. U1-U3 concern only the second question and remain unaccepted. S8/S9 exclude these particular candidate occurrences from being the missing bridge; they do not settle the three questions by absence.
+
+Only this main evidence record is updated. The integrated review's existing open status remains correct and is not rewritten. The prior nonlethal model, rescue-resource audit and hypothetical controls remain unchanged. No game, simulator, test or CI workflow was run; source retrieval and publication checks are the actual verification performed. No implementation, pin, broad coverage checkbox, buff-timing conclusion, break-chain result or backend process is changed.
+
 [S1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/ExcelOutput/MonsterSkillConfig.json
 [S2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/ExcelOutput/MonsterTemplateConfig.json
 [S3]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Monster/Monster_XP_Elite02_01_Config.json
@@ -267,12 +309,19 @@ Publication updates this existing main record only; the integrated review alread
 [S5]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json
 [S6]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Avatar/Avatar_Bailu_00_Ability.json
 [S7]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigCharacter/Avatar/Avatar_Bailu_00_Config.json
+[S8]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigAbility/Common_Additional_Ability.json
+[S9]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigGlobalModifier/GlobalModifier_Avatar.json
 [P1]: https://starrail.honeyhunterworld.com/decaying-shadow-enemy/?lang=EN
 [P1a]: https://starrail.honeyhunterworld.com/liberation-of-the-golden-age-monster_skill/?lang=EN
 [P2]: https://hsr.keqingmains.com/misc/beginner-guide/
 [P3]: https://github.com/KQM-git/SRL/blob/de0e5c09c8dbba9577367ad86e991fe91c4f0e36/src/data/enemies/Decaying_Shadow.json
 [P4]: https://srl.keqingmains.com/characters/ice/gepard
 [P5]: https://github.com/KQM-git/SRL/blob/de0e5c09c8dbba9577367ad86e991fe91c4f0e36/src/data/characters/Bailu.json
+[U1]: https://ol.3dmgame.com/gl/233780.html
+[U2]: https://www.linuxdiyf.com/wz/26853.html
+[U3]: https://m.duote.com/tech/202406/662183.html
+[U4]: https://www.youtube.com/watch?v=P6Oah2k_BtY
+[U5]: https://www.hoyolab.com/article/18258401
 [F07]: general_energy_skill_point_economy_v1.md
 [R4]: resource_economy_core_v1.md
 [F10]: general_event_entity_encounter_lifecycle_v1.md
