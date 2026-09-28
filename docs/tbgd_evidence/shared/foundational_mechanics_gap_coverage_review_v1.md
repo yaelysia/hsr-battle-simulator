@@ -61,7 +61,7 @@ Every repository record below was inspected at the evidence parent above. Relati
 | [F07 resources][F07] | Per-event grants, capacity/balance, owner redirection, per-hit and initialization residuals |
 | [F08 timing][F08] | Action/category/clock matrix, ordinary AV rules and remaining first-step/ready-order questions |
 | [F09 targeting][F09] | Per-effect recipients, split-source join, attribution and cached-anchor discrepancy |
-| [F10 lifecycle][F10] | Registration/eligibility/recheck, quotas, phase/wave/result scopes and explicit exits |
+| [F10 lifecycle][F10] | Registration/eligibility/recheck, quotas, phase/wave/result scopes and unresolved competing effects |
 | [Roadmap][ROADMAP] | Current foundation summaries and checked/unchecked claim overlay |
 | [W worklist][WORKLIST] | W01-W18 and L01-L08 obligations, historical summaries and freezes |
 | [Source-family inventory][INVENTORY] | Owner-backed family triage, representative coverage, unresolved owners and export boundaries |
@@ -123,7 +123,7 @@ All F families remain active at the mechanism level. The following are retained 
 | F06 modifiers | Instance/source/holder distinctions; cap-refresh versus extension; parent clocks and cleanup; sampling separated from duration | Stronger/weaker and extended-timer arbitration, per-layer variants, first eligible step and exact sampling |
 | F07 resources | Energy versus BP; ordinary/fixed/max-relative grants; cost/capacity; signed spending and named owner deduplication | Initial/carry-over policy, per-hit allocation, debit/refund/availability ordering and special capacity teardown |
 | F08 timing | Ordinary AV/rescaling/full-gauge movement; zeroing versus insertion; normal/extra/Ultimate clocks | First-step/control matrix, exceptional ready ordering, concurrent changes and coordinated/new-entity slot accounting |
-| F09 targets/owners | Selected versus affected/traversed recipients; split destination and inherited-owner contrasts | Invalidation, empty/terminal selectors, taunt/script precedence, formation changes and complete nested attribution |
+| F09 targets/owners | Selected versus affected/traversed recipients; conditional aggro; split destination and inherited-owner contrasts | Invalidation, empty/terminal selectors, taunt/script precedence, formation changes and complete nested attribution |
 | F10 lifecycle | Listener/request/execution separation; shared recovery quotas; phase/wave/result scopes and explicit exits | Competing recoveries, state/slot retention, exact muting and exceptional spawn/result participation |
 
 The common weakness is no longer lack of every basic equation. It is incomplete agreement between **the equation, the exact event or hit that supplies its inputs, the sampled state, and the resulting next state**. This diagnosis follows the repeated residuals in F02/F03/F06/F07/F08/F09/F10; it does not assert that all those domains must be solved in one task.
