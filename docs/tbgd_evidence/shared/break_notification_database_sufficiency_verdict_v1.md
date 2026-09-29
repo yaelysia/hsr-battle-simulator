@@ -1,5 +1,9 @@
 # Break notifications: database-only sufficiency verdict v1
 
+## Current decision — verified 2026-09-29
+
+**Database-only sufficiency remains NO for the complete requested notification contract.** Section 8 independently follows the recall-policy lead into release-qualified native declarations and checks the complete global behavior-event map. This strengthens the source-boundary decision, not a claim to have recovered the original event order or a once-per-Break guard. Sections 1-7 preserve the preceding decision and its provenance.
+
 ## 1. Decision and scope
 
 Reviewed 2026-09-28 from PR #8 head `3b1e1bdfbd08582d542ad67f104dc43e7d273716`, following checkpoint `5866961554`. Startup and pre-publication reads agree on that head and open/Draft/unmerged state. Database authority remains `DimbreathBot/TurnBasedGameData@14c1d18f91a8101d610e6c523447a7517de3fae1`.
@@ -95,6 +99,41 @@ A game observation can support the observable behavior required by a simulator w
 
 This continuation adds the database-sufficiency decision, the alias-resolution finding, the exact global recall-list occurrence, and the checked alternative mapping/scheduling surfaces. It reuses rather than repeats the earlier native/version and ordinary mechanic results. Validation consisted of GitHub source/configuration/metadata reads, reference and scope comparison, the logical ambiguity analysis above, and the publication checks recorded in the checkpoint. No game, simulator, test suite, native executor, extraction script or CI workflow was run. The truncated root-tree response is not complete validation. Repository access used only the GitHub connector; no runtime/lowering/IR/tests/CI/pin/mode files changed.
 
+## 8. Verification continuation: recall processing does not close the dispatch contract
+
+Reviewed 2026-09-29 from head `4d524d6c1e4875d748b5adb568e478a554b34d3b` and checkpoint `5867285964`. Startup comparison against the last conversationally reported head `3b1e1bdfbd08582d542ad67f104dc43e7d273716` found one intervening commit adding this decision record, +107/-0. The decision and recall-list discovery in sections 1-7 therefore predate this continuation; they are not claimed again as new discoveries. Pre-write PR metadata matched the startup head and open/Draft/unmerged state.
+
+### 8.1 Complete relevant global inventory and an additional mapping candidate
+
+The exact-pin Config tree identifies the GlobalConfig subtree [V1], tree `888ebb7aa50d5c4a1e3955c6120de1320b4bd727`. Its recursive response is `truncated=false` and contains 16 blob entries, all JSON files including layout indexes, and no child directory. This is a complete inventory of that subtree only, not an exhaustive reading of the entire export or an upgrade of the earlier truncated root request.
+
+D1 was reread completely, D2's selected aliases at lines 1-24 were reread, D3 was reread completely, and the full selected StanceBreakState.OnCreate body was reread at [V4] lines 1-50. These confirm the existing reference-expansion boundary without changing the ordinary mechanic claims.
+
+An additional candidate in D4 was checked in full: `ModifierBehaviorFlagEventMap`, within replay lines 570-850. It contains keys `500` and `501`. Both entries author `DispelStatus` for STAT_CTRL on ModifierOwnerEntity, excluding STAT_ForceControl; the second additionally checks the holder against CallBackModifierCaster with ByIsEnemy. Neither body contains TriggerBreak, a Break callback emission, or an event-order definition. This statement concerns the actual two inspected task bodies; no enum meaning is inferred from the numeric keys. The adjacent KeepOnDeathrattle list containing Break is also not an emission algorithm.
+
+### 8.2 Follow the recall-policy lead into the actual auxiliary declaration layer
+
+Both V2 and V3 use the previously release-qualified auxiliary SDK revision `75b0b4b1eff6c4a2a48e15b4358b0e40b0e2045b`, labelled 4.3.0. They remain separate from the TBGD pin, and exact binary equivalence is not established.
+
+| Ref | Newly inspected extent | Complete blob and precise result |
+| --- | --- | --- |
+| V2 | `unitysdk/RPG/GameCore/GameCoreConstValue.h`, complete header | `4f134b7e02b25bc9c46d3f0ef6d160c5ea21290c`; declares ForbidRecallModifierEventList, a separate _ForbidRecallModifierEventMask, and CheckModifierEventCanRecall(TurnBasedModifierEvent) |
+| V3 | `unitysdk/RPG/GameCore/TurnBasedModifierInstance_ModifierSequenceComposite.h`, complete header | `64576e66988b74f36b53da27d2208af57bda4200`; declares _TaskConfig, _ModifierInst, _RecallSeqs, _CallCount, _CurEventType, _CanRecall and Execute |
+
+V2's Boolean-returning query delegates to a native function at the SDK-local offset `0x19CA3AB0`. V3's constructor accepts a modifier instance, TaskContext, sequence or task-list input, event type and priority; its Execute delegates to SDK-local `0x17B331B0`. The acquired headers expose no branching, mask construction, call-count reset or recall-admission body. They do not establish that V3 invokes V2, or that TriggerBreak invokes either one. This is new, targeted consumer-layer localization for D4's recall input, not a recovered caller/callee chain.
+
+These declarations show why the table cannot be treated as a complete once-per-logical-Break implementation. Event selection, sequence execution state and a later independent event delivery are separate questions. As a logical discriminator, suppressing a recursive invocation while a sequence is active does not itself suppress a second delivery after that sequence has finished. Conversely, remembering a logical Break identity across deliveries would require a defined identity and reset scope. The acquired list and headers do not decide between those behaviors. Neither is asserted to be the game's implementation; _CallCount and _CanRecall are not assigned guessed meanings merely from their names. The adjacent RangePropertyRecallLimit=3 is still not a Break repetition allowance.
+
+### 8.3 Final answer and retained uncertainty
+
+**The source-sufficiency answer remains definite: do not wait for this fixed database alone to provide the complete notification mapping, multiplicity and cross-callback execution contract. Use independent behavior or native-consumer evidence for that part.** The exact game-side policy remains unresolved; insufficiency of the source and uncertainty about the behavior are different conclusions.
+
+The terminal dependency is not another unvisited StanceBreak_<element> template. TriggerBreak is a typed operation whose implementation and invocation-context construction are outside the authored task body. The now-checked alias, priority, behavior-event and recall configuration inputs still do not specify the missing composition. Their existence must be retained, but it is not permission to infer an additional full notification pass, a proven no-op, a universal per-attack deduplication rule, or the current backend's correctness.
+
+The confidence boundary is explicit: no claim is made that every unrelated file was read or that future/newly supplied data could never constrain a narrower question. This is a sufficiency verdict for the complete contract at the fixed revision, based on its reference/consumer boundary and the checked candidate global rules. Further character consumers can provide constraints but cannot substitute for a demonstrated execution rule. Observable testing can establish the behavior needed by a simulator without asserting that the simulator duplicates the game's internal event-bus architecture.
+
+Publication adds this section, the current-decision notice and V references only. Actual new verification is GitHub remote-head/checkpoint comparison, exact-pin body and subtree reads, release-qualified SDK declaration review and publication checks. No game, simulator, test suite, extraction script, native executor or CI workflow was run, and no original executable or event trace was acquired. Runtime, lowering, IR, tests, CI, pin and broad coverage states are unchanged.
+
 [MAIN]: break_notification_dispatch_and_full_chain_status_v1.md
 [D1]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/GameCoreConfigPathInfo.json
 [D2]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/TargetAliasConfig.json
@@ -105,3 +144,7 @@ This continuation adds the database-sufficiency decision, the alias-resolution f
 [D7]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigGlobalModifier/GlobalModifier.json
 [D8]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/JsonEnumDefineConfig.json
 [D9]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/GlobalConfig/TargetOperationConfig.json
+[V1]: https://api.github.com/repos/DimbreathBot/TurnBasedGameData/git/trees/888ebb7aa50d5c4a1e3955c6120de1320b4bd727?recursive=1
+[V2]: https://github.com/Z4ee/AnimeSDK/blob/75b0b4b1eff6c4a2a48e15b4358b0e40b0e2045b/unitysdk/RPG/GameCore/GameCoreConstValue.h
+[V3]: https://github.com/Z4ee/AnimeSDK/blob/75b0b4b1eff6c4a2a48e15b4358b0e40b0e2045b/unitysdk/RPG/GameCore/TurnBasedModifierInstance_ModifierSequenceComposite.h
+[V4]: https://github.com/DimbreathBot/TurnBasedGameData/blob/14c1d18f91a8101d610e6c523447a7517de3fae1/Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json
