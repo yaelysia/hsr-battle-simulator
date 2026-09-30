@@ -28,7 +28,7 @@ def run_validation(output_dir: Path) -> dict[str, Any]:
     cases = {
         "full_absorption": _absorption_case(50.0, 30.0),
         "partial_absorption": _absorption_case(20.0, 50.0),
-        "multi_shield_priority": _multi_shield_case(),
+        "multi_shield_parallel": _multi_shield_case(),
         "opcode_policy": _opcode_policy_case(),
         "shield_exhaustion_event": _exhaustion_case(),
         "same_effect_different_casters": _cross_caster_identity_case(),
@@ -97,12 +97,14 @@ def _multi_shield_case() -> dict[str, Any]:
         {
             "damage_result_ok": result.ok,
             "reducer_ok": reduction.ok,
-            "high_priority_consumed_first": isinstance(consumed, list)
-            and bool(consumed)
-            and consumed[0].get("shield_id") == "validation:high",
-            "high_priority_exhausted": "validation:high" not in by_id,
-            "remainder_consumed_from_low": by_id.get("validation:low") == 25.0,
+            "both_pools_consume_full_hit": isinstance(consumed, list)
+            and len(consumed) == 2
+            and {item.get("shield_id"): item.get("absorbed") for item in consumed}
+            == {"validation:low": 15.0, "validation:high": 10.0},
+            "smaller_pool_exhausted": "validation:high" not in by_id,
+            "larger_pool_retains_own_balance": by_id.get("validation:low") == 15.0,
             "hp_unchanged": after.hp == 100.0,
+            "hp_protected_once": _route_amount(result.records, "absorbed_damage") == 15.0,
         }
     )
     return {"checks": checks, "instances": list(after.shield_instances), "consumed": consumed}

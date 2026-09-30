@@ -20,6 +20,7 @@ class TimelinePlan:
     reset_actor_av: bool = False
     source: str = "timeline_system"
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    preserve_turn_owner: bool = False
 
 
 @dataclass(frozen=True)
@@ -879,7 +880,9 @@ class TimelineSystem:
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:current_window:{next_event_index}",
             ),
-            Mutation(
+        ]
+        if not plan.preserve_turn_owner:
+            mutations.append(Mutation(
                 op="set",
                 path=("global_flags", "turn_owner_id"),
                 before=state.global_flags.get("turn_owner_id"),
@@ -889,8 +892,7 @@ class TimelineSystem:
                 before_exists="turn_owner_id" in state.global_flags,
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:turn_owner:{next_event_index}",
-            ),
-        ]
+            ))
         if plan.reset_actor_av:
             mutations.append(self.set_action_value(state, actor_id, 0.0, plan.source, metadata))
         return TimelinePlanResult(tuple(mutations), events)
@@ -915,12 +917,16 @@ def _turn_action_delay_cost(
     consumed: list[str] = []
     sources: list[dict[str, JSONValue]] = []
     remaining: dict[str, JSONValue] = {}
+    operations: list[tuple[int, str, float]] = []
+    indices: set[int] = set()
     for identity, entry in sorted(raw.items(), key=lambda item: str(item[0])):
         if not isinstance(identity, str) or not identity or not isinstance(entry, dict):
             return 0.0, (), (), None, "turn_action_delay_cost_entry_invalid"
         entry_actor_id = entry.get("actor_id")
         value = entry.get("normalized_value")
         source_trace = entry.get("source_trace")
+        modify_function = entry.get("modify_function")
+        operation_index = entry.get("operation_index")
         if (
             not isinstance(entry_actor_id, str)
             or not entry_actor_id
@@ -929,14 +935,23 @@ def _turn_action_delay_cost(
             or not isfinite(float(value))
             or not isinstance(source_trace, dict)
             or not source_trace
+            or not isinstance(modify_function, str)
+            or modify_function not in {"Set", "Add"}
+            or type(operation_index) is not int
+            or operation_index < 0
+            or operation_index in indices
         ):
             return 0.0, (), (), None, "turn_action_delay_cost_entry_invalid"
+        indices.add(operation_index)
         if entry_actor_id != actor_id:
             remaining[identity] = entry
             continue
-        total += float(value)
+        operations.append((operation_index, modify_function, float(value)))
         consumed.append(identity)
         sources.append(source_trace)
+    # Preserve the actual committed producer order, not status/hash ordering.
+    for _, modify_function, value in sorted(operations):
+        total = value - 1.0 if modify_function == "Set" else total + value
     if not isfinite(total):
         return 0.0, (), (), None, "turn_action_delay_cost_sum_invalid"
     return total, tuple(consumed), tuple(sources), remaining, ""

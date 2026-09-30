@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import math
 from typing import Literal
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.settlement import SettlementRecord
 from ..rules.engine_rule_registry import (
     ENGINE_RULE_REGISTRY_VERSION,
+    KILL_ENERGY_RULE_APPLICABILITY,
     EngineRuleRegistry,
     build_engine_rule_registry,
+    engine_rule_admission_reason,
     select_damage_route_rule,
 )
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from .damage_formula import DamageFormulaInput, DirectDamageFormula
 from .damage_pipeline import DamagePipelineResult, DamageStagePipeline
-from .mutation_events import mutation_backed_event_id
+from .mutation_events import events_for_mutation, mutation_backed_event_id
+from .resource import ResourceSystem
 from .unit_lifecycle import UnitLifecycleSystem
 from .shield import HPDamageRoute, ShieldSystem
 
@@ -225,6 +229,8 @@ class DamagePacket:
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     source_frame: DamageSourceFrame | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    hit_energy_gain: float | None = None
+    base_includes_break_bonus: bool = False
 
     def __post_init__(self) -> None:
         if self.damage_formula_family == FOLLOW_UP_ATTACK_TYPE:
@@ -238,6 +244,7 @@ class DamagePacket:
             "target_id": self.target_id,
             "amount": self.amount,
             "amount_stage": self.amount_stage,
+            "base_includes_break_bonus": self.base_includes_break_bonus,
             "attack_type": self.attack_type,
             "damage_kind": self.damage_kind,
             "damage_formula_family": self.damage_formula_family,
@@ -259,6 +266,7 @@ class DamagePacket:
             "source_trace": self.source_trace,
             "source_frame": source_frame_for_packet(self).to_json(),
             "metadata": self.metadata,
+            "hit_energy_gain": self.hit_energy_gain,
             "bypasses_normal_multipliers": _family_policy(self.damage_formula_family).bypasses_normal_multipliers,
             "uses_direct_multiplier_ledger": _family_policy(self.damage_formula_family).uses_direct_multiplier_ledger,
         }
@@ -293,6 +301,7 @@ class DamageSystem:
         *,
         engine_rules: EngineRuleRegistry | None = None,
     ) -> None:
+        self.rules = rules
         self.engine_rules = engine_rules or (
             rules.engine_rule_registry() if rules is not None else build_engine_rule_registry()
         )
@@ -343,10 +352,117 @@ class DamageSystem:
                 ),
                 errors=(f"unsupported damage formula family {packet.damage_formula_family!r}",),
             )
+        if result.ok and packet.hit_energy_gain is not None:
+            result = self._with_hit_energy(state, packet, result)
+        if result.ok:
+            result = self._with_kill_energy(state, packet, result)
+        if result.ok:
+            hp_events = tuple(
+                event
+                for mutation in result.mutations
+                if mutation.path == ("units", packet.target_id, "hp")
+                for event in events_for_mutation(
+                    mutation, actor_id=packet.attacker_id, source_id=packet.attacker_id,
+                    event_index=state.event_index,
+                )
+            )
+            result = replace(result, events=(*hp_events, *result.events))
         if window_ledger is not None:
             for event in result.events:
                 window_ledger.record_defeat_event(event)
         return result
+
+    def _with_kill_energy(
+        self, state: BattleState, packet: DamagePacket, result: DamageApplicationResult,
+    ) -> DamageApplicationResult:
+        defeat = next((event for event in result.events if event.event_type == "unit.defeated"), None)
+        if defeat is None:
+            return result
+        frame = source_frame_for_packet(packet)
+        owner = state.units.get(frame.owner_id)
+        if owner is None or owner.hp <= 0 or owner.lifecycle_status != "active" or owner.max_energy <= 0:
+            return result
+        if any(mutation.path == ("units", owner.unit_id, "hp") and mutation.after <= 0
+               for mutation in result.mutations):
+            return result
+        rules = tuple(rule for rule in self.engine_rules.resource_rules if rule.rule_kind == "kill_energy_gain")
+        if len(rules) != 1:
+            return _damage_error(packet, "resource_engine_rule_" + ("missing" if not rules else "ambiguous") + ":kill_energy_gain")
+        rule = rules[0]
+        reason = engine_rule_admission_reason(rule, expected_applicability=KILL_ENERGY_RULE_APPLICABILITY,
+                                            numeric_value_required=True)
+        if reason:
+            return _damage_error(packet, reason)
+        hp_mutation = next((mutation for mutation in result.mutations
+                            if mutation.path == ("units", packet.target_id, "hp")), None)
+        if hp_mutation is None:
+            return _damage_error(packet, "kill_energy_lethal_hp_mutation_missing")
+        try:
+            mutation = ResourceSystem().gain_kill_energy(
+                state, owner.unit_id, rule, defeated_event_payload=defeat.payload,
+                source="damage_system.kill_energy", metadata={
+                    **hp_mutation.metadata, "source_frame": frame.to_json(),
+                    "target_id": owner.unit_id, "defeated_target_id": packet.target_id,
+                    "hp_mutation_id": hp_mutation.stable_id(),
+                    "lifecycle_mutation_id": defeat.payload.get("lifecycle_mutation_id"),
+                    "energy_capacity": owner.max_energy,
+                },
+            )
+        except ValueError as exc:
+            return _damage_error(packet, str(exc))
+        if mutation.before == mutation.after:
+            return result
+        record = SettlementRecord(
+            record_type="kill_energy_gain", source="damage_system.kill_energy",
+            mutation_id=mutation.stable_id(), process_only=False,
+            payload={"owner_id": owner.unit_id, "defeated_target_id": packet.target_id,
+                     "before_energy": mutation.before, "after_energy": mutation.after,
+                     "resource_rule_id": rule.resource_rule_id}, trace=mutation.metadata,
+        ).to_json()
+        return replace(result, mutations=(*result.mutations, mutation),
+                       events=(*result.events, *events_for_mutation(
+                           mutation, actor_id=owner.unit_id, source_id=owner.unit_id,
+                           event_index=state.event_index,
+                       )), records=(*result.records, record))
+
+    def _with_hit_energy(
+        self, state: BattleState, packet: DamagePacket, result: DamageApplicationResult,
+    ) -> DamageApplicationResult:
+        amount = packet.hit_energy_gain
+        if (type(amount) not in (int, float) or not math.isfinite(amount) or amount < 0
+                or not packet.damage_emission_id or not packet.source_task_id):
+            return _damage_error(packet, "hit_energy_contract_invalid")
+        target = state.units[packet.target_id]
+        hp_after = next((mutation.after for mutation in result.mutations
+                         if mutation.path == ("units", packet.target_id, "hp")), target.hp)
+        if hp_after <= 0:
+            return _damage_error(packet, "hit_energy_lethal_eligibility_not_admitted")
+        try:
+            mutation = ResourceSystem().change_unit_energy(
+                state, packet.target_id, amount, "damage_system.hit_energy",
+            )
+        except ValueError as exc:
+            return _damage_error(packet, str(exc))
+        mutation = replace(mutation, mutation_id="", metadata={
+            **mutation.metadata, "resource_operation": "hit_energy_gain",
+            "damage_emission_id": packet.damage_emission_id,
+            "source_task_id": packet.source_task_id, "hit_profile_id": packet.hit_profile_id,
+            "source_trace": packet.source_trace, "target_id": packet.target_id,
+            "source_frame": source_frame_for_packet(packet).to_json(),
+            "energy_capacity": target.max_energy,
+        })
+        record = SettlementRecord(
+            record_type="hit_energy_gain", source="damage_system.hit_energy",
+            mutation_id=mutation.stable_id(), process_only=False,
+            payload={"target_id": packet.target_id, "raw_energy_gain": amount,
+                     "before_energy": mutation.before, "after_energy": mutation.after},
+            trace=packet.source_trace,
+        ).to_json()
+        return replace(result, mutations=(*result.mutations, mutation),
+                       events=(*result.events, *events_for_mutation(
+                           mutation, actor_id=packet.attacker_id,
+                           source_id=packet.source_task_id, event_index=state.event_index,
+                       )), records=(*result.records, record))
 
     def _apply_dot_damage(
         self,
@@ -650,6 +766,15 @@ class DamageSystem:
             return _damage_error(packet, "break damage requires break_damage_emission_id or status_damage_emission_id")
         if not packet.break_template_id:
             return _damage_error(packet, "break damage requires break_template_id")
+        if packet.status_damage_emission_id and self.rules is not None:
+            emission = self.rules.status_damage_emission(packet.status_damage_emission_id)
+            if (emission is None or emission.coverage_status != "executable"
+                or emission.damage_formula_family != "break"
+                or packet.base_includes_break_bonus is not emission.base_includes_break_bonus
+                or (packet.base_includes_break_bonus and emission.break_amount_mode != "value")):
+                return _damage_error(packet, "included_break_bonus_emission_mismatch")
+        elif packet.base_includes_break_bonus:
+            return _damage_error(packet, "included_break_bonus_emission_missing")
         pipeline = _non_direct_pipeline(
             state,
             packet,
@@ -1163,6 +1288,7 @@ def _non_direct_pipeline(
             attacker_id=packet.attacker_id,
             target_id=packet.target_id,
             producer_base_amount=float(packet.amount),
+            base_includes_break_bonus=packet.base_includes_break_bonus,
             element_type=packet.element_type,
             attack_type=packet.attack_type,
             source_trace=packet.source_trace,

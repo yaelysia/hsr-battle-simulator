@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -6225,6 +6226,8 @@ class DamageEmissionIR:
     blocked_reason: str = ""
     damage_custom_name: str = ""
     damage_tags: tuple[str, ...] = ()
+    hit_energy_gain: float | None = None
+    toughness_emission_required: bool = True
 
     def __post_init__(self) -> None:
         if (
@@ -6255,6 +6258,8 @@ class DamageEmissionIR:
             "blocked_reason": self.blocked_reason,
             "damage_custom_name": self.damage_custom_name,
             "damage_tags": list(self.damage_tags),
+            "hit_energy_gain": self.hit_energy_gain,
+            "toughness_emission_required": self.toughness_emission_required,
         }
 
 
@@ -6318,6 +6323,7 @@ class BreakTemplateIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    status_numeric_bindings: tuple[dict[str, JSONValue], ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6327,6 +6333,7 @@ class BreakTemplateIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "status_numeric_bindings": list(self.status_numeric_bindings),
         }
 
 
@@ -6341,6 +6348,8 @@ class BreakDamageEmissionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    base_damage_hash: str = ""
+    target_toughness_hash: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6350,6 +6359,8 @@ class BreakDamageEmissionIR:
             "element_type": self.element_type,
             "damage_formula_family": self.damage_formula_family,
             "scaling_expr": self.scaling_expr,
+            "base_damage_hash": self.base_damage_hash,
+            "target_toughness_hash": self.target_toughness_hash,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -6368,6 +6379,8 @@ class BreakStatusEmissionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    condition_id: str = ""
+    condition_expected: bool | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6381,6 +6394,8 @@ class BreakStatusEmissionIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "condition_id": self.condition_id,
+            "condition_expected": self.condition_expected,
         }
 
 
@@ -6590,6 +6605,8 @@ class StatusDamageEmissionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    break_amount_mode: str = ""
+    base_includes_break_bonus: bool = False
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6605,6 +6622,8 @@ class StatusDamageEmissionIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "break_amount_mode": self.break_amount_mode,
+            "base_includes_break_bonus": self.base_includes_break_bonus,
         }
 
 
@@ -7366,6 +7385,20 @@ class ActionDefinitionIR:
     source_mode: str = "mainline"
     skill_trigger_key: str = ""
     target_relation: str = "unknown"
+    sp_need: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.sp_need is None:
+            return
+        if isinstance(self.sp_need, bool) or not isinstance(self.sp_need, (int, float)):
+            raise TypeError("sp_need must be a finite number or None")
+        try:
+            sp_need = float(self.sp_need)
+        except OverflowError as exc:
+            raise ValueError("sp_need must be finite") from exc
+        if not math.isfinite(sp_need):
+            raise ValueError("sp_need must be finite")
+        object.__setattr__(self, "sp_need", sp_need)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -7379,6 +7412,7 @@ class ActionDefinitionIR:
             "bp_add": self.bp_add,
             "sp_base": self.sp_base,
             "sp_multiple_ratio": self.sp_multiple_ratio,
+            "sp_need": self.sp_need,
             "param_list": list(self.param_list),
             "show_stance_list": list(self.show_stance_list),
             "show_damage_list": list(self.show_damage_list),

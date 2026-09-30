@@ -37,6 +37,7 @@ _FACT_AUTHORITIES = {
     "relation.opposing": "entity_relation",
     "relation.summoner": "entity_relation",
     "unit.avatar_base_type": "rulebook_character_definition",
+    "unit.build_selector": "character_build_selection",
     "unit.battle_event_id": "unit_definition",
     "unit.hp": "battle_state",
     "unit.is_battle_event_entity": "unit_definition",
@@ -59,6 +60,7 @@ _FACT_PARAMETER_KEYS = {
     "relation.opposing": frozenset(),
     "relation.summoner": frozenset(),
     "unit.avatar_base_type": frozenset(),
+    "unit.build_selector": frozenset({"selector_kind", "selector_key", "selector_hash"}),
     "unit.battle_event_id": frozenset(),
     "unit.hp": frozenset(),
     "unit.is_battle_event_entity": frozenset({"expect_sub_type"}),
@@ -81,6 +83,7 @@ _FACT_SUBJECT_COUNTS = {
     "relation.opposing": 2,
     "relation.summoner": 1,
     "unit.avatar_base_type": 1,
+    "unit.build_selector": 1,
     "unit.battle_event_id": 1,
     "unit.hp": 1,
     "unit.is_battle_event_entity": 1,
@@ -166,6 +169,8 @@ class CommittedConditionFactProvider:
             return self._lifecycle(state, request)
         if request.fact_kind == "unit.avatar_base_type":
             return self._avatar_base_type(state, request)
+        if request.fact_kind == "unit.build_selector":
+            return self._build_selector(state, request)
         if request.fact_kind == "unit.monster_rank":
             return self._monster_rank(state, request)
         if request.fact_kind == "unit.special_resource_ratio":
@@ -180,6 +185,63 @@ class CommittedConditionFactProvider:
             return self._target_unselectable(state, request)
         return self._blocked(
             request, f"condition_fact_provider_missing:{request.fact_kind}"
+        )
+
+    def _build_selector(
+        self, state: BattleState, request: ConditionOperandRequest
+    ) -> ConditionOperandResolution:
+        unit = state.units[request.subject_ids[0]]
+        flags = unit.flags
+        if (
+            self.rules is None
+            or flags.get("build_mode") != "assembled_character_build"
+            or flags.get("character_build_battle_admission_status") != "admitted"
+        ):
+            return self._blocked(request, "character_build_selector_context_missing")
+        card_id = flags.get("character_data_card_id")
+        card = self.rules.character_data_card(card_id) if isinstance(card_id, str) else None
+        if card is None or card.entity_ref != unit.template_id:
+            return self._blocked(request, "character_build_selector_owner_mismatch")
+        parameters = request.parameters or {}
+        kind = parameters.get("selector_kind")
+        key = parameters.get("selector_key")
+        key_hash = parameters.get("selector_hash")
+        if not (
+            kind == "rank" and key == "" and type(key_hash) is int
+            or kind == "skill_point" and isinstance(key, str) and bool(key) and key_hash is None
+        ):
+            return self._blocked(request, "character_build_selector_identity_invalid")
+        relations = tuple(
+            relation
+            for relation in self.rules.character_build_selector_relations_for_card(card.card_id)
+            if relation.selector_kind == kind
+            and relation.selector_key == key
+            and relation.selector_hash == key_hash
+        )
+        mappings = {(relation.selection_kind, relation.selection_ref_ids) for relation in relations}
+        if len(mappings) != 1:
+            return self._blocked(request, "character_build_selector_mapping_missing_or_ambiguous")
+        selection_kind, refs = next(iter(mappings))
+        selection_flag = "selected_eidolon_slot_ids" if kind == "rank" else "selected_trace_node_ids"
+        selected = flags.get(selection_flag)
+        if not isinstance(selected, (list, tuple)) or any(
+            not isinstance(ref, str) or not ref for ref in selected
+        ):
+            return self._blocked(request, "character_build_selector_selection_missing")
+        lookup = self.rules.character_eidolon_slot if kind == "rank" else self.rules.character_trace_node
+        expected_kind = "eidolon" if kind == "rank" else "trace"
+        if selection_kind != expected_kind or any(
+            (definition := lookup(ref)) is None
+            or definition.character_data_card_id != card.card_id
+            for ref in (*selected, *refs)
+        ):
+            return self._blocked(request, "character_build_selector_selection_invalid")
+        return ConditionOperandResolution.resolved(
+            "boolean",
+            bool(set(selected).intersection(refs)),
+            fact_kind=request.fact_kind,
+            authority=_FACT_AUTHORITIES[request.fact_kind],
+            source_identity="|".join(sorted(relation.selector_relation_id for relation in relations)),
         )
 
     def _avatar_base_type(

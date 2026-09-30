@@ -25,11 +25,12 @@ from .dynamic_values import (
 )
 from .mutation_events import events_for_mutation
 from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
-from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
-from .shield import NORMAL_SHIELD_FAMILIES, ShieldSystem
+from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem, remove_self_intrinsic_target_admitted
+from .shield import NORMAL_SHIELD_FAMILIES, ShieldExhaustionFact, ShieldSystem
 from .target import TargetSystem
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .unit_stats import effective_unit_stat
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class EffectResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class PreHealDispatchResult:
     rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     errors: tuple[str, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class EffectExecutionContext:
     damage_window_ledger: DamageWindowLedger | None = None
     admitted_action_target_fact: AdmittedActionTargetFact | None = None
     expected_action_window_scope: ActionWindowExpectedScope | None = None
+    shield_exhaustion_fact: ShieldExhaustionFact | None = None
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -107,6 +111,7 @@ class EffectRegistry:
         self.register("ModifyTeamBoostPoint", self._execute_resource_delta)
         self.register("ModifyTeamBoostPointMax", self._execute_resource_delta)
         self.register("LoseHPByRatio", self._execute_hp_loss_ratio)
+        self.register("TriggerSkipDeadHandler", self._execute_death_settlement_barrier)
         self.register("SetEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetMonsterEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetSummonerEnergyBarState", self._execute_mechanism_bar_state)
@@ -193,6 +198,10 @@ class EffectRegistry:
             return effect.coverage_status
         if effect.coverage_status != "executable":
             return effect.coverage_status
+        if effect.opcode == "TriggerSkipDeadHandler" and effect.payload.get("standard") != {
+            "operation": "verify_death_settlement", "source_shape_admitted": True,
+        }:
+            return "blocked"
         if effect.opcode == "AddModifier" and not _add_modifier_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
@@ -216,6 +225,21 @@ class EffectRegistry:
         if effect.opcode == "StackWeakness" and not _stack_weakness_payload_is_executable(effect):
             return "blocked"
         return "executable"
+
+    def _execute_death_settlement_barrier(
+        self, effect: EffectIR, context: EffectExecutionContext | None,
+    ) -> EffectResult:
+        if context is None:
+            return _unsupported_effect(effect, "death_settlement_context_missing")
+        reason = UnitLifecycleSystem().death_settlement_blocked_reason(context.state)
+        if reason:
+            return _unsupported_effect(effect, reason)
+        return EffectResult(records=(SettlementRecord(
+            record_type="unit_lifecycle_barrier", source="unit_lifecycle", process_only=True,
+            payload={"effect_id": effect.effect_id, "operation": "verify_death_settlement",
+                     "settled_unit_ids": [unit.unit_id for unit in context.state.units.values() if unit.hp <= 0]},
+            trace={"effect_source": effect.source.to_json()},
+        ).to_json(),))
 
     def _execute_add_modifier(
         self,
@@ -270,6 +294,8 @@ class EffectRegistry:
             event_payload=context.event_payload,
             dynamic_values=context.dynamic_values,
             binding_sources=_binding_sources(context),
+            admitted_action_target_fact=context.admitted_action_target_fact,
+            expected_action_window_scope=context.expected_action_window_scope,
         )
         # RemoveModifier / RemoveSelfModifier are idempotent at the ability
         # effect boundary.  Keep the lifecycle record for audit, but do not
@@ -309,6 +335,8 @@ class EffectRegistry:
             event_payload=context.event_payload,
             dynamic_values=context.dynamic_values,
             binding_sources=_binding_sources(context),
+            admitted_action_target_fact=context.admitted_action_target_fact,
+            expected_action_window_scope=context.expected_action_window_scope,
         )
         return EffectResult(
             events=result.events,
@@ -356,6 +384,7 @@ class EffectRegistry:
             mutations=(*pre.mutations, *healed.mutations),
             rng_events=(*pre.rng_events, *healed.rng_events),
             records=(*pre.records, *healed.records),
+            dispatched_event_ids=pre.dispatched_event_ids | healed.dispatched_event_ids,
         )
 
     def _execute_shield(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
@@ -439,6 +468,8 @@ def _remove_modifier_payload_is_executable(effect: EffectIR) -> bool:
         return False
     has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
     has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
+    if effect.opcode == "RemoveSelfModifier":
+        return remove_self_intrinsic_target_admitted(standard)
     return (has_modifier or has_status) and _typed_target_reference_admitted(standard)
 
 
@@ -475,6 +506,15 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
     if standard.get("blocked_reason"):
         return False
     resource = standard.get("resource")
+    kind = str(standard.get("kind") or "")
+    if _formula_type_blocked(effect, standard, kind):
+        return False
+    if kind in {"heal", "shield"} and "flat_addition" in standard:
+        if not _runtime_numeric_payload_is_executable(standard["flat_addition"]):
+            return False
+    if kind == "shield" and "max_capacity" in standard:
+        if not _runtime_numeric_payload_is_executable(standard["max_capacity"]):
+            return False
     team_resource = resource in {"skill_points", "max_skill_points"}
     if not team_resource and standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
         return False
@@ -610,6 +650,15 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
     blocked_reason = standard.get("blocked_reason")
     if isinstance(blocked_reason, str) and blocked_reason:
         return blocked_reason
+    formula_reason = _formula_type_blocked(effect, standard, str(standard.get("kind") or ""))
+    if formula_reason:
+        return formula_reason
+    if standard.get("kind") in {"heal", "shield"} and "flat_addition" in standard:
+        if not _runtime_numeric_payload_is_executable(standard["flat_addition"]):
+            return "flat_addition_not_executable"
+    if standard.get("kind") == "shield" and "max_capacity" in standard:
+        if not _runtime_numeric_payload_is_executable(standard["max_capacity"]):
+            return "shield_max_capacity_not_executable"
     operation_spec = standard.get("dynamic_operation")
     if _is_dynamic_value_effect(effect.opcode) and _dynamic_value_operation_spec(effect) is None:
         return "typed_dynamic_value_operation_missing_or_invalid"
@@ -632,7 +681,10 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
         has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
         if not (has_modifier or has_status):
             return "modifier_name_or_status_id_missing"
-        if not _typed_target_reference_admitted(standard):
+        if effect.opcode == "RemoveSelfModifier":
+            if not remove_self_intrinsic_target_admitted(standard):
+                return "remove_self_intrinsic_target_invalid"
+        elif not _typed_target_reference_admitted(standard):
             return "target_expression_id_missing_or_not_executable"
     if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"}:
         if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
@@ -726,9 +778,7 @@ def _execute_fixed_unit_delta(
             {"numeric_evaluation": amount_result.to_json(), "standard": standard},
         )
     flat_addition_result = None
-    if kind == "heal" and _runtime_numeric_payload_is_executable(
-        standard.get("flat_addition")
-    ):
+    if kind in {"heal", "shield"} and "flat_addition" in standard:
         flat_addition_result = _evaluate_numeric(
             effect,
             context,
@@ -737,7 +787,7 @@ def _execute_fixed_unit_delta(
         if not flat_addition_result.ok or flat_addition_result.value is None:
             return _unsupported_effect(
                 effect,
-                "unsupported_formula:heal_flat_addition_evaluation_failed",
+                f"unsupported_formula:{kind}_flat_addition_evaluation_failed",
                 {
                     "numeric_evaluation": amount_result.to_json(),
                     "flat_addition_evaluation": flat_addition_result.to_json(),
@@ -746,6 +796,9 @@ def _execute_fixed_unit_delta(
             )
         amount += float(flat_addition_result.value)
         formula_details["flat_addition"] = float(flat_addition_result.value)
+        formula_details["flat_addition_evaluation"] = flat_addition_result.to_json()
+    if not math.isfinite(amount) or (kind == "heal" and amount < 0.0):
+        return _unsupported_effect(effect, f"unsupported_formula:{kind}_amount_invalid")
     state = context.state
     if team_resource:
         return _team_resource_delta_result(
@@ -779,12 +832,16 @@ def _execute_fixed_unit_delta(
             0.0,
             1.0 + outgoing.value + incoming.value + transient_ratio,
         )
+        formula_details["base_amount"] = amount
         amount *= healing_multiplier
         formula_details["healing_multiplier"] = healing_multiplier
         formula_details["outgoing_healing_ratio"] = outgoing.to_json()
         formula_details["incoming_healing_ratio"] = incoming.to_json()
         formula_details["transient_heal_ratio"] = transient_ratio
         after = max(0.0, min(unit.max_hp, unit.hp + amount))
+        formula_details["offered_healing"] = amount
+        formula_details["realized_healing"] = after - unit.hp
+        formula_details["overheal"] = max(0.0, amount - (after - unit.hp))
         mutation = Mutation(
             op="set",
             path=("units", target_id, "hp"),
@@ -809,9 +866,23 @@ def _execute_fixed_unit_delta(
             return _unsupported_effect(effect, "shield caster is not in state")
         shield_bonus = effective_unit_stat(caster, "shield_added_ratio")
         shield_multiplier = max(0.0, 1.0 + shield_bonus.value)
+        formula_details["base_amount"] = amount
         amount *= shield_multiplier
         formula_details["shield_multiplier"] = shield_multiplier
         formula_details["shield_added_ratio"] = shield_bonus.to_json()
+        max_capacity = None
+        if "max_capacity" in standard:
+            capacity_result = _evaluate_numeric(effect, context, standard["max_capacity"])
+            if not capacity_result.ok or capacity_result.value is None:
+                return _unsupported_effect(effect, "unsupported_formula:shield_max_capacity_evaluation_failed")
+            # PR8 leaves bonus participation in the stack cap disputed; do not choose a policy.
+            if shield_bonus.value != 0.0:
+                return _unsupported_effect(effect, "shield_bonus_stack_cap_policy_unconfirmed", {
+                    "research_source": "https://github.com/yaelysia/hsr-battle-simulator/blob/bd417912e57f1e8196ae6a6ebbdf7b2e4509675b/docs/tbgd_evidence/shared/shield_depletion_callbacks_and_stack_cap_evidence_v1.md#6-shield-bonus-and-cap-useful-public-model-unresolved-contradiction",
+                })
+            max_capacity = capacity_result.value
+            formula_details["max_capacity"] = max_capacity
+            formula_details["max_capacity_evaluation"] = capacity_result.to_json()
         effect_source = effect.source.to_json()
         raw_families = standard.get("absorb_families")
         absorb_families = (
@@ -830,6 +901,7 @@ def _execute_fixed_unit_delta(
             source_kind="effect_ir",
             opcode=effect.opcode,
             amount=amount,
+            max_capacity=max_capacity,
             source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
             actor_id=context.caster_id,
             event_source_id=context.source_id,
@@ -851,7 +923,7 @@ def _execute_fixed_unit_delta(
                 formula_details=formula_details,
             ),
         )
-        if not result.ok or result.mutation is None:
+        if not result.ok:
             return _unsupported_effect(
                 effect,
                 result.blocked_reason or "shield_application_blocked",
@@ -859,28 +931,38 @@ def _execute_fixed_unit_delta(
             )
         return EffectResult(
             events=result.events,
-            mutations=(result.mutation,),
+            mutations=(result.mutation,) if result.mutation is not None else (),
             records=result.records,
         )
     if kind == "resource_delta" and resource == "energy":
         raw_amount = amount
+        operation = standard.get("operation", "add")
+        if operation not in {"add", "set"}:
+            return _unsupported_effect(effect, "unsupported_formula:energy_operation_invalid")
+        affected_by_regeneration = standard.get(
+            "affected_by_energy_regeneration",
+            True if effect.opcode == "ResourceDelta" else None,
+        )
+        if type(affected_by_regeneration) is not bool:
+            return _unsupported_effect(effect, "unsupported_formula:energy_regeneration_policy_missing")
         energy_regeneration = effective_unit_stat(
             unit,
             "energy_regeneration_rate",
         )
         energy_multiplier = (
             max(0.0, 1.0 + energy_regeneration.value)
-            if raw_amount > 0.0
+            if raw_amount > 0.0 and operation == "add" and affected_by_regeneration
             else 1.0
         )
         amount = raw_amount * energy_multiplier
         formula_details["raw_energy_delta"] = raw_amount
+        formula_details["affected_by_energy_regeneration"] = affected_by_regeneration
         formula_details["energy_regeneration_multiplier"] = energy_multiplier
         formula_details["energy_regeneration_rate"] = (
             energy_regeneration.to_json()
         )
         cap = unit.max_energy if unit.max_energy > 0 else unit.energy + amount
-        after = max(0.0, min(cap, unit.energy + amount))
+        after = max(0.0, min(cap, amount if operation == "set" else unit.energy + amount))
         mutation = Mutation(
             op="set",
             path=("units", target_id, "energy"),
@@ -977,6 +1059,29 @@ def _execute_remove_shield(
         },
     )
     if not result.ok or result.mutation is None:
+        fact = context.shield_exhaustion_fact
+        if (
+            result.blocked_reason == "shield_removal_source_instance_missing"
+            and type(fact) is ShieldExhaustionFact
+            and event_payload.get("lifecycle_operation") == "remove"
+            and event_payload.get("event_window") == "OnDestroy"
+            and fact.owns(target_id, owner_modifier_name, status_instance_id, context.caster_id)
+        ):
+            return EffectResult(records=(
+                SettlementRecord(
+                    record_type="shield_remove",
+                    source="shield_system",
+                    process_only=True,
+                    payload={
+                        "target_id": target_id,
+                        "owner_modifier_name": owner_modifier_name,
+                        "status_instance_id": status_instance_id,
+                        "reason": "already_exhausted_by_same_shield_mutation",
+                        "exhaustion_mutation_id": fact.mutation.stable_id(),
+                    },
+                    trace=source_trace,
+                ).to_json(),
+            ))
         return _unsupported_effect(
             effect,
             result.blocked_reason or "shield_removal_blocked",
@@ -2490,6 +2595,7 @@ def _binding_sources(context: EffectExecutionContext) -> tuple[dict[str, JSONVal
         ),
         excluded_hashes=shadowed_hashes,
         excluded_names=shadowed_names,
+        excluded_scopes=("status",) if not context.include_ambient_status_bindings else (),
     )
     return (*explicit_sources, store_source)
 
@@ -2549,13 +2655,33 @@ def _optional_numeric(
 def _formula_type_blocked(effect: EffectIR, standard: dict[str, JSONValue], kind: str) -> str:
     formula_type = standard.get("formula_type")
     if kind == "heal":
-        if formula_type in {None, "", "HealByBaseValue", "HealByTargetLostHP", "HealByTargetMaxHP", "HealByHealerMaxHP"}:
-            return ""
+        bases = {
+            "HealByBaseValue": "flat",
+            "HealByTargetLostHP": "target.lost_hp",
+            "HealByTargetMaxHP": "target.max_hp",
+            "HealByHealerMaxHP": "caster.max_hp",
+        }
+        # Internal Heal's fixed-amount contract is independent of raw HealHP.
+        if formula_type is None and effect.opcode == "Heal":
+            formula_type = "HealByBaseValue"
+    elif kind == "shield":
+        bases = {
+            None: "flat",
+            "": "flat",
+            "ShieldByBaseValue": "flat",
+            "ShieldByCasterMaxHP": "caster.max_hp",
+            "ShieldByCasterDefence": "caster.defense",
+            "ShieldByTargetMaxHP": "target.max_hp",
+        }
+    else:
+        return ""
+    if not isinstance(formula_type, (str, type(None))) or formula_type not in bases:
         return f"unsupported_formula:formula_type_not_supported:{formula_type}"
-    if kind == "shield":
-        if formula_type in {None, "", "ShieldByBaseValue", "ShieldByCasterMaxHP", "ShieldByCasterDefence", "ShieldByTargetMaxHP"}:
-            return ""
-        return f"unsupported_formula:formula_type_not_supported:{formula_type}"
+    base = bases[formula_type]
+    if standard.get("formula_base", "flat") != base:
+        return "unsupported_formula:formula_base_mismatch"
+    if standard.get("amount_role", "flat") != ("flat" if base == "flat" else "ratio"):
+        return "unsupported_formula:amount_role_mismatch"
     return ""
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, PassiveMechanismSlotIR, SkillFormulaBindingIR
 
 
@@ -53,10 +55,119 @@ class _RowRecord:
     row: dict[str, Any]
 
 
+def exclude_presentation_passives(
+    slots: list[PassiveMechanismSlotIR], root: Path, source_paths: set[str],
+) -> list[PassiveMechanismSlotIR]:
+    """Prove a local visual controller has no battle-visible outputs in scope.
+
+    Ponytail: conservatively scans complete selected documents (including unused
+    siblings). A future wider scope can use the compiler's dependency graph to
+    reduce false negatives; it must re-check escaped modifier/dynamic identities.
+    """
+    documents = {path: json.loads((root / path).read_text(encoding="utf-8"))
+                 for path in sorted(source_paths)}
+    fingerprints = {path: sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+                    for path, value in documents.items()}
+    result = []
+    for slot in slots:
+        path = str(slot.linked_ir_ids.get("ability_file_path") or "")
+        name = slot.linked_ir_ids.get("ability_name")
+        document = documents.get(path, {})
+        definitions = [value for value in document.get("AbilityList", [])
+                       if isinstance(value, dict) and value.get("Name") == name]
+        if slot.coverage_status == "blocked" or len(definitions) != 1:
+            result.append(slot)
+            continue
+        definition = definitions[0]
+        tokens = _presentation_controller_tokens(definition)
+        if not tokens or any(_escaped_token(value, tokens, definition) for value in documents.values()):
+            result.append(slot)
+            continue
+        result.append(replace(
+            slot, mechanism_kind="presentation_only", runtime_system="none",
+            coverage_status="skipped_with_reason", blocked_reason="presentation_only_closed_source_scope",
+            semantics={**slot.semantics, "presentation_scope": {
+                "private_identities": sorted(tokens), "source_fingerprints": fingerprints,
+                "reason": "only visual sinks and private visual state; no battle outputs",
+            }},
+        ))
+    return result
+
+
+def _presentation_controller_tokens(definition: dict[str, Any]) -> set[str]:
+    if set(definition) != {"Name", "TargetInfo", "Modifiers", "OnAdd"}:
+        return set()
+    modifiers, roots = definition["Modifiers"], definition["OnAdd"]
+    if not isinstance(modifiers, dict) or not modifiers or not isinstance(roots, list) or not roots:
+        return set()
+    names = set(modifiers)
+    installed = set()
+    for task in roots:
+        if not isinstance(task, dict) or set(task) != {"$type", "TargetType", "ModifierName"}:
+            return set()
+        if task["$type"] != "RPG.GameCore.AddModifier" or task["TargetType"] != {
+            "$type": "RPG.GameCore.TargetAlias", "Alias": "Caster",
+        }:
+            return set()
+        if not isinstance(task["ModifierName"], dict) or set(task["ModifierName"]) != {"Value"}:
+            return set()
+        installed.add(task["ModifierName"]["Value"])
+    if installed != names:
+        return set()
+    for modifier in modifiers.values():
+        if not isinstance(modifier, dict) or set(modifier) != {"_CallbackList"}:
+            return set()
+        if not isinstance(modifier["_CallbackList"], list) or any(
+            not isinstance(callback, dict) or set(callback) != {"Event", "CallbackConfig"}
+            or not isinstance(callback["Event"], str)
+            or not isinstance(callback["CallbackConfig"], list)
+            or any(not isinstance(task, dict) or "$type" not in task for task in callback["CallbackConfig"])
+            for callback in modifier["_CallbackList"]
+        ):
+            return set()
+    allowed = {"TriggerEffect", "RemoveEffect", "SetAttachEffectTimeSlow", "PredicateTaskList",
+               "ByCompareDynamicValue", "ByContainBehaviorFlag", "ByAny", "TargetAlias", "DefineDynamicValue"}
+    tokens = set(names)
+    for node in _objects(modifiers):
+        opcode = node.get("$type")
+        if opcode is not None and opcode not in {"RPG.GameCore." + item for item in allowed}:
+            return set()
+        if opcode in {"RPG.GameCore.DefineDynamicValue", "RPG.GameCore.ByCompareDynamicValue"}:
+            key = node.get("DynamicKey", {}).get("Value")
+            if not isinstance(key, str) or not key or node.get("ContextScope") != "TargetEntity":
+                return set()
+            if node.get("TargetType") != {"$type": "RPG.GameCore.TargetAlias", "Alias": "ModifierOwnerEntity"}:
+                return set()
+            tokens.update((key, str(tbgd_dynamic_key_hash(key))))
+    return tokens
+
+
+def _objects(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _objects(child)
+
+
+def _escaped_token(value: Any, tokens: set[str], excluded: dict[str, Any]) -> bool:
+    if value is excluded:
+        return False
+    if isinstance(value, dict):
+        return any(str(key) in tokens or _escaped_token(child, tokens, excluded)
+                   for key, child in value.items())
+    if isinstance(value, list):
+        return any(_escaped_token(child, tokens, excluded) for child in value)
+    return str(value) in tokens
+
+
 def build_monster_card_ir(
     tbgd_root: Path,
     *,
     max_records_per_table: int | None,
+    monster_ids: frozenset[str] | None = None,
 ) -> MonsterCardBuildResult:
     monster_rows: dict[str, _RowRecord] = {}
     for relative_path in MONSTER_ROW_PATHS:
@@ -95,7 +206,12 @@ def build_monster_card_ir(
     skill_formula_bindings: dict[str, SkillFormulaBindingIR] = {}
     passive_mechanism_slots: dict[str, PassiveMechanismSlotIR] = {}
     for monster_id, monster_record in sorted(monster_rows.items()):
-        passive_slots = _passive_slots_for_monster(monster_id, monster_record, ability_name_index)
+        if monster_ids is not None and monster_id not in monster_ids:
+            continue
+        passive_slots = _passive_slots_for_monster(
+            monster_id, monster_record, ability_name_index, tbgd_root=tbgd_root,
+            template_record=template_rows.get(str(monster_record.row.get("MonsterTemplateID") or "")),
+        )
         for slot in passive_slots:
             passive_mechanism_slots.setdefault(slot.passive_slot_id, slot)
         card = _monster_card(
@@ -302,34 +418,133 @@ def _passive_slots_for_monster(
     monster_id: str,
     monster_record: _RowRecord,
     ability_name_index: dict[str, tuple[str, ...]],
+    *,
+    tbgd_root: Path,
+    template_record: _RowRecord | None,
 ) -> list[PassiveMechanismSlotIR]:
-    raw_abilities = monster_record.row.get("AbilityNameList")
+    candidates: dict[str | int, list[dict[str, Any]]] = {}
+    reasons: dict[str | int, str] = {}
+    explicit_passive: set[str] = set()
+    active_names: set[str] = set()
+
+    def add(name: Any, edge: dict[str, Any], reason: str = "") -> None:
+        valid = isinstance(name, str) and bool(name)
+        key = name if valid else len(candidates)
+        candidates.setdefault(key, []).append(edge)
+        if reason or not valid:
+            reasons[key] = reason or "monster_passive_ability_name_invalid"
+
+    monster_edge = {"source_path": monster_record.relative_path,
+                    "raw_type": Path(monster_record.relative_path).stem,
+                    "raw_id": monster_id, "row_index": monster_record.row_index}
+    raw_abilities = monster_record.row.get("AbilityNameList", [])
     if not isinstance(raw_abilities, list):
-        return []
+        add(None, {**monster_edge, "raw_path": "AbilityNameList"}, "monster_passive_ability_list_invalid")
+    else:
+        for index, name in enumerate(raw_abilities):
+            add(name, {**monster_edge, "raw_path": f"AbilityNameList[{index}]"})
+            if isinstance(name, str) and name:
+                explicit_passive.add(name)
+
+    config_path = str(template_record.row.get("JsonConfig") or "") if template_record else ""
+    config = _read_json_dict(tbgd_root, config_path)
+    template_edge = {
+        "source_path": template_record.relative_path if template_record else monster_record.relative_path,
+        "raw_type": Path(template_record.relative_path).stem if template_record else monster_edge["raw_type"],
+        "raw_id": str(monster_record.row.get("MonsterTemplateID") or ""),
+        "row_index": template_record.row_index if template_record else monster_record.row_index,
+        "raw_path": "JsonConfig" if template_record else "MonsterTemplateID",
+        "character_config_path": config_path,
+    }
+    if config is None:
+        add(None, template_edge, "monster_passive_character_config_missing_or_unreadable")
+    else:
+        config_edge = {"source_path": config_path, "raw_type": "MonsterCharacterConfig",
+                       "raw_id": monster_id, "template_source": template_edge}
+        raw_skills = config.get("SkillList", [])
+        if isinstance(raw_skills, list):
+            skills = tuple((f"SkillList[{index}]", item, "") for index, item in enumerate(raw_skills))
+        elif isinstance(raw_skills, dict):
+            skills = tuple((f"SkillList.{key}", item, str(key)) for key, item in raw_skills.items())
+        else:
+            skills = ()
+            add(None, {**config_edge, "raw_path": "SkillList"}, "monster_passive_skill_list_invalid")
+        for path, skill, fallback_key in skills:
+            if not isinstance(skill, dict):
+                add(None, {**config_edge, "raw_path": path}, "monster_passive_skill_entry_invalid")
+                continue
+            name = skill.get("EntryAbility")
+            trigger = str(skill.get("Name") or skill.get("SkillName") or skill.get("SkillTriggerKey") or fallback_key)
+            if skill.get("UseType") == "Passive":
+                edge = {**config_edge, "raw_path": f"{path}.EntryAbility", "use_type": "Passive"}
+                add(name, edge)
+                if isinstance(name, str) and name:
+                    explicit_passive.add(name)
+            elif isinstance(skill.get("UseType"), str) and skill["UseType"]:
+                if isinstance(name, str) and name:
+                    active_names.add(name)
+                active_names.update(_standalone_ability_names_for_trigger(config, trigger))
+        raw_roots = config.get("AbilityList", [])
+        if not isinstance(raw_roots, list):
+            add(None, {**config_edge, "raw_path": "AbilityList"}, "monster_passive_character_ability_list_invalid")
+        else:
+            for index, name in enumerate(raw_roots):
+                edge = {**config_edge, "raw_path": f"AbilityList[{index}]"}
+                if isinstance(name, str) and name in active_names and name not in explicit_passive:
+                    continue
+                add(name, edge, "" if isinstance(name, str) and name in explicit_passive
+                    else "monster_character_ability_activation_kind_unresolved")
+    for name in explicit_passive & active_names:
+        reasons[name] = "monster_passive_active_ability_identity_conflict"
+
     slots: list[PassiveMechanismSlotIR] = []
     card_id = f"monster_data_card:monster:{monster_id}"
     owner_entity_ref = f"monster:{monster_id}"
-    for index, raw_name in enumerate(raw_abilities):
-        ability_name = raw_name if isinstance(raw_name, str) else ""
+    for index, (candidate, source_edges) in enumerate(candidates.items()):
+        ability_name = candidate if isinstance(candidate, str) else ""
         paths = tuple(sorted(ability_name_index.get(ability_name, ()))) if ability_name else ()
-        blocked_reason = ""
-        if not ability_name:
+        blocked_reason = reasons.get(candidate, "")
+        if not blocked_reason and not ability_name:
             blocked_reason = "monster_passive_ability_name_invalid"
-        elif not paths:
+        elif not blocked_reason and not paths:
             blocked_reason = "monster_passive_ability_missing"
-        elif len(paths) > 1:
+        elif not blocked_reason and len(paths) > 1:
             blocked_reason = "monster_passive_ability_ambiguous"
+        callback_sources: list[dict[str, Any]] = []
+        if len(paths) == 1:
+            document = _read_json_dict(tbgd_root, paths[0])
+            definitions = tuple((position, value) for position, value in enumerate(
+                document.get("AbilityList", []) if document else []
+            ) if isinstance(value, dict) and (value.get("Name") or value.get("AbilityName")) == ability_name)
+            if len(definitions) != 1:
+                blocked_reason = blocked_reason or "monster_passive_ability_definition_missing_or_ambiguous"
+            else:
+                position, definition = definitions[0]
+                for callback, tasks in definition.items():
+                    if not callback.startswith("On"):
+                        continue
+                    if not isinstance(tasks, list) or any(not isinstance(task, dict) for task in tasks):
+                        blocked_reason = blocked_reason or "monster_passive_root_callback_invalid"
+                    callback_sources.append({"source_path": paths[0], "ability_name": ability_name,
+                                             "raw_path": f"AbilityList[{position}].{callback}",
+                                             "callback_kind": callback})
+                if not callback_sources:
+                    blocked_reason = blocked_reason or "monster_passive_root_callback_missing"
+        callbacks = tuple(item["callback_kind"] for item in callback_sources)
+        first_source = source_edges[0]
         source = IRSource(
-            source_path=monster_record.relative_path,
-            raw_type=Path(monster_record.relative_path).stem,
+            source_path=first_source["source_path"],
+            raw_type=first_source["raw_type"],
             raw_id=monster_id,
             evidence={
-                "row_index": monster_record.row_index,
-                "raw_path": f"AbilityNameList[{index}]",
+                "row_index": first_source.get("row_index"),
+                "raw_path": first_source["raw_path"],
+                "source_edges": source_edges,
+                "root_callback_sources": callback_sources,
                 "ability_name": ability_name,
                 "ability_file_paths": list(paths),
                 "ability_resolution_status": "unique" if len(paths) == 1 else "blocked",
-                "builder": "monster_passive_slot_v0_281",
+                "builder": "monster_passive_source_discovery",
             },
         )
         slot_id = f"passive_mechanism_slot:monster:{monster_id}:ability:{index}:{_safe_id(ability_name)}"
@@ -349,17 +564,19 @@ def _passive_slots_for_monster(
                 },
                 activation={
                     "kind": "monster_passive_startup_ability_candidate",
-                    "source_field": "AbilityNameList",
+                    "source_field": first_source["raw_path"],
                     "source_index": index,
                     "default_enabled": True,
-                    "callback_kind": "OnStart",
+                    "callback_kind": callbacks[0] if len(callbacks) == 1 else "",
+                    "callback_kinds": list(callbacks),
                 },
                 semantics={
                     "ability_name": ability_name,
                     "ability_file_paths": list(paths),
-                    "admission_policy": "only_root_on_start_add_modifier_without_dynamic_or_event_trigger_v0_281",
+                    "admission_policy": "source_callback_runtime_admission_required",
                     "event_trigger_execution_admitted": False,
-                    "source_field": "AbilityNameList",
+                    "source_field": first_source["raw_path"],
+                    "root_callback_sources": callback_sources,
                 },
                 source=source,
                 coverage_status="blocked" if blocked_reason else "lowered",
@@ -764,6 +981,7 @@ def _raw_parameter_blocks(monster_row: dict[str, Any], template_row: dict[str, A
         },
         "template_config": {
             "rank": str(template_row.get("Rank") or ""),
+            **({"stance_count": _json_safe(template_row["StanceCount"])} if "StanceCount" in template_row else {}),
             "json_config": str(template_row.get("JsonConfig") or ""),
             "base_stats": {
                 "attack": _json_safe(template_row.get("AttackBase")),
@@ -813,7 +1031,8 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "sequence_skill_must_be_in_skill_list": True,
         },
         "passive_policy": {
-            "passive_source_field": "MonsterConfig.AbilityNameList",
+            "passive_source_fields": ["MonsterConfig.AbilityNameList", "MonsterTemplateConfig.JsonConfig",
+                                      "MonsterCharacterConfig.AbilityList", "MonsterCharacterConfig.SkillList"],
             "skill_modifier_list_is_not_passive_source": True,
             "first_executable_scope": "root OnStart AddModifier only",
             "event_trigger_execution_admitted": False,

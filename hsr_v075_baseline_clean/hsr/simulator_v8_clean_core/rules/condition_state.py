@@ -63,6 +63,7 @@ COMMITTED_CONDITION_FACT_KINDS = frozenset(
         "relation.opposing",
         "relation.summoner",
         "unit.avatar_base_type",
+        "unit.build_selector",
         "unit.battle_event_id",
         "unit.hp",
         "unit.is_battle_event_entity",

@@ -34,13 +34,13 @@ class ScenarioLoader:
         scenario_id = _required_str(data, "scenario_id")
         version = _required_str(data, "version")
         units_data = _required_list(data, "units")
-        route_data = _required_list(data, "route")
+        route_data = data.get("route", [])
+        if not isinstance(route_data, list):
+            raise TypeError("scenario.route must be an array")
         units = tuple(_unit(item, index) for index, item in enumerate(units_data))
         route = tuple(_route_step(item, index) for index, item in enumerate(route_data))
         if not units:
             raise ValueError("scenario.units must not be empty")
-        if not route:
-            raise ValueError("scenario.route must not be empty")
         battle_setup = _battle_setup(data)
         if any(unit.build_mode == "assembled_character_build" for unit in units):
             timeline = battle_setup.timeline

@@ -60,6 +60,7 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
     "critical_damage": ("crit", "critical_damage"),
     "effect_hit_rate": ("status_probability", "effect_hit_rate"),
     "effect_resistance": ("status_probability", "effect_resistance"),
+    "control_resistance": ("status_resistance", "STAT_CTRL"),
     "outgoing_healing_ratio": ("healing", "outgoing_healing_ratio"),
     "incoming_healing_ratio": ("healing", "incoming_healing_ratio"),
     "shield_added_ratio": ("shield", "shield_added_ratio"),
@@ -185,7 +186,7 @@ def effective_status_resistance(
         raise TypeError("status resistance keys must be strings")
     effect = _clamped_stat_value(unit, "effect_resistance")
     control = (
-        _clamped_resource_value(unit, "control_resistance")
+        _clamped_stat_value(unit, "control_resistance")
         if control_kind
         else 0.0
     )

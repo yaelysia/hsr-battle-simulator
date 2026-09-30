@@ -20,6 +20,7 @@ from .character_ability_scope import (
     CharacterAbilityScopeProjectionCatalog,
     build_character_ability_raw_snapshot,
     build_character_ability_scope_projection,
+    character_ability_semantic_kind,
 )
 from .character_ability_source_graph import (
     _skill_entries,
@@ -40,6 +41,7 @@ from .character_control_flow_contracts import (
 from .task_graph_materializer import (
     build_complete_task_graph_catalog,
     materialize_character_runtime_task_graph_catalog,
+    materialize_selected_character_task_graphs,
 )
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
@@ -57,7 +59,7 @@ from .light_cone_cards import (
     require_complete_light_cone_catalog,
 )
 from .relic_cards import build_relic_catalog, require_complete_relic_catalog
-from .monster_cards import build_monster_card_ir
+from .monster_cards import build_monster_card_ir, exclude_presentation_passives
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..equipment.models import (
@@ -1843,7 +1845,24 @@ class TBGDLowering:
             )
         ]
 
-    def build(self) -> CanonicalIR:
+    def build(
+        self,
+        *,
+        avatar_ids: frozenset[str] | None = None,
+        monster_ids: frozenset[str] | None = None,
+        stage_ids: frozenset[str] | None = None,
+        include_equipment: bool = True,
+    ) -> CanonicalIR:
+        # Content scope selects whole source graphs, never a prefix of their tasks.
+        for selected in (avatar_ids, monster_ids, stage_ids):
+            if selected is not None and (
+                type(selected) is not frozenset
+                or any(not isinstance(item, str) or not item for item in selected)
+            ):
+                raise ValueError("content scope must contain nonempty string identities")
+        if type(include_equipment) is not bool:
+            raise TypeError("include_equipment must be bool")
+        scoped = any(value is not None for value in (avatar_ids, monster_ids, stage_ids))
         character_ability_source_graph_catalog = (
             self.build_character_ability_source_graph_catalog()
         )
@@ -1858,7 +1877,7 @@ class TBGDLowering:
         equipment_ability_sources = _equipment_ability_source_projection(
             (*light_cone_definitions, *relic_set_thresholds)
         )
-        entities: list[RuleEntity] = []
+        entities: list[RuleEntity] = self._lower_status_immunity_rules()
         action_definitions: list[ActionDefinitionIR] = []
         triggers: list[TriggerIR] = []
         effects: list[EffectIR] = []
@@ -1890,8 +1909,30 @@ class TBGDLowering:
         }
 
         table_stats: dict[str, dict[str, Any]] = {}
+        avatar_rows = self._avatar_config_rows_prefer_enhanced()
+        avatar_field_keys = set().union(*(set(spec[2]) for spec in ENTITY_TABLES.values() if spec[0] == "avatar"))
         for relative_path, spec in ENTITY_TABLES.items():
-            entities.extend(self._lower_entity_table(relative_path, spec))
+            if scoped and spec[0] not in {"avatar", "monster", "monster_template", "status", "summon_unit", "servant"}:
+                # Skill levels and equipment use their typed definitions below.
+                # Their old unlevelled audit entities are not runtime inputs.
+                continue
+            if spec[0] == "avatar":
+                for source_path, row_index, row in avatar_rows:
+                    if source_path != relative_path:
+                        continue
+                    avatar_id = str(row["AvatarID"])
+                    entities.append(RuleEntity(
+                        entity_id=f"avatar:{avatar_id}", entity_type="avatar",
+                        fields={key: _json_safe(row[key]) for key in avatar_field_keys if key in row},
+                        source=IRSource(source_path=source_path, raw_type=Path(source_path).stem,
+                            raw_id=avatar_id, evidence={"row_index": row_index, "id_key": "AvatarID",
+                            "selected_version": row.get("_v8_version_kind"),
+                            "base_source_path": row.get("_v8_base_source_path"),
+                            "base_row_index": row.get("_v8_base_row_index")}),
+                        coverage_status="audit_only",
+                    ))
+            else:
+                entities.extend(self._lower_entity_table(relative_path, spec))
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
         character_cards = build_character_card_ir(
@@ -1914,6 +1955,7 @@ class TBGDLowering:
         monster_cards = build_monster_card_ir(
             self.tbgd_root,
             max_records_per_table=self.limits.max_records_per_table,
+            monster_ids=monster_ids,
         )
         monster_data_cards = monster_cards.monster_data_cards
         monster_rank_scores = self._monster_rank_scores()
@@ -1921,14 +1963,23 @@ class TBGDLowering:
         passive_mechanism_slots = list(monster_cards.passive_mechanism_slots)
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
-        wave_definitions = self._lower_wave_definitions(entities, combatant_profiles, monster_data_cards)
-        action_definitions = self._lower_action_definitions()
+        wave_definitions = self._lower_wave_definitions(
+            entities, combatant_profiles, monster_data_cards, stage_ids=stage_ids,
+        )
+        selected_action_ids = None
+        if avatar_ids is not None and monster_ids is not None:
+            selected_action_ids = frozenset(
+                [f"avatar_skill:{skill_id}" for card in character_data_cards
+                 if card.entity_ref[7:] in avatar_ids for skill_id in card.skill_ids]
+                + [f"monster_skill:{skill_id}" for card in monster_data_cards for skill_id in card.skill_ids]
+            )
+        action_definitions = self._lower_action_definitions(action_ids=selected_action_ids)
         action_target_contract_catalog = build_action_target_contract_catalog(
             self.tbgd_root,
             definitions=action_definitions,
             snapshot=self._character_ability_raw_snapshot,
             source_graph_catalog=character_ability_source_graph_catalog,
-            definition_scope_complete=self.limits.max_records_per_table is None,
+            definition_scope_complete=not scoped and self.limits.max_records_per_table is None,
         )
         (
             action_ability_bindings,
@@ -1981,8 +2032,10 @@ class TBGDLowering:
             break_status_emissions,
             break_effects,
             break_target_expressions,
+            break_conditions,
         ) = self._lower_break_templates()
         target_expressions.extend(break_target_expressions)
+        conditions.extend(break_conditions)
         super_break_emissions.extend(self._lower_super_break_emissions())
         effects.extend(break_effects)
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
@@ -1990,6 +2043,25 @@ class TBGDLowering:
 
         ability_files = self._ability_files()
         selected_ability_files = _limit_sequence(ability_files, self.limits.max_ability_files)
+        if avatar_ids is not None and monster_ids is not None:
+            selected_graphs = tuple(
+                graph for graph in character_ability_source_graph_catalog.graphs
+                if graph.owner_avatar_id in avatar_ids or graph.source_kind == "character_shared"
+            )
+            selected_source_ids = {graph.source_id for graph in selected_graphs}
+            selected_paths = {
+                source.source.source_path for source in character_ability_source_graph_catalog.sources
+                if source.source_id in selected_source_ids
+            }
+            selected_paths.update(phase.source.source_path for phase in ability_phases)
+            for slot in passive_mechanism_slots:
+                selected_paths.update(slot.linked_ir_ids.get("ability_file_paths", ()))
+            selected_ability_files = [
+                path for path in selected_ability_files
+                if relative_source_path(self.tbgd_root, path) in selected_paths
+                or relative_source_path(self.tbgd_root, path).startswith("Config/ConfigGlobalModifier/")
+                or (include_equipment and relative_source_path(self.tbgd_root, path) in equipment_ability_sources)
+            ]
         formal_status_source_context = self._character_formal_task_source_context()
         formal_status_root_paths = {
             item.source.source_path
@@ -2048,7 +2120,7 @@ class TBGDLowering:
             equipment_target_expressions,
             equipment_parameter_reads,
         ) = self._lower_equipment_ability_graphs(
-            (*light_cone_definitions, *relic_set_thresholds),
+            (*light_cone_definitions, *relic_set_thresholds) if include_equipment else (),
             status_callbacks=status_callbacks,
         )
         standalone_ability_graphs.extend(equipment_ability_graphs)
@@ -2132,15 +2204,17 @@ class TBGDLowering:
             effects=effects,
             root_task_ids_by_graph=standalone_root_task_ids_by_graph,
         )
-        passive_mechanism_slots = _admit_passive_startup_slots(
-            passive_mechanism_slots,
-            standalone_graphs=standalone_ability_graphs,
-            ability_tasks=ability_tasks,
-            effects=effects,
-            triggers=triggers,
-        )
+        if scoped:
+            passive_mechanism_slots = exclude_presentation_passives(
+                passive_mechanism_slots, self.tbgd_root,
+                {relative_source_path(self.tbgd_root, path) for path in selected_ability_files}
+                | {trigger.source.source_path for trigger in triggers},
+            )
         skill_continuations = _skill_continuations_from_ability_tasks(ability_tasks)
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
+        if avatar_ids is not None and monster_ids is not None:
+            selected_entities = {f"avatar:{item}" for item in avatar_ids} | {f"monster:{item}" for item in monster_ids}
+            combatant_action_sets = [item for item in combatant_action_sets if item.entity_ref in selected_entities]
         combatant_action_sets, action_admissions = _lower_action_admissions(
             combatant_action_sets,
             action_definitions,
@@ -2178,6 +2252,13 @@ class TBGDLowering:
             entities,
             status_callbacks,
             ability_property_watchers,
+        )
+        passive_mechanism_slots = _admit_passive_startup_slots(
+            passive_mechanism_slots,
+            standalone_graphs=standalone_ability_graphs,
+            ability_tasks=ability_tasks,
+            effects=effects,
+            triggers=triggers,
         )
         status_callback_blocked_reasons = {
             callback.callback_id: (
@@ -2326,7 +2407,18 @@ class TBGDLowering:
             )
         )
         character_task_graph_catalog = (
-            materialize_character_runtime_task_graph_catalog(
+            materialize_selected_character_task_graphs(
+                control_flow_catalog,
+                task_graph_view,
+                source_snapshot=self._character_ability_raw_snapshot,
+                selected_source_paths=frozenset(
+                    relative_source_path(self.tbgd_root, path)
+                    for path in selected_ability_files
+                    if relative_source_path(self.tbgd_root, path) in formal_status_root_paths
+                ),
+            )
+            if scoped and task_graph_scope_complete
+            else materialize_character_runtime_task_graph_catalog(
                 control_flow_catalog,
                 task_graph_view,
                 source_snapshot=self._character_ability_raw_snapshot,
@@ -2335,6 +2427,55 @@ class TBGDLowering:
             if task_graph_scope_complete
             else None
         )
+        if character_task_graph_catalog is not None:
+            weighted_control_ids: set[tuple[str, str]] = set()
+            for graph in character_task_graph_catalog.graphs:
+                selected_node_ids = {
+                    selection.graph_node_id for selection in graph.weighted_selections
+                }
+                weighted_control_ids.update(
+                    (graph.entry_kind, node.formal_task_id)
+                    for node in graph.nodes
+                    if node.opcode == node.source_family == "RandomConfig"
+                    and node.node_kind == "branch"
+                    and node.materialization_status == "materialized"
+                    and node.owner_domains == ("task_graph_execution",)
+                    and node.graph_node_id in selected_node_ids
+                )
+            formal_status_callback_ids = {
+                callback.callback_id
+                for callback in status_callbacks
+                if callback.source_mode == "mainline_avatar_ability"
+                and callback.coverage_status == "executable"
+                and callback.admission_status == "executable"
+                and not callback.blocked_reason
+                and not callback.blocking_dependency
+            }
+            ability_tasks = [
+                replace(task, coverage_status="executable", blocked_reason="")
+                if (
+                    ("ability_phase_callback", task.task_id) in weighted_control_ids
+                    and task.opcode == "RandomConfig"
+                    and task.execution_mode == "runtime_effect"
+                    and task.coverage_status == "blocked"
+                    and task.blocked_reason == "effect_coverage_status:unsupported:RandomConfig"
+                ) else task
+                for task in ability_tasks
+            ]
+            status_callback_tasks = [
+                replace(task, coverage_status="executable", blocked_reason="")
+                if (
+                    ("status_callback", task.task_id) in weighted_control_ids
+                    and task.callback_id in formal_status_callback_ids
+                    and task.opcode == "RandomConfig"
+                    and task.coverage_status == "blocked"
+                    and task.blocked_reason in {
+                        f"status_callback_event_not_admitted:{task.event}",
+                        "status_callback_task_opcode_not_admitted:RandomConfig",
+                    }
+                ) else task
+                for task in status_callback_tasks
+            ]
         self._character_formal_task_graph_catalog = character_task_graph_catalog
         external_task_topology_dependencies = (
             build_external_task_topology_dependency_ledger(
@@ -2447,6 +2588,12 @@ class TBGDLowering:
                 character_ability_source_resolution_catalog
             ),
             metadata={
+                "content_scope": {
+                    "avatar_ids": sorted(avatar_ids) if avatar_ids is not None else None,
+                    "monster_ids": sorted(monster_ids) if monster_ids is not None else None,
+                    "stage_ids": sorted(stage_ids) if stage_ids is not None else None,
+                    "include_equipment": include_equipment,
+                },
                 "source": "turnbasedgamedata-main",
                 "lowering": "tbgd_first_v0_200",
                 "monster_rank_scores": monster_rank_scores,
@@ -2616,6 +2763,45 @@ class TBGDLowering:
     def _lower_resource_rules(self) -> list[ResourceRuleIR]:
         return list(build_engine_rule_registry().resource_rules)
 
+    def _lower_status_immunity_rules(self) -> list[RuleEntity]:
+        relative = "Config/GlobalConfig/GameCoreConstValue.json"
+        raw = _read_json_file(self.tbgd_root / relative)
+        result: list[RuleEntity] = []
+        for table_name, raw_field, field_name in (
+            ("ModifierBehaviorFlagImmuneMap", "BehaviorFlags", "behavior_flags"),
+            ("ModifierStatusTypeImmuneMap", "StatusTypes", "status_types"),
+        ):
+            table = raw.get(table_name) if isinstance(raw, dict) else None
+            if not isinstance(table, dict) or not table:
+                raise ValueError(f"{table_name} source table is missing")
+            for flag, entry in sorted(table.items()):
+                values = entry.get(raw_field) if isinstance(entry, dict) else None
+                if (
+                    not isinstance(flag, str) or not flag
+                    or not isinstance(values, list) or not values
+                    or any(not isinstance(value, str) or not value for value in values)
+                ):
+                    raise ValueError(f"{table_name} source table is malformed")
+                path = f"$.{table_name}.{flag}"
+                result.append(RuleEntity(
+                    entity_id=f"status_immunity_rule:{table_name}:{flag}",
+                    entity_type="status_immunity_rule",
+                    source=IRSource(
+                        source_path=relative,
+                        raw_type="GameCoreConstValue",
+                        raw_id=f"{table_name}.{flag}",
+                        evidence={"json_path": path, "value": _json_safe(entry)},
+                    ),
+                    fields={
+                        "granting_behavior_flag": flag,
+                        "behavior_flags": [],
+                        "status_types": [],
+                        field_name: list(values),
+                    },
+                    coverage_status="executable",
+                ))
+        return result
+
     def _lower_damage_formula_rules(self) -> list[DamageFormulaRuleIR]:
         return list(build_engine_rule_registry().damage_formula_rules)
 
@@ -2692,6 +2878,8 @@ class TBGDLowering:
         entities: list[RuleEntity],
         combatant_profiles: list[CombatantProfileIR],
         monster_data_cards: tuple[MonsterDataCardIR, ...],
+        *,
+        stage_ids: frozenset[str] | None = None,
     ) -> list[WaveDefinitionIR]:
         relative = "ExcelOutput/StageConfig.json"
         path = self.tbgd_root / relative
@@ -2714,6 +2902,8 @@ class TBGDLowering:
                 continue
             stage_id = _stage_id(row)
             if not stage_id:
+                continue
+            if stage_ids is not None and stage_id not in stage_ids:
                 continue
             monster_list = row.get("MonsterList")
             if not isinstance(monster_list, list) or not monster_list:
@@ -2923,23 +3113,26 @@ class TBGDLowering:
         list[BreakStatusEmissionIR],
         list[EffectIR],
         list[TargetExpressionIR],
+        list[ConditionIR],
     ]:
         relative_path = "Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json"
         path = self.tbgd_root / relative_path
         if not path.exists():
-            return [], [], [], [], []
+            return [], [], [], [], [], []
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            return [], [], [], [], []
+            return [], [], [], [], [], []
         templates = data.get("TaskListTemplate") if isinstance(data, dict) else None
         if not isinstance(templates, list):
-            return [], [], [], [], []
+            return [], [], [], [], [], []
         lowered_templates: list[BreakTemplateIR] = []
         damage_emissions: list[BreakDamageEmissionIR] = []
         status_emissions: list[BreakStatusEmissionIR] = []
         effects: list[EffectIR] = []
         target_expressions: list[TargetExpressionIR] = []
+        conditions: list[ConditionIR] = []
+        conditions_by_id: dict[str, ConditionIR] = {}
         for index, template in enumerate(templates):
             if not isinstance(template, dict):
                 continue
@@ -2960,6 +3153,40 @@ class TBGDLowering:
                     "purpose": "normal_weakness_break_lifecycle_template",
                 },
             )
+            status_numeric_bindings: list[dict[str, Any]] = []
+            for task in task_list:
+                if not isinstance(task, dict):
+                    continue
+                opcode = _short_gamecore_type(task.get("$type"))
+                if opcode in {"AddModifier", "PredicateTaskList"}:
+                    break
+                read_target = task.get("ReadTargetType")
+                read_alias = read_target.get("Alias") if isinstance(read_target, dict) else None
+                if (opcode == "SetDynamicValueByProperty"
+                    and task.get("DynamicKey") == "TargetStance"
+                    and task.get("Value") == "MaxStance" and read_alias == "ParamEntity"):
+                    status_numeric_bindings.append({
+                        "name": "TargetStance", "hash": str(_tbgd_dynamic_key_hash("TargetStance")),
+                        "value_source": "target_max_toughness_old_units",
+                    })
+                elif (opcode == "SetDynamicValueByBreakBaseDamage"
+                    and task.get("DynamicKey") == "CasterBreakBaseDamage" and read_alias == "Caster"):
+                    status_numeric_bindings.append({
+                        "name": "CasterBreakBaseDamage", "hash": str(_tbgd_dynamic_key_hash("CasterBreakBaseDamage")),
+                        "value_source": "caster_level_break_base_damage",
+                    })
+            # PR8 reconciles this working hash with the old-unit denominator;
+            # the pinned template does not export its native assignment.
+            status_numeric_bindings.append({
+                "name": "StanceUnitBase", "hash": "-276098552",
+                "value_source": "constant", "value": 30.0,
+                "model_source": (
+                    "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+                    "bd417912e57f1e8196ae6a6ebbdf7b2e4509675b/"
+                    "docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md"
+                    "#5-initial-weakness-break-damage"
+                ),
+            })
             lowered_templates.append(
                 BreakTemplateIR(
                     template_id=f"break_template:{name}",
@@ -2968,16 +3195,53 @@ class TBGDLowering:
                     source=source,
                     coverage_status="executable",
                     blocked_reason="",
+                    status_numeric_bindings=tuple(status_numeric_bindings),
                 )
             )
+            task_rows: list[tuple[int, str, str, dict[str, Any], str, bool | None]] = []
             for task_index, task in enumerate(task_list):
                 if not isinstance(task, dict):
                     continue
+                task_path = f"$.TaskListTemplate[{index}].TaskList[{task_index}]"
+                if _short_gamecore_type(task.get("$type")) == "PredicateTaskList":
+                    predicate = task.get("Predicate")
+                    branches = (("SuccessTaskList", True), ("FailedTaskList", False))
+                    if (
+                        not isinstance(predicate, dict)
+                        or any(not isinstance(task.get(branch), list) or not task[branch]
+                               or any(not isinstance(child, dict) or _short_gamecore_type(child.get("$type")) != "AddModifier"
+                                      for child in task[branch]) for branch, _ in branches)
+                    ):
+                        lowered_templates[-1] = replace(
+                            lowered_templates[-1], coverage_status="blocked",
+                            blocked_reason="break_predicate_task_shape_not_admitted",
+                        )
+                        continue
+                    condition = _condition_ir_from_typed_target_predicate(
+                        predicate,
+                        IRSource(
+                            source_path=relative_path, raw_type="GlobalBreakPredicate",
+                            raw_id=f"{name}:{task_index}",
+                            evidence={"json_path": f"{task_path}.Predicate"},
+                        ),
+                    )
+                    conditions.append(condition)
+                    conditions_by_id[condition.condition_id] = condition
+                    for branch, expected in branches:
+                        for child_index, child in enumerate(task[branch]):
+                            task_rows.append((
+                                task_index, f"{task_index}:{branch}:{child_index}",
+                                f"{task_path}.{branch}[{child_index}]", child,
+                                condition.condition_id, expected,
+                            ))
+                    continue
+                task_rows.append((task_index, str(task_index), task_path, task, "", None))
+            for task_index, task_key, task_path, task, condition_id, condition_expected in task_rows:
                 opcode = _short_gamecore_type(task.get("$type"))
-                task_id = f"break_template_task:{name}:{task_index}:{opcode}"
+                task_id = f"break_template_task:{name}:{task_key}:{opcode}"
                 if opcode == "AddModifier":
-                    effect_id = f"break_effect:{name}:{task_index}:{opcode}"
-                    status_emission_id = f"break_status_emission:{name}:{task_index}"
+                    effect_id = f"break_effect:{name}:{task_key}:{opcode}"
+                    status_emission_id = f"break_status_emission:{name}:{task_key}"
                     effect_source = IRSource(
                         source_path=relative_path,
                         raw_type="GlobalBreakStatusTask",
@@ -2986,6 +3250,7 @@ class TBGDLowering:
                             "template_id": f"break_template:{name}",
                             "break_status_emission_id": status_emission_id,
                             "task_index": task_index,
+                            "json_path": task_path,
                             "task_id": task_id,
                             "opcode": opcode,
                             "task": _json_safe(task),
@@ -3001,6 +3266,9 @@ class TBGDLowering:
                     target_expressions.extend(effect_target_expressions)
                     coverage_status = _effect_coverage_status(opcode, payload)
                     blocked_reason = _effect_blocked_reason(opcode, payload, coverage_status) if coverage_status != "executable" else ""
+                    if condition_id and conditions_by_id[condition_id].coverage_status != "executable":
+                        coverage_status = "blocked"
+                        blocked_reason = conditions_by_id[condition_id].blocked_reason or "break_predicate_not_executable"
                     standard = payload.get("standard") if isinstance(payload.get("standard"), dict) else {}
                     payload = {
                         **payload,
@@ -3034,6 +3302,8 @@ class TBGDLowering:
                             source=effect_source,
                             coverage_status=coverage_status,
                             blocked_reason=blocked_reason,
+                            condition_id=condition_id,
+                            condition_expected=condition_expected,
                         )
                     )
                     continue
@@ -3046,7 +3316,32 @@ class TBGDLowering:
                 if formula_type != "ByBreakDamage":
                     continue
                 scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
-                coverage_status = "executable" if _numeric_expr_can_be_runtime_bound(scaling_expr) else "blocked"
+                # PR8 reconciles this shared percentage with MaxStance / 30.
+                # Compile the complete base amount; runtime must not guess roles
+                # from the order of raw dynamic hashes or omit the level factor.
+                base_hash = _tbgd_dynamic_key_hash("CasterBreakBaseDamage")
+                toughness_hash = _tbgd_dynamic_key_hash("TargetStance")
+                instructions = scaling_expr.get("instructions", [])
+                reconciled = (
+                    scaling_expr.get("kind") == "program"
+                    and instructions and instructions[-1] == {"opcode": "end"}
+                    and set(numeric_dynamic_hashes(scaling_expr)) == {toughness_hash, -276098552}
+                )
+                if reconciled:
+                    scaling_expr = {
+                        **scaling_expr,
+                        "instructions": [
+                            {"opcode": "push_dynamic", "hash": base_hash},
+                            *[
+                                {"opcode": "push_fixed", "value": 30.0}
+                                if item.get("opcode") == "push_dynamic" and item.get("hash") == -276098552
+                                else item
+                                for item in instructions[:-1]
+                            ],
+                            {"opcode": "mul"}, {"opcode": "end"},
+                        ],
+                    }
+                coverage_status = "executable" if reconciled and _numeric_expr_can_be_runtime_bound(scaling_expr) else "blocked"
                 damage_emissions.append(
                     BreakDamageEmissionIR(
                         break_damage_emission_id=f"break_damage_emission:{name}:{task_index}",
@@ -3055,6 +3350,8 @@ class TBGDLowering:
                         element_type=element,
                         damage_formula_family="break",
                         scaling_expr=scaling_expr,
+                        base_damage_hash=str(base_hash) if reconciled else "",
+                        target_toughness_hash=str(toughness_hash) if reconciled else "",
                         source=IRSource(
                             source_path=relative_path,
                             raw_type="GlobalBreakDamageTask",
@@ -3062,16 +3359,32 @@ class TBGDLowering:
                             evidence={
                                 "template_id": f"break_template:{name}",
                                 "task_index": task_index,
+                                "json_path": f"$.TaskListTemplate[{index}].TaskList[{task_index}]",
                                 "task_id": task_id,
                                 "opcode": opcode,
                                 "attack_property": _json_safe(attack_property),
+                                "break_formula_model": {
+                                    "kind": "pr8_confirmed_behavior_model",
+                                    "formula": "level_base * element_coefficient * (0.5 + max_toughness / 120)",
+                                    "toughness_unit_base": 30.0,
+                                    "research_source": (
+                                        "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+                                        "b811950b88d95c3309e634740bb27441933f09e1/"
+                                        "docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md"
+                                        "#5-initial-weakness-break-damage"
+                                    ),
+                                },
                             },
                         ),
                         coverage_status=coverage_status,
-                        blocked_reason="" if coverage_status == "executable" else _break_damage_blocked_reason(scaling_expr),
+                        blocked_reason="" if coverage_status == "executable" else "ordinary_break_formula_not_reconciled",
                     )
                 )
-        return lowered_templates, damage_emissions, status_emissions, effects, target_expressions
+        self._ordinary_break_status_modifiers = frozenset(
+            item.modifier_name for item in status_emissions
+            if item.modifier_name and item.coverage_status == "executable"
+        )
+        return lowered_templates, damage_emissions, status_emissions, effects, target_expressions, conditions
 
     def _lower_super_break_emissions(self) -> list[SuperBreakEmissionIR]:
         relative_path = "Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json"
@@ -4630,6 +4943,8 @@ class TBGDLowering:
             binding.ability_definition_id
             for binding in gameplay_bindings
             if binding.binding_kind == "entry"
+            or (binding.binding_kind == "passive"
+                and binding.ability_name == skill_config.get("EntryAbility"))
         }
 
         graph = next(
@@ -4726,6 +5041,7 @@ class TBGDLowering:
             "avatar_id": action.owner_avatar_id,
             "json_path": character_path,
             "version_kind": action.config_source.evidence["selected_version"],
+            "use_type": str(skill_config.get("UseType") or ""),
         }
         source_context = _ability_graph_source_context(
             source_mode="mainline_avatar",
@@ -4866,6 +5182,7 @@ class TBGDLowering:
                 entry_ability=entry_ability,
                 ability_names=tuple(ability_names),
                 config_source={
+                    "use_type": str(skill_config.get("UseType") or ""),
                     "avatar_config": _json_safe(config_source),
                     "character_config_path": character_path,
                     "ability_file_paths": [
@@ -6966,10 +7283,12 @@ class TBGDLowering:
                     f"{source_context.get('json_path')}"
                     f"._CallbackList[{modifier_callback_index}]"
                 )
+                presentation_only = _status_callback_presentation_only(tasks)
                 callback_source_context = {
                     **source_context,
                     "modifier_callback_index": modifier_callback_index,
                     "callback_json_path": callback_json_path,
+                    **({"source_proven_presentation_only": True} if presentation_only else {}),
                 }
                 trigger_effects: list[str] = []
                 trigger_conditions: list[str] = []
@@ -7037,6 +7356,7 @@ class TBGDLowering:
                     if task.callback_id == callback_id
                 )
                 foundational_events = {
+                    "OnHPChange",
                     "OnBeforeSkillUse",
                     "OnBeforeHit",
                     "OnAfterAttack",
@@ -7050,6 +7370,10 @@ class TBGDLowering:
                     "OnInsertActionFinish",
                     "OnListenInsertAbilityFinish",
                     "OnCustomEvent",
+                    "OnTriggerBreak",
+                    "OnBeingBreak",
+                    "OnListenBreak",
+                    "OnEndBreak",
                 }
                 equipment_event_stage = (
                     classify_equipment_callback(event, tasks)
@@ -7094,7 +7418,8 @@ class TBGDLowering:
                     )
                 status = (
                     "executable"
-                    if admitted_event
+                    if not presentation_only
+                    and admitted_event
                     and (
                         source_admitted
                         or (
@@ -7106,6 +7431,8 @@ class TBGDLowering:
                 )
                 if status == "executable":
                     blocked_reason = ""
+                elif presentation_only:
+                    blocked_reason = "source_proven_presentation_only"
                 elif equipment_source_admitted and not equipment_modifier_reachable:
                     blocked_reason = "equipment_modifier_definition_unreferenced"
                 elif equipment_source_admitted and equipment_event_stage == "s8":
@@ -7877,7 +8204,9 @@ class TBGDLowering:
                 modifier_name=modifier_name,
             )
         else:
-            coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
+            coverage_status, blocked_reason = _status_callback_task_admission(
+                event, opcode, task, source_modifier_name=modifier_name,
+            )
         source_admitted = (
             _queue_intent_source_admitted(admission_source_path or relative)
             if opcode in QUEUE_INTENT_OPCODES
@@ -7898,6 +8227,8 @@ class TBGDLowering:
             task,
             source_modifier_name=modifier_name,
         )
+        if opcode == "StackStatusResistance":
+            task_payload["status_resistance_producer_key"] = f"{relative}:{source_json_path or task_path}"
         if opcode == "IncludeTaskListTemplate":
             task_payload = {
                 **task_payload,
@@ -7967,6 +8298,9 @@ class TBGDLowering:
                 event=event,
                 task=task,
                 source=source,
+                ordinary_break_source=modifier_name in getattr(
+                    self, "_ordinary_break_status_modifiers", frozenset()
+                ),
             )
             if emission is not None:
                 lowered.status_damage_emissions.append(emission)
@@ -9064,6 +9398,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnTriggerBreak": ("break.triggered",),
     "OnBeforeBeingBreak": ("toughness.hit",),
     "OnBeingBreak": ("break.triggered",),
+    "OnEndBreak": ("break.recovery_requested",),
     "OnListenBreak": ("break.triggered",),
     "OnTriggerDeath": ("unit.defeated",),
     "OnDeathrattle": ("unit.defeated",),
@@ -10599,7 +10934,7 @@ def _admit_passive_startup_slot(
             )
             continue
         admitted_tasks.append({"task_id": task.task_id, "effect_id": effect.effect_id})
-    if not admitted_tasks:
+    if blocked_tasks or not admitted_tasks:
         return _passive_startup_blocked_slot(
             slot,
             "monster_passive_startup_no_admitted_on_start_add_modifier",
@@ -10666,8 +11001,10 @@ def _passive_startup_effect_blocked_reason(effect: EffectIR, modifiers_with_trig
     requests = standard.get("dynamic_value_requests")
     if requests:
         return "monster_passive_startup_dynamic_value_request_not_admitted"
-    if modifier_name in modifiers_with_triggers:
-        return "monster_passive_startup_modifier_has_event_triggers"
+    if modifier_name in modifiers_with_triggers and not effect.modifier_definition_id:
+        return "monster_passive_startup_modifier_definition_missing"
+    # Installing a listener does not execute every future callback. The status
+    # dispatcher checks each callback when its real event occurs, atomically.
     return ""
 
 
@@ -10859,6 +11196,8 @@ def _modifier_definition_entity(
         "modifier_name": modifier_name,
         "map_name": map_name,
         "stacking": _json_safe(modifier.get("Stacking")),
+        "max_layer_expr": _numeric_expr_summary(modifier.get("MaxLayer")),
+        "layer_add_when_stack_expr": _numeric_expr_summary(modifier.get("LayerAddWhenStack")),
         "lifetime": _json_safe(modifier.get("LifeTime")),
         "lifetime_expr": _numeric_expr_summary(modifier.get("LifeTime")),
         "life_step_moment": _value_field(modifier.get("LifeStepMoment")),
@@ -10871,11 +11210,11 @@ def _modifier_definition_entity(
         "dynamic_value_bindings": dynamic_value_bindings,
         "callback_dynamic_hashes": _callback_dynamic_hashes(modifier),
         "callback_events": _callback_events(modifier),
-        "stack_properties": _stack_property_summaries(modifier),
+        "stack_properties": _stack_property_summaries(modifier, modifier_json_path, relative_path),
         "addition_effect_ids": list(addition_effect_ids),
     }
     return RuleEntity(
-        entity_id=f"modifier_definition:{modifier_name}:{_safe_id(relative_path)}:{_safe_id(map_name)}",
+        entity_id=f"modifier_definition:{modifier_name}:{_safe_id(relative_path)}:{_safe_id(modifier_json_path or map_name)}",
         entity_type="modifier_definition",
         fields=fields,
         source=source,
@@ -11337,7 +11676,9 @@ def _modifier_callback_named_dynamic_inputs(
     return names
 
 
-def _stack_property_summaries(modifier: dict[str, Any]) -> list[dict[str, Any]]:
+def _stack_property_summaries(
+    modifier: dict[str, Any], modifier_path: str = "", source_path: str = "",
+) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     callbacks = modifier.get("_CallbackList")
     if not isinstance(callbacks, list):
@@ -11350,7 +11691,26 @@ def _stack_property_summaries(modifier: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(tasks, list):
             continue
         for task_index, task in enumerate(tasks):
-            if not isinstance(task, dict) or _short_gamecore_type(task.get("$type")) != "StackProperty":
+            if not isinstance(task, dict):
+                continue
+            opcode = _short_gamecore_type(task.get("$type"))
+            if opcode == "StackStatusResistance":
+                coverage, reason = _status_callback_task_admission(event, opcode, task)
+                raw_path = f"_CallbackList[{callback_index}].CallbackConfig[{task_index}]"
+                summaries.append({
+                    "opcode": opcode,
+                    "event": event,
+                    "behavior_flag": task.get("BehaviorFlag"),
+                    "target_alias": _target_alias(task.get("TargetType")),
+                    "value_expr": _numeric_expr_summary(task.get("Resistance")),
+                    "coverage_status": coverage,
+                    "blocked_reason": reason,
+                    "producer_task_path": f"{modifier_path}.{raw_path}" if modifier_path else "",
+                    "producer_key": f"{source_path}:{modifier_path}.{raw_path}" if source_path and modifier_path else "",
+                    "raw_path": raw_path,
+                })
+                continue
+            if opcode != "StackProperty":
                 continue
             summaries.append(
                 {
@@ -11891,6 +12251,7 @@ def _action_definition_from_row(
                 "BPNeed": "skill_point_cost_if_positive",
                 "BPAdd": "skill_point_gain_if_positive",
                 "SPBase": "energy_gain",
+                "SPNeed": "action_energy_cost_not_capacity",
             },
             "taxonomy": {
                 "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
@@ -11909,6 +12270,7 @@ def _action_definition_from_row(
         bp_need=_number_value(row.get("BPNeed"), 0.0),
         bp_add=_number_value(row.get("BPAdd"), 0.0),
         sp_base=_number_value(row.get("SPBase"), 0.0),
+        sp_need=_numeric_expr_summary(row.get("SPNeed")).get("value"),
         sp_multiple_ratio=_number_value(row.get("SPMultipleRatio"), 0.0),
         param_list=tuple(_list_json_values(row.get("ParamList"))),
         show_stance_list=tuple(_list_json_values(row.get("ShowStanceList"))),
@@ -12672,9 +13034,30 @@ def _link_status_effect_runtime_fields(
                 key=lambda item: item.watcher_id,
             )
         )
+        definition_bindings = selected[0].fields.get("dynamic_value_bindings")
+        declared_slots = (
+            definition_bindings.get("by_hash", {})
+            if isinstance(definition_bindings, dict)
+            else {}
+        )
+        named_dynamic_hashes: dict[str, str] = {}
+        for name in standard.get("dynamic_values", {}):
+            if not isinstance(name, str) or not isinstance(declared_slots, dict):
+                continue
+            hash_key = str(_tbgd_dynamic_key_hash(name))
+            slot = declared_slots.get(hash_key)
+            if (
+                isinstance(slot, dict)
+                and isinstance(slot.get("read_info"), dict)
+                and slot["read_info"].get("Type") == "None"
+                and slot.get("source_scope") in {"modifier_dynamic_values", "ability_dynamic_values"}
+            ):
+                named_dynamic_hashes[name] = hash_key
+        linked_standard = {**standard, "named_dynamic_hashes": named_dynamic_hashes}
         linked.append(
             replace(
                 effect,
+                payload={**effect.payload, "standard": linked_standard},
                 modifier_definition_id=selected[0].entity_id,
                 status_callback_ids=callback_ids,
                 ability_property_watcher_ids=watcher_ids,
@@ -14383,6 +14766,9 @@ def _lower_damage_emissions(
                 )
                 if not blocked_reason:
                     blocked_reason = damage_tag_blocked_reason
+                hit_energy_gain, hit_energy_reason = _monster_hit_energy_gain(effect, profile)
+                if not blocked_reason:
+                    blocked_reason = hit_energy_reason
                 source = _damage_emission_source(
                     task,
                     effect,
@@ -14390,6 +14776,24 @@ def _lower_damage_emissions(
                     damage_tags=damage_tags,
                     damage_tag_sources=damage_tag_sources,
                 )
+                if hit_energy_gain is not None:
+                    source = replace(source, evidence={
+                        **source.evidence,
+                        "hit_energy_rule": {
+                            "kind": "pr8_confirmed_behavior_model",
+                            "operation": "skill_hit_base_times_actual_request_weight",
+                            "skill_source": _monster_hit_action_source(profile),
+                            "request_weight": _numeric_expr_summary(
+                                effect.payload["AttackProperty"]["SPHitRatio"]
+                            ),
+                            "research_source": (
+                                "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+                                "b811950b88d95c3309e634740bb27441933f09e1/"
+                                "docs/tbgd_evidence/shared/being_hit_energy_bounce_lethal_resolution_v1.md"
+                                "#5-reconciled-ordinary-energy-model"
+                            ),
+                        },
+                    })
                 emissions.append(
                     DamageEmissionIR(
                         damage_emission_id=_damage_emission_id(task, profile),
@@ -14408,6 +14812,8 @@ def _lower_damage_emissions(
                         blocked_reason=blocked_reason,
                         damage_custom_name=_attack_property_custom_name(effect.payload if effect else {}),
                         damage_tags=damage_tags,
+                        hit_energy_gain=hit_energy_gain,
+                        toughness_emission_required=not _monster_attack_without_stance(effect, profile),
                     )
                 )
     return emissions
@@ -14501,6 +14907,8 @@ def _lower_toughness_emissions(
                 effect,
             )
             for profile in target_profiles:
+                if _monster_attack_without_stance(effect, profile):
+                    continue
                 blocked_reason = _toughness_emission_blocked_reason(task, effect, profile)
                 emissions.append(
                     ToughnessEmissionIR(
@@ -14616,7 +15024,11 @@ def _admit_damage_ability_tasks(
                 reasons.append("toughness_emission_hit_profile_ambiguous")
         damage_profile_ids = set(damage_by_profile)
         toughness_profile_ids = set(toughness_by_profile)
-        if damage_profile_ids - toughness_profile_ids:
+        if any(
+            emission.toughness_emission_required
+            for emission in task_damage
+            if emission.hit_profile_id in damage_profile_ids - toughness_profile_ids
+        ):
             reasons.append("toughness_emission_missing_for_damage_hit_profile")
         if toughness_profile_ids - damage_profile_ids:
             reasons.append("toughness_emission_without_damage_hit_profile")
@@ -15370,8 +15782,21 @@ def _toughness_amount_expr(effect: EffectIR | None, profile: HitProfileIR | None
     if not isinstance(attack_property, dict):
         return {"kind": "missing", "reason": "toughness_emission_attack_property_missing"}
     if "StanceValue" not in attack_property:
-        return _monster_sp_hit_toughness_amount_expr(effect, profile, attack_property)
+        return {"kind": "missing", "reason": "attack_property_stance_value_missing"}
     expr = _numeric_expr_summary(attack_property.get("StanceValue"))
+    if (
+        profile is not None
+        and profile.stance_expr.get("source_kind") == "confirmed_ordinary_basic_toughness"
+        and 1659254037 in numeric_dynamic_hashes(expr)
+    ):
+        expr = {
+            **expr,
+            "binding_source": {
+                "source_type": "confirmed_ordinary_basic_toughness",
+                "values": {"1659254037": profile.stance_expr["value"]},
+                "source_trace": profile.stance_expr["source_trace"],
+            },
+        }
     return {
         **expr,
         "raw_path": "AttackProperty.StanceValue",
@@ -15379,53 +15804,47 @@ def _toughness_amount_expr(effect: EffectIR | None, profile: HitProfileIR | None
     }
 
 
-def _monster_sp_hit_toughness_amount_expr(
-    effect: EffectIR,
-    profile: HitProfileIR | None,
-    attack_property: dict[str, Any],
-) -> dict[str, Any]:
+def _monster_hit_action_source(profile: HitProfileIR | None) -> dict[str, Any]:
     if profile is None:
-        return {"kind": "missing", "reason": "attack_property_stance_value_missing"}
+        return {}
     action_source = profile.stance_source.get("source") if isinstance(profile.stance_source, dict) else None
     if not isinstance(action_source, dict):
         action_source = profile.source.to_json()
-    action_evidence = action_source.get("evidence") if isinstance(action_source, dict) else {}
-    sp_hit_base_raw = action_evidence.get("sp_hit_base") if isinstance(action_evidence, dict) else None
-    sp_hit_base = _number_value(sp_hit_base_raw, float("nan"))
-    sp_hit_ratio_expr = _numeric_expr_summary(attack_property.get("SPHitRatio"))
-    sp_hit_ratio = _fixed_expr_value(sp_hit_ratio_expr)
-    if not isinstance(sp_hit_base, float) or sp_hit_base != sp_hit_base:
-        return {
-            "kind": "missing",
-            "reason": "attack_property_stance_value_missing",
-            "secondary_reason": "monster_sp_hit_base_missing",
-            "raw_path": "ActionDefinition.source.evidence.sp_hit_base",
-            "source_kind": "monster_skill_sp_hit_base",
-            "source_trace": action_source,
-        }
-    if sp_hit_ratio is None:
-        return {
-            "kind": "missing",
-            "reason": "monster_sp_hit_ratio_not_fixed",
-            "raw_path": "AttackProperty.SPHitRatio",
-            "source_kind": "monster_skill_sp_hit_ratio",
-            "sp_hit_ratio_expr": sp_hit_ratio_expr,
-            "source_trace": effect.source.to_json(),
-        }
-    return {
-        "kind": "fixed",
-        "value": sp_hit_base * sp_hit_ratio,
-        "source_kind": "monster_skill_sp_hit_base_times_attack_property_sp_hit_ratio",
-        "raw_path": "MonsterSkillConfig.SPHitBase * AttackProperty.SPHitRatio",
-        "sp_hit_base": sp_hit_base,
-        "sp_hit_base_raw": _json_safe(sp_hit_base_raw),
-        "sp_hit_ratio": sp_hit_ratio,
-        "sp_hit_ratio_expr": sp_hit_ratio_expr,
-        "source_trace": {
-            "action_definition": action_source,
-            "effect": effect.source.to_json(),
-        },
-    }
+    return action_source if action_source.get("raw_type") in {
+        "MonsterSkillConfig", "MonsterSkillUniqueConfig",
+    } else {}
+
+
+def _monster_attack_without_stance(effect: EffectIR | None, profile: HitProfileIR | None) -> bool:
+    attack = effect.payload.get("AttackProperty") if effect is not None else None
+    return bool(_monster_hit_action_source(profile)) and isinstance(attack, dict) and "StanceValue" not in attack
+
+
+def _monster_hit_energy_gain(
+    effect: EffectIR | None, profile: HitProfileIR | None,
+) -> tuple[float | None, str]:
+    source = _monster_hit_action_source(profile)
+    if not source:
+        return None, ""
+    # Each executed request carries its own Energy weight; candidate request counts
+    # neither allocate nor deduplicate the recipient's Energy (PR8 2026-09-28).
+    attack = effect.payload.get("AttackProperty") if effect is not None else None
+    if not isinstance(attack, dict):
+        return None, "hit_energy_attack_property_missing"
+    ratio = _fixed_expr_value(_numeric_expr_summary(attack.get("SPHitRatio")))
+    if ratio is None or not math.isfinite(ratio) or ratio < 0:
+        return None, "hit_energy_request_weight_not_admitted"
+    evidence = source.get("evidence", {})
+    raw_base = evidence.get("sp_hit_base") if isinstance(evidence, dict) else None
+    if not isinstance(raw_base, dict) or set(raw_base) != {"Value"}:
+        return None, "hit_energy_base_invalid"
+    value = raw_base["Value"]
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        return None, "hit_energy_base_invalid"
+    gain = float(value) * ratio
+    if not math.isfinite(gain):
+        return None, "hit_energy_weighted_base_invalid"
+    return gain, ""
 
 
 def _action_event_from_definition(
@@ -15578,7 +15997,7 @@ def _hit_profiles_from_definition(
                 target_group=target_group,
                 multiplier_expr=_param_multiplier_expr(definition.param_list, 0),
                 multiplier_source=_param_multiplier_source(definition, 0),
-                stance_expr=_stance_expr(definition.show_stance_list),
+                            stance_expr=_stance_expr(definition),
                 stance_source=_stance_source(definition),
                 damage_formula_family=definition.damage_formula_family,
                 element_type=definition.element_type,
@@ -15632,7 +16051,7 @@ def _hit_profiles_from_skill_formula_bindings(
                 target_group=target_group,
                 multiplier_expr=_param_multiplier_expr(definition.param_list, binding.param_index),
                 multiplier_source=_param_multiplier_source(definition, binding.param_index, binding),
-                stance_expr=_stance_expr(definition.show_stance_list),
+                        stance_expr=_stance_expr(definition),
                 stance_source=_stance_source(definition),
                 damage_formula_family=definition.damage_formula_family,
                 element_type=definition.element_type,
@@ -15707,7 +16126,7 @@ def _bounce_hit_profiles_from_skill_formula_bindings(
                 target_group=target_group,
                 multiplier_expr=multiplier_expr,
                 multiplier_source=multiplier_source,
-                stance_expr=_stance_expr(definition.show_stance_list),
+                stance_expr=_stance_expr(definition),
                 stance_source=_stance_source(definition),
                 damage_formula_family=definition.damage_formula_family,
                 element_type=definition.element_type,
@@ -15811,9 +16230,33 @@ def _param_multiplier_source(
     return source
 
 
-def _stance_expr(show_stance_list: tuple[Any, ...]) -> dict[str, Any]:
+def _stance_expr(definition: ActionDefinitionIR) -> dict[str, Any]:
+    show_stance_list = definition.show_stance_list
     if not show_stance_list:
         return {"kind": "missing", "blocked_reason": "show_stance_not_present"}
+    # Ponytail: only the confirmed ordinary avatar single-target basic is admitted.
+    # Other skill shapes need their own amount contract, not this display mapping.
+    if (
+        definition.source.raw_type == "AvatarSkillConfig"
+        and definition.attack_type == "Normal"
+        and definition.target_mode == "single"
+        and tuple(_number_value(value, -1.0) for value in show_stance_list) == (30, 0, 0)
+    ):
+        return {
+            **numeric_fixed(30),
+            "source_kind": "confirmed_ordinary_basic_toughness",
+            "source_trace": {
+                "kind": "pr8_confirmed_behavior_model",
+                "unit": "old_toughness",
+                "action_source": definition.source.to_json(),
+                "research_source": (
+                    "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+                    "a987d2607f135799a9427c9341ebdf002a1b2c90/"
+                    "docs/tbgd_evidence/shared/general_weakness_toughness_break_super_break_v1.md"
+                    "#31-old-raw-units-displayed-units-and-normalized-basic-units"
+                ),
+            },
+        }
     first = show_stance_list[0]
     return {
         "kind": "audit_only",
@@ -16062,6 +16505,11 @@ def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
 REMOVE_MODIFIER_OPCODES = {"RemoveModifier", "RemoveSelfModifier"}
 HEAL_OPCODES = {"HealHP"}
 SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
+SUSTAIN_FORMULA_EVIDENCE = (
+    "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+    "a987d2607f135799a9427c9341ebdf002a1b2c90/docs/tbgd_evidence/shared/"
+    "public_mechanics_healing_shield_reconciliation_v1.md"
+)
 REMOVE_SHIELD_OPCODES = {"RemoveShield"}
 MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
 RESOURCE_DELTA_OPCODES = {
@@ -16166,6 +16614,7 @@ P1_6_SAFE_DIRECT_TARGET_ALIASES = {
     "ModifierOwnerSkillTargetEntityList",
     "TurnActionEntitySkillTarget",
     "ParamEntityAdjoinEntity",
+    "ParamEntityActualOwner",
     "ParamEntitySummoner",
     "AllUnselectable",
 }
@@ -16215,6 +16664,11 @@ DAMAGE_EMISSION_TARGET_ALIASES = {
 SUPPORTED_MODIFIER_VALUE_TYPES = {"Layer", "LifeTime", "MaxLayer"}
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
     payload = _compact_payload(value)
+    if opcode == "TriggerSkipDeadHandler":
+        payload["standard"] = {
+            "operation": "verify_death_settlement",
+            "source_shape_admitted": set(value) == {"$type"},
+        }
     if opcode == "AddModifier":
         payload["standard"] = _standard_add_modifier_payload(value)
     elif opcode in REMOVE_MODIFIER_OPCODES:
@@ -16224,7 +16678,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
     elif opcode in HEAL_OPCODES:
         payload["standard"] = _standard_heal_payload(value)
     elif opcode in SHIELD_OPCODES:
-        payload["standard"] = _standard_shield_payload(value, opcode)
+        payload["standard"] = _standard_shield_payload(value, opcode, source_modifier_name)
     elif opcode in REMOVE_SHIELD_OPCODES:
         payload["standard"] = _standard_remove_shield_payload(value)
     elif opcode in MECHANISM_BAR_OPCODES:
@@ -16260,6 +16714,9 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
                 source_modifier_name,
             )
         standard = dict(standard)
+        destination_key = standard.get("value_name", standard.get("target_value_name"))
+        if standard.get("hash", standard.get("target_hash")) is None and isinstance(destination_key, str) and destination_key:
+            standard["hash"] = str(_tbgd_dynamic_key_hash(destination_key))
         standard["dynamic_operation"] = lower_dynamic_value_operation_spec(
             opcode,
             standard,
@@ -16288,6 +16745,19 @@ def lower_character_dynamic_value_operation(
 
 
 _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
+    "StartAim": {"TargetType": "mapping", "TargetAttachPoint": "string"},
+    "StopAim": {},
+    "MoveToTargetList": {"TargetType": "mapping", "AnimStateName": "string", "MovingRangeList": "list"},
+    "MoveStageOnTargetForward": {"TargetType": "mapping", "StageRootOffset": "number"},
+    "SetTeamRootOffset": {"Team": "string", "Reset": "bool"},
+    "SetSkillTargetFormationByPos": {
+        "Team": "string", "CustomTargetType": "mapping", "CustomCenterTargetType": "mapping",
+        "SetBodyPartPos": "bool", "TargetFormation": "empty_mapping",
+        "LeftSideFormations": "list", "RightSideFormations": "list",
+    },
+    "ShowBattleUI": {"IsShow": "bool"},
+    "TargetTimeSlow": {"TargetType": "mapping", "TimeScale": "number", "UnscaledDuration": "number"},
+    "WaitTimelineFinish": {"TimelineName": "string", "IgnoreWarning": "bool", "TriggerBeforeFinish": "bool"},
     "DamagePerformFinish": {
         "IsFakeAvatarAttack": "bool",
         "SkipDeathSettlement": "bool",
@@ -16420,6 +16890,8 @@ def _process_only_source_field_reason(
         valid = isinstance(value, str) and bool(value)
     elif expected_type == "mapping":
         valid = isinstance(value, dict) and bool(value)
+    elif expected_type == "empty_mapping":
+        valid = isinstance(value, dict) and not value
     elif expected_type == "list":
         valid = isinstance(value, list)
     elif expected_type == "numeric_expression":
@@ -16453,6 +16925,59 @@ def _process_only_ability_task_source_blocked_reason(
         )
         if reason:
             return reason
+    if opcode in {"MoveToTargetList", "MoveStageOnTargetForward", "SetSkillTargetFormationByPos", "TargetTimeSlow", "StartAim"}:
+        targets = [task[key] for key in ("TargetType", "CustomTargetType", "CustomCenterTargetType") if key in task]
+        if opcode == "MoveToTargetList":
+            targets.extend(item.get("TargetType") for item in task.get("MovingRangeList", []) if isinstance(item, dict))
+        if any(
+            not isinstance(target, dict) or set(target) != {"$type", "Alias"}
+            or _short_gamecore_type(target.get("$type")) != "TargetAlias"
+            or not isinstance(target.get("Alias"), str) or not target["Alias"]
+            for target in targets
+        ):
+            return "presentation_target_alias_shape_not_admitted"
+    if opcode == "StartAim":
+        return "" if task.get("TargetType") and task.get("TargetAttachPoint") else "start_aim_presentation_shape_missing"
+    if opcode == "StopAim":
+        return ""
+    if opcode == "MoveToTargetList":
+        if not task.get("TargetType") or not task.get("AnimStateName") or not task.get("MovingRangeList"):
+            return "move_to_target_list_presentation_shape_missing"
+        fields = {
+            "TargetType": "mapping", "OffsetTargetDistance": "numeric_expression",
+            "NormalizedTimeStart": "numeric_expression", "NormalizedTimeEnd": "numeric_expression",
+            "IgnoreRadius": "bool",
+        }
+        for item in task["MovingRangeList"]:
+            if not isinstance(item, dict) or set(item) - set(fields) or not {
+                "TargetType", "NormalizedTimeStart", "NormalizedTimeEnd", "OffsetTargetDistance"
+            }.issubset(item):
+                return "move_to_target_list_range_shape_not_admitted"
+            if any(_process_only_source_field_reason(key, value, fields[key]) for key, value in item.items()):
+                return "move_to_target_list_range_field_invalid"
+        return ""
+    if opcode == "MoveStageOnTargetForward":
+        return "" if task.get("TargetType") else "move_stage_target_missing"
+    if opcode == "SetTeamRootOffset":
+        return "" if task.get("Team") and task.get("Reset") is True else "team_root_reset_shape_not_admitted"
+    if opcode == "SetSkillTargetFormationByPos":
+        if not all(key in task for key in _PROCESS_ONLY_TASK_FIELD_TYPES[opcode]):
+            return "skill_target_formation_presentation_shape_missing"
+        for item in (*task["LeftSideFormations"], *task["RightSideFormations"]):
+            if not isinstance(item, dict) or set(item) != {"LocalDelta"}:
+                return "skill_target_formation_offset_shape_not_admitted"
+            delta = item["LocalDelta"]
+            if not isinstance(delta, dict) or set(delta) != {"X", "Y", "Z"} or any(
+                _process_only_source_field_reason(axis, value, "number") for axis, value in delta.items()
+            ):
+                return "skill_target_formation_offset_invalid"
+        return ""
+    if opcode == "ShowBattleUI":
+        return ""
+    if opcode == "TargetTimeSlow":
+        return "" if {"TargetType", "TimeScale", "UnscaledDuration"}.issubset(task) else "target_time_slow_shape_missing"
+    if opcode == "WaitTimelineFinish":
+        return "" if task.get("TimelineName") else "wait_timeline_name_missing"
     if opcode == "DamagePerformFinish":
         return "" if set(task) == {"$type"} else "damage_perform_finish_settlement_payload_not_admitted"
     if opcode == "GlobalMainIntensityEffect":
@@ -17937,6 +18462,13 @@ def _typed_condition_payload(
             )
         else:
             lowered[key] = _json_safe(value)
+    if opcode in {"ByRankActivated", "BySkillPointActivated"}:
+        trigger = payload.get("TriggerKey")
+        lowered["build_selector"] = {
+            "selector_kind": "rank" if opcode == "ByRankActivated" else "skill_point",
+            "selector_key": payload.get("PointTriggerKey") if opcode == "BySkillPointActivated" else "",
+            "selector_hash": trigger.get("Hash") if opcode == "ByRankActivated" and isinstance(trigger, dict) else None,
+        }
     return lowered
 
 
@@ -18147,6 +18679,10 @@ def _condition_payload_with_tbgd_defaults(
 
 
 def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
+    if opcode == "TriggerSkipDeadHandler":
+        return "executable" if payload.get("standard") == {
+            "operation": "verify_death_settlement", "source_shape_admitted": True,
+        } else "blocked"
     if opcode == "AddModifier":
         standard = payload.get("standard")
         if not isinstance(standard, dict):
@@ -18472,13 +19008,21 @@ def _equipment_task_admission(
     if opcode == "DamageByAttackProperty":
         return _equipment_damage_task_admission(task)
     if opcode == "ModifyHealData":
-        heal_ratio = _numeric_expr_summary(task.get("Healer_HealRatio"))
+        fields = tuple(
+            key for key in ("Healer_HealRatio", "Target_HealTakenRatio")
+            if key in task
+        )
+        if len(fields) != 1 or set(task) - {"$type", *fields}:
+            return "blocked", "modify_heal_data_fields_not_admitted"
+        heal_ratio = _numeric_expr_summary(task[fields[0]])
         if _numeric_expr_can_be_runtime_bound(heal_ratio):
             return "executable", ""
         return "blocked", str(
-            heal_ratio.get("reason") or "healer_heal_ratio_not_executable"
+            heal_ratio.get("reason") or f"{fields[0].lower()}_not_executable"
         )
     if opcode == "ModifyCurrentSkillDelayCost":
+        if not isinstance(task.get("ModifyFunction"), str) or task["ModifyFunction"] not in {"Set", "Add"}:
+            return "blocked", "current_skill_delay_cost_modify_function_not_admitted"
         normalized = _numeric_expr_summary(task.get("NormalizedValue"))
         if _numeric_expr_can_be_runtime_bound(normalized):
             return "executable", ""
@@ -18638,7 +19182,90 @@ def _equipment_structured_task_admission(
     return "executable", ""
 
 
-def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
+def _status_callback_task_admission(
+    event: str, opcode: str, task: dict[str, Any], *, source_modifier_name: str = "",
+) -> tuple[str, str]:
+    if event == "OnDestroy" and opcode == "ResetStance":
+        if (
+            set(task) == {"$type", "TargetType", "ForbidWhenEmpty", "SkipLockTeamStance"}
+            and _target_alias(task.get("TargetType")) == "ModifierOwnerEntity"
+            and task.get("ForbidWhenEmpty") is False
+            and task.get("SkipLockTeamStance") is True
+        ):
+            return "executable", ""
+        return "blocked", "ordinary_reset_stance_source_shape_not_admitted"
+    if event == "OnDestroy" and opcode == "SetStanceCount":
+        if set(task) == {"$type", "TargetType"} and _target_alias(task.get("TargetType")) == "ModifierOwnerEntity":
+            return "executable", ""
+        return "blocked", "ordinary_set_stance_count_source_shape_not_admitted"
+    if event == "OnCreate" and opcode == "ModifyActionDelay":
+        delay_expr = _action_delay_expr(task, opcode)
+        if (
+            set(task) == {"$type", "TargetType", "AddNormalizedValue"}
+            and _target_alias(task.get("TargetType")) == "ModifierOwnerEntity"
+            and _numeric_expr_can_be_runtime_bound(delay_expr)
+        ):
+            return "executable", ""
+        return "blocked", "break_on_create_normalized_delay_shape_not_admitted"
+    if event == "OnCreate" and opcode == "TriggerBreak":
+        return "blocked", "break_trigger_notification_mapping_unconfirmed"
+    if event == "OnDestroy" and opcode == "PredicateTaskList":
+        predicate = task.get("Predicate")
+        if (
+            set(task) == {"$type", "Predicate", "SuccessTaskList"}
+            and task.get("SuccessTaskList") == []
+            and isinstance(predicate, dict)
+            and set(predicate) == {"$type", "TargetType", "AliveOnly"}
+            and _short_gamecore_type(predicate.get("$type")) == "ByIsTargetValid"
+            and _target_alias(predicate.get("TargetType")) == "ModifierOwnerEntity"
+            and predicate.get("AliveOnly") is True
+        ):
+            return "blocked", "source_proven_no_effect_branches"
+    if (
+        not any(key in task for key in ("TaskList", "SuccessTaskList", "FailedTaskList"))
+        and classify_equipment_task(opcode, task) == "non_gameplay"
+    ):
+        return "blocked", "source_proven_presentation_only"
+    if opcode == "StackProperty":
+        if event != "OnStack":
+            return "blocked", "stack_property_event_not_admitted"
+        if set(task) - {"$type", "TargetType", "Property", "PropertyValue", "IsRefresh"}:
+            return "blocked", "stack_property_fields_not_admitted"
+        if task.get("IsRefresh", False) is not False:
+            return "blocked", "stack_property_refresh_not_admitted"
+        target = task.get("TargetType")
+        if (not isinstance(target, dict) or set(target) - {"$type", "Alias"}
+                or target.get("$type", "RPG.GameCore.TargetAlias") != "RPG.GameCore.TargetAlias"):
+            return "blocked", "stack_property_target_shape_not_admitted"
+        if _target_alias(task.get("TargetType")) not in {"Caster", "ModifierOwnerEntity"}:
+            return "blocked", "stack_property_target_not_admitted"
+        return _equipment_structured_task_admission(opcode, task)
+    if event in {"OnStack", "OnHPChange"} and opcode in {
+        "SetDynamicValueByHPRatio", "AddModifier", "RemoveModifier",
+    }:
+        # HP reads already lower to the shared typed hp_ratio operand. Keep the
+        # ordinary status entry subject to the same effect/target admission.
+        payload = _effect_payload(task, opcode, "")
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
+    if event == "OnStack" and opcode == "SetDynamicValueByModifierValue":
+        payload = _effect_payload(task, opcode, source_modifier_name)
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
+    if opcode == "StackStatusResistance":
+        if event != "OnStack":
+            return "blocked", "status_resistance_event_not_admitted"
+        if task.get("BehaviorFlag") != "STAT_CTRL":
+            return "blocked", "status_resistance_category_not_admitted"
+        if _target_alias(task.get("TargetType")) not in {"Caster", "ModifierOwnerEntity"}:
+            return "blocked", "status_resistance_target_not_admitted"
+        if not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(task.get("Resistance"))):
+            return "blocked", "status_resistance_value_not_executable"
+        return "executable", ""
     foundational_effect_events = {
         "OnBeforeSkillUse",
         "OnBeforeAttack",
@@ -18656,7 +19283,10 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         "OnCustomEvent",
         "OnAfterBeingAttacked",
         "OnListenBeforeSkillUse",
+        "OnTriggerBreak",
         "OnBeingBreak",
+        "OnListenBreak",
+        "OnEndBreak",
     }
     if opcode in QUEUE_INTENT_OPCODES:
         actor_target_alias = _queue_actor_target_alias(task, opcode)
@@ -18704,7 +19334,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             "StackWeakness",
         }
     ):
-        payload = _effect_payload(task, opcode, "")
+        payload = _effect_payload(task, opcode, source_modifier_name)
         coverage = _effect_coverage_status(opcode, payload)
         if coverage == "executable":
             return "executable", ""
@@ -18806,6 +19436,15 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
         return "executable", ""
     if opcode in {"ModifyActionDelay", "SetActionDelay"}:
+        if event == "OnCreate" and opcode == "ModifyActionDelay":
+            delay_expr = _action_delay_expr(task, opcode)
+            if (
+                set(task) == {"$type", "TargetType", "AddNormalizedValue"}
+                and _target_alias(task.get("TargetType")) == "ModifierOwnerEntity"
+                and _numeric_expr_can_be_runtime_bound(delay_expr)
+            ):
+                return "executable", ""
+            return "blocked", "break_on_create_normalized_delay_shape_not_admitted"
         if event not in {"OnStack", "OnListenTurnEnd"}:
             return "blocked", f"action_delay_event_not_admitted:{event}"
         if opcode == "ModifyActionDelay":
@@ -18872,13 +19511,41 @@ def _status_callback_source_mode(
     return "mainline_unadmitted"
 
 
+def _status_callback_presentation_only(tasks: Any) -> bool:
+    if not isinstance(tasks, list) or not tasks:
+        return False
+
+    def presentation_task(task: Any) -> bool:
+        if not isinstance(task, dict):
+            return False
+        family = str(task.get("$type") or "").rsplit(".", 1)[-1]
+        children = ("TaskList", "SuccessTaskList", "FailedTaskList")
+        if family == "PredicateTaskList":
+            if set(task) - {"$type", "Predicate", *children}:
+                return False
+            branches = [task[key] for key in children if key in task]
+            return bool(branches) and all(
+                isinstance(branch, list) and all(presentation_task(child) for child in branch)
+                for branch in branches
+            )
+        if character_ability_semantic_kind(family) != "presentation_only":
+            return False
+        return all(
+            isinstance(task[key], list)
+            and all(presentation_task(child) for child in task[key])
+            for key in children if key in task
+        )
+
+    return all(presentation_task(task) for task in tasks)
+
+
 def _status_callback_scope_kind(event: str) -> str:
     resource_scope = resource_scope_for_callback(event)
     if resource_scope:
         return resource_scope
     if event in {"OnListenCharacterDie", "OnListenAllowAction"}:
         return "owner_local"
-    if event in {"OnAfterDealHeal", "OnBeforeDealHeal"}:
+    if event in {"OnAfterDealHeal", "OnBeforeDealHeal", "OnTriggerBreak"}:
         return "actor_local"
     if event in {
         "OnHPChange",
@@ -18888,6 +19555,7 @@ def _status_callback_scope_kind(event: str) -> str:
         "OnShieldChange",
         "OnBeforeBeingStanceDamage",
         "OnBeingStanceDamage",
+        "OnEndBreak",
         "OnActionDelayEffect",
         "OnActionDelayEffectAll",
         "OnDefenderPrepareAttackData",
@@ -18963,22 +19631,35 @@ def _status_damage_emission_from_task(
     event: str,
     task: dict[str, Any],
     source: IRSource,
+    ordinary_break_source: bool = False,
 ) -> StatusDamageEmissionIR | None:
     attack_property = task.get("AttackProperty")
     if not isinstance(attack_property, dict):
         return None
     formula_type = str(attack_property.get("FormulaType") or "")
     attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
+    break_amount_mode = ""
+    base_includes_break_bonus = False
     if formula_type == "ByBreakDamage":
         damage_formula_family = "break"
+        break_amount_mode = "percentage"
         scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
         element_type = None
+    elif (ordinary_break_source and attack_type == "DOT"
+          and not formula_type
+          and str(attack_property.get("FinalFormulaType") or "") == "ByPureDamage"
+          and isinstance(attack_property.get("DamageValue"), dict)):
+        damage_formula_family = "break"
+        break_amount_mode = "value"
+        base_includes_break_bonus = True
+        scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
+        element_type = _attack_property_element_type(attack_property)
     elif attack_type == "TrueDamage":
         damage_formula_family = "true_damage"
         scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
         element_type = _attack_property_element_type(attack_property)
     elif str(attack_property.get("FinalFormulaType") or "") == "ByPureDamage":
-        damage_formula_family = "true_damage"
+        damage_formula_family = "unresolved"
         scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
         element_type = _attack_property_element_type(attack_property)
     elif attack_type == "Pursued":
@@ -19026,6 +19707,8 @@ def _status_damage_emission_from_task(
             "DamageByAttackProperty",
             task,
         )
+    if damage_formula_family == "unresolved":
+        coverage_status, blocked_reason = "blocked", "pure_damage_family_unproven"
     if coverage_status == "executable" and not _status_callback_source_admitted(
         source.source_path,
         equipment_source_admitted=bool(
@@ -19047,6 +19730,8 @@ def _status_damage_emission_from_task(
         source=source,
         coverage_status=coverage_status,
         blocked_reason=blocked_reason,
+        break_amount_mode=break_amount_mode,
+        base_includes_break_bonus=base_includes_break_bonus,
     )
 
 
@@ -19781,6 +20466,7 @@ def _lower_assistant_ability_resolutions(
 
 QUEUE_INTENT_OPCODES = {"TurnInsertAbility", "TurnInsertAction", "TurnInsertAssistantAbility"}
 STATUS_CALLBACK_EFFECTLESS_OPCODES = QUEUE_INTENT_OPCODES | {
+    "StackStatusResistance",
     "DamageByAttackProperty",
     "ModifyActionDelay",
     "SetActionDelay",
@@ -21165,6 +21851,21 @@ def _condition_payload_executable(
         return False
     if opcode == "AlwaysTrue":
         return True
+    if opcode in {"ByRankActivated", "BySkillPointActivated"}:
+        selector = payload.get("build_selector")
+        if not isinstance(selector, dict) or set(selector) != {"selector_kind", "selector_key", "selector_hash"}:
+            return False
+        allowed = {"TriggerKey", "Inverse", "build_selector"} if opcode == "ByRankActivated" else {"PointTriggerKey", "Inverse", "build_selector"}
+        if set(payload) - allowed or ("Inverse" in payload and type(payload["Inverse"]) is not bool):
+            return False
+        if opcode == "ByRankActivated":
+            trigger = payload.get("TriggerKey")
+            return (isinstance(trigger, dict) and set(trigger) == {"Hash"}
+                    and selector["selector_kind"] == "rank" and selector["selector_key"] == ""
+                    and type(selector["selector_hash"]) is int and trigger["Hash"] == selector["selector_hash"])
+        return (selector["selector_kind"] == "skill_point" and selector["selector_hash"] is None
+                and isinstance(selector["selector_key"], str) and bool(selector["selector_key"])
+                and selector["selector_key"] == payload.get("PointTriggerKey"))
     if opcode in COMMITTED_STATE_CONDITION_OPCODES:
         return _committed_condition_payload_executable(
             opcode,
@@ -21588,6 +22289,7 @@ def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source
         "target_alias": target_alias,
         "modifier_name": modifier_name,
         "status_id": status_id,
+        **({"intrinsic_target_relation": "context.owner"} if opcode == "RemoveSelfModifier" else {}),
     }
 
 
@@ -21618,19 +22320,23 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
     modify_value = _numeric_expr_summary(value.get("ModifyValue"))
     percentage = _numeric_expr_summary(value.get("HealPercentage"))
     formula_type = _value_field(value.get("FormulaType"))
-    formula_type_missing = formula_type in {None, ""}
+    if formula_type is not None and not isinstance(formula_type, str):
+        return {"kind": "heal", "blocked_reason": "invalid_formula_type", "raw_formula_fields": _json_safe(value)}
+    formula_type_missing = "FormulaType" not in value
     ratio_formula_types = {
         "HealByTargetLostHP",
         "HealByTargetMaxHP",
         "HealByHealerMaxHP",
     }
-    implicit_percentage_formula = (
+    # Reconciled flat-only healing contract, not a recovered raw enum default.
+    # PR8/public_mechanics_healing_shield_reconciliation_v1.md, section 5.
+    implicit_flat_formula = (
         formula_type_missing
-        and _numeric_expr_can_be_runtime_bound(percentage)
-        and not _numeric_expr_can_be_runtime_bound(modify_value)
+        and "HealPercentage" not in value
+        and _numeric_expr_can_be_runtime_bound(modify_value)
     )
     effective_formula_type = (
-        "HealByTargetMaxHP" if implicit_percentage_formula else formula_type
+        "HealByBaseValue" if implicit_flat_formula else formula_type
     )
     amount = (
         percentage
@@ -21642,9 +22348,10 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         "target_alias": _target_alias(value.get("TargetType")),
         "formula_type": effective_formula_type,
         "raw_formula_type": formula_type,
+        "formula_model_source": SUSTAIN_FORMULA_EVIDENCE,
         "formula_type_source": (
-            "tbgd_schema_default_for_percentage_only_heal"
-            if implicit_percentage_formula
+            "reconciled_flat_only_heal_model"
+            if implicit_flat_formula
             else "explicit_tbgd_field"
             if not formula_type_missing
             else "missing"
@@ -21656,21 +22363,15 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         "formula_base": _heal_formula_base(effective_formula_type),
         "percentage": percentage,
         "modify_value": modify_value,
-        "flat_addition": (
-            modify_value
-            if effective_formula_type in ratio_formula_types
-            and _numeric_expr_can_be_runtime_bound(modify_value)
-            else numeric_missing("heal_flat_addition_missing")
-        ),
         "raw_formula_fields": {
             "ModifyValue": _json_safe(value.get("ModifyValue")),
             "HealPercentage": _json_safe(value.get("HealPercentage")),
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
+    if effective_formula_type in ratio_formula_types and "ModifyValue" in value:
+        payload["flat_addition"] = modify_value
     if effective_formula_type not in {
-        None,
-        "",
         "HealByBaseValue",
         *ratio_formula_types,
     }:
@@ -21679,19 +22380,33 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         )
     elif not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_heal_percentage_required" if effective_formula_type in ratio_formula_types else "fixed_or_bound_modify_value_required"
+    elif "flat_addition" in payload and not _numeric_expr_can_be_runtime_bound(modify_value):
+        payload["blocked_reason"] = "fixed_or_bound_heal_flat_addition_required"
+    elif effective_formula_type == "HealByBaseValue" and "HealPercentage" in value:
+        payload["blocked_reason"] = "heal_percentage_not_consumed_by_flat_formula"
     return payload
 
 
-def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
-    shield_value = _numeric_expr_summary(value.get("ShieldValue"))
+def _standard_shield_payload(
+    value: dict[str, Any], opcode: str, source_modifier_name: str = ""
+) -> dict[str, Any]:
+    stack_formula = opcode == "StackShield" and ("StackValue" in value or "MaxStack" in value)
+    shield_value = _numeric_expr_summary(value.get("StackValue" if stack_formula else "ShieldValue"))
     percentage = _numeric_expr_summary(value.get("ShieldPercentage"))
-    formula_type = _value_field(value.get("FormulaType"))
+    formula_type = "ShieldByBaseValue" if stack_formula else _value_field(value.get("FormulaType"))
+    if formula_type is not None and not isinstance(formula_type, str):
+        return {"kind": "shield", "blocked_reason": "invalid_formula_type", "raw_formula_fields": _json_safe(value)}
     ratio_formula_types = {"ShieldByCasterMaxHP", "ShieldByCasterDefence", "ShieldByTargetMaxHP"}
     amount = percentage if formula_type in ratio_formula_types else shield_value
     payload = {
         "kind": "shield",
         "shield_opcode": opcode,
-        "target_alias": _target_alias(value.get("TargetType")),
+        "formula_model_source": SUSTAIN_FORMULA_EVIDENCE,
+        "target_alias": (
+            "ModifierOwnerEntity"
+            if stack_formula and source_modifier_name and "TargetType" not in value
+            else _target_alias(value.get("TargetType"))
+        ),
         "formula_type": formula_type,
         "amount": amount,
         "amount_role": "ratio" if formula_type in ratio_formula_types else "flat",
@@ -21704,10 +22419,32 @@ def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, An
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if formula_type not in {None, "", "ShieldByBaseValue", *ratio_formula_types}:
+    if stack_formula:
+        payload["max_capacity"] = _numeric_expr_summary(value.get("MaxStack"))
+        payload["raw_formula_fields"].update({
+            "StackValue": _json_safe(value.get("StackValue")),
+            "MaxStack": _json_safe(value.get("MaxStack")),
+        })
+        payload["formula_model_source"] = SUSTAIN_FORMULA_EVIDENCE.replace(
+            "public_mechanics_healing_shield_reconciliation_v1.md",
+            "general_healing_shield_hp_resolution_v1.md",
+        )
+    # Both authored operands precede the creator's shield-generation bonus.
+    # PR8/public_mechanics_healing_shield_reconciliation_v1.md, section 6.
+    if formula_type in ratio_formula_types and "ShieldValue" in value:
+        payload["flat_addition"] = shield_value
+    if stack_formula and any(key in value for key in ("ShieldValue", "ShieldPercentage", "FormulaType")):
+        payload["blocked_reason"] = "shield_combined_formula_not_supported"
+    elif stack_formula and not _numeric_expr_can_be_runtime_bound(payload["max_capacity"]):
+        payload["blocked_reason"] = "fixed_or_bound_shield_max_capacity_required"
+    elif formula_type not in {None, "", "ShieldByBaseValue", *ratio_formula_types}:
         payload["blocked_reason"] = f"formula_type_not_supported:{formula_type}"
     elif not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_shield_percentage_required" if formula_type in ratio_formula_types else "fixed_or_bound_shield_value_required"
+    elif "flat_addition" in payload and not _numeric_expr_can_be_runtime_bound(shield_value):
+        payload["blocked_reason"] = "fixed_or_bound_shield_flat_addition_required"
+    elif formula_type not in ratio_formula_types and "ShieldPercentage" in value:
+        payload["blocked_reason"] = "shield_percentage_not_consumed_by_flat_formula"
     return payload
 
 
@@ -21809,7 +22546,21 @@ def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict
             "ModifyFunction": _json_safe(value.get("ModifyFunction")),
         },
     }
-    if raw_operation not in {None, "", "Add", "Set"}:
+    if resource == "energy":
+        # PR8/general_energy_skill_point_economy_v1.md: fixed grants bypass ERR.
+        payload["formula_model_source"] = (
+            "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+            "a987d2607f135799a9427c9341ebdf002a1b2c90/docs/tbgd_evidence/shared/"
+            "general_energy_skill_point_economy_v1.md"
+        )
+        payload["affected_by_energy_regeneration"] = (
+            operation == "add"
+            and formula_field not in {"FixedAddValue", "FixedAddMaxSPRatio"}
+        )
+    formula_fields = [key for key in (*admitted_fields, "AddRatio", "FixedAddRatio") if key in value]
+    if len(formula_fields) > 1:
+        payload["blocked_reason"] = "resource_combined_formula_not_supported"
+    elif raw_operation not in {None, "", "Add", "Set"}:
         payload["blocked_reason"] = (
             f"resource_modify_function_not_supported:{raw_operation}"
         )
@@ -23195,6 +23946,7 @@ def _status_callback_runtime_payload(
     for key in (
         "AddNormalizedValue",
         "Healer_HealRatio",
+        "Target_HealTakenRatio",
         "MaxLoopCount",
         "MaxNumber",
         "ModifyValue",

@@ -68,9 +68,17 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "GlobalMainIntensityEffect",
         "GlobalTimeSlow",
         "MoveToTargetPosition",
+        "MoveToTargetList",
+        "MoveStageOnTargetForward",
         "RadialBlurEffect",
         "SetEntityVisible",
         "SetTeamFormation",
+        "SetTeamRootOffset",
+        "SetSkillTargetFormationByPos",
+        "ShowBattleUI",
+        "StartAim",
+        "StopAim",
+        "TargetTimeSlow",
         "SkillExecutionStart",
         "SkillPerformFinish",
         "TriggerAnimState",
@@ -78,6 +86,7 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "VCameraConfigChange",
         "WaitAnimState",
         "WaitSecond",
+        "WaitTimelineFinish",
     }
 )
 

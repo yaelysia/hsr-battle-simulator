@@ -19,7 +19,7 @@ from .action_preflight import (
     action_resource_plan,
     combined_blocked_reason,
 )
-from .resource import ResourceSystem
+from .resource import ResourceSystem, ultimate_energy_blocked_reason
 from .status import status_control_gate_for_actor
 from .unit_lifecycle import UnitLifecycleSystem
 from .ability_task_contract import (
@@ -484,11 +484,30 @@ def _formal_action_task_graph_projection(
                 )
                 if unresolved and not (
                     not runtime_reason
-                    and _is_emission_backed_damage_audit_reference(
-                        rules,
-                        task,
-                        node,
-                        unresolved,
+                    and (
+                        _is_emission_backed_damage_audit_reference(
+                            rules, task, node, unresolved,
+                        )
+                        or (
+                            task.opcode == node.opcode == node.source_family == "RandomConfig"
+                            and node.node_kind == "branch"
+                            and node.materialization_status == "materialized"
+                            and node.owner_domains == ("task_graph_execution",)
+                            and len(tuple(
+                                selection for selection in graph.weighted_selections
+                                if selection.graph_node_id == node.graph_node_id
+                            )) == 1
+                            and len(unresolved) == 1
+                            and unresolved[0].reference_kind == "effect"
+                            and unresolved[0].definition_id == task.effect_id
+                            and unresolved[0].resolution_status == "deferred"
+                            and unresolved[0].blocked_reason
+                            == "task_graph_definition_not_admitted:effect:unsupported"
+                            and unresolved[0].source == node.source
+                            and (effect := rules.effect(task.effect_id)) is not None
+                            and effect.opcode == "RandomConfig"
+                            and effect.coverage_status == "unsupported"
+                        )
                     )
                 ):
                     block(
@@ -836,17 +855,20 @@ class ActionContractSystem:
                 admission=admission,
                 blocked_reason="action_definition_missing",
             )
-        if admission.resource_gate_kind == "ultimate_energy" and (
-            actor.max_energy <= 0 or actor.energy < actor.max_energy
-        ):
+        energy_reason = (
+            ultimate_energy_blocked_reason(actor, definition.sp_need)
+            if admission.resource_gate_kind == "ultimate_energy"
+            else ""
+        )
+        if energy_reason:
             return ActionContractDecision(
                 **base,
                 ok=False,
                 admission=admission,
-                blocked_reason="ultimate_energy_not_ready",
+                blocked_reason=energy_reason,
                 resource_status="blocked",
-                resource_blocked_reason="ultimate_energy_not_ready",
-                metadata={"energy": actor.energy, "max_energy": actor.max_energy},
+                resource_blocked_reason=energy_reason,
+                metadata={"energy": actor.energy, "max_energy": actor.max_energy, "sp_need": definition.sp_need},
             )
         resource_result = self.resources.plan_action_resources(
             state,

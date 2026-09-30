@@ -36,6 +36,9 @@ from simulator_v8_clean_core.systems.unit_spawn import (
     _required_source_trace_identity,
 )
 from simulator_v8_clean_core.systems.wave import WAVE_RUNTIME_SCHEMA_VERSION, WaveSystem
+from simulator_v8_clean_core.systems.scheduler import CombatScheduler
+from simulator_v8_clean_core.systems.phase_machine import CombatPhaseMachine, WAVE_TRANSITION
+from simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
 from simulator_v8_clean_core.tbgd.lowering import (
     ENTITY_TABLES,
     TBGDLowering,
@@ -225,6 +228,54 @@ def test_request_mismatch_rejected(wave_sources: WaveSources, field: str) -> Non
     plan = UnitSpawnSystem().plan(template, malformed)
     assert not plan.ok and not plan.unit and "mismatch" in plan.blocked_reason
     print("negative=" + plan.blocked_reason)
+
+
+def test_final_wave_after_insert_resumes_terminal_phase(wave_sources: WaveSources) -> None:
+    definition = wave_sources.rules.wave_definition_for_stage("200020050")
+    assert definition is not None and definition.coverage_status == "executable"
+    entries = wave_sources.rules.wave_entries_for_wave(definition.wave_definition_id, definition.wave_count - 1)
+    enemies = [materialize(wave_sources, definition, entry) for entry in entries]
+    assert enemies
+    ally = UnitState("fixture:survivor", "ally", "fixture:survivor", hp=10.0, max_hp=100.0)
+    # A completed insert boundary, not a claim that these fixture HP changes
+    # execute attacks or activate the monster passives.
+    units = {unit.unit_id: replace(unit, hp=0.0, lifecycle_status="defeated") for unit in enemies}
+    units[ally.unit_id] = ally
+    state = BattleState(units=units, global_flags={
+        "phase": "combat", "combat_phase": "awaiting_decision", "current_window": "turn_active",
+        "turn_owner_id": enemies[0].unit_id,
+        "wave_runtime": {"schema_version": WAVE_RUNTIME_SCHEMA_VERSION,
+            "wave_definition_id": definition.wave_definition_id, "stage_id": definition.stage_id,
+            "current_wave_index": definition.wave_count - 1, "total_waves": definition.wave_count,
+            "current_wave_unit_ids": [unit.unit_id for unit in enemies], "status": "active",
+            "source_trace": definition.source.to_json()},
+    })
+    scheduler = CombatScheduler(wave_sources.rules)
+    result = scheduler.step(state)
+    assert result.transition.outcome.successor_eligible, result.transition.outcome.to_json()
+    assert result.after_state.global_flags["combat_phase"] == "ended"
+    assert result.after_state.global_flags["battle_outcome"] == "victory"
+    assert {"wave.cleared", "battle.victory", "battle.completed"}.issubset(
+        event.event_type for event in result.transition.transaction.events)
+    assert MutationReducer().replay_snapshot(state, result.transition.transaction.mutations,
+        result.after_state.snapshot().to_json()).ok
+    audit = RuntimeSourceAuditor(wave_sources.rules).validate_transition(result.transition)
+    assert audit.ok, audit.to_json()
+    # The source plan still controls eligibility, and internal execution phases
+    # do not gain a shortcut to wave settlement.
+    live = replace(state, units={**state.units, enemies[0].unit_id: enemies[0]})
+    assert scheduler.wave.plan_transition(live).status == "no_change"
+    assert scheduler._try_wave_transition(live) is None
+    missing = replace(state, global_flags={**state.global_flags, "wave_runtime": {
+        **state.global_flags["wave_runtime"], "wave_definition_id": "missing"}})
+    pending = replace(state, queues={"manual_ultimate": ({"entry_id": "pending"},)})
+    for candidate in (missing, pending):
+        blocked = scheduler._try_wave_transition(candidate)
+        assert blocked is not None and not blocked.transition.outcome.successor_eligible
+        assert blocked.after_state == candidate and not blocked.transition.transaction.mutations
+    for phase in ("action_execution", "pre_action", "turn_begin"):
+        candidate = replace(state, global_flags={**state.global_flags, "combat_phase": phase})
+        assert not CombatPhaseMachine().transition(candidate, WAVE_TRANSITION, reason="test").plan.ok
 
 
 def test_real_subsequent_wave(wave_sources: WaveSources) -> None:

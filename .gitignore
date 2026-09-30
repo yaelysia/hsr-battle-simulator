@@ -1,4 +1,6 @@
 # Python
+/.venv/
+/.pytest_cache/
 __pycache__/
 *.pyc
 *.pyo
@@ -21,6 +23,13 @@ Thumbs.db
 
 # CodeGraph index (to be added later)
 .codegraph/
+
+# Local MCP / web-Codex workflow
+/.local-workflow/
+/pr-workflow/
+/local-workspace-mcp/
+/local-workspace-mcp-template/
+/local_test_archive/
 
 # Generated validation artifacts
 hsr_v075_baseline_clean/hsr/validation_outputs_v*/

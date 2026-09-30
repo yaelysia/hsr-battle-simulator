@@ -122,6 +122,7 @@ class DamagePlan:
     value_context: dict[str, object] = field(default_factory=dict)
     damage_custom_name: str = ""
     damage_tags: tuple[str, ...] = ()
+    hit_energy_gain: float | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -145,6 +146,7 @@ class DamagePlan:
             "value_context": self.value_context,
             "damage_custom_name": self.damage_custom_name,
             "damage_tags": list(self.damage_tags),
+            "hit_energy_gain": self.hit_energy_gain,
         }
 
 
@@ -430,6 +432,7 @@ def _damage_plan_from_emissions(
                     value_context=_damage_value_context(profile),
                     damage_custom_name=emission.damage_custom_name,
                     damage_tags=emission.damage_tags,
+                    hit_energy_gain=emission.hit_energy_gain,
                 )
             )
     return tuple(plans)

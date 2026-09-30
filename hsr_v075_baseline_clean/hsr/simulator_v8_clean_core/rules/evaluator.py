@@ -136,6 +136,8 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByIsTargetValid",
     "ByIsTopActionDelayTarget",
     "ByRandomChance",
+    "ByRankActivated",
+    "BySkillPointActivated",
     "ByCurrentSkillName",
     "ByCurrentSkillType",
     "ByIsContainModifier",
@@ -670,6 +672,22 @@ def _evaluate_condition_payload(
         )
     if opcode == "AlwaysTrue":
         return _condition_result(True, condition_id, opcode, "condition_true", {}, source_trace)
+    if opcode in {"ByRankActivated", "BySkillPointActivated"}:
+        selector = payload.get("build_selector")
+        actor_id = context.actor_id
+        if not isinstance(selector, dict) or not actor_id:
+            return _condition_blocked(
+                condition_id, opcode, "character_build_selector_context_missing", {}, source_trace
+            )
+        operand = _condition_operand(
+            context, "unit.build_selector", subject_ids=(actor_id,), parameters=selector
+        )
+        if operand.status != "resolved" or operand.value_type != "boolean":
+            return _condition_operand_blocked(condition_id, opcode, operand, source_trace)
+        return _condition_result(
+            bool(operand.value), condition_id, opcode, "character_build_selector",
+            {"operand": operand.to_json()}, source_trace,
+        )
     if opcode in COMMITTED_STATE_CONDITION_OPCODES:
         return _evaluate_committed_state_condition(
             evaluator,

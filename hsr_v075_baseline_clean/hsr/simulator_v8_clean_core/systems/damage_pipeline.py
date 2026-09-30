@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, UnitState
@@ -9,7 +10,8 @@ from ..rules.engine_rule_registry import (
     evaluate_defense_multiplier,
     evaluate_resistance_multiplier,
 )
-from .damage_formula import status_modifier_terms
+from .damage_formula import damage_reduction_residuals, status_modifier_terms, toughness_state_multiplier
+from .unit_stats import effective_unit_stat
 
 
 DAMAGE_STAGE_SCHEMA_VERSION = "p7_s12_damage_stage_pipeline_v1"
@@ -125,6 +127,7 @@ class DamageStagePipeline:
         element_type: str | None,
         source_trace: dict[str, JSONValue],
         attack_type: str | None = None,
+        base_includes_break_bonus: bool = False,
     ) -> DamagePipelineResult:
         if family not in DAMAGE_FAMILY_STAGE_MATRIX:
             return DamagePipelineResult(
@@ -155,6 +158,13 @@ class DamageStagePipeline:
                 "damage_pipeline_actor_or_target_missing",
             )
         applicable = set(DAMAGE_FAMILY_STAGE_MATRIX[family])
+        if base_includes_break_bonus:
+            if family != "break":
+                return DamagePipelineResult(
+                    False, family, attacker_id, target_id, max(0.0, float(producer_base_amount)),
+                    0.0, (), source_trace, state.event_index, "included_break_bonus_requires_break_family",
+                )
+            applicable.discard("break_bonus")
         buckets = tuple(
             self._bucket(
                 stage,
@@ -280,18 +290,18 @@ class DamageStagePipeline:
                 stage="attribute",
                 keys=("defense_delta",),
             )
+            defense_stat = effective_unit_stat(target, "defense")
+            # Keep the existing hit-context convention separate from committed stat pools.
             effective = max(
                 0.0,
-                target.defense
+                defense_stat.value
+                + target.defense
                 * (
-                    1.0
-                    + status_defense_ratio
-                    - reduction
+                    -reduction
                     - status_reduction
                     - ignore
                     - status_ignore
-                )
-                + status_defense_flat,
+                ),
             )
             multiplier, engine_rule = evaluate_defense_multiplier(
                 effective_defense=effective,
@@ -319,6 +329,9 @@ class DamageStagePipeline:
                 ),
                 metadata={
                     "effective_defense": effective,
+                    "effective_defense_stat": defense_stat.to_json(),
+                    "context_ratio_basis": target.defense,
+                    "context_ratio_rule": "existing_engine_convention",
                     "actor_level": actor.level,
                     "status_def_reduction": status_reduction,
                     "status_def_ignore": status_ignore,
@@ -393,20 +406,26 @@ class DamageStagePipeline:
                 stage=stage,
                 keys=("damage_reduction",),
             )
+            residuals = damage_reduction_residuals(value, status_terms)
             return DamageStageBucket(
                 stage,
                 True,
-                max(0.0, 1.0 - value - status_value),
+                math.prod(residuals),
                 applied_terms=(
                     _applied(stage, "damage_reduction", value, "target.resources"),
                     *status_terms,
                 ),
                 skipped_terms=status_skipped,
-                metadata={"status_damage_reduction": status_value},
+                metadata={
+                    "status_damage_reduction": status_value,
+                    "aggregation": "independent_reduction_product",
+                    "reduction_residuals": list(residuals),
+                },
             )
         if stage == "toughness_state":
             broken = bool(target.flags.get("broken", False))
-            multiplier = 0.9 if target.toughness > 0 and not broken else 1.0
+            status_driven = target.flags.get("toughness_reduction_mode") == "status"
+            multiplier = toughness_state_multiplier(target)
             return DamageStageBucket(
                 stage,
                 True,
@@ -415,7 +434,7 @@ class DamageStagePipeline:
                     _applied(stage, "current_toughness", target.toughness, "target.state"),
                     _applied(stage, "broken", 1.0 if broken else 0.0, "target.state"),
                 ),
-                metadata={"broken": broken},
+                metadata={"broken": broken, "reduction_from_status": status_driven},
             )
         if stage == "toughness_bonus":
             value = _resource(actor, "toughness_damage_added_ratio")

@@ -50,6 +50,7 @@ class _DamageRules(_FixtureRules):
                 coverage_status="executable",
                 blocked_reason="",
                 hit_profile_id="fixture:profile",
+                toughness_emission_required=True,
             ),
         )
         self._toughness_emissions = toughness_emissions if toughness_emissions is not None else (
@@ -332,6 +333,7 @@ def test_missing_or_invalid_damage_support_remains_blocked() -> None:
         coverage_status="blocked",
         blocked_reason="fixture_damage_blocked",
         hit_profile_id="fixture:profile",
+        toughness_emission_required=True,
     )
     task, _effect, _graph_value, rules = _fixture(damage_emissions=(bad_emission,))
     projection = _project(task, rules)

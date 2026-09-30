@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, UnitState
@@ -21,7 +22,7 @@ from .rng import (
     resolve_rng_request,
 )
 from .scaling_basis import resolve_scaling_basis
-from .unit_stats import status_modifier_numeric_value
+from .unit_stats import effective_unit_stat, status_modifier_numeric_value
 
 
 @dataclass(frozen=True)
@@ -556,16 +557,12 @@ def _defense_bucket(
         bucket="attribute",
         keys=("defense_delta",),
     )
+    defense_stat = effective_unit_stat(target, "defense")
+    # Keep the existing hit-context convention separate from committed stat pools.
     effective_def = max(
         0.0,
-        target.defense * (
-            1.0
-            + status_defense_ratio
-            + defender_added_ratio
-            - def_reduction
-            - def_ignore
-        )
-        + status_defense_flat,
+        defense_stat.value
+        + target.defense * (defender_added_ratio - def_reduction - def_ignore),
     )
     multiplier, engine_rule = evaluate_defense_multiplier(
         effective_defense=effective_def,
@@ -594,6 +591,9 @@ def _defense_bucket(
         ),
         metadata={
             "effective_defense": effective_def,
+            "effective_defense_stat": defense_stat.to_json(),
+            "context_ratio_basis": target.defense,
+            "context_ratio_rule": "existing_engine_convention",
             "actor_level": actor.level,
             "status_def_reduction": status_def_reduction,
             "status_def_ignore": status_def_ignore,
@@ -718,8 +718,12 @@ def _damage_reduction_bucket(
         key="damage_reduction",
     )
     direct_value = sum(float(term.get("value") or 0.0) for term in direct_terms)
-    value = resource_value + status_value + direct_value
-    multiplier = max(0.0, 1.0 - value)
+    residuals = damage_reduction_residuals(
+        resource_value,
+        tuple(term.to_json() for term in status_terms),
+        tuple(float(term["value"]) for term in direct_terms),
+    )
+    multiplier = math.prod(residuals)
     return multiplier, DamageFormulaBucket(
         bucket="damage_reduction",
         multiplier=multiplier,
@@ -735,15 +739,39 @@ def _damage_reduction_bucket(
         metadata={
             "status_damage_reduction": status_value,
             "direct_damage_reduction": direct_value,
+            "aggregation": "independent_reduction_product",
+            "reduction_residuals": list(residuals),
         },
     )
 
 
+def damage_reduction_residuals(
+    resource_value: float,
+    status_terms: tuple[dict[str, JSONValue], ...],
+    direct_values: tuple[float, ...] = (),
+) -> tuple[float, ...]:
+    # Property writes within one status instance add; independent instances multiply.
+    by_instance: dict[str, float] = {}
+    for term in status_terms:
+        instance_id = str(term["source_id"])
+        by_instance[instance_id] = by_instance.get(instance_id, 0.0) + float(term["applied_value"])
+    # Hit terms have no admitted common stacking identity; keep their input boundaries.
+    reductions = (resource_value, *by_instance.values(), *direct_values)
+    return tuple(max(0.0, 1.0 - value) for value in reductions)
+
+
+def toughness_state_multiplier(target: UnitState) -> float:
+    if target.flags.get("toughness_reduction_mode") == "status":
+        return 1.0
+    return 0.9 if target.toughness > 0 and not target.flags.get("broken", False) else 1.0
+
+
 def _toughness_state_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]:
     broken = bool(target.flags.get("broken", False))
-    has_positive_toughness = target.toughness > 0
-    multiplier = 0.9 if has_positive_toughness and not broken else 1.0
+    multiplier = toughness_state_multiplier(target)
     reason = "positive_toughness_not_broken" if multiplier == 0.9 else "broken_or_no_positive_toughness"
+    if target.flags.get("toughness_reduction_mode") == "status":
+        reason = "reduction_owned_by_source_status"
     return multiplier, DamageFormulaBucket(
         bucket="toughness_state",
         multiplier=multiplier,

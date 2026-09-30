@@ -56,6 +56,13 @@ class UnitLifecycleView:
 
 
 class UnitLifecycleSystem:
+    def death_settlement_blocked_reason(self, state: BattleState) -> str:
+        """Read the lifecycle state already produced by the typed damage transaction."""
+        for unit in state.units.values():
+            if unit.hp <= 0 and unit.lifecycle_status not in {"defeated", "removed"}:
+                return f"death_settlement_incomplete:{unit.unit_id}"
+        return ""
+
     """Shared lifecycle gate for target, queue, timeline, damage and snapshots."""
 
     VALID_STATUSES = {"active", "defeated", "removed"}

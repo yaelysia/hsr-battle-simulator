@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from simulator_v8_clean_core.core.model import BattleState, RNGEvent
+from simulator_v8_clean_core.core.model import BattleState, GameEvent, RNGEvent, TargetResolution
 from simulator_v8_clean_core.ir_types import IRSource
+from simulator_v8_clean_core.rules.ir import AbilityTaskIR, CanonicalIR, StatusCallbackIR, StatusCallbackTaskIR
+from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.rules.expression_ir import numeric_fixed
 from simulator_v8_clean_core.rules.task_graph import (
     TaskGraphBranchIR,
@@ -17,6 +20,7 @@ from simulator_v8_clean_core.rules.task_graph import (
     TaskGraphNumericDefinitionIR,
     TaskGraphWeightedChoiceIR,
     TaskGraphWeightedSelectionIR,
+    TaskGraphQueryResult,
     task_graph_branch_id,
     task_graph_entry_id,
     task_graph_id,
@@ -28,12 +32,18 @@ from simulator_v8_clean_core.rules.task_graph import (
 )
 from simulator_v8_clean_core.systems.task_graph import (
     TaskGraphBranchResult,
+    TaskGraphConditionResult,
     TaskGraphExecutionContext,
     TaskGraphExecutionHooks,
     TaskGraphExecutor,
     TaskGraphLeafResult,
+    TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
 )
+from simulator_v8_clean_core.systems.ability import AbilityTaskSystem, _FormalAbilityInvocation
+from simulator_v8_clean_core.systems.effect import EffectRegistry
+from simulator_v8_clean_core.systems.status import StatusSystem
+from simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
 
 
 _DIGEST = "1" * 64
@@ -79,9 +89,12 @@ def _leaf_node(graph_id: str, index: int) -> TaskGraphNodeIR:
     )
 
 
-def _random_graph(choice_count: int = 3) -> TaskGraphIR:
-    entry_kind = "ability_phase_callback"
-    owner_id = "p9-s8c2-owner"
+def _random_graph(
+    choice_count: int = 3,
+    *,
+    entry_kind: str = "ability_phase_callback",
+    owner_id: str = "p9-s8c2-owner",
+) -> TaskGraphIR:
     callback_kind = "test"
     entry_id = task_graph_entry_id(entry_kind, owner_id, callback_kind)
     source_catalog_id = "p9-s8c2-random-catalog"
@@ -197,6 +210,87 @@ def _random_graph(choice_count: int = 3) -> TaskGraphIR:
     )
 
 
+def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
+    for entry_kind in ("ability_phase_callback", "status_callback"):
+        owner_id = "phase" if entry_kind == "ability_phase_callback" else "callback"
+        graph = _random_graph(entry_kind=entry_kind, owner_id=owner_id)
+        source = _source("$.RandomConfig", "RandomConfig")
+        if entry_kind == "ability_phase_callback":
+            task = AbilityTaskIR(
+                "random-root", owner_id, "action", 1, "ability", "test", 0,
+                "root", "root", "RandomConfig", source, coverage_status="executable",
+            )
+            rules = RuleBook(CanonicalIR("fixture", ability_tasks=(task,)))
+        else:
+            callback = StatusCallbackIR(
+                owner_id, "Modifier", "test", ("random-root",), source,
+                (0, 0), coverage_status="executable", admission_status="executable",
+            )
+            task = StatusCallbackTaskIR(
+                "random-root", owner_id, "Modifier", "test", 0, "root",
+                "root", "RandomConfig", source, coverage_status="executable",
+            )
+            rules = RuleBook(CanonicalIR(
+                "fixture", status_callbacks=(callback,), status_callback_tasks=(task,),
+            ))
+        class GraphRules:
+            def __getattr__(self, name):
+                return getattr(rules, name)
+
+            def query_task_graph(self, graph_id):
+                return TaskGraphQueryResult(
+                    "resolved", "graph", (graph.graph_id,), graph, "",
+                )
+
+            def query_task_graph_node(self, node_id):
+                return TaskGraphQueryResult(
+                    "resolved", "node", (node_id,),
+                    next(node for node in graph.nodes if node.graph_node_id == node_id), "",
+                )
+
+        graph_rules = GraphRules()
+        if entry_kind == "ability_phase_callback":
+            system = AbilityTaskSystem(graph_rules, EffectRegistry(StatusSystem(graph_rules)))
+            hooks = system._formal_task_graph_hooks(invocation=_FormalAbilityInvocation(
+                "status_nested", "actor", "action", 1, TargetResolution(),
+            ))
+        else:
+            system = StatusCallbackSystem(graph_rules)
+            hooks = system._formal_status_hooks(
+                callback, {"owner_id": "actor", "instance_id": "status"}, None, None, None,
+            )
+        selected: list[str] = []
+        hooks = replace(hooks, leaf=lambda request, _state: (
+            selected.append(request.formal_task_id) or TaskGraphLeafResult("resolved")
+        ))
+        result = system.task_graph_executor.execute(_STATE, graph, _CONTEXT, hooks)
+        assert result.ok, result.errors
+        assert len(result.rng_events) == 1
+        choice_id = result.rng_events[0].result["selected_outcome_id"]
+        chosen = next(choice for choice in graph.weighted_selections[0].choices if choice.choice_id == choice_id)
+        assert selected == [f"leaf:{chosen.ordinal}"]
+        alternative = next(choice for choice in graph.weighted_selections[0].choices if choice.choice_id != choice_id)
+        choice_key = result.rng_events[0].metadata["choice_key"]
+        payload = {"rng_mode": "explicit", "rng_choices": {choice_key: alternative.choice_id}}
+        selected.clear()
+        if entry_kind == "status_callback":
+            hooks = replace(
+                system._formal_status_hooks(
+                    callback, {"owner_id": "actor", "instance_id": "status"},
+                    GameEvent("test", payload=payload), None, None,
+                ),
+                leaf=hooks.leaf,
+            )
+            context = _CONTEXT
+        else:
+            context = TaskGraphExecutionContext(_CONTEXT.invocation_id, payload)
+        explicit = system.task_graph_executor.execute(_STATE, graph, context, hooks)
+        assert explicit.ok, explicit.errors
+        assert explicit.rng_events[0].result["selected_outcome_id"] == alternative.choice_id
+        assert explicit.rng_events[0].metadata["choice_source"] == "explicit_ledger"
+        assert selected == [f"leaf:{alternative.ordinal}"]
+
+
 def _ordinary_graph() -> TaskGraphIR:
     entry_kind = "ability_phase_callback"
     owner_id = "p9-s8c2-ordinary-owner"
@@ -261,6 +355,54 @@ def _ordinary_graph() -> TaskGraphIR:
         coverage_status="lowered",
         weighted_selections=(),
     )
+
+
+def test_control_node_rng_precedes_selected_child_and_rolls_back() -> None:
+    ordinary = _ordinary_graph()
+    root = next(node for node in ordinary.nodes if node.node_kind == "branch")
+    for control_kind in ("condition", "target_scope"):
+        branch_kind = "success" if control_kind == "condition" else "target_scope"
+        branch = replace(
+            root.branches[1], branch_kind=branch_kind, ordinal=0,
+            branch_id=task_graph_branch_id(
+                root.graph_node_id, branch_kind, 0,
+                root.branches[1].label, root.branches[1].child_node_ids,
+            ),
+        )
+        selected_root = replace(
+            root, node_kind="branch" if control_kind == "condition" else "target_scope",
+            branches=(branch,),
+        )
+        graph = replace(ordinary, nodes=tuple(
+            selected_root if node.graph_node_id == root.graph_node_id else node
+            for node in ordinary.nodes
+            if node.graph_node_id == root.graph_node_id
+            or node.graph_node_id in branch.child_node_ids
+        ))
+        event = RNGEvent("test_random", "test", {"choice": "selected"},
+                         event_id=f"control:{control_kind}")
+        seen: list[str] = []
+        hooks = TaskGraphExecutionHooks(
+            leaf=lambda request, _state: (
+                seen.append(request.formal_task_id) or TaskGraphLeafResult("resolved")
+            ),
+            condition=lambda _request, _state: TaskGraphConditionResult(
+                "resolved", True, rng_events=(event,),
+            ),
+            targets=lambda _request, _state: TaskGraphTargetResult(
+                "resolved", ("target",), rng_events=(event,),
+            ),
+        )
+        result = TaskGraphExecutor().execute(_STATE, graph, _CONTEXT, hooks)
+        assert result.ok, result.errors
+        assert seen == ["leaf:1"] and result.rng_events == (event,)
+        failed = TaskGraphExecutor().execute(
+            _STATE, graph, _CONTEXT,
+            replace(hooks, leaf=lambda _request, _state: TaskGraphLeafResult(
+                "blocked", outcome_kind="", blocked_reason="selected_child_failed",
+            )),
+        )
+        assert not failed.ok and failed.after_state is _STATE and not failed.rng_events
 
 
 def _selection_result(

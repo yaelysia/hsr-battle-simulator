@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import math
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
@@ -50,6 +51,39 @@ class HPDamageRoute:
     evidence: dict[str, JSONValue] = field(default_factory=dict)
 
 
+_SHIELD_FACT_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class ExhaustedShieldOwner:
+    instance_id: str
+    modifier_name: str
+    status_instance_id: str
+    caster_id: str
+
+
+@dataclass(frozen=True)
+class ShieldExhaustionFact:
+    """Transient, mutation-backed ownership for one completed shield drain."""
+
+    mutation: Mutation = field(repr=False)
+    event_id: str
+    owners: tuple[ExhaustedShieldOwner, ...]
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _SHIELD_FACT_PRODUCER:
+            raise ValueError("shield exhaustion fact requires ShieldSystem producer")
+
+    def owns(self, target_id: str, modifier_name: str, status_instance_id: str, caster_id: str) -> bool:
+        return self.mutation.path == ("units", target_id, "shield_instances") and any(
+            owner.modifier_name == modifier_name
+            and owner.status_instance_id == status_instance_id
+            and owner.caster_id == caster_id
+            for owner in self.owners
+        )
+
+
 class ShieldSystem:
     """Owns source-distinguished shield instances and HP routing."""
 
@@ -78,6 +112,7 @@ class ShieldSystem:
         status_instance_id: str = "",
         mutation_source: str = "effect_system",
         mutation_metadata: dict[str, JSONValue] | None = None,
+        max_capacity: float | None = None,
     ) -> ShieldApplicationResult:
         target = state.units.get(target_id)
         if target is None:
@@ -89,6 +124,20 @@ class ShieldSystem:
             return ShieldApplicationResult(False, blocked_reason="shield_source_identity_incomplete")
         if not absorb_families:
             return ShieldApplicationResult(False, blocked_reason="shield_absorb_family_policy_missing")
+        if (
+            not isinstance(amount, (int, float))
+            or isinstance(amount, bool)
+            or not math.isfinite(amount)
+        ):
+            return ShieldApplicationResult(False, blocked_reason="shield_amount_invalid")
+        if max_capacity is not None and (
+            not isinstance(max_capacity, (int, float))
+            or isinstance(max_capacity, bool)
+            or not math.isfinite(max_capacity)
+            or max_capacity < 0.0
+        ):
+            return ShieldApplicationResult(False, blocked_reason="shield_max_capacity_invalid")
+        resolved_max_capacity = float(max_capacity) if max_capacity is not None else None
         priority_rule, priority_reason = select_shield_priority_rule(
             priority_rule_id,
             priority_rule_version,
@@ -100,6 +149,31 @@ class ShieldSystem:
 
         before = [dict(item) for item in target.shield_instances]
         after = [dict(item) for item in target.shield_instances]
+
+        def capped_noop() -> ShieldApplicationResult:
+            return ShieldApplicationResult(
+                True,
+                records=(
+                    SettlementRecord(
+                        record_type="shield",
+                        source="shield_system",
+                        mutation_id=None,
+                        process_only=True,
+                        payload={
+                            "target_id": target_id,
+                            "shield_id": shield_id,
+                            "opcode": opcode,
+                            "stack_policy": policy,
+                            "amount": amount,
+                            "max_capacity": resolved_max_capacity,
+                            "aggregate_before": _aggregate(before),
+                            "aggregate_after": _aggregate(before),
+                        },
+                        trace=source_trace,
+                    ).to_json(),
+                ),
+            )
+
         existing_index = next(
             (
                 index
@@ -116,13 +190,24 @@ class ShieldSystem:
             return ShieldApplicationResult(False, blocked_reason="shield_creation_amount_not_positive")
 
         if existing_index is None:
+            remaining = (
+                min(amount, resolved_max_capacity)
+                if resolved_max_capacity is not None
+                else amount
+            )
+            if remaining <= 0.0:
+                return capped_noop()
             instance = _instance(
                 shield_id=shield_id,
                 source_id=source_id,
                 source_actor_id=actor_id,
                 source_kind=source_kind,
-                remaining=amount,
-                capacity=amount,
+                remaining=remaining,
+                capacity=(
+                    resolved_max_capacity
+                    if resolved_max_capacity is not None
+                    else amount
+                ),
                 priority=priority,
                 stack_policy=policy,
                 absorb_families=absorb_families,
@@ -140,12 +225,27 @@ class ShieldSystem:
         else:
             current = after[existing_index]
             current_remaining = float(current["remaining"])
-            if policy == "replace_same_source":
-                next_remaining = amount
-                next_capacity = amount
+            if (
+                resolved_max_capacity is not None
+                and current_remaining > resolved_max_capacity
+            ):
+                return ShieldApplicationResult(
+                    False,
+                    blocked_reason="shield_existing_remaining_exceeds_max_capacity",
+                )
+            if resolved_max_capacity is None:
+                if policy == "replace_same_source":
+                    next_remaining = amount
+                    next_capacity = amount
+                else:
+                    next_remaining = current_remaining + amount
+                    next_capacity = max(float(current["capacity"]), next_remaining)
             else:
-                next_remaining = current_remaining + amount
-                next_capacity = max(float(current["capacity"]), next_remaining)
+                next_remaining = min(
+                    amount if policy == "replace_same_source" else current_remaining + amount,
+                    resolved_max_capacity,
+                )
+                next_capacity = resolved_max_capacity
             if next_remaining <= 0:
                 after.pop(existing_index)
             else:
@@ -158,6 +258,8 @@ class ShieldSystem:
                 }
         after = _ordered(after)
         if after == before:
+            if resolved_max_capacity is not None:
+                return capped_noop()
             return ShieldApplicationResult(False, blocked_reason="shield_effect_no_state_change")
         mutation = Mutation(
             op="set",
@@ -175,6 +277,11 @@ class ShieldSystem:
                 "opcode": opcode,
                 "stack_policy": policy,
                 "amount": amount,
+                **(
+                    {"max_capacity": resolved_max_capacity}
+                    if resolved_max_capacity is not None
+                    else {}
+                ),
                 "aggregate_before": _aggregate(before),
                 "aggregate_after": _aggregate(after),
                 "source_trace": source_trace,
@@ -195,6 +302,11 @@ class ShieldSystem:
                 "opcode": opcode,
                 "stack_policy": policy,
                 "amount": amount,
+                **(
+                    {"max_capacity": resolved_max_capacity}
+                    if resolved_max_capacity is not None
+                    else {}
+                ),
                 "aggregate_before": _aggregate(before),
                 "aggregate_after": _aggregate(after),
                 "instance_count_before": len(before),
@@ -344,7 +456,6 @@ class ShieldSystem:
                 blocked_reason="aggregate_shield_without_source_instances",
             )
         before = [dict(item) for item in instances]
-        remaining_damage = incoming_damage
         exhausted: list[str] = []
         consumed: list[dict[str, JSONValue]] = []
         after: list[dict[str, JSONValue]] = []
@@ -364,13 +475,26 @@ class ShieldSystem:
             )
             if admitted_priority is None:
                 return HPDamageRoute(False, target_id, incoming_damage, blocked_reason=priority_reason)
+        eligible_instances = tuple(
+            instance
+            for instance in instances
+            if damage_family in instance["absorb_families"]
+            and float(instance["remaining"]) > 0.0
+        )
+        # Each ordinary pool takes the full hit; HP is protected once by the largest pool.
+        remaining_damage = max(
+            0.0,
+            incoming_damage - max(
+                (float(instance["remaining"]) for instance in eligible_instances),
+                default=0.0,
+            ),
+        )
         for instance in _ordered(instances):
-            if damage_family not in instance["absorb_families"] or remaining_damage <= 0:
+            if damage_family not in instance["absorb_families"] or incoming_damage <= 0:
                 after.append(instance)
                 continue
             available = float(instance["remaining"])
-            absorbed = min(available, remaining_damage)
-            remaining_damage -= absorbed
+            absorbed = min(available, incoming_damage)
             next_remaining = available - absorbed
             consumed.append(
                 {
@@ -392,6 +516,7 @@ class ShieldSystem:
         events: tuple[GameEvent, ...] = ()
         records: tuple[dict[str, JSONValue], ...] = ()
         if after != before:
+            pool_loss_total = sum(float(item["absorbed"]) for item in consumed)
             shield_mutation = Mutation(
                 op="set",
                 path=("units", target_id, "shield_instances"),
@@ -403,6 +528,8 @@ class ShieldSystem:
                     **(mutation_metadata or {}),
                     "damage_family": damage_family,
                     "incoming_damage": incoming_damage,
+                    "absorption_mode": "parallel_ordinary",
+                    "pool_loss_total": pool_loss_total,
                     "absorbed_damage": incoming_damage - remaining_damage,
                     "hp_damage": remaining_damage,
                     "consumed_instances": consumed,
@@ -417,6 +544,29 @@ class ShieldSystem:
                 source_id=source_id,
                 event_index=state.event_index,
             )
+            if exhausted:
+                owner_by_id = {
+                    str(instance["instance_id"]): ExhaustedShieldOwner(
+                        instance_id=str(instance["instance_id"]),
+                        modifier_name=str(instance.get("owner_modifier_name") or ""),
+                        status_instance_id=str(instance.get("status_instance_id") or ""),
+                        caster_id=str(instance["source_actor_id"]),
+                    )
+                    for instance in before
+                    if str(instance["instance_id"]) in exhausted
+                }
+                events = tuple(
+                    replace(
+                        event,
+                        shield_exhaustion_fact=ShieldExhaustionFact(
+                            mutation=shield_mutation,
+                            event_id=event.event_id,
+                            owners=tuple(owner_by_id[instance_id] for instance_id in exhausted),
+                            _producer_token=_SHIELD_FACT_PRODUCER,
+                        ),
+                    ) if event.event_type == "shield.exhausted" else event
+                    for event in events
+                )
             records = (
                 SettlementRecord(
                     record_type="shield_absorption",
@@ -427,6 +577,8 @@ class ShieldSystem:
                         "target_id": target_id,
                         "damage_family": damage_family,
                         "incoming_damage": incoming_damage,
+                        "absorption_mode": "parallel_ordinary",
+                        "pool_loss_total": pool_loss_total,
                         "absorbed_damage": incoming_damage - remaining_damage,
                         "hp_damage": remaining_damage,
                         "consumed_instances": consumed,
@@ -449,7 +601,11 @@ class ShieldSystem:
             records=records,
             exhausted_instance_ids=tuple(exhausted),
             route_policy=route_policy,
-            evidence={"route_source": route_source, "consumed_instances": consumed},
+            evidence={
+                "route_source": route_source,
+                "absorption_mode": "parallel_ordinary",
+                "consumed_instances": consumed,
+            },
         )
 
 
@@ -507,4 +663,5 @@ def _ordered(instances: list[dict[str, JSONValue]]) -> list[dict[str, JSONValue]
 
 
 def _aggregate(instances: list[dict[str, JSONValue]]) -> float:
+    # Bookkeeping total only; it is not the effective absorption of independent shields.
     return sum(float(item.get("remaining", 0.0)) for item in instances)

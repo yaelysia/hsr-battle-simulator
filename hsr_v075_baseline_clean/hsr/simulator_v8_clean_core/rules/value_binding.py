@@ -29,6 +29,7 @@ ACTION_DEFINITION_NUMERIC_FIELDS = frozenset(
         "bp_add",
         "sp_base",
         "sp_multiple_ratio",
+        "sp_need",
     }
 )
 ACTION_DEFINITION_LIST_FIELDS = frozenset(

@@ -7,7 +7,7 @@ from typing import Any
 from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
 from ..build_types import aggregate_static_stat_contributions
-from ..builds.character_assembler import assemble_character_build
+from ..builds.character_assembler import assemble_character_build, character_startup_bindings
 from ..builds.manifest import (
     FORMAL_BUILD_MANIFEST_FLAG,
     BuildManifestEntry,
@@ -55,6 +55,7 @@ from ..systems.ability_provider import (
     AbilityProviderRegistrationResult,
     register_dynamic_ability_providers,
 )
+from ..systems.ability import AbilityTaskSystem, CharacterStartupInvocation
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.summon_runtime import empty_summon_runtime
@@ -156,6 +157,7 @@ class ScenarioStateBuilder:
         eidolon_startup_specs: list[dict[str, Any]] = []
         trace_startup_specs: list[dict[str, Any]] = []
         passive_startup_specs: list[dict[str, Any]] = []
+        passive_setup_blockers: list[dict[str, JSONValue]] = []
         equipment_provider_specs: list[tuple[str, DynamicMechanismSelection]] = []
         equipment_startup_specs: list[dict[str, Any]] = []
         character_build_results: list[CharacterBuildAssemblyResult] = []
@@ -355,9 +357,14 @@ class ScenarioStateBuilder:
             profile = self.rules.combatant_profile(unit.entity_ref) if entity.entity_type in {"monster", "monster_template"} else None
             monster_card = None
             if entity.entity_type == "monster":
+                flags.pop("monster_stance_count", None)
                 monster_card = self.rules.monster_data_card_for_entity(unit.entity_ref)
                 if monster_card is not None:
                     flags["monster_data_card_id"] = monster_card.card_id
+                    template_config = monster_card.raw_parameter_blocks.get("template_config")
+                    stance_count = template_config.get("stance_count") if isinstance(template_config, dict) else None
+                    if type(stance_count) is int and stance_count > 0:
+                        flags["monster_stance_count"] = stance_count
                     flags["monster_passive_mechanism_slot_ids"] = tuple(monster_card.passive_mechanism_slot_ids)
                     rank_scores = self.rules.ir.metadata.get("monster_rank_scores")
                     rank_score = rank_scores.get(monster_card.rank) if isinstance(rank_scores, dict) else None
@@ -400,6 +407,10 @@ class ScenarioStateBuilder:
                 trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
             passive_activation = _passive_runtime_activation(self.rules, monster_card)
             flags.update(passive_activation["flags"])
+            passive_setup_blockers.extend(
+                {"unit_id": unit.unit_id, **blocked}
+                for blocked in passive_activation["flags"].get("blocked_passive_mechanism_slots", ())
+            )
             for startup_spec in passive_activation["startup_specs"]:
                 passive_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
             for key, delta in trace_activation["resource_deltas"].items():
@@ -592,7 +603,7 @@ class ScenarioStateBuilder:
         equipment_startup_blocked = tuple(
             trace
             for trace in startup_traces
-            if trace.get("kind") == "formal_equipment_ability"
+            if trace.get("kind") in {"formal_equipment_ability", "formal_character_passive"}
             and trace.get("status") == "blocked"
         )
         if equipment_startup_blocked:
@@ -601,7 +612,7 @@ class ScenarioStateBuilder:
                 for trace in equipment_startup_blocked
             )
             raise ValueError(
-                "equipment ability startup blocked: "
+                "formal ability startup blocked: "
                 + "; ".join(sorted(set(reasons)))
             )
         source_traces.extend(startup_traces)
@@ -694,6 +705,7 @@ class ScenarioStateBuilder:
                 *timeline_result.rng_events,
             ),
             blocked_setup=(
+                *passive_setup_blockers,
                 *startup_result.blocked,
                 *setup_result.blocked,
                 *battle_setup_event_result.blocked,
@@ -1740,6 +1752,7 @@ def _apply_initial_summons(rules: RuleBook, state: BattleState, scenario: Scenar
             rng_events=result.rng_events,
             producer_kind="scenario_initial_summon",
             producer_id=f"{scenario.scenario_id}:{index}:{spec.kind}",
+            actor_id=spec.owner_id,
         )
         records.extend(committed.records)
         events.extend(committed.events)
@@ -2484,6 +2497,18 @@ def _formal_character_activation(
         for selection in equipment_providers
     ):
         raise ValueError("battle-admitted character build contains blocked equipment mechanism")
+    passive_bindings, passive_diagnostics = character_startup_bindings(
+        rules, card, assembly.effective_skill_levels,
+    )
+    if passive_diagnostics:
+        raise ValueError("battle-admitted character build contains blocked passive startup")
+    startup_specs.extend({
+        "kind": "formal_character_passive",
+        "ability_name": binding.entry_ability,
+        "action_id": binding.action_id,
+        "action_level": binding.level,
+        "binding_id": binding.binding_id,
+    } for binding in passive_bindings)
     return flags, startup_specs, equipment_providers
 
 
@@ -2561,6 +2586,8 @@ def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[st
     startup_specs: list[dict[str, Any]] = []
     for slot in slots:
         source_traces.append(slot.source.to_json())
+        if slot.mechanism_kind == "presentation_only" and slot.coverage_status == "skipped_with_reason":
+            continue
         if slot.coverage_status != "executable":
             blocked_slots.append(
                 {
@@ -2600,7 +2627,17 @@ def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[st
                 "admitted_task_ids": admitted_task_ids,
             }
         )
+    expected_slot_ids = set(getattr(card, "passive_mechanism_slot_ids", ()))
+    actual_slot_ids = {slot.passive_slot_id for slot in slots}
+    for slot_id in sorted(expected_slot_ids ^ actual_slot_ids):
+        blocked_slots.append({
+            "passive_slot_id": slot_id,
+            "blocked_reason": "monster_passive_slot_reference_not_closed",
+        })
     flags: dict[str, Any] = {
+        # Formal monster passives own their reduction properties. The numeric
+        # pipeline must not add a second implicit unbroken-toughness reduction.
+        "toughness_reduction_mode": "status",
         "passive_activation_policy": {
             "kind": "monster_ability_name_list_startup",
             "source_field": "MonsterConfig.AbilityNameList",
@@ -2975,6 +3012,9 @@ def _apply_startup_ability_effects(
         effect_registry,
         reducer=reducer,
     )
+    ability_tasks = AbilityTaskSystem(
+        rules, effect_registry, reducer=reducer, event_dispatcher=event_dispatch,
+    )
     current = state
     traces: list[dict[str, JSONValue]] = []
     records: list[dict[str, JSONValue]] = []
@@ -2987,6 +3027,29 @@ def _apply_startup_ability_effects(
         ability_name = str(spec.get("ability_name") or "")
         slot = spec.get("slot")
         kind = str(spec.get("kind") or "startup_ability")
+        if kind == "formal_character_passive":
+            result = ability_tasks.execute_character_startup(
+                current, invocation=CharacterStartupInvocation(
+                    unit_id, spec["action_id"], spec["action_level"], spec["binding_id"],
+                ),
+            )
+            failures = tuple(node for node in result.node_results if node.status != "complete")
+            ok = bool(result.node_results) and not failures
+            trace = {
+                "kind": kind, "unit_id": unit_id, "ability_name": ability_name,
+                "binding_id": spec["binding_id"], "status": "applied" if ok else "blocked",
+                "reason": ";".join(node.reason_code for node in failures) if failures else "" if ok else "character_startup_graph_not_executed",
+            }
+            traces.append(trace)
+            records.extend(result.records)
+            if ok:
+                current = result.after_state
+                mutations.extend(result.mutations)
+                events.extend(result.events)
+                rng_events.extend(result.rng_events)
+            else:
+                blocked.append(trace)
+            continue
         slot_id = str(spec.get("slot_id") or getattr(slot, "eidolon_slot_id", "") or getattr(slot, "mechanism_slot_id", ""))
         slot_id_field = str(spec.get("slot_id_field") or "slot_id")
         trace_node_id = str(spec.get("trace_node_id") or "")

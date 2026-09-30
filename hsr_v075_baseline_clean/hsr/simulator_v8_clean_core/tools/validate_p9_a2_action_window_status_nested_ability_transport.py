@@ -1217,7 +1217,16 @@ def _build_runtime_direct_rulebook() -> tuple[
     }
     diagnostic_ref_ids = {
         item.target_ref_id for item in assembly.unadmitted_mechanism_diagnostics
+        if item.mechanism_kind == "character_dynamic_graph_root"
     }
+    expected_startup_ids = {
+        item.action_id for item in source_graph.action_sources
+        if item.action_kind == "passive" and item.owner_avatar_id == focused_status_owner_id
+    }
+    startup_diagnostics = tuple(
+        item for item in assembly.unadmitted_mechanism_diagnostics
+        if item.mechanism_kind == "character_passive_startup"
+    )
     if (
         assembly.assembly_status != "assembled"
         or assembly.base_panel is None
@@ -1230,10 +1239,13 @@ def _build_runtime_direct_rulebook() -> tuple[
             for item in assembly.owned_combatant_results
         )
         or any(
-            item.mechanism_kind != "character_dynamic_graph_root"
+            item.mechanism_kind not in {"character_dynamic_graph_root", "character_passive_startup"}
             for item in assembly.unadmitted_mechanism_diagnostics
         )
         or diagnostic_ref_ids != dynamic_ref_ids
+        or {item.target_ref_id for item in startup_diagnostics} != expected_startup_ids
+        or any(item.reason != "character_passive_startup_binding_not_executable"
+               for item in startup_diagnostics)
         or (
             assembly.battle_admission_status == "blocked"
             and not assembly.unadmitted_mechanism_diagnostics

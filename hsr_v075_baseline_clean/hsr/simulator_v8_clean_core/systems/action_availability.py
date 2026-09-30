@@ -22,7 +22,8 @@ from .action_contract import ActionContractSystem
 from .action_selection import ActionTargetQuery, ActionTargetSelectionSystem
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .queue import QueueDrainPlan, QueueSystem
-from .resource import ResourceSystem
+from .resource import ResourceSystem, ultimate_energy_blocked_reason
+from .phase_machine import AWAITING_DECISION, CombatPhaseMachine
 from .scheduler import (
     TIMELINE_TIE_CHOICE_ACTION_ID,
     _queue_entry_resource_policy,
@@ -154,7 +155,7 @@ class SelectableWindow:
 @dataclass(frozen=True)
 class ActionChoice:
     choice_id: str
-    choice_kind: Literal["normal_action", "enemy_fixed_sequence", "queue_action", "ultimate_window", "summon_action", "timeline_actor"]
+    choice_kind: Literal["normal_action", "enemy_fixed_sequence", "queue_action", "ultimate_window", "manual_ultimate_request", "summon_action", "timeline_actor"]
     control: Literal["external", "mandatory", "selectable"]
     actor_id: str
     actor_side: str
@@ -187,6 +188,7 @@ class ActionChoice:
             "enemy_fixed_sequence",
             "queue_action",
             "ultimate_window",
+            "manual_ultimate_request",
             "summon_action",
             "timeline_actor",
         } or self.control not in {"external", "mandatory", "selectable"}:
@@ -492,6 +494,17 @@ class ActionAvailabilitySystem:
                 can_accept_external_command=True,
             )
             choices, blocked = self._choices_for_actor(state, actor)
+            # Requests only interrupt an existing external turn decision; the
+            # queued action still requires its source-admitted ultimate window.
+            if choices and CombatPhaseMachine().current_phase(state) == AWAITING_DECISION:
+                for candidate in state.units.values():
+                    if candidate.side != "ally":
+                        continue
+                    requests, request_blocked = self._ally_choices(
+                        state, candidate, manual_ultimate_request=True,
+                    )
+                    choices = (*choices, *requests)
+                    blocked = (*blocked, *request_blocked)
             mode: ActionAvailabilityMode = "external_selectable" if choices else "blocked"
             return ActionAvailabilityView(
                 schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
@@ -608,6 +621,8 @@ class ActionAvailabilitySystem:
                 "action_id": TIMELINE_TIE_CHOICE_ACTION_ID,
                 "action_level": 0,
                 "target_ids": [],
+                "source": "manual",
+                "queue_name": None,
                 "metadata": {"timeline_choice_id": choice_id},
             },
             action_role="timeline_control",
@@ -743,8 +758,9 @@ class ActionAvailabilitySystem:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
             actor = state.units[actor_id]
-            if actor.max_energy <= 0 or actor.energy < actor.max_energy:
-                return "manual_ultimate_energy_not_ready_at_drain"
+            energy_reason = ultimate_energy_blocked_reason(actor, definition.sp_need)
+            if energy_reason:
+                return energy_reason
         if (plan.queue_window or {}).get("ok") is not True:
             return str((plan.queue_window or {}).get("blocked_reason") or "queue_window_not_admitted")
         return ""
@@ -864,7 +880,7 @@ class ActionAvailabilitySystem:
                     "queue_window_plan": window,
                     "drain_plan": plan.to_json(),
                     "queue_resolution": resolution.to_json(),
-                    "resource_preflight": _selectable_resource_preflight(state, plan),
+                    "resource_preflight": _selectable_resource_preflight(self.rules, state, plan),
                     "target_query": target_query.to_json() if target_query is not None else None,
                     "source_contract": {
                         "queue_intent_source": (plan.queue_entry.get("source_trace") or {}).get("queue_intent_source", {})
@@ -907,6 +923,8 @@ class ActionAvailabilitySystem:
         self,
         state: BattleState,
         actor: UnitState,
+        *,
+        manual_ultimate_request: bool = False,
     ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
         action_set = self.rules.combatant_action_set(actor.template_id)
         if action_set is None:
@@ -979,6 +997,10 @@ class ActionAvailabilitySystem:
                     action_id,
                     level,
                 )
+            definition = self.rules.action_definition(action_id, level)
+            is_ultimate = definition is not None and definition.attack_type == "Ultra"
+            if manual_ultimate_request != is_ultimate:
+                continue
             if reason:
                 blocked.append(
                     BlockedActionReason(
@@ -1001,7 +1023,7 @@ class ActionAvailabilitySystem:
                 actor,
                 action_id,
                 level,
-                choice_kind="normal_action",
+                choice_kind="manual_ultimate_request" if manual_ultimate_request else "normal_action",
                 source_trace={
                     "actor_data_card": actor_data_card,
                     "combatant_action_set": action_set.source.to_json(),
@@ -1645,7 +1667,7 @@ class ActionAvailabilitySystem:
         action_id: str,
         action_level: int,
         *,
-        choice_kind: Literal["normal_action", "summon_action"],
+        choice_kind: Literal["normal_action", "summon_action", "manual_ultimate_request"],
         source_trace: dict[str, JSONValue],
         metadata: dict[str, JSONValue],
     ) -> tuple[ActionChoice | None, BlockedActionReason]:
@@ -1661,6 +1683,13 @@ class ActionAvailabilitySystem:
                 source_trace,
                 metadata,
             )
+        if choice_kind == "manual_ultimate_request":
+            insert_admission, insert_reason = self.rules.action_admission_resolution(
+                actor.template_id, action_id, action_level, "insert_window",
+            )
+            if insert_admission is None or "ultimate" not in insert_admission.allowed_windows:
+                return None, _blocked_action(actor, action_id, action_level,
+                    insert_reason or "manual_ultimate_window_not_admitted", source_trace, metadata)
         contract_command = ActionCommand(
             actor_id=actor.unit_id,
             action_id=action_id,
@@ -1672,7 +1701,7 @@ class ActionAvailabilitySystem:
         contract = self.contract.evaluate(
             state,
             contract_command,
-            submission_mode="external_turn",
+            submission_mode="queue" if choice_kind == "manual_ultimate_request" else "external_turn",
         )
         if not contract.ok or contract.admission is None:
             return None, _blocked_action(
@@ -1862,21 +1891,34 @@ def _command_template(command: ActionCommand) -> dict[str, JSONValue]:
     }
 
 
-def _selectable_resource_preflight(state: BattleState, plan: QueueDrainPlan) -> dict[str, JSONValue]:
+def _selectable_resource_preflight(rules: RuleBook, state: BattleState, plan: QueueDrainPlan) -> dict[str, JSONValue]:
     window_family = str((plan.queue_window or {}).get("window_family") or "")
     actor_id = str(plan.queue_entry.get("actor_id") or "")
     actor = state.units.get(actor_id)
     if window_family == "ultimate":
         energy = actor.energy if actor is not None else 0.0
         max_energy = actor.max_energy if actor is not None else 0.0
-        ok = actor is not None and max_energy > 0 and energy >= max_energy
+        action_id = plan.resolved_action_id or str(plan.queue_entry.get("action_or_ability_ref") or "")
+        action_level = plan.resolved_action_level
+        requires_action_choice = not action_id or action_level is None
+        definition = rules.action_definition(action_id, action_level) if not requires_action_choice else None
+        cost = definition.sp_need if definition is not None else None
+        reason = (
+            "queue_action_actor_missing"
+            if actor is None
+            else ""
+            if requires_action_choice
+            else ultimate_energy_blocked_reason(actor, cost)
+        )
         return {
             "kind": "ultimate_energy",
             "actor_id": actor_id,
             "energy": energy,
             "max_energy": max_energy,
-            "ok": ok,
-            "blocked_reason": "" if ok else "manual_ultimate_energy_not_ready_at_drain",
+            "sp_need": cost,
+            "ok": not reason,
+            "blocked_reason": reason,
+            "requires_action_command_before_action_resource_preflight": requires_action_choice,
         }
     if window_family == "extra_turn":
         return {

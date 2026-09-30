@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
 from ..build_types import (
@@ -18,6 +18,7 @@ from ..build_types import (
 from ..equipment.models import EquipmentAssemblyResult
 from ..ir_types import IRSource, same_ir_source_raw_row
 from ..rules.ir import (
+    ActionAbilityBindingIR,
     AvatarProfileIR,
     AvatarPromotionTierIR,
     CharacterBuildBindingIR,
@@ -152,6 +153,8 @@ def assemble_character_build(
         )
     contributions.extend(equipment_result.static_contributions)
     diagnostics: list[CharacterMechanismDiagnostic] = list(skill_level_diagnostics)
+    _, startup_diagnostics = character_startup_bindings(rules, card, tuple(skill_levels))
+    diagnostics.extend(startup_diagnostics)
     diagnostics.extend(
         CharacterMechanismDiagnostic(
             diagnostic_id=(
@@ -212,6 +215,9 @@ def assemble_character_build(
     )
     if dynamic_errors:
         return _blocked(build, *dynamic_errors)
+    dynamic_graph_refs = _admit_bound_character_dynamic_roots(
+        rules, card, tuple(skill_levels), dynamic_graph_refs,
+    )
     diagnostics.extend(
         CharacterMechanismDiagnostic(
             diagnostic_id=(
@@ -222,7 +228,7 @@ def assemble_character_build(
             reason=root.blocked_reason,
             source=root.root_source,
         )
-        for root in dynamic_graph_refs
+        for root in dynamic_graph_refs if root.blocked_reason
     )
     owned_combatants, owned_diagnostics = _assemble_owned_combatants(
         rules,
@@ -271,6 +277,101 @@ def assemble_character_build(
         )
     except (TypeError, ValueError) as exc:
         return _blocked(build, f"character_contribution_ledger_invalid:{exc}")
+
+
+def _admit_bound_character_dynamic_roots(
+    rules: RuleBook,
+    card: CharacterDataCardIR,
+    skill_levels: tuple[CharacterSkillLevelResolution, ...],
+    roots: tuple[CharacterDynamicGraphRef, ...],
+) -> tuple[CharacterDynamicGraphRef, ...]:
+    catalog = rules.ir.character_ability_source_graph_catalog
+    if catalog is None:
+        return roots
+    levels = {item.action_id: item.effective_level for item in skill_levels}
+    actions = {item.action_source_id: item for item in catalog.action_sources}
+    admitted: set[str] = set()
+    for root in roots:
+        if root.root_kind != "ability_definition" or root.build_binding_ids:
+            continue
+        for relation in catalog.bindings:
+            action = actions.get(relation.action_source_id)
+            if (
+                relation.graph_id != root.source_graph_id
+                or relation.ability_definition_id != root.ability_definition_id
+                or action is None or card.entity_ref != f"avatar:{action.owner_avatar_id}"
+                or action.action_id not in levels
+            ):
+                continue
+            binding = rules.action_ability_binding(action.action_id, levels[action.action_id])
+            if binding is None or binding.coverage_status != "executable" or binding.blocked_reason:
+                continue
+            phases = tuple(phase for phase in rules.ability_phases_for_binding(binding.binding_id)
+                           if phase.ability_name == relation.ability_name)
+            if len(phases) != 1 or phases[0].invocation_role not in {"action_root", "nested_only"}:
+                continue
+            phase = phases[0]
+            tasks = rules.ability_tasks_for_phase(phase.phase_id)
+            callbacks = {task.callback_kind for task in tasks}
+            if callbacks and callbacks <= {"OnStart", "OnAttack", "OnHit", "OnEnd"} and all(rules.query_formal_task_graph(
+                "ability_phase_callback", phase.phase_id, callback,
+                (task.task_id for task in tasks if task.callback_kind == callback),
+            ).status == "resolved" for callback in callbacks):
+                admitted.add(root.dynamic_graph_ref_id)
+    return tuple(replace(root, blocked_reason="") if root.dynamic_graph_ref_id in admitted else root
+                 for root in roots)
+
+
+def character_startup_bindings(
+    rules: RuleBook,
+    card: CharacterDataCardIR,
+    skill_levels: tuple[CharacterSkillLevelResolution, ...],
+) -> tuple[tuple[ActionAbilityBindingIR, ...], tuple[CharacterMechanismDiagnostic, ...]]:
+    """Close every source-declared passive against the selected skill level."""
+    catalog = rules.ir.character_ability_source_graph_catalog
+    if catalog is None:
+        return (), ()
+    levels = {item.action_id: item.effective_level for item in skill_levels}
+    bindings: list[ActionAbilityBindingIR] = []
+    diagnostics: list[CharacterMechanismDiagnostic] = []
+    for source in catalog.action_sources:
+        if source.action_kind != "passive" or card.entity_ref != f"avatar:{source.owner_avatar_id}":
+            continue
+        level = levels.get(source.action_id)
+        binding = rules.action_ability_binding(source.action_id, level) if level is not None else None
+        reason = ""
+        if binding is None or binding.coverage_status != "executable" or binding.blocked_reason:
+            reason = "character_passive_startup_binding_not_executable"
+        elif binding.config_source.get("use_type") != "Passive" or not binding.entry_ability:
+            reason = "character_passive_startup_role_not_source_closed"
+        else:
+            phases = rules.ability_phases_for_binding(binding.binding_id)
+            roots = tuple(phase for phase in phases
+                          if phase.invocation_role == "action_root"
+                          and phase.ability_name == binding.entry_ability)
+            if len(roots) != 1:
+                reason = "character_passive_startup_root_missing"
+            for phase in roots:
+                tasks = rules.ability_tasks_for_phase(phase.phase_id)
+                if any(task.callback_kind != "OnStart" for task in tasks):
+                    reason = "character_passive_startup_lifecycle_not_admitted"
+                    break
+                graph = rules.query_formal_task_graph(
+                    "ability_phase_callback", phase.phase_id, "OnStart",
+                    (task.task_id for task in tasks),
+                )
+                if graph.status != "resolved":
+                    reason = graph.blocked_reason or "character_passive_startup_graph_missing"
+                    break
+        if reason:
+            diagnostics.append(CharacterMechanismDiagnostic(
+                diagnostic_id=f"character_mechanism_diagnostic:startup:{source.action_source_id}",
+                mechanism_kind="character_passive_startup", target_ref_id=source.action_id,
+                reason=reason, source=source.config_source,
+            ))
+        elif binding is not None:
+            bindings.append(binding)
+    return tuple(bindings), tuple(diagnostics)
 
 
 def validate_character_build_admission(

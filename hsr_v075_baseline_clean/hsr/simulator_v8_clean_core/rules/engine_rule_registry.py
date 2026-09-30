@@ -13,7 +13,7 @@ from .ir import (
 )
 
 
-ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v6"
+ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v8"
 ENGINE_RULE_SOURCE_KIND = "engine_convention"
 TIMELINE_RULE_APPLICABILITY = "all timeline units with positive effective speed"
 ULTIMATE_COST_RULE_APPLICABILITY = "admitted ultimate action committed from the ultimate queue window"
@@ -107,14 +107,14 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
         ),
         resource_rules=(
             ResourceRuleIR(
-                resource_rule_id="resource_rule:engine_convention:ultimate_energy_cost_then_action_spbase",
+                resource_rule_id="resource_rule:engine_convention:ultimate_spneed_cost_then_action_spbase",
                 rule_kind="ultimate_energy_cost",
-                operation="set_actor_energy_to_action_spbase_after_admitted_ultimate_execution",
+                operation="subtract_action_spneed_before_action_generation",
                 source_kind=ENGINE_RULE_SOURCE_KIND,
                 source=_source(
                     "ResourceEngineConvention",
-                    "ultimate_energy_cost_then_action_spbase",
-                    "Ultimate cost ordering is an explicit engine convention pending an admitted raw source.",
+                    "ultimate_spneed_cost_then_action_spbase",
+                    "PR8 general_energy_skill_point_economy_v1: SPNeed is the cost, not capacity; debit and eligible generation are separate. Relative callback timing retains the engine resource-window convention.",
                 ),
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=ULTIMATE_COST_RULE_APPLICABILITY,
@@ -273,13 +273,20 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
                 operation=(
                     "apply_hp_delta_without_shield_absorption"
                     if family in HP_LOSS_ROUTE_FAMILIES
-                    else "consume_priority_ordered_shield_instances_then_apply_hp_remainder"
+                    else "consume_eligible_shields_in_parallel_then_apply_single_hp_remainder"
                 ),
                 source_kind=ENGINE_RULE_SOURCE_KIND,
                 source=_source(
                     "DamageRouteEngineConvention",
                     f"{family}_route_v1",
-                    "Damage-family shield routing is an explicit versioned engine convention.",
+                    "Damage-family routing uses the confirmed ordinary parallel-shield model: "
+                    "each eligible pool loses up to the incoming damage, while HP overflow is "
+                    "computed once against the largest eligible pool. Research source: "
+                    "https://github.com/yaelysia/hsr-battle-simulator/blob/"
+                    "b811950b88d95c3309e634740bb27441933f09e1/"
+                    "docs/tbgd_evidence/shared/multi_shield_parallel_absorption_and_effect_ownership_v1.md#4-ordinary-parallel-absorption-is-not-addition-or-a-reserve-queue"
+                    if family not in HP_LOSS_ROUTE_FAMILIES
+                    else "HP-loss routing bypasses shields.",
                 ),
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=DAMAGE_ROUTE_APPLICABILITY,
@@ -294,7 +301,7 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
                 source=_source(
                     "ShieldPriorityEngineConvention",
                     "priority_then_creation_order_v1",
-                    "Shield instance ordering is an explicit versioned engine convention.",
+                    "Stable shield enumeration for records; this is not sequential absorption priority.",
                 ),
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=SHIELD_PRIORITY_RULE_APPLICABILITY,

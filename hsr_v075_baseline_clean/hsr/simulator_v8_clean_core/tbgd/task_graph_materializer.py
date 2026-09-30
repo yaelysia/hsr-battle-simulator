@@ -428,6 +428,8 @@ def _materialize_status_entries(
 def _validate_status_callback_denominator(
     source_snapshot: CharacterAbilityRawSnapshot,
     callbacks: tuple[StatusCallbackIR, ...],
+    *,
+    source_paths: frozenset[str] | None = None,
 ) -> None:
     expected: set[tuple[str, str]] = set()
 
@@ -465,6 +467,8 @@ def _validate_status_callback_denominator(
 
     for source in source_snapshot.sources:
         source_path = source.source.source_path
+        if source_paths is not None and source_path not in source_paths:
+            continue
         visit(source_snapshot.documents[source_path], "$", source_path)
     actual = tuple(
         (
@@ -514,6 +518,71 @@ def _ordered_status_task_ids(
         )
     )
     return (*callback.task_ids, *(item.task_id for item in non_roots))
+
+
+def materialize_selected_character_task_graphs(
+    source_catalog: CharacterControlFlowContractCatalog,
+    canonical: CanonicalIR,
+    *,
+    source_snapshot: CharacterAbilityRawSnapshot,
+    selected_source_paths: frozenset[str],
+) -> TaskGraphCatalogIR:
+    """Merge full selected-character slices against the unchanged complete source ledger."""
+    if type(canonical) is not CanonicalIR:
+        raise TypeError("selected character materialization requires exact CanonicalIR")
+    source_paths = selected_source_paths
+    if (type(source_paths) is not frozenset or not source_paths
+            or not all(isinstance(path, str) and path for path in source_paths)
+            or not source_paths.issubset(source_snapshot.documents)):
+        raise ValueError("selected character snapshot source closure missing")
+    callbacks = tuple(callback for callback in canonical.status_callbacks if callback.source.source_path in source_paths)
+    _validate_status_callback_denominator(source_snapshot, callbacks, source_paths=frozenset(source_paths))
+    callback_ids = {callback.callback_id for callback in callbacks}
+    if len(callback_ids) != len(callbacks):
+        raise ValueError("selected character status callback identities duplicated")
+    if any(task.callback_id not in callback_ids for task in canonical.status_callback_tasks
+           if task.source.evidence.get("admission_source_path") in source_paths):
+        raise ValueError("selected character status task owner missing")
+    context = _prepare_materialization(source_catalog, canonical, source_snapshot)
+    complete = context.base
+    slices = []
+
+    def append_slice(entry_kind, owner_id, callback_kind, ordered, tasks):
+        entry, graph = _materialize_entry(context, entry_kind, owner_id, callback_kind, ordered, tasks)
+        graphs = (graph,) if graph is not None else ()
+        dispositions = _materialization_dispositions(complete.source_dispositions, (entry,), graphs)
+        slices.append(_catalog(source_catalog, "formal_slice", dispositions, (entry,), graphs))
+
+    if len({phase.phase_id for phase in canonical.ability_phases}) != len(canonical.ability_phases):
+        raise ValueError("selected character phase identities duplicated")
+    if len({task.task_id for task in canonical.ability_tasks}) != len(canonical.ability_tasks):
+        raise ValueError("selected character task identities duplicated")
+    for phase in canonical.ability_phases:
+        if phase.invocation_role not in _FORMAL_ABILITY_INVOCATION_ROLES:
+            continue
+        if phase.source.source_path not in source_paths:
+            raise ValueError("selected character formal phase outside selected source closure")
+        phase_tasks = tuple(task for task in canonical.ability_tasks if task.phase_id == phase.phase_id)
+        if (not phase_tasks or len(phase.task_ids) != len(phase_tasks)
+                or set(phase.task_ids) != {task.task_id for task in phase_tasks}):
+            raise ValueError("selected character ability phase task ledger incomplete")
+        for callback_kind in sorted({task.callback_kind for task in phase_tasks}):
+            if not callback_kind:
+                raise ValueError("selected character ability callback kind missing")
+            tasks = tuple(task for task in phase_tasks if task.callback_kind == callback_kind)
+            selected = {task.task_id for task in tasks}
+            ordered = tuple(task_id for task_id in phase.task_ids if task_id in selected)
+            append_slice("ability_phase_callback", phase.phase_id, callback_kind, ordered,
+                         tuple(_ability_task(task) for task in tasks))
+    for callback in callbacks:
+        tasks = tuple(task for task in canonical.status_callback_tasks if task.callback_id == callback.callback_id)
+        if not tasks:
+            if callback.task_ids:
+                raise ValueError("selected character taskless callback has root identities")
+            continue
+        append_slice("status_callback", callback.callback_id, callback.event,
+                     _ordered_status_task_ids(callback, tasks), tuple(_status_task(task) for task in tasks))
+    return merge_task_graph_slices(complete, slices)
 
 
 def materialize_ability_phase_task_graph(
@@ -1401,11 +1470,11 @@ def _is_wait_anim_state_process_only_presentation_shape(
     if control is None:
         return False
     return (
-        control.family == "WaitAnimState"
+        control.family in {"WaitAnimState", "WaitTimelineFinish"}
         and control.control_role == "presentation_barrier"
         and control.coverage_status != "blocked"
-        and task.family == "WaitAnimState"
-        and task.opcode == "WaitAnimState"
+        and task.family == control.family
+        and task.opcode == control.family
         and task.execution_mode == "process_only"
         and task.coverage_status == "audit_only"
         and bool(task.effect_id)
@@ -1469,6 +1538,20 @@ def _wait_anim_state_process_only_effect(
             "task_graph_wait_anim_state_process_only_effect_contract_invalid"
         )
     return effect
+
+
+def _is_death_settlement_barrier_shape(control, task) -> bool:
+    return bool(
+        control is not None and control.family == task.family == task.opcode == "TriggerSkipDeadHandler"
+        and control.control_role == "death_barrier" and control.coverage_status != "blocked"
+        and not control.blocked_reason and not control.peer_field_names and not control.field_responsibilities
+        and not control.branches and not control.template_reference_ids
+        and control.termination.termination_kind == control.termination.status == "not_applicable"
+        and control.downstream_stages == ("p9_s14",)
+        and task.execution_mode == "runtime_effect" and task.coverage_status == "executable"
+        and task.effect_id and not task.condition_id and not task.target_expression_id
+        and not task.ability_definition_id
+    )
 
 
 def _is_process_only_settlement_barrier_shape(
@@ -1595,6 +1678,17 @@ def _references(
         _wait_anim_state_process_only_effect(task, indexes)
     if _is_process_only_settlement_barrier_shape(control, task):
         _process_only_settlement_barrier_effect(task, indexes)
+    if _is_death_settlement_barrier_shape(control, task):
+        effects = indexes.effects.get(task.effect_id, ())
+        sources = tuple(replace(item, evidence={key: value for key, value in item.evidence.items()
+                                               if key not in {"parent_task_id", "child_task_count"}})
+                        for item in ((effects[0].source, task.source) if len(effects) == 1 else ()))
+        if (len(effects) != 1 or sources[0] != sources[1]
+                or effects[0].coverage_status != "executable"
+                or effects[0].payload.get("standard") != {
+                    "operation": "verify_death_settlement", "source_shape_admitted": True,
+                }):
+            raise _Blocked("task_graph_death_settlement_effect_contract_invalid")
     result: list[TaskGraphDefinitionReferenceIR] = []
     for kind, definition_id, values, default_owner in definitions:
         if not definition_id:
@@ -1655,6 +1749,8 @@ def _references(
 
 
 def _reference_owner(control: CharacterControlFlowNodeIR | None, kind: str, default: str) -> str:
+    if control is not None and control.family == "TriggerSkipDeadHandler" and kind == "effect":
+        return "unit_lifecycle"
     responsibilities = {
         "condition": "condition_contract",
         "target": "target_contract",
@@ -1675,12 +1771,14 @@ def _node_status(
     task: _FormalTask,
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
-        if task.family == "WaitAnimState" and task.execution_mode == "process_only":
+        if task.family in {"WaitAnimState", "WaitTimelineFinish"} and task.execution_mode == "process_only":
             raise _Blocked("task_graph_wait_anim_state_source_contract_missing")
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_wait_anim_state_process_only_presentation_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_process_only_settlement_barrier_shape(control, task):
+        return "leaf", "materialized", ("task_graph_execution",), ""
+    if _is_death_settlement_barrier_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
@@ -1826,11 +1924,11 @@ def _materialization_dispositions(
         linked_nodes = tuple(linked_nodes_by_record.get(item.source_record_id, ()))
         retire_wait_anim_state_barrier = (
             item.source_kind == "control_node"
-            and item.family == "WaitAnimState"
+            and item.family in {"WaitAnimState", "WaitTimelineFinish"}
             and bool(linked_nodes)
             and all(
-                node.source_family == "WaitAnimState"
-                and node.opcode == "WaitAnimState"
+                node.source_family == item.family
+                and node.opcode == item.family
                 and node.node_kind == "leaf"
                 and node.materialization_status == "materialized"
                 and node.owner_domains == ("task_graph_execution",)
@@ -1884,6 +1982,19 @@ def _materialization_dispositions(
                 for node in linked_nodes
             )
         )
+        retire_death_barrier = (
+            item.source_kind == "control_node" and item.family == "TriggerSkipDeadHandler"
+            and bool(linked_nodes) and all(
+                node.source_family == node.opcode == item.family and node.node_kind == "leaf"
+                and node.materialization_status == "materialized" and not node.branches
+                and node.owner_domains == ("task_graph_execution",) and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].resolution_status == "resolved"
+                and node.references[0].owner_domain == "unit_lifecycle"
+                and node.references[0].source == node.source
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
             domain
             for domain in item.owner_domains
@@ -1900,6 +2011,7 @@ def _materialization_dispositions(
                 retire_random_config_control
                 and domain == "hit_random_sequence"
             )
+            and not (retire_death_barrier and domain == "unit_lifecycle")
         )
         result.append(replace(
             item,

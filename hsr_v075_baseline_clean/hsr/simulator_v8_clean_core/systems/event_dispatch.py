@@ -22,6 +22,8 @@ from .mutation_events import (
     mutation_backed_event_id,
 )
 from .phase_machine import CombatPhaseMachine
+from .shield import ShieldExhaustionFact
+from .status import StatusSystem
 from .status_callbacks import StatusCallbackSystem
 from .task_graph import (
     TaskGraphContinuation,
@@ -53,6 +55,7 @@ class EventDispatchResult:
     node_results: tuple[ExecutionNodeResult, ...] = ()
     event_normalizations: tuple[EventNormalization, ...] = ()
     task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         projections = tuple(self.task_graph_projections)
@@ -407,6 +410,8 @@ class EventDispatchSystem:
                 status_nested_ability_provider=status_nested_ability_provider,
                 expected_window_scope=expected_window_scope,
             )
+        if event.event_type == "shield.exhausted" and not result.errors:
+            result = self._remove_exhausted_shield_owners(result, event)
         result = self._reconcile_ability_property_watchers(
             result,
             before_state=state,
@@ -419,6 +424,107 @@ class EventDispatchSystem:
             _with_event_dispatch_node_result(result, event),
             before=event_before_normalization,
             after=event,
+        )
+
+    def _remove_exhausted_shield_owners(
+        self,
+        result: EventDispatchResult,
+        event: GameEvent,
+    ) -> EventDispatchResult:
+        fact = event.shield_exhaustion_fact
+        target_id = str(event.target_id or "")
+        if (
+            type(fact) is not ShieldExhaustionFact
+            or fact.event_id != event.event_id
+            or fact.mutation.path != ("units", target_id, "shield_instances")
+            or fact.mutation.stable_id() != event.payload.get("mutation_id")
+            or {owner.instance_id for owner in fact.owners}
+            != set(event.payload.get("exhausted_instance_ids") or ())
+            or target_id not in result.after_state.units
+        ):
+            return _atomic_dispatch_failure(
+                result.after_state,
+                replace(result, errors=("shield_exhaustion_typed_fact_missing_or_mismatch",)),
+            )
+        current = result.after_state
+        mutations = list(result.mutations)
+        events = list(result.events)
+        records = list(result.records)
+        rng_events = list(result.rng_events)
+        nodes = list(result.node_results)
+        normalizations = list(result.event_normalizations)
+        projections = list(result.task_graph_projections)
+        dispatched_ids = set(result.dispatched_event_ids)
+        removed_owners: set[tuple[str, str, str]] = set()
+        for owner in fact.owners:
+            if owner.instance_id in {
+                str(item.get("instance_id") or "")
+                for item in current.units[target_id].shield_instances
+            }:
+                return _atomic_dispatch_failure(
+                    result.after_state,
+                    replace(result, errors=("shield_exhausted_instance_still_present",)),
+                )
+            if not owner.modifier_name and not owner.status_instance_id:
+                continue
+            if not owner.modifier_name or not owner.status_instance_id:
+                return _atomic_dispatch_failure(
+                    result.after_state,
+                    replace(result, errors=("shield_exhausted_owner_identity_incomplete",)),
+                )
+            owner_key = (owner.modifier_name, owner.status_instance_id, owner.caster_id)
+            if owner_key in removed_owners:
+                continue
+            removed_owners.add(owner_key)
+            removal = StatusSystem(self.rules).remove_exhausted_shield_owner(
+                current,
+                target_id=target_id,
+                modifier_name=owner.modifier_name,
+                status_instance_id=owner.status_instance_id,
+                caster_id=owner.caster_id,
+                exhaustion_fact=fact,
+            )
+            if not removal.ok:
+                return _atomic_dispatch_failure(
+                    result.after_state,
+                    replace(result, errors=removal.unsupported or ("shield_owner_status_remove_failed",)),
+                )
+            reduction = self.reducer.apply_all_result(current, removal.mutations)
+            if not reduction.ok:
+                return _atomic_dispatch_failure(
+                    result.after_state,
+                    replace(result, errors=("shield_owner_status_mutation_conflict",)),
+                )
+            current = reduction.after_state
+            mutations.extend(removal.mutations)
+            records.extend(removal.records)
+            for lifecycle_event in removal.events:
+                dispatched = self.dispatch_event(current, event=lifecycle_event)
+                if dispatched.errors:
+                    return _atomic_dispatch_failure(
+                        result.after_state,
+                        replace(result, errors=dispatched.errors),
+                    )
+                current = dispatched.after_state
+                mutations.extend(dispatched.mutations)
+                events.extend(dispatched.events)
+                records.extend(dispatched.records)
+                rng_events.extend(dispatched.rng_events)
+                nodes.extend(dispatched.node_results)
+                normalizations.extend(dispatched.event_normalizations)
+                projections.extend(dispatched.task_graph_projections)
+                dispatched_ids.update(dispatched.dispatched_event_ids)
+        return replace(
+            result,
+            after_state=current,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=tuple(records),
+            rng_events=tuple(rng_events),
+            node_results=tuple(nodes),
+            event_normalizations=tuple(normalizations),
+            task_graph_projections=tuple(projections),
+            dispatched_event_ids=frozenset(dispatched_ids),
         )
 
     def _reconcile_ability_property_watchers(
@@ -474,6 +580,7 @@ class EventDispatchSystem:
             *result.task_graph_projections,
             *watcher_result.task_graph_projections,
         ]
+        dispatched_event_ids = set(result.dispatched_event_ids)
         child_depth = _event_mutation_depth(event)
         dispatchable_events = tuple(
             emitted_event
@@ -486,6 +593,12 @@ class EventDispatchSystem:
         ):
             errors.append("callback_emitted_event_depth_exceeded")
         else:
+            # Recursive dispatch returns each emitted event as its input event.
+            events = [
+                *result.events,
+                *(emitted for emitted in watcher_result.events
+                  if emitted.event_type not in CALLBACK_EMITTED_EVENT_TYPES),
+            ]
             for emitted_event in dispatchable_events:
                 child_event = emitted_event
                 if "mutation_event_depth" not in emitted_event.payload:
@@ -523,6 +636,7 @@ class EventDispatchSystem:
                 nodes.extend(child_result.node_results)
                 normalizations.extend(child_result.event_normalizations)
                 projections.extend(child_result.task_graph_projections)
+                dispatched_event_ids.update(child_result.dispatched_event_ids)
         merged = replace(
             result,
             after_state=current_state,
@@ -533,6 +647,7 @@ class EventDispatchSystem:
             errors=tuple(errors),
             node_results=tuple(nodes),
             event_normalizations=tuple(normalizations),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
             task_graph_projections=(() if errors else tuple(projections)),
         )
         return (
@@ -711,6 +826,7 @@ class EventDispatchSystem:
         node_results: list[ExecutionNodeResult] = []
         event_normalizations: list[EventNormalization] = []
         task_graph_projections: list[TaskGraphNodeProjection] = []
+        dispatched_event_ids: set[str] = set()
         for match in matches:
             listener_record = _listener_record(
                 event,
@@ -759,7 +875,6 @@ class EventDispatchSystem:
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
-            events.extend(result.events)
             errors.extend(result.errors)
             node_results.extend(result.node_results)
             task_graph_projections.extend(result.task_graph_projections)
@@ -773,8 +888,14 @@ class EventDispatchSystem:
                 dispatchable_events
                 and child_depth >= MAX_CALLBACK_EMITTED_EVENT_DEPTH
             ):
+                events.extend(result.events)
                 errors.append("callback_emitted_event_depth_exceeded")
             else:
+                # Child dispatch includes its input event in child_result.events.
+                events.extend(
+                    emitted for emitted in result.events
+                    if emitted.event_type not in CALLBACK_EMITTED_EVENT_TYPES
+                )
                 for emitted_event in dispatchable_events:
                     child_event = emitted_event
                     if (
@@ -826,6 +947,7 @@ class EventDispatchSystem:
                     task_graph_projections.extend(
                         child_result.task_graph_projections
                     )
+                    dispatched_event_ids.update(child_result.dispatched_event_ids)
             execution_record = _listener_record(
                 event,
                 listener_kind=match.listener_kind,
@@ -855,6 +977,7 @@ class EventDispatchSystem:
             task_graph_projections=(
                 () if errors else tuple(task_graph_projections)
             ),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
         return _atomic_dispatch_failure(state, result) if errors else result
 
@@ -1091,7 +1214,9 @@ def _with_event_dispatch_node_result(
                 status="complete",
             )
         )
-    return replace(result, node_results=tuple(nodes))
+    return replace(result, node_results=tuple(nodes), dispatched_event_ids=(
+        result.dispatched_event_ids | {str(event.to_json()["event_id"])}
+    ))
 
 
 def _with_controlled_event_normalization(
@@ -1211,6 +1336,22 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    # These callbacks are produced by StatusSystem._status_lifecycle_events.
+    # A scoped source slice may contain no listener for one of them; existing
+    # source families still take precedence over this producer-side mapping.
+    "status.lifecycle": (
+        ("OnCreate", "status_local", ""),
+        ("OnStack", "status_local", ""),
+        ("OnModifierAdd", "status_local", ""),
+        ("OnAddModifierSuc", "status_local", ""),
+        ("OnListenModifierAdd", "global_listener", ""),
+        ("OnModifierDotAdd", "status_local", ""),
+        ("OnModifierOnStack", "status_local", ""),
+        ("OnListenModifierOnStack", "global_listener", ""),
+        ("OnDestroy", "status_local", ""),
+        ("OnModifierRemove", "status_local", ""),
+        ("OnListenModifierRemove", "global_listener", ""),
+    ),
     "battle.start": (
         ("OnEnterBattle", "owner_local", ""),
     ),
@@ -1303,11 +1444,13 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnAfterBeingHitAll", "being_hit_target_local", ""),
     ),
     "toughness.hit": (
+        ("OnBeingStanceDamage", "being_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", ""),
     ),
     "break.triggered": (
-        ("OnTriggerBreak", "actor_local", "downstream_intent_missing:break_listener_execution_not_admitted"),
-        ("OnBeingBreak", "being_hit_target_local", "downstream_intent_missing:being_break_listener_execution_not_admitted"),
+        ("OnTriggerBreak", "actor_local", ""),
+        ("OnBeingBreak", "being_hit_target_local", ""),
+        ("OnListenBreak", "global_listener", ""),
     ),
     "status.callback": (
         ("OnPhase1", "status_local", "event_alias_missing:status_callback_requires_explicit_callback_event"),
@@ -1325,6 +1468,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 
 CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
     "custom.event",
+    "status.lifecycle",
     "summon.spawned",
     "summon.removed",
 }
@@ -1824,7 +1968,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return resource_scope
     if callback_event == "OnListenAllowAction":
         return "owner_local"
-    if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal"}:
+    if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal", "OnTriggerBreak"}:
         return "actor_local"
     if callback_event in {
         "OnHPChange",
@@ -1936,7 +2080,7 @@ def _match_callback_to_event(
     if not scope_ok:
         status = "skipped"
         reason = scope_reason
-    elif callback.blocked_reason == "equipment_event_family_non_gameplay":
+    elif callback.blocked_reason in {"equipment_event_family_non_gameplay", "source_proven_presentation_only"}:
         status = "skipped"
         reason = "non_gameplay_listener_excluded"
     elif not _status_detail_admits_callback(detail, callback):
@@ -2110,7 +2254,7 @@ def _optional_missing_mutation_alias(event: GameEvent, alias: EventAlias) -> boo
 def _non_gameplay_alias(rules: RuleBook, alias: EventAlias) -> bool:
     callbacks = rules.status_callbacks_for_event(alias.callback_event)
     return bool(callbacks) and all(
-        callback.blocked_reason == "equipment_event_family_non_gameplay"
+        callback.blocked_reason in {"equipment_event_family_non_gameplay", "source_proven_presentation_only"}
         for callback in callbacks
     )
 

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
-from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTemplateIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
@@ -14,7 +13,9 @@ from .dynamic_values import find_status_detail
 from .event_dispatch import EventDispatchSystem
 from .effect import EffectExecutionContext, EffectRegistry
 from .status_callbacks import StatusCallbackSystem
-from .toughness import ToughnessPacket
+from .target import TargetSystem
+from .toughness import ToughnessApplicationResult, ToughnessPacket
+from .unit_relation import TargetEvaluationContext
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class BreakApplicationResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     events: tuple[GameEvent, ...] = ()
     errors: tuple[str, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
 
 
 class BreakSystem:
@@ -48,12 +50,155 @@ class BreakSystem:
         self.effects = effects
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem(rules)
+        self.targets = TargetSystem(rules)
+        self.evaluator = RuleEvaluator()
         self.event_dispatcher = event_dispatcher or EventDispatchSystem(
             rules,
             effects,
             reducer=self.reducer,
             damage=self.damage,
             status_callbacks=status_callbacks,
+        )
+
+    def enter_if_depleted(
+        self, state: BattleState, result: ToughnessApplicationResult,
+    ) -> BreakApplicationResult | None:
+        if not result.ok or not result.mutations:
+            return None
+        target = state.units.get(result.packet.target_id)
+        if target is None or target.toughness > 0 or bool(target.flags.get("broken", False)):
+            return None
+        metadata = dict(result.packet.metadata)
+        for mutation in result.mutations:
+            if mutation.source == "toughness_system":
+                for key in ("numeric_evaluation", "weakness_check", "amount"):
+                    if key in mutation.metadata:
+                        metadata[key] = mutation.metadata[key]
+        return self.enter_break(state, replace(result.packet, metadata=metadata))
+
+    def recover_ordinary_before_action(
+        self, state: BattleState, *, unit_id: str,
+    ) -> BreakApplicationResult | None:
+        target = state.units.get(unit_id)
+        if (
+            target is None or target.side != "enemy"
+            or target.lifecycle_status != "active" or target.hp <= 0
+            or not target.flags.get("broken", False)
+        ):
+            return None
+
+        def blocked(reason: str) -> BreakApplicationResult:
+            return BreakApplicationResult(
+                ok=False, after_state=state,
+                records=(SettlementRecord(
+                    record_type="break_recovery_blocked", source="break_system",
+                    process_only=True, payload={"target_id": unit_id, "reason": reason},
+                    trace={},
+                ).to_json(),),
+                errors=(reason,),
+            )
+
+        source = target.flags.get("break_source")
+        if (
+            target.max_toughness <= 0 or target.toughness > 0
+            or not isinstance(source, dict)
+        ):
+            return blocked("ordinary_break_recovery_state_invalid")
+        template_id = source.get("break_template_id")
+        emission_id = source.get("toughness_emission_id")
+        task_id = source.get("source_task_id")
+        profile_id = source.get("hit_profile_id")
+        template = self.rules.break_template(template_id) if isinstance(template_id, str) else None
+        emission = self.rules.toughness_emission(emission_id) if isinstance(emission_id, str) else None
+        if (
+            template is None or template.coverage_status != "executable"
+            or emission is None or emission.coverage_status != "executable"
+            or not isinstance(task_id, str) or not task_id
+            or not isinstance(profile_id, str) or not profile_id
+        ):
+            return blocked("ordinary_break_recovery_source_missing")
+        trace: dict[str, JSONValue] = {
+            "break_template_source": template.source.to_json(),
+            "toughness_source": emission.source.to_json(),
+            "original_break_source": source,
+        }
+        request = GameEvent(
+            "break.recovery_requested",
+            source_id=unit_id, target_id=unit_id,
+            event_id=f"event:{state.event_index}:break_recovery_requested:{unit_id}",
+            window="break_recovery", process_only=True,
+            payload={
+                "callback_events": ["OnEndBreak"],
+                "actor_id": unit_id, "target_id": unit_id,
+                "break_template_id": template_id, "source_trace": trace,
+            },
+        )
+        dispatched = self.event_dispatcher.dispatch_event(state, event=request)
+        if dispatched.errors:
+            return blocked("ordinary_break_recovery_callback_blocked:" + ",".join(dispatched.errors))
+        current = dispatched.after_state
+        current_target = current.units[unit_id]
+        metadata: dict[str, JSONValue] = {
+            "break_template_id": template_id,
+            "toughness_emission_id": emission_id,
+            "source_task_id": task_id,
+            "hit_profile_id": profile_id,
+            "source_trace": trace,
+            "break_lifecycle": {"operation": "recover", "target_id": unit_id},
+            "break_recovery": {
+                "kind": "ordinary_before_action",
+                "trigger_kind": "next_regular_action",
+            },
+        }
+        changes = (
+            (("flags", "broken"), False),
+            (("toughness",), current_target.max_toughness),
+        )
+        mutations: list[Mutation] = []
+        for path, after in changes:
+            before = current_target.flags.get("broken") if path[0] == "flags" else current_target.toughness
+            if before == after:
+                continue
+            mutations.append(Mutation(
+                op="set", path=("units", unit_id, *path),
+                before=before, after=after,
+                before_exists=(path[1] in current_target.flags if path[0] == "flags" else True),
+                reason="recover ordinary weakness break before action",
+                source="break_system", metadata=metadata,
+            ))
+        for key in ("break_element", "break_source"):
+            if key not in current_target.flags:
+                continue
+            mutations.append(Mutation(
+                op="delete", path=("units", unit_id, "flags", key),
+                before=current_target.flags[key], after=None, after_exists=False,
+                reason="clear ordinary weakness break state",
+                source="break_system", metadata=metadata,
+            ))
+        reduction = self.reducer.apply_all_result(current, tuple(mutations))
+        if not reduction.ok:
+            return blocked("ordinary_break_recovery_mutation_conflict")
+        records = tuple(
+            SettlementRecord(
+                record_type="break_recovery", source="break_system",
+                mutation_id=mutation.stable_id(), process_only=False,
+                payload={"target_id": unit_id, "field": mutation.path[-1],
+                         "trigger_kind": "next_regular_action",
+                         "break_template_id": template_id},
+                trace=trace,
+            ).to_json()
+            for mutation in mutations
+        )
+        return BreakApplicationResult(
+            ok=True, after_state=reduction.after_state,
+            mutations=(*dispatched.mutations, *mutations),
+            events=(*dispatched.events, GameEvent(
+                "break.recovered", source_id=unit_id, target_id=unit_id,
+                window="break_recovery", process_only=True,
+                payload={"break_template_id": template_id, "source_trace": trace},
+            )),
+            records=(*dispatched.records, *records),
+            rng_events=dispatched.rng_events,
         )
 
     def enter_break(self, state: BattleState, packet: ToughnessPacket) -> BreakApplicationResult:
@@ -127,28 +272,42 @@ class BreakSystem:
             _break_event_record(packet, template),
         ]
         mutations: list[Mutation] = list(lifecycle_mutations)
-        errors: list[str] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
 
         for emission in self.rules.break_status_emissions_for_template(template.template_id):
             result = self._apply_status_emission(current_state, packet, template, emission)
+            if not result.ok:
+                return _blocked(
+                    state, packet, ",".join(result.errors) or "break_status_emission_blocked",
+                    template=template,
+                )
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
-            errors.extend(result.errors)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
 
         for emission in self.rules.break_damage_emissions_for_template(template.template_id):
             result = self._apply_break_damage_emission(current_state, packet, template, emission)
+            if not result.ok:
+                return _blocked(
+                    state, packet, ",".join(result.errors) or "break_damage_emission_blocked",
+                    template=template,
+                )
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
-            errors.extend(result.errors)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
 
         return BreakApplicationResult(
-            ok=not errors,
+            ok=True,
             after_state=current_state,
             mutations=tuple(mutations),
             records=tuple(records),
             events=(
+                *events,
                 GameEvent(
                     "break.triggered",
                     source_id=packet.attacker_id,
@@ -167,7 +326,7 @@ class BreakSystem:
                     },
                 ),
             ),
-            errors=tuple(errors),
+            rng_events=tuple(rng_events),
         )
 
     def _apply_break_damage_emission(
@@ -253,6 +412,7 @@ class BreakSystem:
             records=damage_result.records,
             events=damage_result.events,
             errors=damage_result.errors,
+            rng_events=damage_result.rng_events,
         )
 
     def _evaluate_break_damage_amount(
@@ -318,12 +478,53 @@ class BreakSystem:
                 ),
                 errors=(emission.blocked_reason or f"break_status_not_executable:{emission.coverage_status}",),
             )
+        if emission.condition_id:
+            condition, condition_reason = self.rules.condition_resolution(emission.condition_id)
+            if condition is None or condition.coverage_status != "executable" or type(emission.condition_expected) is not bool:
+                reason = condition_reason or "break_status_condition_not_executable"
+                return BreakApplicationResult(
+                    ok=False, after_state=state,
+                    records=(_break_status_record(packet, template, emission, reason=reason),),
+                    errors=(reason,),
+                )
+            evaluated = self.evaluator.evaluate_condition_result(
+                condition,
+                self.targets.condition_evaluation_context(
+                    state, condition,
+                    context=TargetEvaluationContext(
+                        caster_id=packet.attacker_id,
+                        effect_owner_id=packet.target_id,
+                        parameter_entity_ids=(packet.target_id,),
+                        selected_target_ids=(packet.target_id,),
+                        current_target_id=packet.target_id,
+                    ),
+                ),
+            )
+            if not evaluated.ok or evaluated.result is None:
+                reason = evaluated.reason or "break_status_condition_unresolved"
+                return BreakApplicationResult(
+                    ok=False, after_state=state,
+                    records=(_break_status_record(packet, template, emission, reason=reason),),
+                    errors=(reason,),
+                )
+            if evaluated.result is not emission.condition_expected:
+                return BreakApplicationResult(
+                    ok=True, after_state=state,
+                    records=(_break_status_record(packet, template, emission, reason="condition_branch_not_selected"),),
+                )
         if effect is None:
             return BreakApplicationResult(
                 ok=False,
                 after_state=state,
                 records=(_break_status_record(packet, template, emission, reason="effect_missing"),),
                 errors=("effect_missing",),
+            )
+        binding_source, binding_error = self._status_binding_source(state, packet, template)
+        if binding_error:
+            return BreakApplicationResult(
+                ok=False, after_state=state,
+                records=(_break_status_record(packet, template, emission, reason=binding_error),),
+                errors=(binding_error,),
             )
         result = self.effects.execute(
             effect,
@@ -334,9 +535,22 @@ class BreakSystem:
                 owner_id=packet.target_id,
                 param_entity_id=packet.target_id,
                 current_action_target_id=packet.target_id,
+                binding_sources=(binding_source,) if binding_source else (),
             ),
         )
-        after_state = self.reducer.apply_all(state, result.mutations)
+        if result.unsupported:
+            return BreakApplicationResult(
+                ok=False, after_state=state, records=result.records,
+                errors=tuple(str(item) for item in result.unsupported),
+                rng_events=result.rng_events,
+            )
+        reduction = self.reducer.apply_all_result(state, result.mutations)
+        if not reduction.ok:
+            return BreakApplicationResult(
+                ok=False, after_state=state,
+                errors=("break_status_emission_mutation_conflict",),
+            )
+        after_state = reduction.after_state
         reason = "executed"
         if result.unsupported and result.mutations:
             reason = "executed_partial"
@@ -352,40 +566,62 @@ class BreakSystem:
             ),
             *result.records,
         ]
-        if emission.modifier_name:
-            on_stack = self.event_dispatcher.dispatch_status_callback(
-                after_state,
-                event=GameEvent(
-                    "status.callback.OnStack",
-                    source_id=packet.attacker_id,
-                    target_id=packet.target_id,
-                    window="OnStack",
-                    process_only=True,
-                    payload={
-                        "callback_event": "OnStack",
-                        "modifier_name": emission.modifier_name,
-                        "break_status_emission_id": emission.break_status_emission_id,
-                        "break_template_id": template.template_id,
-                    },
-                ),
-                unit_id=packet.target_id,
-                modifier_name=emission.modifier_name,
-            )
-            after_state = on_stack.after_state
-            records.extend(on_stack.records)
-            result_mutations = (*result.mutations, *on_stack.mutations)
-            result_events = (*result.events, *on_stack.events)
-        else:
-            result_mutations = result.mutations
-            result_events = result.events
         return BreakApplicationResult(
-            ok=bool(result.mutations) or not result.unsupported,
+            ok=True,
             after_state=after_state,
-            mutations=result_mutations,
+            mutations=result.mutations,
             records=tuple(records),
-            events=result_events,
-            errors=() if result.mutations else tuple(str(item) for item in result.unsupported),
+            events=result.events,
+            rng_events=result.rng_events,
         )
+
+    def _status_binding_source(
+        self, state: BattleState, packet: ToughnessPacket, template: BreakTemplateIR,
+    ) -> tuple[dict[str, JSONValue], str]:
+        if not template.status_numeric_bindings:
+            return {}, ""
+        caster = state.units.get(packet.attacker_id)
+        target = state.units.get(packet.target_id)
+        if caster is None or target is None:
+            return {}, "break_status_binding_unit_missing"
+        entries: dict[str, JSONValue] = {}
+        by_hash: dict[str, JSONValue] = {}
+        by_name: dict[str, JSONValue] = {}
+        for binding in template.status_numeric_bindings:
+            name = binding.get("name")
+            hash_key = binding.get("hash")
+            source_kind = binding.get("value_source")
+            if not isinstance(name, str) or not isinstance(hash_key, str):
+                return {}, "break_status_binding_ir_invalid"
+            owner_id = packet.target_id
+            source_trace: dict[str, JSONValue] = {"break_template_source": template.source.to_json()}
+            if source_kind == "target_max_toughness_old_units":
+                value = target.max_toughness
+            elif source_kind == "caster_level_break_base_damage":
+                base = self.rules.break_base_damage(caster.level)
+                if base is None or base.coverage_status != "executable":
+                    return {}, "break_status_base_damage_missing"
+                value = base.break_base_damage
+                owner_id = packet.attacker_id
+                source_trace["break_base_damage"] = base.to_json()
+            elif source_kind == "constant":
+                value = binding.get("value")
+                if not isinstance(value, (int, float)):
+                    return {}, "break_status_unit_base_missing"
+            else:
+                return {}, "break_status_binding_source_unsupported"
+            key = f"binding_{len(entries)}"
+            entries[key] = {
+                "scope": "break_template", "owner_id": owner_id,
+                "name": name, "hash": hash_key, "value": float(value),
+                "source_trace": source_trace,
+            }
+            by_hash[hash_key] = [key]
+            by_name[name] = [key]
+        return {
+            "source_type": "break_template_runtime_value",
+            "entries": entries, "by_hash": by_hash, "by_name": by_name,
+        }, ""
 
     def recover_from_break_status(
         self,
@@ -693,14 +929,13 @@ def _break_damage_binding_source(
     break_base_damage: dict[str, JSONValue],
     target_stance: float,
 ) -> dict[str, JSONValue]:
-    hashes = numeric_dynamic_hashes(emission.scaling_expr)
     entries: dict[str, JSONValue] = {}
-    if len(hashes) >= 1:
+    if emission.base_damage_hash:
         entries["break_base_damage"] = {
             "scope": "break_template",
             "owner_id": packet.attacker_id,
             "name": "CasterBreakBaseDamage",
-            "hash": str(hashes[0]),
+            "hash": emission.base_damage_hash,
             "value": float(break_base_damage.get("break_base_damage") or 0.0),
             "source_trace": {
                 "dynamic_key": "CasterBreakBaseDamage",
@@ -708,12 +943,12 @@ def _break_damage_binding_source(
                 "break_template_source": template.source.to_json(),
             },
         }
-    if len(hashes) >= 2:
+    if emission.target_toughness_hash:
         entries["target_stance"] = {
             "scope": "break_template",
             "owner_id": packet.target_id,
             "name": "TargetStance",
-            "hash": str(hashes[1]),
+            "hash": emission.target_toughness_hash,
             "value": float(target_stance),
             "source_trace": {
                 "dynamic_key": "TargetStance",

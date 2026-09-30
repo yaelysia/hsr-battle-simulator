@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -18,6 +19,7 @@ from ..rules.task_graph import (
     TaskGraphNumericDefinitionIR,
     TaskGraphWeightedSelectionIR,
 )
+from .rng import RNGOutcome, RNGRequest, choice_key_for_identity, event_id_for_identity, resolve_rng_request
 
 
 HookStatus = Literal["resolved", "blocked"]
@@ -158,6 +160,7 @@ class TaskGraphConditionResult:
     value: bool | None = None
     progress_remaining: int | None = None
     blocked_reason: str = ""
+    rng_events: tuple[RNGEvent, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphConditionResult:
@@ -172,10 +175,11 @@ class TaskGraphConditionResult:
             ):
                 raise ValueError("task graph progress measure is invalid")
         elif self.status == "blocked":
-            if self.value is not None or self.progress_remaining is not None or not self.blocked_reason:
+            if self.value is not None or self.progress_remaining is not None or self.rng_events or not self.blocked_reason:
                 raise ValueError("blocked task graph condition is inconsistent")
         else:
             raise ValueError("task graph condition status is invalid")
+        object.__setattr__(self, "rng_events", tuple(_freeze_rng_event(item) for item in self.rng_events))
 
 
 @dataclass(frozen=True)
@@ -229,6 +233,7 @@ class TaskGraphTargetResult:
     status: HookStatus
     target_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
+    rng_events: tuple[RNGEvent, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphTargetResult:
@@ -240,11 +245,12 @@ class TaskGraphTargetResult:
             if self.blocked_reason:
                 raise ValueError("resolved task graph targets carry a blocker")
         elif self.status == "blocked":
-            if targets or not self.blocked_reason:
+            if targets or self.rng_events or not self.blocked_reason:
                 raise ValueError("blocked task graph targets are inconsistent")
         else:
             raise ValueError("task graph target status is invalid")
         object.__setattr__(self, "target_ids", targets)
+        object.__setattr__(self, "rng_events", tuple(_freeze_rng_event(item) for item in self.rng_events))
 
 
 @dataclass(frozen=True)
@@ -502,6 +508,66 @@ class TaskGraphWeightedSelectionResult:
                 raise ValueError("blocked task graph weighted selection leaks resolved payload")
         else:
             raise ValueError("task graph weighted selection status is invalid")
+
+
+def resolve_task_graph_weighted_selection(
+    request: TaskGraphHookRequest,
+    selection: TaskGraphWeightedSelectionIR,
+    state: BattleState,
+    weights: tuple[float, ...],
+    *,
+    rng_choices: Mapping[str, JSONValue] | None = None,
+    rng_mode: str = "deterministic_seed",
+) -> TaskGraphWeightedSelectionResult:
+    if (
+        len(weights) != len(selection.choices)
+        or any(not math.isfinite(weight) or weight < 0 for weight in weights)
+        or not math.isfinite(sum(weights))
+        or sum(weights) <= 0
+    ):
+        return TaskGraphWeightedSelectionResult("blocked", blocked_reason="task_graph_weighted_selection_weights_invalid")
+    identity: dict[str, JSONValue] = {
+        "decision_scope": request.invocation_id,
+        "decision_index": request.iteration_index or 0,
+        "task_id": request.formal_task_id,
+        "graph_node_id": request.graph_node_id,
+        "selection_id": selection.selection_id,
+        "frame_ids": list(request.frame_ids),
+        "target_ids": list(request.target_ids),
+    }
+    rng_type = "task_graph_weighted_selection"
+    rng_request = RNGRequest(
+        rng_type=rng_type,
+        purpose="select exactly one RandomConfig branch",
+        event_id=event_id_for_identity(rng_type, identity, event_index=state.event_index),
+        choice_key=choice_key_for_identity(rng_type, identity),
+        source=selection.selection_id,
+        before_state=state.rng_state,
+        decision_kind="weighted",
+        outcomes=tuple(
+            RNGOutcome(choice.choice_id, {"branch_id": choice.branch_id}, weight=weight)
+            for choice, weight in zip(selection.choices, weights, strict=True)
+        ),
+        source_trace={"selection_source": selection.source.to_json()},
+        identity=identity,
+    )
+    resolution = resolve_rng_request(
+        rng_request, rng_choices=dict(rng_choices or {}), rng_mode=rng_mode,
+    )
+    if not resolution.ok or resolution.selected_outcome is None or resolution.event is None:
+        return TaskGraphWeightedSelectionResult(
+            "blocked", blocked_reason=resolution.blocked_reason or "task_graph_weighted_selection_unresolved",
+        )
+    choice = next(
+        (item for item in selection.choices if item.choice_id == resolution.selected_outcome.outcome_id),
+        None,
+    )
+    if choice is None:
+        return TaskGraphWeightedSelectionResult("blocked", blocked_reason="task_graph_weighted_selection_choice_missing")
+    return TaskGraphWeightedSelectionResult(
+        "resolved", selection.selection_id, selection.graph_node_id,
+        choice.choice_id, choice.ordinal, choice.branch_id, resolution.event,
+    )
 
 
 @dataclass(frozen=True)
@@ -963,6 +1029,12 @@ class _TaskGraphRun:
         self.rng_events.append(event)
         self.rng_event_ids.add(event_id)
 
+    def _admit_control_rng_events(self, events: tuple[RNGEvent, ...]) -> None:
+        if len({event.event_id for event in events}) != len(events):
+            raise _ExecutionBlocked("task_graph_duplicate_rng_identity")
+        for event in events:
+            self._admit_weighted_selection_rng_event(event)
+
     def _execute_weighted_selection(
         self,
         graph: TaskGraphIR,
@@ -1053,6 +1125,7 @@ class _TaskGraphRun:
                 raise _ExecutionBlocked("task_graph_condition_hook_result_type_invalid")
             if result.status == "blocked":
                 raise _ExecutionBlocked(result.blocked_reason)
+            self._admit_control_rng_events(result.rng_events)
             kind, label = ("success" if result.value else "failed"), ""
             children = self._branch_children(node, kind, allow_absent=True)
         else:
@@ -1149,6 +1222,7 @@ class _TaskGraphRun:
             raise _ExecutionBlocked("task_graph_condition_hook_result_type_invalid")
         if result.status == "blocked":
             raise _ExecutionBlocked(result.blocked_reason)
+        self._admit_control_rng_events(result.rng_events)
         return result
 
     def _resolve_count(self, graph: TaskGraphIR, node: TaskGraphNodeIR) -> int:
@@ -1176,6 +1250,7 @@ class _TaskGraphRun:
             raise _ExecutionBlocked("task_graph_target_hook_result_type_invalid")
         if result.status == "blocked":
             raise _ExecutionBlocked(result.blocked_reason)
+        self._admit_control_rng_events(result.rng_events)
         return result.target_ids
 
     def _execute_target_scope(

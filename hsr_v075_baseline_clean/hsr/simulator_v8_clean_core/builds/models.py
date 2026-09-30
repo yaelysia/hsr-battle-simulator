@@ -1102,9 +1102,10 @@ class CharacterDynamicGraphRef:
             "character_card_id",
             "source_graph_ref_id",
             "source_graph_id",
-            "blocked_reason",
         ):
             require_text(getattr(self, field_name), field_name)
+        if not isinstance(self.blocked_reason, str):
+            raise TypeError("dynamic graph blocked_reason must be text")
         if self.root_kind not in {"ability_definition", "source_graph"}:
             raise ValueError("invalid character dynamic graph root kind")
         if not isinstance(self.ability_definition_id, str) or not isinstance(
@@ -1155,7 +1156,7 @@ class CharacterDynamicGraphRef:
             "build_binding_ids": list(self.build_binding_ids),
             "specialization_ids": list(self.specialization_ids),
             "root_source": self.root_source.to_json(),
-            "runtime_admission_status": "blocked",
+            "runtime_admission_status": "blocked" if self.blocked_reason else "admitted",
             "blocked_reason": self.blocked_reason,
         }
 
@@ -1180,8 +1181,9 @@ class CharacterDynamicGraphRef:
                 "blocked_reason",
             },
         )
-        if row.get("runtime_admission_status") != "blocked":
-            raise ValueError("character dynamic graph root cannot be admitted in S2")
+        expected_admission = "blocked" if row.get("blocked_reason") else "admitted"
+        if row.get("runtime_admission_status") != expected_admission:
+            raise ValueError("character dynamic graph root admission is inconsistent")
         binding_ids = row.get("build_binding_ids")
         specialization_ids = row.get("specialization_ids")
         if not isinstance(binding_ids, (list, tuple)) or not isinstance(
@@ -1216,7 +1218,7 @@ class CharacterDynamicGraphRef:
                 for item in specialization_ids
             ),
             root_source=ir_source_from_json(row.get("root_source"), "root_source"),
-            blocked_reason=require_text(row.get("blocked_reason"), "blocked_reason"),
+            blocked_reason=row.get("blocked_reason"),
         )
 
 
@@ -1993,11 +1995,12 @@ class CharacterBuildAssemblyResult:
                 raise ValueError("dynamic graph roots cannot duplicate direct bindings")
             if reasons:
                 raise ValueError("assembled character result cannot carry static blocked reasons")
-            if dynamic_graph_refs and self.battle_admission_status != "blocked":
+            blocked_dynamic_roots = tuple(root for root in dynamic_graph_refs if root.blocked_reason)
+            if blocked_dynamic_roots and self.battle_admission_status != "blocked":
                 raise ValueError(
-                    "source-bound dynamic graph refs require blocked battle admission in S2"
+                    "unadmitted dynamic graph refs require blocked battle admission"
                 )
-            if dynamic_graph_refs and not diagnostics:
+            if blocked_dynamic_roots and not diagnostics:
                 raise ValueError(
                     "source-bound dynamic graph refs require an admission diagnostic"
                 )

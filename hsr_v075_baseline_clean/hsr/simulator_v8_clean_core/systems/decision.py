@@ -351,6 +351,8 @@ class DecisionSystem:
                     },
                 )
             selection_context = target_decision.context
+        if choice.choice_kind == "manual_ultimate_request":
+            return self.scheduler.enqueue_manual_ultimate(state, canonical_command)
         authorization = _issue_decision_submission_authorization(
             decision_id=token.decision_id,
             state_revision=token.state_revision,

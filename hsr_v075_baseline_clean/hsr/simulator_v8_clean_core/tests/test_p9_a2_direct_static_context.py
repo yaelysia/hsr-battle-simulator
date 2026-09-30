@@ -33,7 +33,7 @@ def test_direct_static_build_is_real_but_does_not_claim_birth_admission(
     assert build["assembly_status"] == "assembled"
     assert build["battle_admission_status"] == "blocked"
     assert {item["mechanism_kind"] for item in build["diagnostics"]} == {
-        "character_dynamic_graph_root"
+        "character_dynamic_graph_root", "character_passive_startup",
     }
     assert rules.character_data_card(context.owner_card.card_id) == context.owner_card
 

@@ -1,33 +1,23 @@
-# P9 执行卡索引
+# P9 执行卡参考索引
 
-本目录保存 P9 非记忆、非欢愉角色共享机制收口的执行卡。总目标、阶段依赖和唯一 checklist 位于
-[`../../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`](../../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)。
-工作方式统一服从 [`../AGENT_WORKFLOW_AND_VALIDATION.md`](../AGENT_WORKFLOW_AND_VALIDATION.md)，
-不在本索引复制验证协议或模型路由。
+本目录保留原 P9 的机制拆分、来源导航和历史检查点。当前路线以
+[P9 总计划第 0 节](../../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-当前路线机制优先内容逐步扩充)
+为准：先完成通用底层，再接入角色、敌人和场地，并按实际需要实现特殊机制。
+特殊机制即使需要扩展 L1，也不因此提前成为底层阶段的前置；CLI MVP 用于运行与游戏对照。
 
-## 当前入口
+当前进度和下一项只看 [CODEX_HANDOFF.md](../../../CODEX_HANDOFF.md)。本索引不另设唯一执行卡，
+旧卡的允许写集合、阶段顺序、审批角色和全目录验收不自动成为新任务限制。
+工作方式采用 [本地执行与验证约定](../AGENT_WORKFLOW_AND_VALIDATION.md#0-当前本地工作方式)。
 
-当前没有可直接执行的 P9 卡。
+## 复用方式
 
-`P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`、
-`P9-S8C1B_ACTION_ENTRY_WEIGHTED_SELECTION_MATERIALIZATION.md`、
-`P9-S8C1C_REMAINING_ENTRY_RANDOM_CONFIG_SOURCE_CLOSURE.md`、
-`P9-S8C1_RANDOM_CONFIG_GRAPH_AGGREGATE_AUDIT.md` 与
-`P9-S8C2_RANDOM_CONFIG_RUNTIME_EXECUTOR.md` 均已完成独立验收。S8C1 聚合已从当前实时来源重新闭合完整 raw/S8A/source-ledger `RandomConfig` 分母、formal/no-producer 分类和全部正式 producer/formal-position multiplicity，并证明公开联合 task-graph catalog 中每个正式 `RandomConfig` node 恰有一个严格 weighted selection；S8C2 已在共享 `TaskGraphExecutor` 建立专用 typed weighted-selection hook/result、accepted IR identity 校验、selected-only branch execution 与单个 RNGEvent 的既有 result/dedup/atomic rollback 准入。该结论仍不代表真实 ability/status dynamic-weight + RNG-ledger caller integration、projectile/barrier/parallel/sequence 或 S5D2 transaction/replay 已完成。
-
-本检查点不创建剩余 S8C 或 S5D2 回验的下一张执行卡、不创建新 PR，也不自动启动后续施工。
-
-## 阶段状态
-
-| 状态 | 阶段 |
-|---|---|
-| 已验收 | S0-S4；S5A、S5B、S5C1、S5C2、S5D1；S6A、S6B；S7 |
-| 已验收 | S8A、S8A-R1；S8B1、S8B2、S8B1-R2；S8B3A-S8B3C；S8B4A-S8B4B；S8B5A-S8B5C；S8B6 及对应聚合项；S8C1A；S8C1B；S8C1C；S8C1 聚合；S8C2 executor contract |
-| 部分完成 | S5D2 的随机目标和弹射消费已验收，完整动作 transaction/replay 等待 S8 后回验 |
-| 待规划 | S8C 剩余真实 caller/RNG-ledger integration、projectile、barrier、parallel、sequence 与 S5D2 回验均未启动；不得自动推进 |
-| 后续 | S8C 剩余子卡、S9-S20 |
-
-最终状态只认总计划 checklist 和已验收 Git 检查点。执行卡或报告中的 `ready_for_review` 不是通过结论。
+- 先核对当前实现和已完成的本地修改，再按机制读取旧卡的真实来源与调用者导航。
+- 复用已完成的来源、构筑、目标、条件、任务图、状态 callback 和 A2 跨入口成果。
+- S8C1/S8C2 证明随机图和共享 executor 契约，尚不代表正式 caller/RNG 全链完成；当前路线先补
+  该实际断点，但不要求为此重开全部前置阶段或复制旧审计套餐。
+- PR #9 是已排除的失败测试片，不读取、恢复、移植或操作；后续在当前主线加本地成果上实施。
+- 任务按实际行为划分，必要时跨旧卡修复同一根因；不追角色数量、覆盖率或全目录零缺口。
+- 已完成/未完成的历史边界保留在总计划第 12 节，不能把旧卡的 `ready_for_review` 当作当前功能已完成。
 
 ## 聚合说明文件
 
@@ -41,47 +31,27 @@
 - `P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md`
 - `P9-S8C1_RANDOM_CONFIG_GRAPH_CONTRACT.md`
 
-聚合文件不能覆盖子卡的允许写集合、停止条件或验收状态。
+这些聚合文件和子卡均只作机制与历史参考，不能覆盖当前路线和用户授权。
 
-## 开工规则
+## 开工方式
 
-执行线程只读取：
+从当前交接与总计划第 0 节确定机制目标，只读对应生产符号、正式调用者和真实来源，
+需要时再查旧卡。禁止默认通读全部 P9 卡、历史报告和验证器。
 
-1. 当前执行卡；
-2. 卡内点名的起始符号和正式调用者；
-3. 卡内明确列出的来源或前置契约；
-4. 发生具体依赖缺口后才扩展的一小段导航。
-
-禁止默认通读其他 P9 卡、历史报告和旧验证器。开工前先核对当前代码事实；若目标、权威、调用面或
-风险与卡面不符，提交 `needs_replan`，不能自行扩大或缩小目标。
-
-执行线程只能提交：
-
-- `ready_for_review`：卡面生产完成条件、自审和必要验证均完成；
-- `needs_replan`：发现第二权威、额外消费域、写集合或语义偏差；
-- `blocked`：外部来源、环境或用户范围裁决阻止继续。
-
-不得勾总计划、提交 Git 或自动进入下一阶段。
+按实际依赖完成同一根因的实现与必要检查，在交接中说明可用行为和剩余边界。
+发现规则或范围确实不明时询问用户；普通接线修复不恢复独立规划/验收线程或审批卡。
 
 ## P9 永久约束
 
 - 角色专属差异只能进入内容 IR，不能形成角色名、技能名或固定 ID runtime handler。
 - 普通动作、状态 callback、独立 ability 和角色战斗事件复用同一任务图与效果契约。
 - 未知来源、缺上下文或未准入分支必须在生产边界 fail-closed，且 state、mutation、event 和 RNG 不变。
-- 记忆、欢愉、怪物、关卡或非战斗产品内容只做精确归属，不借 P9 提前实现。
+- 通用机制同时服务角色与怪物；记忆/欢愉专属内容按后续路线增量处理，非战斗产品范围仍排除。
 - source gap、lowering gap、admission gap、implementation missing 和 validation gap 不能互相改名。
 - fixture 可以证明通用边界，不能证明真实角色或 gameplay 来源 executable。
 
-## P9 验证边界
+## 验证边界
 
-具体证据由当前卡和工作流按改动面选择。P9 额外遵守：
-
-- source/family 过滤必须在来源读取、投影和 IR 构建前生效；
-- 不先构建完整 Canonical IR 再过滤；
-- 后序卡不重跑前序主入口，只运行本次 fast、必要 direct 和实际触发的 catalog；
-- 不运行 P1-P8 聚合、`validate_v0_209` 或固定历史验证套餐；
-- 每个新生产不变量保留一个最小反例，不以扩大验证器替代生产约束；
-- 报告只记录实际改动、有效命令、资源异常和遗留 gap，不复述执行卡。
-
-达到卡面资源预算或同一根因两次修复仍不收敛时停止，由规划/验收线程重拆，不通过增加验证模式或
-换更强模型掩盖范围问题。
+依照本地约定，围绕本次实际行为和风险选择必要检查；不强制新增反例、全目录核对或历史套餐。
+来源读取与 IR 构建尽量采用已有窄范围入口，不为一次机制修复构建无关的全量目录。
+文档只记录有效结果和未完成边界；实现不收敛时重新定位根因，不通过加测试或扩大范围掩盖问题。

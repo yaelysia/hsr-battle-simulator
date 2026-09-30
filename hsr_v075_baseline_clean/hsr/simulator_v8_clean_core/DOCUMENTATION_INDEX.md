@@ -12,22 +12,24 @@
 | 最终目标和完成层级 | [`PROJECT_GOALS.md`](PROJECT_GOALS.md) |
 | 分层、依赖方向和权威边界 | [`ARCHITECTURE_BOUNDARY_CONTRACT.md`](ARCHITECTURE_BOUNDARY_CONTRACT.md) |
 | 绝对禁止事项 | [`FORBIDDEN.md`](FORBIDDEN.md) |
-| 规划、执行、验收和验证成本 | [`docs/AGENT_WORKFLOW_AND_VALIDATION.md`](docs/AGENT_WORKFLOW_AND_VALIDATION.md) |
+| 本地执行与必要验证 | [`docs/AGENT_WORKFLOW_AND_VALIDATION.md` 第 0 节](docs/AGENT_WORKFLOW_AND_VALIDATION.md#0-当前本地工作方式) |
 
 新线程不需要通读这张表。先读 `AGENTS.md` 和交接文档，再按任务补一个主题入口。
 
 ## 当前主线
 
-P9 是当前唯一活动的核心阶段：
+保持四层架构，先完成通用战斗底层，再接入角色、敌人和场地，按具体内容需求实现特殊机制。
+特殊机制的架构归属不决定提前施工；底层阶段不以最终产品全部机制完成为终点。现有 CLI MVP
+是运行与游戏内对照的载体，已有成果复用，不以角色数量或全目录归零安排施工。
 
-- 总目标、阶段依赖和唯一 checklist：
-  [`P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)
-- 当前执行卡索引：[`docs/p9_execution_cards/README.md`](docs/p9_execution_cards/README.md)
-- 当前唯一可执行卡：
-  [`docs/p9_execution_cards/P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md`](docs/p9_execution_cards/P9-S8C1A_WEIGHTED_SELECTION_IR_CONTRACT.md)
+- 后续路线与机制完成条件：
+  [P9 总计划第 0 节](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-当前路线机制优先内容逐步扩充)
+- 当前实际进度与下一项：[CODEX_HANDOFF.md](../CODEX_HANDOFF.md)
+- 已交付命令行场景与操作：[CLI_MVP.md](CLI_MVP.md)
+- 旧执行卡与历史来源导航：[参考索引](docs/p9_execution_cards/README.md)
 
-总计划负责阶段目标和完成状态；单卡负责本次允许写集合、生产完成条件和验证。二者都不应复制
-项目工作流全文。
+旧阶段 checklist 保留已完成边界，不再作为唯一当前卡或逐阶段审批链。后续任务只读相关机制
+和调用者，不默认通读执行卡目录或恢复 MCP 工作流。
 
 ## 内容与专题
 
@@ -48,7 +50,7 @@ P9 是当前唯一活动的核心阶段：
 
 - 交接文档或当前执行卡点名的报告才是默认入口；
 - `ready_for_review` 只是执行交付，不等于已验收；
-- 最终状态由生产代码、总计划 checklist 和 Git 检查点共同确定；
+- 当前能力以源码、实际运行证据与交接为准；历史 checklist/Git 检查点只证明当时声明的范围；
 - 历史报告按阶段或关键词搜索，不全量读取；
 - `/tmp` 中的详细 evidence 不属于长期项目文档。
 
@@ -71,7 +73,7 @@ P9 是当前唯一活动的核心阶段：
 
 ## 维护规则
 
-- 当前进度只更新交接文档和当前总计划 checklist。
+- 当前进度写交接文档；路线写 P9 总计划，历史 checklist 不因新路线自动补勾。
 - 稳定架构、目标与工作流文档不记录每张卡的计数和耗时。
 - 已完成阶段的详细计划整体归档，不在根目录继续充当活动入口。
 - 报告不复述执行卡；执行卡不复述工作流；AGENTS 不承载阶段流水账。

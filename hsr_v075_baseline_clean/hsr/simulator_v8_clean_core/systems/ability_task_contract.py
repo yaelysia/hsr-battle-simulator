@@ -197,7 +197,11 @@ def ability_task_runtime_blocked_reason(
             profile = rules.hit_profile(emission.hit_profile_id)
             if profile is None or profile.coverage_status != "executable":
                 return "toughness_hit_profile_missing_or_not_executable"
-        if set(damage_profile_ids) != set(toughness_profile_ids):
+        required_toughness_profiles = {
+            emission.hit_profile_id for emission in damage_emissions
+            if emission.toughness_emission_required
+        }
+        if required_toughness_profiles != set(toughness_profile_ids):
             return "damage_toughness_hit_profile_set_mismatch"
         return ""
     return ""

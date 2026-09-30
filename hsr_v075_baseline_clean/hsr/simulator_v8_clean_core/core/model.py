@@ -11,6 +11,7 @@ from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_js
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
 if TYPE_CHECKING:
+    from ..systems.shield import ShieldExhaustionFact
     from ..systems.action_event_contract import (
         AdmittedActionTargetFact,
         ActionWindowExpectedScope,
@@ -594,6 +595,11 @@ class GameEvent:
         compare=False,
     )
     expected_action_window_scope: ActionWindowExpectedScope | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    shield_exhaustion_fact: ShieldExhaustionFact | None = field(
         default=None,
         repr=False,
         compare=False,

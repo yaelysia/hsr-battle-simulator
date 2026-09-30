@@ -21,6 +21,8 @@ def action_resource_blocked_reason(errors: tuple[str, ...]) -> str:
             return "insufficient_skill_points"
         if error.startswith("unknown actor_id"):
             return "resource_unknown_actor"
+        if error.startswith("ultimate_energy_"):
+            return error
     return "resource_plan_failed"
 
 
@@ -41,6 +43,7 @@ def action_resource_plan(
     return ResourcePlan(
         skill_point_delta=skill_point_delta,
         energy_gain=energy_gain,
+        energy_cost=action_definition.sp_need if action_definition.attack_type == "Ultra" else 0.0,
         source=source,
         metadata=metadata or {},
     )

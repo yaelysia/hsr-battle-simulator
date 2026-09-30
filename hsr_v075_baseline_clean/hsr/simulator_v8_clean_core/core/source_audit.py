@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 from .model import BattleTransition, JSONValue, Mutation
@@ -53,6 +54,18 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "StatusDamageEmissionIR + StatusCallbackIR for DOT/break DOT tick", "SuperBreakEmissionIR + BreakBaseDamageIR for super-break", "or EffectIR for hp_loss/true_damage"],
         "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or status_damage_emission_id or super_break_emission_id or effect_id", "source_trace", "source_frame"],
         "coverage_required": "executable",
+    },
+    "damage_system.hit_energy": {
+        "required_ir": ["DamageEmissionIR.hit_energy_gain + AbilityTaskIR + HitProfileIR"],
+        "required_metadata": ["damage_emission_id", "source_task_id", "hit_profile_id", "target_id",
+                              "raw_delta", "delta", "energy_regeneration_rate", "source_trace"],
+        "coverage_required": "executable single-request hit energy",
+    },
+    "damage_system.kill_energy": {
+        "required_ir": ["Executable lethal damage source + ResourceRuleIR"],
+        "required_metadata": ["source_frame", "resource_rule_id", "hp_mutation_id",
+                              "lifecycle_mutation_id", "energy_regeneration_rate"],
+        "coverage_required": "executable caused-kill energy",
     },
     "toughness_system": {
         "required_ir": ["ToughnessEmissionIR + AbilityTaskIR + HitProfileIR"],
@@ -191,12 +204,24 @@ class RuntimeSourceAuditor:
         records_by_mutation = _records_by_mutation_id(records)
         violations: list[SourceAuditViolation] = []
         traces: list[dict[str, JSONValue]] = []
+        mutations_by_id = {mutation.stable_id(): mutation for mutation in mutations}
         for mutation in mutations:
             mutation_records = records_by_mutation.get(mutation.stable_id(), ())
             if not mutation_records:
                 violations.append(_violation(mutation, "mutation_has_no_settlement_record"))
                 continue
             trace = self._audit_mutation(mutation, mutation_records, violations)
+            if mutation.source == "damage_system.kill_energy":
+                metadata = mutation.metadata
+                target = metadata.get("defeated_target_id")
+                hp = mutations_by_id.get(str(metadata.get("hp_mutation_id")))
+                lifecycle = mutations_by_id.get(str(metadata.get("lifecycle_mutation_id")))
+                if (hp is None or hp.path != ("units", target, "hp")
+                        or type(hp.before) not in (int, float) or hp.before <= 0 or hp.after != 0
+                        or hp.metadata.get("source_frame") != metadata.get("source_frame")
+                        or lifecycle is None or lifecycle.path != ("units", target, "lifecycle_status")
+                        or lifecycle.after != "defeated"):
+                    violations.append(_violation(mutation, "kill_energy_lethal_mutation_lineage_invalid"))
             if trace:
                 traces.append(trace)
         return SourceAuditResult(
@@ -230,6 +255,87 @@ class RuntimeSourceAuditor:
             return self._audit_action_source_mutation(mutation, records, violations, require_action_event=True)
         if mutation.source == "damage_system":
             return self._audit_damage_mutation(mutation, records, violations)
+        if mutation.source == "damage_system.kill_energy":
+            trace = self._audit_damage_mutation(mutation, records, violations)
+            metadata = mutation.metadata
+            rule, blocked = self.rules.select_resource_rule("kill_energy_gain")
+            if rule is None:
+                violations.append(_violation(mutation, "kill_energy_rule_not_admitted", details={"reason": blocked}))
+                return trace
+            _audit_source(rule.source, rule.coverage_status, mutation, violations, executable_required=False)
+            frame = metadata.get("source_frame")
+            frame = frame if isinstance(frame, dict) else {}
+            defeat = metadata.get("defeated_event_payload")
+            defeat = defeat if isinstance(defeat, dict) else {}
+            owner = frame.get("owner_id")
+            if (not isinstance(owner, str) or not owner
+                    or mutation.path != ("units", owner, "energy")
+                    or metadata.get("target_id") != owner
+                    or metadata.get("resource_operation") != "kill_energy_gain"
+                    or metadata.get("resource_rule_id") != rule.resource_rule_id
+                    or metadata.get("resource_rule_source") != rule.source.to_json()
+                    or metadata.get("resource_rule_kind") != rule.rule_kind
+                    or metadata.get("resource_rule_operation") != rule.operation
+                    or metadata.get("resource_rule_source_kind") != rule.source_kind
+                    or defeat.get("source_frame") != frame
+                    or metadata.get("kill_credit_owner_id") != owner
+                    or defeat.get("kill_credit_owner_id") != owner
+                    or metadata.get("kill_credit_source_id") != frame.get("source_id")
+                    or metadata.get("kill_credit_source_kind") != frame.get("source_kind")
+                    or defeat.get("kill_credit_source_id") != frame.get("source_id")
+                    or defeat.get("kill_credit_source_kind") != frame.get("source_kind")
+                    or metadata.get("defeated_target_id") != defeat.get("target_id")
+                    or metadata.get("lifecycle_mutation_id") != defeat.get("lifecycle_mutation_id")):
+                violations.append(_violation(mutation, "kill_energy_source_contract_mismatch"))
+            raw = metadata.get("raw_energy_gain")
+            gain = metadata.get("energy_gain")
+            regeneration = metadata.get("energy_regeneration_rate")
+            rate = regeneration.get("value") if isinstance(regeneration, dict) else None
+            if raw == 0:
+                rate = 0.0
+            capacity = metadata.get("energy_capacity")
+            if (any(type(value) not in (int, float) or not math.isfinite(value)
+                    for value in (raw, gain, rate, capacity, mutation.before, mutation.after))
+                    or raw != rule.numeric_value or capacity <= 0
+                    or not math.isclose(gain, raw * max(0.0, 1.0 + rate))
+                    or not math.isclose(mutation.after, max(0.0, min(capacity, mutation.before + gain)))
+                    or metadata.get("before_energy") != mutation.before
+                    or metadata.get("after_energy") != mutation.after
+                    or (raw > 0 and (regeneration.get("stat") != "energy_regeneration_rate"
+                                     or not isinstance(regeneration.get("source_terms"), list)))):
+                violations.append(_violation(mutation, "kill_energy_regeneration_lineage_invalid"))
+            return trace
+        if mutation.source == "damage_system.hit_energy":
+            trace = self._audit_damage_mutation(mutation, records, violations)
+            metadata = mutation.metadata
+            emission = self.rules.damage_emission(str(metadata.get("damage_emission_id") or ""))
+            raw = metadata.get("raw_delta")
+            target_id = metadata.get("target_id")
+            if (emission is None or emission.hit_energy_gain is None
+                    or type(raw) not in (int, float) or not math.isfinite(raw)
+                    or raw != emission.hit_energy_gain or raw < 0
+                    or metadata.get("resource_operation") != "hit_energy_gain"
+                    or not isinstance(target_id, str) or not target_id
+                    or mutation.path != ("units", target_id, "energy")):
+                violations.append(_violation(mutation, "hit_energy_source_contract_mismatch"))
+                return trace
+            regeneration = metadata.get("energy_regeneration_rate")
+            rate = regeneration.get("value") if isinstance(regeneration, dict) else None
+            if raw == 0:
+                rate = 0.0
+            delta = metadata.get("delta")
+            capacity = metadata.get("energy_capacity")
+            numbers = (rate, delta, capacity, mutation.before, mutation.after)
+            if (any(type(value) not in (int, float) or not math.isfinite(value) for value in numbers)
+                    or not math.isclose(delta, raw * max(0.0, 1.0 + rate))
+                    or not math.isclose(mutation.after, max(0.0, min(
+                        capacity if capacity > 0 else mutation.before + delta,
+                        mutation.before + delta,
+                    )))
+                    or (raw > 0 and (regeneration.get("stat") != "energy_regeneration_rate"
+                                     or not isinstance(regeneration.get("source_terms"), list)))):
+                violations.append(_violation(mutation, "hit_energy_regeneration_lineage_invalid"))
+            return trace
         if mutation.source == "toughness_system":
             return self._audit_toughness_mutation(mutation, records, violations)
         if mutation.source == "break_system":
@@ -1153,19 +1259,33 @@ class RuntimeSourceAuditor:
         _required_str(mutation, metadata, "status_instance_id", violations)
         _required_str(mutation, metadata, "modifier_name", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
-        break_base_source = metadata.get("break_base_damage_source")
-        if not isinstance(break_base_source, dict):
-            violations.append(_violation(mutation, "break_base_damage_source_missing", missing_field="break_base_damage_source"))
-        else:
-            level = break_base_source.get("level")
-            if isinstance(level, int):
-                base = self.rules.break_base_damage(level)
-                if base is None:
-                    violations.append(_violation(mutation, "break_base_damage_ir_missing", details={"level": level}))
-                else:
-                    _audit_source(base.source, base.coverage_status, mutation, violations, executable_required=True)
+        source_emission = self.rules.status_damage_emission(emission_id) if emission_id else None
+        if source_emission is not None:
+            if metadata.get("base_includes_break_bonus") is not source_emission.base_includes_break_bonus:
+                violations.append(_violation(mutation, "included_break_bonus_emission_mismatch"))
+            if source_emission.base_includes_break_bonus:
+                pipeline = metadata.get("damage_pipeline")
+                stages = pipeline.get("stages") if isinstance(pipeline, dict) else None
+                break_stage = next(
+                    (stage for stage in stages if isinstance(stage, dict) and stage.get("stage") == "break_bonus"),
+                    None,
+                ) if isinstance(stages, list) else None
+                if not isinstance(break_stage, dict) or break_stage.get("applicable") is not False:
+                    violations.append(_violation(mutation, "included_break_bonus_stage_not_skipped"))
+        if source_emission is None or source_emission.break_amount_mode != "value":
+            break_base_source = metadata.get("break_base_damage_source")
+            if not isinstance(break_base_source, dict):
+                violations.append(_violation(mutation, "break_base_damage_source_missing", missing_field="break_base_damage_source"))
             else:
-                violations.append(_violation(mutation, "break_base_damage_level_missing", missing_field="break_base_damage_source.level"))
+                level = break_base_source.get("level")
+                if isinstance(level, int):
+                    base = self.rules.break_base_damage(level)
+                    if base is None:
+                        violations.append(_violation(mutation, "break_base_damage_ir_missing", details={"level": level}))
+                    else:
+                        _audit_source(base.source, base.coverage_status, mutation, violations, executable_required=True)
+                else:
+                    violations.append(_violation(mutation, "break_base_damage_level_missing", missing_field="break_base_damage_source.level"))
         evaluation = metadata.get("numeric_evaluation")
         if not isinstance(evaluation, dict):
             violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
@@ -1452,9 +1572,11 @@ class RuntimeSourceAuditor:
         mutation: Mutation,
         records: tuple[dict[str, JSONValue], ...],
         violations: list[SourceAuditViolation],
+        *,
+        ordinary_recovery: bool = False,
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
-        if isinstance(metadata.get("break_recovery"), dict):
+        if isinstance(metadata.get("break_recovery"), dict) and not ordinary_recovery:
             return self._audit_break_recovery_mutation(mutation, records, violations)
         template_id = _required_str(mutation, metadata, "break_template_id", violations)
         emission_id = _required_str(mutation, metadata, "toughness_emission_id", violations)
@@ -1513,6 +1635,11 @@ class RuntimeSourceAuditor:
         if not isinstance(recovery, dict):
             violations.append(_violation(mutation, "break_recovery_missing", missing_field="break_recovery"))
             return _trace(mutation, records, {})
+        if recovery.get("kind") == "ordinary_before_action":
+            _required_str(mutation, recovery, "trigger_kind", violations)
+            return self._audit_break_mutation(
+                mutation, records, violations, ordinary_recovery=True,
+            )
         emission_id = _required_str(mutation, recovery, "break_status_emission_id", violations)
         _required_str(mutation, recovery, "status_instance_id", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
@@ -1543,6 +1670,32 @@ class RuntimeSourceAuditor:
         violations: list[SourceAuditViolation],
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
+        if metadata.get("ordinary_reset_stance") is True:
+            callback = self.rules.status_callback(str(metadata.get("callback_id") or ""))
+            task = self.rules.status_callback_task(str(metadata.get("task_id") or ""))
+            trace = metadata.get("source_trace")
+            trace = trace if isinstance(trace, dict) else {}
+            card = self.rules.monster_data_card(str(trace.get("monster_data_card_id") or ""))
+            template_config = card.raw_parameter_blocks.get("template_config") if card is not None else None
+            break_source = trace.get("break_source")
+            break_source = break_source if isinstance(break_source, dict) else {}
+            template = self.rules.break_template(str(break_source.get("break_template_id") or ""))
+            if callback is None or task is None or card is None or template is None:
+                violations.append(_violation(mutation, "ordinary_stance_reset_source_missing"))
+            else:
+                _audit_source(callback.source, callback.coverage_status, mutation, violations, executable_required=True)
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+                _audit_source(card.source, card.coverage_status, mutation, violations, check_status=False)
+                _audit_source(template.source, template.coverage_status, mutation, violations, executable_required=True)
+                if (task.callback_id != callback.callback_id or task.opcode != "ResetStance"
+                        or callback.event != "OnDestroy"
+                        or not isinstance(template_config, dict)
+                        or template_config.get("stance_count") != 1
+                        or mutation.path != ("units", metadata.get("target_id"), "toughness")
+                        or mutation.before != 0 or mutation.after != metadata.get("max_toughness")
+                        or not any(record.get("record_type") == "ordinary_stance_reset" for record in records)):
+                    violations.append(_violation(mutation, "ordinary_stance_reset_contract_mismatch"))
+            return _trace(mutation, records, {"callback_id": metadata.get("callback_id"), "task_id": metadata.get("task_id")})
         if metadata.get("dynamic_key") or metadata.get("property"):
             return self._audit_status_callback_dynamic_value_mutation(mutation, records, violations)
         callback_id = _required_str(mutation, metadata, "callback_id", violations)
