@@ -1940,6 +1940,7 @@ class TBGDLowering:
             self.tbgd_root,
             max_records_per_table=None,
             skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+            avatar_ids=avatar_ids,
             ability_source_graph_catalog=character_ability_source_graph_catalog,
             ability_scope_catalog=self._character_ability_scope_catalog,
         )
@@ -2586,6 +2587,7 @@ class TBGDLowering:
             character_ability_source_graph_catalog=(
                 character_ability_source_graph_catalog
             ),
+            character_card_scope=tuple(sorted(avatar_ids)) if avatar_ids is not None else None,
             character_ability_source_resolution_catalog=(
                 character_ability_source_resolution_catalog
             ),

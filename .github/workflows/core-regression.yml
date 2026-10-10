@@ -1,0 +1,30 @@
+name: Current core regression
+
+on:
+  pull_request:
+    paths:
+      - 'hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/**'
+      - 'turnbasedgamedata-main'
+      - 'pytest.ini'
+      - '.github/workflows/core-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Prepare existing test dependency
+        run: |
+          python3 -m venv "$RUNNER_TEMP/core-tests"
+          "$RUNNER_TEMP/core-tests/bin/python" -m pip install pytest==8.3.5
+      - name: Current regression
+        run: |
+          "$RUNNER_TEMP/core-tests/bin/python" -B -m pytest

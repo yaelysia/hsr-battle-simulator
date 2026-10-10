@@ -7,6 +7,8 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from hsr.simulator_v8_clean_core.builds.character_assembler import assemble_character_build
@@ -77,6 +79,7 @@ def test_real_named_hp_writer_updates_the_formula_hash():
     assert operation["destination_hash"] == "912879638"
 
 
+@pytest.mark.integration
 def test_real_passive_installs_and_tracks_hp_changes():
     rules, built = _source_case()
     before = built.state
@@ -160,6 +163,7 @@ def test_status_parameters_are_local_to_the_selected_callback():
             assert result.ok and result.value == expected, result
 
 
+@pytest.mark.integration
 def test_startup_identity_failure_has_no_mutation():
     rules, built = _source_case()
     effects = EffectRegistry(StatusSystem(rules))
@@ -171,6 +175,7 @@ def test_startup_identity_failure_has_no_mutation():
     assert any(node.status == "blocked" for node in result.node_results)
 
 
+@pytest.mark.integration
 def test_source_lifecycle_without_listener_remains_observable():
     rules, built = _source_case()
     event = next(event for event in built.setup_events

@@ -1,12 +1,14 @@
-"""One real source-backed battle, including startup, terminal state and replay."""
+"""Source-backed battle routes, including startup, terminal state and replay."""
 from pathlib import Path
 from dataclasses import replace
 
 import pytest
 
-from hsr.simulator_v8_clean_core.battle_archive import read_json_object, verify_archive
+from hsr.simulator_v8_clean_core.battle_archive import read_json_object, verify_archive, write_archive
 from hsr.simulator_v8_clean_core.session import BattleSession, command_from_json
 from hsr.simulator_v8_clean_core.tbgd.battle_catalog import build_battle_rulebook
+
+pytestmark = pytest.mark.integration
 
 
 def test_real_battle_startup_actions_victory_and_replay():
@@ -14,6 +16,7 @@ def test_real_battle_startup_actions_victory_and_replay():
     example = Path(__file__).resolve().parents[1] / "examples/cli/arlan_vs_antimatter.json"
     scenario = read_json_object(example)
     rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
+    assert {card.entity_ref for card in rules.ir.character_data_cards} == {"avatar:1008"}
     card = rules.monster_data_card_for_entity("monster:8011010")
     slots = rules.passive_mechanism_slots_for_card(card.card_id)
     assert len(slots) == 2
@@ -157,6 +160,7 @@ def test_real_serval_basic_skill_shock_ultimate_victory_and_replay():
     example = Path(__file__).resolve().parents[1] / "examples/cli/serval_natasha_vs_antimatter.json"
     scenario = read_json_object(example)
     rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
+    assert {card.entity_ref for card in rules.ir.character_data_cards} == {"avatar:1103", "avatar:1105"}
     session = BattleSession(rules, scenario)
     commands = read_json_object(example.with_suffix(".commands.json"))["commands"]
     assert session.state.units["serval"].energy == 0
@@ -218,3 +222,57 @@ def test_real_serval_basic_skill_shock_ultimate_victory_and_replay():
     archive = session.archive()
     replay = verify_archive(archive, rules)
     assert replay["ok"], replay["errors"]
+
+
+def test_real_three_character_party_healing_shock_and_victory(tmp_path):
+    root = Path(__file__).resolve().parents[4]
+    example = Path(__file__).resolve().parents[1] / "examples/cli/arlan_serval_natasha_vs_antimatter.json"
+    scenario = read_json_object(example)
+    rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
+    assert rules.ir.character_card_scope == ("1008", "1103", "1105")
+    session = BattleSession(rules, scenario)
+    allies = {"arlan", "serval", "natasha"}
+    enemies = {key for key, unit in session.state.units.items() if unit.side == "enemy"}
+    assert all(session.state.units[key].energy == 0 for key in allies)
+    seen = set()
+    for command in read_json_object(example.with_suffix(".commands.json"))["commands"]:
+        decision = session.advance()
+        assert decision.ready, decision.blocked_reason
+        before = session.state
+        result = session.submit(command_from_json(command))
+        assert result.transition.outcome.successor_eligible, result.transition.outcome.reason_codes
+        after = session.state
+        if command["action_id"] == "avatar_skill:100802":
+            seen.add("hp_cost")
+            assert after.units["arlan"].hp < before.units["arlan"].hp
+            assert after.skill_points == before.skill_points
+        if command["action_id"] == "avatar_skill:110502" and command["target_ids"] == ["arlan"]:
+            seen.add("targeted_heal")
+            assert before.units["arlan"].hp < after.units["arlan"].hp == after.units["arlan"].max_hp
+            assert all(before.units[key].hp == after.units[key].hp for key in allies - {"arlan"})
+            assert after.skill_points == before.skill_points - 1
+        if command["action_id"] == "avatar_skill:110302":
+            seen.add("shock")
+            shocked = {key for key in enemies if any(d["modifier_name"] == "MCommon_DOT_Electric"
+                       for d in after.units[key].flags["status_details"])}
+            assert len(shocked) == 1
+            rolls = [event for event in result.transition.rng_events if event.rng_type == "status_apply"]
+            assert len(rolls) == 2 and {event.result["success"] for event in rolls} == {True, False}
+            assert {m.path[1] for m in result.transition.transaction.mutations
+                    if m.path[-1] == "hp" and m.metadata.get("damage_formula_family") == "additional"} == shocked
+        if command["action_id"] == "avatar_skill:110503" and command.get("source") == "queue":
+            seen.add("party_heal")
+            heals = {m.path[1]: m for m in result.transition.transaction.mutations if m.path[-1] == "hp"}
+            assert set(heals) == allies
+            for key in allies:
+                assert before.units[key].hp < after.units[key].hp == after.units[key].max_hp
+                assert heals[key].metadata["formula_details"]["offered_healing"] == pytest.approx(106.5728)
+            assert before.units["natasha"].energy == 90 and after.units["natasha"].energy == 5
+            assert after.skill_points == before.skill_points
+    session.advance()
+    assert seen == {"hp_cost", "targeted_heal", "shock", "party_heal"}
+    assert session.outcome == "victory"
+    assert all(session.state.units[key].hp == 0 for key in enemies)
+    assert all(session.state.units[key].hp > 0 for key in allies)
+    archive_path = write_archive(tmp_path / "party-battle.json.gz", session.archive())
+    print(f"archive: {archive_path}")

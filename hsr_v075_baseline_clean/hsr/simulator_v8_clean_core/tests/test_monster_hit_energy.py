@@ -12,6 +12,8 @@ from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
 from hsr.simulator_v8_clean_core.systems.action_selection import ActionTargetSelectionSystem
 from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(scope="module")
 def source_ir():

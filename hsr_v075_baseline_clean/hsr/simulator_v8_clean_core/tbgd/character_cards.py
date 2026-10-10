@@ -337,6 +337,7 @@ def build_character_card_ir(
         build_graph_resolver,
         trace_nodes,
         eidolon_slots,
+        avatar_ids=avatar_ids,
     )
     eidolon_slots_by_card = {}
     for slot in eidolon_slots:
@@ -1035,6 +1036,8 @@ def _build_selector_ledger(
     resolver: _CharacterBuildGraphResolver | None,
     trace_nodes: list[CharacterTraceNodeIR],
     eidolon_slots: list[CharacterEidolonSlotIR],
+    *,
+    avatar_ids: frozenset[str] | None = None,
 ) -> tuple[
     list[CharacterBuildSelectorRelationIR],
     list[CharacterBuildSelectorGapIR],
@@ -1129,6 +1132,8 @@ def _build_selector_ledger(
             or not branch_root_path
         ):
             raise ValueError("typed S0 selector projection is incomplete")
+        if avatar_ids is not None and owner_avatar_id not in avatar_ids:
+            continue
         card_id = f"character_data_card:avatar:{owner_avatar_id}"
         contexts = contexts_by_scope.get(record.record_id, ())
         scope_source_candidates = scope_sources_by_path.get(

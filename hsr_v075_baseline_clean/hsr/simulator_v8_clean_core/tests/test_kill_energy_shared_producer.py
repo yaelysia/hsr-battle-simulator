@@ -112,6 +112,7 @@ def _execute(rules, state, action_id="avatar_skill:100801"):
 
 
 @pytest.mark.parametrize("action_id,expected_energy", [("avatar_skill:100801", 57.5), ("avatar_skill:100802", 70.0)])
+@pytest.mark.integration
 def test_real_admitted_action_kill_energy_and_spbase_are_distinct_once(arlan_case, action_id, expected_energy):
     rules, state = arlan_case
     after, transition = _execute(rules, state, action_id)
@@ -164,6 +165,7 @@ def test_real_admitted_action_kill_energy_and_spbase_are_distinct_once(arlan_cas
         assert not auditor.validate_execution(altered, transition.transaction.settlement.records).ok
 
 
+@pytest.mark.integration
 def test_admitted_basic_applies_resolved_toughness_after_hp_damage(arlan_case):
     rules, state = arlan_case
     target = replace(state.units["target"], hp=1000,
@@ -180,6 +182,7 @@ def test_admitted_basic_applies_resolved_toughness_after_hp_damage(arlan_case):
     assert event_types.index("damage.hit") < event_types.index("toughness.hit")
 
 
+@pytest.mark.integration
 def test_real_admitted_action_missing_kill_rule_has_zero_commit(arlan_case):
     rules, state = arlan_case
     rejected = RuleBook(replace(rules.ir, resource_rules=tuple(

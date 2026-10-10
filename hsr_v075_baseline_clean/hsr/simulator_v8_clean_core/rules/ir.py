@@ -7781,8 +7781,16 @@ class CanonicalIR:
     character_ability_source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None
     character_ability_source_resolution_catalog: CharacterAbilitySourceResolutionCatalogIR | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    # None requires all catalog owners; () explicitly compiles no character cards.
+    character_card_scope: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        if self.character_card_scope is not None:
+            object.__setattr__(self, "character_card_scope", _require_unique_strings(
+                self.character_card_scope, "character card scope",
+            ))
+            if self.character_ability_source_graph_catalog is None:
+                raise ValueError("character card scope requires a source catalog")
         target_catalog = self.action_target_contract_catalog
         if target_catalog is not None:
             from .action_target_contract import ActionTargetContractCatalogIR
@@ -8353,7 +8361,11 @@ class CanonicalIR:
                 "source_closure_mismatch",
             } and not source_closed:
                 raise ValueError("CanonicalIR selector gap invented source closure")
-        if catalog.source_catalog_complete and not set(
+        if self.character_card_scope is not None:
+            selected = set(self.character_card_scope)
+            if selected != set(cards_by_avatar) or not selected.issubset(owned_graphs_by_avatar):
+                raise ValueError("character card scope does not close over selected cards and source graphs")
+        elif catalog.source_catalog_complete and not set(
             owned_graphs_by_avatar
         ).issubset(cards_by_avatar):
             raise ValueError(
@@ -8367,6 +8379,7 @@ class CanonicalIR:
             "entities": [entity.to_json() for entity in self.entities],
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
+            "character_card_scope": list(self.character_card_scope) if self.character_card_scope is not None else None,
             "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
             "character_equipment_eligibilities": [
                 eligibility.to_json() for eligibility in self.character_equipment_eligibilities

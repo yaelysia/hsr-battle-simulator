@@ -23,7 +23,7 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering
 def selector_fixture():
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
     lowerer = TBGDLowering(root)
-    catalog = replace(lowerer.build_character_ability_source_graph_catalog(), fingerprint_kind="partial")
+    catalog = lowerer.build_character_ability_source_graph_catalog()
     cards = build_character_card_ir(
         root, max_records_per_table=None, skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
         avatar_ids=frozenset({"1008"}), ability_source_graph_catalog=catalog,
@@ -31,10 +31,12 @@ def selector_fixture():
     )
     card = next(item for item in cards.character_data_cards if item.entity_ref == "avatar:1008")
     fields = {key: tuple(value) for key, value in vars(cards).items()}
-    for key in ("character_build_selector_relations", "character_build_selector_gaps"):
-        fields[key] = tuple(item for item in fields[key] if item.character_data_card_id == card.card_id)
+    assert {item.character_data_card_id for key in (
+        "character_build_selector_relations", "character_build_selector_gaps",
+    ) for item in fields[key]} == {card.card_id}
     rules = RuleBook(CanonicalIR(
-        version="source_selector_test", character_ability_source_graph_catalog=catalog, **fields,
+        version="source_selector_test", character_ability_source_graph_catalog=catalog,
+        character_card_scope=("1008",), **fields,
     ))
     relation = next(item for item in rules.character_build_selector_relations_for_card(card.card_id)
                     if item.selector_kind == "rank")
@@ -44,6 +46,13 @@ def selector_fixture():
         "selected_trace_node_ids": (),
     })})
     return rules, relation, state, lowerer
+
+
+@pytest.mark.parametrize("scope", [None, ("1008", "1105"), ("1008", "1008"), ()])
+def test_selected_card_scope_cannot_hide_missing_or_duplicate_cards(selector_fixture, scope):
+    rules, *_ = selector_fixture
+    with pytest.raises(ValueError):
+        replace(rules.ir, character_card_scope=scope)
 
 
 def _condition(relation, *, inverse=False):

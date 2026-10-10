@@ -4,6 +4,8 @@ from functools import lru_cache
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from hsr.simulator_v8_clean_core.core.model import UnitState
@@ -12,6 +14,8 @@ from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
 from hsr.simulator_v8_clean_core.session import command_from_json
 from hsr.simulator_v8_clean_core.systems.decision import DecisionSystem
 from hsr.simulator_v8_clean_core.tests.test_character_passive_startup import _source_case
+
+pytestmark = pytest.mark.integration
 
 
 @lru_cache(maxsize=1)

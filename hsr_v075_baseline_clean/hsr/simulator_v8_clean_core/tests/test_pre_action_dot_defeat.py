@@ -4,11 +4,15 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
 from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
 from hsr.simulator_v8_clean_core.session import BattleSession
 from hsr.simulator_v8_clean_core.systems.toughness import ToughnessPacket
 from hsr.simulator_v8_clean_core.tbgd.battle_catalog import build_battle_rulebook
+
+pytestmark = pytest.mark.integration
 
 
 def test_pre_action_dot_defeat_commits_and_next_actor_can_act():

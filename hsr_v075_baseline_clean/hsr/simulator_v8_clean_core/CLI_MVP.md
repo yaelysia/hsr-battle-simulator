@@ -1,7 +1,7 @@
 # 本地命令行战斗
 
-已跑通首个真实来源战斗：阿兰 E0 / 1 级对两只 2 级重子，双方手动控制，
-从正式出生、普通行动、终结技插入一直到胜利。当前是单波战斗雏形，支持范围见下文。
+已跑通阿兰、希露瓦与娜塔莎指定构筑的单人、双人和三人战斗路线，双方手动控制，
+从正式出生、普通行动、终结技插入一直到胜利。当前支持单波，具体边界见下文。
 
 使用工作区已有的 `.venv`，无需安装新依赖。在仓库根目录运行：
 
@@ -44,13 +44,43 @@ export PYTHONPATH=hsr_v075_baseline_clean
 
 归档使用 `hsr_battle_archive_v2` 引用表与 `hsr_battle_session_v2` 会话结构：相同审计对象只保存
 一次，读取时恢复共享内容，回放仍逐项核对完整事实。支持 `.json.gz` 和普通 `.json`，推荐前者。
-场景与操作文件仍是普通 JSON。按用户决定不兼容旧归档；旧文件会明确报格式错误。
+场景与操作文件仍是普通 JSON。按用户决定不兼容旧格式或旧规则指纹；分别明确返回格式错误
+或 `canonical_ir_fingerprint_mismatch`，后者在重建战斗前拒绝。
 首次编译和完整回放仍有成本，当前没有跨进程编译缓存。
+
+角色卡及星魂/行迹选择账本现在按场景所选角色构建，完整共享来源目录仍保留校验。
+2026-10-10 同一希露瓦双人路线实测：角色卡由 92 张降至 2 张，编译由 68.388 秒降至
+59.448 秒；来源审计组装拆分后的独立文件回放 43 步全部一致。上述编译降幅约 13%，
+不能当作整场加速倍数，也不表示全部来源编译都已按场景裁剪。
 
 脚本执行使用 `run 场景路径 --commands 操作路径 --output 记录路径`。操作文件形如 `{"commands": [...]}`，
 每项填写 `actor_id`、`action_id`、`action_level`、`target_ids`，或使用查询返回的 `command_template`。
 可信动作元数据由 `DecisionSystem` 补齐；同一个系统校验目标、资源与时机。
 脚本结束时战斗尚未结束，退出码为 `3`；执行或校验失败为 `2`，完成为 `0`。
+
+## 阿兰、希露瓦与娜塔莎三人路线（2026-10-10）
+
+三人均为 E0 / 1 级、零初始能量、空装备、无额外行迹，对来源关卡 `200021050` 的两只
+8 级重子。十九次提交覆盖阿兰损血、娜塔莎定向治疗与持续治疗、希露瓦两目标攻击与感电，
+随后娜塔莎从战技与受击获得 90 能量，在自己普通回合插入终结技，实际治疗三名受伤队友。
+终结技队列完成后继续普通行动，保留感电跳伤及击杀，最终获胜。
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_serval_natasha_vs_antimatter.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_serval_natasha_vs_antimatter.commands.json \
+  --output /tmp/arlan-serval-natasha-battle.json.gz
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli replay /tmp/arlan-serval-natasha-battle.json.gz
+```
+
+群疗分别结算三名目标，阿兰 HP `138.72`、希露瓦 HP `72.5216483384`、娜塔莎 HP `114.8391060172`
+恢复至各自满血；能量扣至零后返还 5，不消耗战技点。最终阿兰 HP `163.2` / 能量 `100`，
+希露瓦 HP `124.8` / 能量 `100`，娜塔莎 HP `108.8179530086` / 能量 `45`，SP `2`，两怪 HP `0`。
+本路线的感电两次命中判定一成一败，天赋追加伤害只结算实际感电的目标；不把基础概率当成必然。
+它复用现有角色机制，验证同队执行时的目标、资源和状态归属；不扩大到未验收构筑。
+固定脚本的来源场景检查通过，独立 CLI 回放返回 `ok=true, step_count=39, errors=[]`。
+归档约 411 KB；本次生成 162.53 秒、独立回放 171.83 秒。
 
 ## 希露瓦与娜塔莎的完整胜利路线（2026-10-09）
 
