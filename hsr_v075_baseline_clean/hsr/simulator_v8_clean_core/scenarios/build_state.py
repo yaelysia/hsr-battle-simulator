@@ -1248,7 +1248,7 @@ def _dispatch_battle_setup_event(
                 "param_entity_id": unit_id,
                 "entity_id": entity.entity_id,
                 "entity_type": entity.entity_type,
-                "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+                "callback_events": ["OnListenCharacterCreate"],
                 "listener_scope": "global_listener",
                 "source_trace": source_trace,
             },

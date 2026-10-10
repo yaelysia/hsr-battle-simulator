@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from ..core.model import ActionCommand, BattleState, JSONValue
 from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
+from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import (
     TaskGraphDefinitionReferenceIR,
@@ -22,6 +23,7 @@ from .action_preflight import (
 from .resource import ResourceSystem, ultimate_energy_blocked_reason
 from .status import status_control_gate_for_actor
 from .unit_lifecycle import UnitLifecycleSystem
+from .condition_state import CommittedConditionFactProvider
 from .ability_task_contract import (
     ability_task_runtime_blocked_reason,
     emission_backed_damage_audit_reference_admitted,
@@ -261,6 +263,9 @@ def _formal_action_task_graph_projection(
     action_id: str,
     action_level: int,
     tasks: tuple[AbilityTaskIR, ...],
+    *,
+    state: BattleState | None = None,
+    actor_id: str = "",
 ) -> _FormalActionGraphAdmissionProjection:
     root_graph_ids: list[str] = []
     root_entries: list[tuple[str, str, str]] = []
@@ -428,11 +433,45 @@ def _formal_action_task_graph_projection(
             )
             continue
 
-        # TaskGraphIR itself is the structural-topology authority: its constructor
-        # rejects cycles, unreachable nodes, dangling children and ambiguous parents.
-        # Admission therefore scans the canonical node set instead of re-walking
-        # branch edges or evaluating runtime branch/condition/count/target hooks.
+        # Build selections stay constant throughout an action. Reuse the runtime
+        # condition authority; unavailable facts retain the conservative projection.
+        inactive_nodes: set[str] = set()
+        if state is not None and actor_id:
+            node_by_id = {node.graph_node_id: node for node in graph.nodes}
+            context = EvaluationContext(
+                state=state, actor_id=actor_id,
+                committed_condition_provider=CommittedConditionFactProvider(rules),
+            )
+            for node in graph.nodes:
+                task = rules.ability_task(node.formal_task_id)
+                condition = rules.condition(task.condition_id) if task and task.condition_id else None
+                if (
+                    node.node_kind != "branch" or node.opcode != "PredicateTaskList"
+                    or condition is None
+                    or condition.opcode not in {"ByRankActivated", "BySkillPointActivated"}
+                    or condition.payload.get("TargetType") not in (
+                        None, "Caster", {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"},
+                    )
+                ):
+                    continue
+                result = RuleEvaluator().evaluate_condition_result(condition, context)
+                if not result.ok or type(result.result) is not bool:
+                    continue
+                selected = "success" if result.result else "failed"
+                pending = [child for branch in node.branches
+                           if branch.branch_kind in {"success", "failed"} and branch.branch_kind != selected
+                           for child in branch.child_node_ids]
+                while pending:
+                    child_id = pending.pop()
+                    if child_id in inactive_nodes:
+                        continue
+                    inactive_nodes.add(child_id)
+                    pending.extend(child for branch in node_by_id[child_id].branches
+                                   for child in branch.child_node_ids)
+
         for node in graph.nodes:
+            if node.graph_node_id in inactive_nodes:
+                continue
             task = rules.ability_task(node.formal_task_id)
             if (
                 task is None
@@ -876,6 +915,7 @@ class ActionContractSystem:
             action_resource_plan(
                 definition,
                 source="action_contract.resource_gate",
+                rules=self.rules,
                 metadata={"admission_id": admission.admission_id},
                 queue_resource_policy=queue_resource_policy or {},
             ),
@@ -905,6 +945,8 @@ class ActionContractSystem:
             command.action_id,
             command.action_level,
             selected_tasks,
+            state=state,
+            actor_id=actor.unit_id,
         )
         legacy_task_reasons = tuple(
             reason

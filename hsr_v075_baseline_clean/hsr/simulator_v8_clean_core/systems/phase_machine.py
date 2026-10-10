@@ -102,7 +102,12 @@ class CombatPhaseMachine:
         return value if isinstance(value, str) else f"<invalid:{type(value).__name__}>"
 
     def allowed_next_phases(self, state: BattleState) -> tuple[str, ...]:
-        return LEGAL_TRANSITIONS.get(self.current_phase(state), ())
+        current = self.current_phase(state)
+        allowed = LEGAL_TRANSITIONS.get(current, ())
+        actor = state.units.get(str(state.global_flags.get("turn_owner_id") or ""))
+        if current == AWAITING_DECISION and actor is not None and actor.hp <= 0:
+            return (*allowed, TURN_END)
+        return allowed
 
     def operation_blocked_reason(self, state: BattleState, operation: str) -> str:
         allowed = OPERATION_PHASES.get(operation)
@@ -145,7 +150,7 @@ class CombatPhaseMachine:
             )
         if to_phase not in LEGAL_TRANSITIONS:
             return self._blocked(current, to_phase, actor_id, reason, "unknown_combat_phase", detail)
-        if to_phase not in LEGAL_TRANSITIONS[current]:
+        if to_phase not in self.allowed_next_phases(state):
             return self._blocked(
                 current,
                 to_phase,

@@ -532,7 +532,11 @@ def _effect_positive_checks(cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
     checks["modify_sp_new_resource_record"] = bool(energy_record) and energy_record.get("resource") == "energy"
     checks["modify_sp_new_scale_or_set"] = _sp_formula_detail(cases["modify_sp_new_branch"]["transition"]) in {"max_energy", "set"}
     checks["hp_loss_record_present"] = bool(hp_loss_record)
-    checks["hp_loss_floor_policy"] = _hp_loss_rounding_policy(cases["hp_loss_floor"]["transition"]) == "floor_from_tbgd_flag"
+    checks["hp_loss_minimum_hp_policy"] = (
+        _hp_loss_rounding_policy(cases["hp_loss_floor"]["transition"]) == "none"
+        and any(mutation.metadata.get("minimum_hp") == 1.0
+                for mutation in cases["hp_loss_floor"]["transition"].transaction.mutations)
+    )
     checks["hp_loss_no_direct_multiplier_ledger"] = _hp_loss_no_direct_ledger(cases["hp_loss_floor"]["transition"])
     checks["heal_record_present"] = bool(heal_record)
     checks["shield_record_present"] = bool(shield_record)
@@ -562,7 +566,7 @@ def _actionability_matrix(
         "heal_formula_current_scope": _fixed_now_entry(effect_cases["heal_new_formula"]["checks"]["ok"], "HealByTargetMaxHP/HealByHealerMaxHP current fixed/status-bound numeric scope is executable"),
         "shield_formula_current_scope": _fixed_now_entry(effect_cases["shield_new_formula"]["checks"]["ok"], "ShieldByCasterMaxHP/ShieldByCasterDefence/ShieldByTargetMaxHP current fixed/status-bound numeric scope is executable"),
         "modify_sp_new_current_scope": _fixed_now_entry(effect_cases["modify_sp_new_branch"]["checks"]["ok"], "ModifySPNew fixed/status-bound energy add/set/max-ratio current scope is executable"),
-        "hp_loss_floor": _fixed_now_entry(effect_cases["hp_loss_floor"]["checks"]["ok"], "LoseHPByRatio Floor=true applies floor rounding without direct multiplier ledger"),
+        "hp_loss_floor": _fixed_now_entry(effect_cases["hp_loss_floor"]["checks"]["ok"], "LoseHPByRatio Floor bounds remaining HP without integer rounding or direct multipliers"),
         "unsupported_dynamic_or_formula_negatives": _fixed_now_entry(_negative_checks(negative_cases)["ok"], "Unbound dynamic numeric paths remain blocked and do not mutate state"),
         "true_damage": _wait_entry("requires admitted executable TBGD true-damage emission/effect source"),
         "enemy_ai": _wait_entry("requires enemy action selection and AI policy admission", semantic_status="blocked"),
@@ -674,7 +678,7 @@ def _select_modify_sp_effect(ir) -> EffectIR:
 def _select_hp_loss_floor_effect(ir) -> EffectIR:
     return _select_effect(
         ir,
-        lambda effect, standard: effect.opcode == "LoseHPByRatio" and standard.get("floor") is True,
+        lambda effect, standard: effect.opcode == "LoseHPByRatio" and "minimum_hp" in standard,
         "LoseHPByRatio floor",
     )
 

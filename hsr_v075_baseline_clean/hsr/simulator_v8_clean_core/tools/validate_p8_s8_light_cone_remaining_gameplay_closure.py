@@ -1036,8 +1036,8 @@ def _dot_additive_term_contract_matrix() -> dict[str, Any]:
     )
     applied_keys = {
         str(term.get("key") or "")
-        for term in result.dot_ledger.get("applied_terms", ())
-        if isinstance(term, dict)
+        for term in result.dot_ledger.get("terms", ())
+        if isinstance(term, dict) and term.get("applied") is True
     }
     checks = {
         "damage_value_and_percentage_are_independent_additive_terms": (

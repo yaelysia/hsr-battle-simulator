@@ -463,15 +463,12 @@ def test_missing_exact_wait_anim_control_fails_closed() -> None:
         _node_status(None, _task())
 
 
-def test_non_wait_anim_presentation_barrier_is_unchanged() -> None:
+def test_seconds_wait_retires_source_proven_presentation_responsibility() -> None:
     control = _control(family="WaitSecond")
     task = _task(family="WaitSecond")
-    assert not _is_wait_anim_state_process_only_presentation_shape(control, task)
+    assert _is_wait_anim_state_process_only_presentation_shape(control, task)
     assert _node_status(control, task) == (
-        "deferred",
-        "deferred",
-        ("hit_random_sequence",),
-        "task_graph_control_requires_domains:hit_random_sequence",
+        "leaf", "materialized", ("task_graph_execution",), "",
     )
 
 

@@ -210,14 +210,21 @@ class RuntimeSourceAuditor:
             if not mutation_records:
                 violations.append(_violation(mutation, "mutation_has_no_settlement_record"))
                 continue
-            trace = self._audit_mutation(mutation, mutation_records, violations)
+            if (mutation.source == "damage_system"
+                    and mutation.metadata.get("lifecycle_operation") in {"unit_defeat", "unit_defeat_record"}):
+                trace = self._audit_damage_lifecycle_mutation(
+                    mutation, mutation_records, mutations_by_id, violations,
+                )
+            else:
+                trace = self._audit_mutation(mutation, mutation_records, violations)
             if mutation.source == "damage_system.kill_energy":
                 metadata = mutation.metadata
                 target = metadata.get("defeated_target_id")
                 hp = mutations_by_id.get(str(metadata.get("hp_mutation_id")))
                 lifecycle = mutations_by_id.get(str(metadata.get("lifecycle_mutation_id")))
-                if (hp is None or hp.path != ("units", target, "hp")
-                        or type(hp.before) not in (int, float) or hp.before <= 0 or hp.after != 0
+                if (hp is None or hp.source != "damage_system" or hp.path != ("units", target, "hp")
+                        or type(hp.before) not in (int, float) or hp.before <= 0
+                        or type(hp.after) not in (int, float) or hp.after != 0
                         or hp.metadata.get("source_frame") != metadata.get("source_frame")
                         or lifecycle is None or lifecycle.path != ("units", target, "lifecycle_status")
                         or lifecycle.after != "defeated"):
@@ -234,6 +241,41 @@ class RuntimeSourceAuditor:
 
     def policy_matrix(self) -> dict[str, JSONValue]:
         return {source: dict(policy) for source, policy in sorted(MUTATION_SOURCE_POLICIES.items())}
+
+    def _audit_damage_lifecycle_mutation(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        mutations_by_id: dict[str, Mutation], violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        hp = mutations_by_id.get(str(metadata.get("hp_mutation_id")))
+        defeat = metadata.get("defeat_record")
+        defeat = defeat if isinstance(defeat, dict) else {}
+        target = defeat.get("target_id")
+        operation = metadata.get("lifecycle_operation")
+        status = mutations_by_id.get(str(metadata.get("lifecycle_mutation_id")))
+        valid_path = (mutation.path == ("units", target, "lifecycle_status")
+                      and mutation.after == "defeated" and metadata.get("lifecycle_status_before") == "active"
+                      if operation == "unit_defeat" else
+                      mutation.path == ("units", target, "flags", "defeat_record")
+                      and isinstance(mutation.after, dict)
+                      and status is not None and status.source == "damage_system"
+                      and status.path == ("units", target, "lifecycle_status") and status.after == "defeated"
+                      and mutation.after == {**defeat, "lifecycle_mutation_id": status.stable_id()}
+                      and status.metadata.get("hp_mutation_id") == metadata.get("hp_mutation_id"))
+        if (hp is None or hp.source != "damage_system" or hp.op != "set"
+                or hp.path != ("units", target, "hp")
+                or type(hp.before) not in (int, float) or not math.isfinite(hp.before) or hp.before <= 0
+                or type(hp.after) not in (int, float) or hp.after != 0
+                or mutation.op != "set" or not valid_path
+                or defeat.get("defeated_unit_id") != target
+                or defeat.get("hp_mutation_id") != hp.stable_id()
+                or defeat.get("target_before_hp") != hp.before or defeat.get("target_after_hp") != hp.after
+                or hp.metadata.get("source_frame") != metadata.get("source_frame")
+                or defeat.get("source_frame") != metadata.get("source_frame")
+                or hp.metadata.get("source_trace") != metadata.get("source_trace")):
+            violations.append(_violation(mutation, "damage_lifecycle_lethal_mutation_lineage_invalid"))
+        return _trace(mutation, records, {"hp_mutation_id": str(metadata.get("hp_mutation_id") or ""),
+                                          "lifecycle_operation": str(operation or "")})
 
     def _audit_mutation(
         self,
@@ -256,8 +298,8 @@ class RuntimeSourceAuditor:
         if mutation.source == "damage_system":
             return self._audit_damage_mutation(mutation, records, violations)
         if mutation.source == "damage_system.kill_energy":
-            trace = self._audit_damage_mutation(mutation, records, violations)
             metadata = mutation.metadata
+            trace = _trace(mutation, records, {"hp_mutation_id": str(metadata.get("hp_mutation_id") or "")})
             rule, blocked = self.rules.select_resource_rule("kill_energy_gain")
             if rule is None:
                 violations.append(_violation(mutation, "kill_energy_rule_not_admitted", details={"reason": blocked}))
@@ -2646,7 +2688,7 @@ def _trace(
     origin: dict[str, JSONValue],
 ) -> dict[str, JSONValue]:
     return {
-        "mutation": mutation.to_json(),
+        "mutation": mutation.to_json(detach=False),
         "settlement_records": list(records),
         "origin": origin,
     }

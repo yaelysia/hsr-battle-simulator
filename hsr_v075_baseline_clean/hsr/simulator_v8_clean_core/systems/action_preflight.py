@@ -4,6 +4,7 @@ from typing import Any
 
 from ..core.model import JSONValue
 from ..rules.ir import ActionDefinitionIR
+from ..rules.rulebook import RuleBook
 from .resource import ResourcePlan
 
 
@@ -32,10 +33,13 @@ def action_resource_plan(
     source: str,
     metadata: dict[str, JSONValue] | None = None,
     queue_resource_policy: dict[str, JSONValue] | None = None,
+    rules: RuleBook | None = None,
 ) -> ResourcePlan:
     policy = queue_resource_policy or {}
     skill_point_delta = action_skill_point_delta(action_definition.bp_need, action_definition.bp_add)
     energy_gain = action_definition.sp_base
+    if rules is not None and action_ability_grants_base_energy(rules, action_definition):
+        energy_gain = 0.0
     if policy.get("ignore_skill_point_delta") is True:
         skill_point_delta = 0
     if policy.get("ignore_energy_gain") is True:
@@ -47,6 +51,19 @@ def action_resource_plan(
         source=source,
         metadata=metadata or {},
     )
+
+
+def action_ability_grants_base_energy(rules: RuleBook, definition: ActionDefinitionIR) -> bool:
+    # Explicit source requests own their timing and ERR sample; do not pre-grant SPBase.
+    for task in rules.ability_tasks_for_action(definition.action_id, definition.level):
+        effect = rules.effect(task.effect_id) if task.effect_id else None
+        standard = effect.payload.get("standard") if effect is not None else None
+        if (
+            isinstance(standard, dict) and standard.get("resource") == "energy"
+            and standard.get("scale_basis") == "action_sp_base"
+        ):
+            return True
+    return False
 
 
 def action_binding_blocked_reason(action_binding: Any | None) -> str:

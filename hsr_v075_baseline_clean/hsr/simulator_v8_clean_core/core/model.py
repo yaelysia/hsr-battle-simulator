@@ -256,7 +256,7 @@ class UnitState:
         object.__setattr__(self, "resources", frozen_resources)
         object.__setattr__(self, "stat_pools", pools)
 
-    def to_snapshot(self) -> dict[str, JSONValue]:
+    def to_snapshot(self, *, detach: bool = True) -> dict[str, JSONValue]:
         shield = sum(
             float(instance.get("remaining", 0.0))
             for instance in self.shield_instances
@@ -326,6 +326,9 @@ class UnitState:
             "resources": dict(sorted(self.resources.items())),
             "stat_pools": [pool.to_json() for pool in self.stat_pools],
         }
+        # Internal snapshots can share frozen subtrees; public exports stay detached.
+        if not detach:
+            return snapshot
         detached = thaw_json(snapshot)
         assert isinstance(detached, dict)
         return detached
@@ -424,7 +427,7 @@ class BattleState:
         object.__setattr__(self, "queues", frozen_queues)
 
     def snapshot(self) -> "Snapshot":
-        units = {unit_id: unit.to_snapshot() for unit_id, unit in sorted(self.units.items())}
+        units = {unit_id: unit.to_snapshot(detach=False) for unit_id, unit in sorted(self.units.items())}
         global_flags = {
             "dynamic_value_store": {
                 "entries": {},
@@ -507,8 +510,8 @@ class Snapshot:
             raise TypeError("snapshot data must be a JSON object")
         object.__setattr__(self, "data", frozen)
 
-    def to_json(self) -> dict[str, JSONValue]:
-        detached = thaw_json(self.data)
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
+        detached = thaw_json(self.data) if detach else self.data
         assert isinstance(detached, dict)
         return detached
 
@@ -765,13 +768,13 @@ class Mutation:
             {
                 "op": self.op,
                 "path": list(path),
-                "before": thaw_json(before),
+                "before": before,
                 "before_exists": self.before_exists,
-                "after": thaw_json(after),
+                "after": after,
                 "after_exists": self.after_exists,
                 "reason": self.reason,
                 "source": self.source,
-                "metadata": thaw_json(metadata),
+                "metadata": metadata,
             },
         )
         object.__setattr__(self, "_stable_id_cache", stable_id)
@@ -779,18 +782,18 @@ class Mutation:
     def stable_id(self) -> str:
         return self._stable_id_cache
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
         return {
             "mutation_id": self.stable_id(),
             "op": self.op,
             "path": list(self.path),
-            "before": thaw_json(self.before),
+            "before": thaw_json(self.before) if detach else self.before,
             "before_exists": self.before_exists,
-            "after": thaw_json(self.after),
+            "after": thaw_json(self.after) if detach else self.after,
             "after_exists": self.after_exists,
             "reason": self.reason,
             "source": self.source,
-            "metadata": thaw_json(self.metadata),
+            "metadata": thaw_json(self.metadata) if detach else self.metadata,
         }
 
 
@@ -830,10 +833,10 @@ class BattleTransition:
     coverage: dict[str, JSONValue] = field(default_factory=dict)
     contract_validation: dict[str, JSONValue] = field(default_factory=dict)
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
         return {
-            "before": self.transaction.before.to_json(),
-            "after": self.after.to_json(),
+            "before": self.transaction.before.to_json(detach=detach),
+            "after": self.after.to_json(detach=detach),
             "command": {
                 "actor_id": self.transaction.command.actor_id,
                 "action_id": self.transaction.command.action_id,
@@ -847,7 +850,7 @@ class BattleTransition:
             "events": [event.to_json() for event in self.transaction.events],
             "rng_events": [event.to_json() for event in self.rng_events],
             "outcome": self.outcome.to_json(),
-            "mutations": [mutation.to_json() for mutation in self.transaction.mutations],
+            "mutations": [mutation.to_json(detach=detach) for mutation in self.transaction.mutations],
             "trigger_windows": list(self.transaction.trigger_windows),
             "settlement": self.transaction.settlement.to_json()
             if self.transaction.settlement

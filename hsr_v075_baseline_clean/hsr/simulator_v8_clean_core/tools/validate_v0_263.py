@@ -138,10 +138,10 @@ def _execute_percentage_dot_case(rules: RuleBook, case: dict[str, Any] | None) -
     dot_mutations = [mutation for mutation in result.mutations if mutation.source == "damage_system"]
     formula_payloads = [mutation.metadata.get("dot_formula_result", {}) for mutation in dot_mutations]
     basis_terms = [
-        term
+        {**term, "basis_result": payload.get("numeric_evaluations", {}).get(term.get("basis_result_key"), {})}
         for payload in formula_payloads
-        for term in payload.get("dot_ledger", {}).get("applied_terms", [])
-        if isinstance(term, dict) and term.get("key") == "DamagePercentage"
+        for term in payload.get("dot_ledger", {}).get("terms", [])
+        if isinstance(term, dict) and term.get("applied") is True and term.get("key") == "DamagePercentage"
     ]
     checks = {
         "case_found": True,

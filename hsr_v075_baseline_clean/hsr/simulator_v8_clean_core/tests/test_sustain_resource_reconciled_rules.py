@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from hsr.simulator_v8_clean_core.core.executor import CombatExecutor
-from hsr.simulator_v8_clean_core.core.model import ActionCommand, BattleState, Mutation, RNGEvent, UnitState
+from hsr.simulator_v8_clean_core.core.model import ActionCommand, BattleState, Mutation, RNGEvent, TargetResolution, UnitState
 from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
 from hsr.simulator_v8_clean_core.rules.ir import (
-    CanonicalIR, ConditionIR, EffectIR, IRSource, StatusCallbackIR,
+    AbilityTaskIR, CanonicalIR, ConditionIR, EffectIR, IRSource, StatusCallbackIR,
     StatusCallbackTaskIR, TargetExpressionIR,
 )
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
@@ -65,6 +65,212 @@ def _commit_and_replay(state, result):
     return after
 
 
+def test_group_heal_resolves_living_team_and_discards_partial_failure():
+    from hsr.simulator_v8_clean_core.systems.effect import PreHealDispatchResult
+    from hsr.simulator_v8_clean_core.systems.status import StatusSystem
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    path = "Config/GlobalConfig/TargetAliasConfig.json"
+    aliases = json.loads((root / path).read_text())["AliasDict"]
+    raw = aliases["AllTeamMember"]
+    source = IRSource(path, raw["$type"], "AllTeamMember", {
+        "json_path": "$.AliasDict.AllTeamMember", "source_raw_id": "AllTeamMember",
+    })
+    node = _target_expression_execution_node(raw, source)
+    expression = TargetExpressionIR("test:team", node.expression_kind, "AllTeamMember", source,
+                                    node=node, coverage_status="executable")
+    caster_source = IRSource(path, aliases["Caster"]["$type"], "Caster", {
+        "json_path": "$.AliasDict.Caster", "source_raw_id": "Caster",
+    })
+    caster_node = _target_expression_execution_node(aliases["Caster"], caster_source)
+    caster_expression = TargetExpressionIR("test:caster", caster_node.expression_kind, "Caster", caster_source,
+                                           node=caster_node, coverage_status="executable")
+    effect = _effect("HealHP", ModifyValue={"Value": 50})
+    effect = replace(effect, payload={**effect.payload, "standard": {
+        **effect.payload["standard"], "target_alias": expression.alias,
+        "target_expression_id": expression.target_expression_id, "target_expression_coverage_status": "executable",
+    }})
+    state = replace(_state(), units={**_state().units,
+        "enemy": UnitState("enemy", "enemy", "synthetic:enemy", hp=10, max_hp=100),
+        "dead": UnitState("dead", "ally", "synthetic:dead", hp=0, max_hp=100, lifecycle_status="defeated"),
+    })
+    registry = EffectRegistry(StatusSystem(RuleBook(CanonicalIR(version="test:group-heal",
+                                                               target_expressions=(expression, caster_expression)))))
+    context = EffectExecutionContext(state, "caster", "synthetic:group")
+    result = registry.execute(effect, context)
+    after = _commit_and_replay(state, result)
+    assert after.units["caster"].hp == 1060
+    assert after.units["target"].hp == 1865
+    assert after.units["enemy"].hp == 10 and after.units["dead"].hp == 0
+    visited = []
+
+    def fail_second(_effect, current):
+        visited.append(current.current_action_target_id)
+        if len(visited) == 2:
+            assert current.state.units[visited[0]].hp > state.units[visited[0]].hp
+            return PreHealDispatchResult(False, current.state, errors=("test:second-target-failed",))
+        return PreHealDispatchResult(True, current.state)
+
+    registry.set_pre_heal_dispatcher(fail_second)
+    before = state.snapshot().to_json()
+    failed = registry.execute(effect, context)
+    assert len(visited) == 2 and failed.unsupported == ("test:second-target-failed",)
+    assert not failed.mutations and not failed.events and not failed.rng_events
+    assert state.snapshot().to_json() == before
+
+
+def test_action_dynamic_reads_ignore_previous_instances_and_other_owners():
+    from hsr.simulator_v8_clean_core.rules.evaluator import NumericEvaluationContext, RuleEvaluator
+    from hsr.simulator_v8_clean_core.systems.ability import _binding_sources
+    from hsr.simulator_v8_clean_core.systems.dynamic_values import upsert_dynamic_value
+    from hsr.simulator_v8_clean_core.systems.effect import _binding_sources as effect_binding_sources
+
+    store = None
+    for owner, instance, value in (("caster", "old", 0), ("caster", "current", 2),
+                                    ("target", "current", 9)):
+        store = upsert_dynamic_value(store, scope="ability", owner_id=owner, value=value,
+                                     value_name="duration", hash_key=123, ability_instance_id=instance)
+    state = replace(_state(), global_flags={"dynamic_value_store": store})
+    rules = RuleBook(CanonicalIR(version="test:ability-scope"))
+    expression = {"schema_version": "hsr.numeric_expression.v1", "kind": "dynamic_hash", "hash": 123}
+    for instance, expected in (("current", 2), ("old", 0), ("missing", None)):
+        context = EffectExecutionContext(
+            state, "caster", "test", ability_instance_id=instance,
+            include_ambient_status_bindings=False,
+            binding_sources=_binding_sources(rules, state, "caster", "target", ability_instance_id=instance),
+        )
+        result = RuleEvaluator().evaluate_numeric(expression, NumericEvaluationContext(
+            binding_sources=effect_binding_sources(context),
+        ))
+        assert result.value == expected and result.ok == (expected is not None), result.to_json()
+
+
+def test_dot_parameters_stay_with_the_current_status_instance():
+    from hsr.simulator_v8_clean_core.rules.ir import StatusDamageEmissionIR
+    from hsr.simulator_v8_clean_core.rules.expression_ir import numeric_dynamic_hash, numeric_fixed
+    from hsr.simulator_v8_clean_core.systems.dot_formula import DotFormula, DotFormulaInput
+    from hsr.simulator_v8_clean_core.systems.dynamic_values import upsert_dynamic_value
+
+    store = None
+    for instance, owner, value in (("current", "target", 0.4), ("sibling", "caster", 0.9)):
+        store = upsert_dynamic_value(store, scope="status", owner_id=owner, value=value,
+                                     value_name="ratio", hash_key=42, status_instance_id=instance)
+    state = replace(_state(), global_flags={"dynamic_value_store": store})
+    state = replace(state, units={**state.units, "caster": replace(state.units["caster"], attack=100.0)})
+    detail = {"instance_id": "current", "status_id": "synthetic:dot", "owner_id": "target",
+              "caster_id": "caster", "dynamic_values": {"__by_hash": {"42": 0.4}}}
+    emission = StatusDamageEmissionIR(
+        "synthetic:dot", "synthetic:callback", "synthetic:task", "synthetic:dot", "OnPhase1", "DOT",
+        "dot", "Thunder", {"kind": "dot_attack_property", "damage_value": numeric_fixed(0),
+                            "damage_percentage": numeric_dynamic_hash(42),
+                            "damage_percentage_basis": {"kind": "unit_stat", "unit_ref": "attacker", "stat": "attack"}},
+        IRSource("synthetic:dot", "test", "dot"), "executable",
+    )
+    formula = DotFormula()
+    result = formula.calculate(DotFormulaInput(state, "caster", "target", detail, emission))
+    assert result.ok and result.final_damage == 40.0, result.to_json()
+    ledger = result.dot_ledger
+    assert sorted(ledger["applied_term_indices"] + ledger["skipped_term_indices"]) == list(range(len(ledger["terms"])))
+    for index in ledger["applied_term_indices"]:
+        term = ledger["terms"][index]
+        assert result.numeric_evaluations[term["numeric_evaluation_key"]]["ok"]
+        assert "numeric_evaluation" not in term and "basis_result" not in term
+        if "basis_result_key" in term:
+            assert result.numeric_evaluations[term["basis_result_key"]]["ok"]
+    missing = formula.calculate(DotFormulaInput(state, "caster", "target", {**detail, "dynamic_values": {}}, emission))
+    assert not missing.ok and "42" in missing.blocked_reason
+
+
+@pytest.mark.parametrize("invalid_second", [False, True])
+def test_modifier_lifetime_extends_matching_instances_or_discards_every_change(invalid_second):
+    from hsr.simulator_v8_clean_core.systems.status import StatusSystem
+
+    raw = {"$type": "RPG.GameCore.SetModifierValueByBehaviorFlag", "TargetType": {"Alias": "ParamEntity"},
+           "ModifierBehaviorFlags": ["synthetic:dot"], "ModifyFunction": "Add", "ValueType": "LifeTime",
+           "Value": {"Value": 2}}
+    payload = _effect_payload(raw, "SetModifierValueByBehaviorFlag", "")
+    payload["standard"].update(target_expression_id="synthetic:target", target_expression_coverage_status="executable")
+    effect = EffectIR("synthetic:lifetime", "SetModifierValueByBehaviorFlag", payload,
+                      IRSource("synthetic:lifetime", "test", "extension"), "executable")
+    source = IRSource("synthetic:target", "TargetAlias", "ParamEntity", {"json_path": "$.TargetType"})
+    node = _target_expression_execution_node({"$type": "RPG.GameCore.TargetAlias", "Alias": "ParamEntity"}, source)
+    expression = TargetExpressionIR("synthetic:target", node.expression_kind, "ParamEntity", source,
+                                    node=node, coverage_status="executable")
+    alias_path = "Config/GlobalConfig/TargetAliasConfig.json"
+    alias_raw = json.loads((Path(__file__).resolve().parents[4] / "turnbasedgamedata-main" / alias_path).read_text())["AliasDict"]["ParamEntity"]
+    alias_source = IRSource(alias_path, alias_raw["$type"], "ParamEntity", {
+        "json_path": "$.AliasDict.ParamEntity", "source_raw_id": "ParamEntity",
+    })
+    alias_node = _target_expression_execution_node(alias_raw, alias_source)
+    alias = TargetExpressionIR("synthetic:param-definition", alias_node.expression_kind, "ParamEntity", alias_source,
+                               node=alias_node, coverage_status="executable")
+    rules = RuleBook(CanonicalIR(version="synthetic:lifetime", target_expressions=(expression, alias)))
+    details = [dict(instance_id=f"synthetic:{i}", status_id=f"synthetic:status:{i}",
+                    behavior_flags=[flag], remaining_duration=duration, duration=3,
+                    lifecycle_state="active", duration_admission={"admission_status": "executable"})
+               for i, flag, duration in ((0, "synthetic:dot", 1), (1, "synthetic:dot", 2), (2, "synthetic:other", 3))]
+    if invalid_second:
+        details[1]["remaining_duration"] = None
+    state = _state()
+    state = replace(state, units={
+        "caster": replace(state.units["caster"], flags={"status_details": [{**details[0], "instance_id": "synthetic:first-target"}]}),
+        "target": replace(state.units["target"], flags={"status_details": details}),
+    })
+    before = state.snapshot().to_json()
+    result = EffectRegistry(StatusSystem(rules)).execute(effect, EffectExecutionContext(
+        state, "caster", "synthetic:lifetime", param_entity_id="target",
+        target_resolution=TargetResolution(selected=("caster", "target")),
+    ))
+    assert state.snapshot().to_json() == before
+    if invalid_second:
+        assert result.unsupported and not result.mutations
+    else:
+        after = _commit_and_replay(state, result)
+        assert [d["remaining_duration"] for d in after.units["target"].flags["status_details"]] == [3, 4, 3]
+        assert [d["duration"] for d in after.units["target"].flags["status_details"]] == [3, 3, 3]
+        assert after.units["caster"].flags["status_details"][0]["remaining_duration"] == 3
+        assert result.records[0]["mutation_id"] == result.mutations[0].stable_id()
+    for changed in ({"ValueType": "Layer"}, {"ModifyFunction": "Set"}, {"TaskList": []},
+                    {"ModifierBehaviorFlags": ["synthetic:dot", "synthetic:other"]}):
+        assert _effect_coverage_status(effect.opcode, _effect_payload({**raw, **changed}, effect.opcode, "")) == "blocked"
+
+
+@pytest.mark.parametrize("hp,expected", [(100.0, 83.95), (6.27, 1.0), (1.0, 1.0)])
+def test_real_arlan_hp_cost_preserves_one_hp_without_rounding(hp, expected):
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    source_path = "Config/ConfigAbility/Avatar/Avatar_Arlan_00_Ability.json"
+    raw = json.loads((root / source_path).read_text())
+    task = raw["AbilityList"][3]["OnStart"][1]
+    assert task["$type"] == "RPG.GameCore.LoseHPByRatio"
+    payload = _effect_payload(task, "LoseHPByRatio", "")
+    effect = EffectIR("test:arlan-hp-cost", "LoseHPByRatio", payload,
+                      IRSource(source_path, "AbilityTask", "Avatar_Arlan_Skill02_Phase02"),
+                      _effect_coverage_status("LoseHPByRatio", payload))
+    state = BattleState(units={"caster": UnitState("caster", "ally", "avatar:1008", hp=hp, max_hp=107.0)})
+    before = state.snapshot().to_json()
+    result = EffectRegistry().execute(effect, EffectExecutionContext(
+        state, "caster", effect.effect_id,
+        binding_sources=({"by_hash": {"-1784868094": 0.15}},),
+    ))
+    assert not result.unsupported, result.records
+    after = MutationReducer().apply_all(state, result.mutations)
+    assert after.units["caster"].hp == pytest.approx(expected)
+    assert after.units["caster"].lifecycle_status == "active"
+    assert state.snapshot().to_json() == before
+    assert not result.rng_events
+    assert sum(event.event_type == "hp.change" for event in result.events) == (hp > 1)
+
+
+def test_hp_cost_missing_floor_binding_cannot_commit_partial_loss():
+    effect = _effect("LoseHPByRatio", RatioType="MaxHP", Ratio=0.15,
+                     Floor={"IsDynamic": True, "PostfixExpr": {
+                         "OpCodes": "AQAR", "FixedValues": [], "DynamicHashes": [123],
+                     }})
+    _, result = _execute(effect)
+    assert result.unsupported
+    assert not result.mutations and not result.events and not result.rng_events
+
+
 def test_pre_heal_producer_separates_dispatched_trigger_from_new_hp_events():
     from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
 
@@ -100,7 +306,7 @@ def test_ratio_heal_adds_flat_before_bonus_and_audits_overheal(formula, base):
     assert after.units["caster"] == state.units["caster"]
 
 
-def test_source_backed_recipient_heal_penalty_uses_one_additive_factor():
+def test_source_backed_recipient_heal_penalty_uses_one_additive_factor(monkeypatch):
     from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
     from hsr.simulator_v8_clean_core.systems.summon_runtime import empty_summon_runtime
 
@@ -192,7 +398,17 @@ def test_source_backed_recipient_heal_penalty_uses_one_additive_factor():
             }],
         }),
     })
-    result = StatusCallbackSystem(rules).effect_registry.execute(
+    system = StatusCallbackSystem(rules)
+    original_execute = system.execute
+
+    def without_audit_heal_records(*args, **kwargs):
+        callback_result = original_execute(*args, **kwargs)
+        return replace(callback_result, records=tuple(
+            record for record in callback_result.records if record.get("record_type") != "heal_modifier"
+        ))
+
+    monkeypatch.setattr(system, "execute", without_audit_heal_records)
+    result = system.effect_registry.execute(
         effect, EffectExecutionContext(
             state, "caster", "test:heal", owner_id="caster", param_entity_id="target",
         ),
@@ -205,9 +421,18 @@ def test_source_backed_recipient_heal_penalty_uses_one_additive_factor():
     assert details["offered_healing"] == pytest.approx(600)
     assert details["realized_healing"] == pytest.approx(600)
     assert after.units["target"].hp == pytest.approx(1600)
-    assert any(record.get("record_type") == "heal_modifier" and
-               record["payload"]["heal_field"] == "Target_HealTakenRatio"
-               for record in result.records)
+    assert not any(record.get("record_type") == "heal_modifier" for record in result.records)
+
+
+def test_healing_uses_typed_selection_and_ignores_payload_heal_ratio():
+    effect = _effect("HealHP", TargetType={"Alias": "AbilityTargetEntity"}, ModifyValue={"Value": 100})
+    resolution = TargetResolution(selected=("target",), primary="target")
+    state, result = _execute(effect, target_resolution=resolution,
+                             event_payload={"heal_modifier_ratio": 1000})
+    assert _commit_and_replay(state, result).units["target"].hp == pytest.approx(1930)
+    for unresolved in (None, TargetResolution(selected=("caster", "target"), primary="caster")):
+        _, result = _execute(effect, target_resolution=unresolved)
+        assert result.unsupported and not result.mutations
 
 
 @pytest.mark.parametrize("formula,base", [
@@ -288,6 +513,54 @@ def test_mixed_energy_formula_fields_block_instead_of_dropping_operands(fields):
     _, result = _execute(_effect("ModifySPNew", **fields))
     assert result.unsupported and not result.mutations and not result.rng_events
     assert "resource_combined_formula_not_supported" in str(result.records)
+
+
+def test_real_healing_skill_energy_request_is_one_action_base_grant():
+    from hsr.simulator_v8_clean_core.core.executor import _action_resource_plan_with_value_resolution
+    from hsr.simulator_v8_clean_core.rules.value_binding import ValueResolver
+    from hsr.simulator_v8_clean_core.systems.action_preflight import action_resource_plan
+    from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    lowerer = TBGDLowering(root)
+    definition = next(d for d in lowerer._lower_action_definitions(
+        action_ids=frozenset({"avatar_skill:110502"}),
+    ) if d.level == 1)
+    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json").read_text())
+    phase = next(p for p in raw["AbilityList"] if p["Name"] == "Avatar_Natasha_00_Skill02_Phase02")
+    request = next(t for t in phase["OnStart"] if t["$type"] == "RPG.GameCore.ModifySPNew")
+    payload = _effect_payload(request, "ModifySPNew", "")
+    source = IRSource("Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json", "AbilityTask", phase["Name"])
+    effect = EffectIR("test:healing-energy", "ModifySPNew", payload, source, _effect_coverage_status("ModifySPNew", payload))
+    task = AbilityTaskIR("test:energy-task", "test:phase", definition.action_id, 1,
+                         phase["Name"], "OnStart", 0, "OnStart[0]", "main", "ModifySPNew",
+                         effect_id=effect.effect_id, source=source, coverage_status="executable")
+    rules = RuleBook(CanonicalIR(version="test:healing-energy", action_definitions=(definition,),
+                                 effects=(effect,), ability_tasks=(task,)))
+    assert definition.sp_base == 30 and definition.bp_need == 1
+    assert action_resource_plan(definition, source="test", rules=rules).energy_gain == 0
+    plan, blocked = _action_resource_plan_with_value_resolution(
+        ValueResolver(rules), ActionCommand("caster", definition.action_id, 1), definition,
+        metadata={}, queue_resource_policy={},
+    )
+    assert not blocked and plan.energy_gain == 0
+    state, result = _execute(effect, action_definition=definition)
+    after = _commit_and_replay(state, result)
+    assert after.units["caster"].energy == 55  # 25 + 30; MaxEnergy=120 is not the base.
+    state = replace(state, units={**state.units, "caster": replace(
+        state.units["caster"], resources={"energy_regeneration_rate": 0.5},
+    )})
+    _, result = _execute(effect, state, action_definition=definition)
+    assert _commit_and_replay(state, result).units["caster"].energy == 70
+    _, missing = _execute(effect, state)
+    assert missing.unsupported and not missing.mutations
+    assert "resource_action_context_missing" in str(missing.records)
+
+
+def test_non_energy_ratio_is_not_given_skill_energy_semantics():
+    _, result = _execute(_effect("ModifyTeamBoostPoint", AddRatio={"Value": 1}))
+    assert result.unsupported and not result.mutations
+    assert "resource_formula_type_not_supported:AddRatio" in str(result.records)
 
 
 def test_real_march_shield_raw_lowering_to_mutation_and_replay():

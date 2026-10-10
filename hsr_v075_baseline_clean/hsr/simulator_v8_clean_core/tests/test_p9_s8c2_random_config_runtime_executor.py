@@ -258,6 +258,7 @@ def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
             system = StatusCallbackSystem(graph_rules)
             hooks = system._formal_status_hooks(
                 callback, {"owner_id": "actor", "instance_id": "status"}, None, None, None,
+                [],
             )
         selected: list[str] = []
         hooks = replace(hooks, leaf=lambda request, _state: (
@@ -278,6 +279,7 @@ def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
                 system._formal_status_hooks(
                     callback, {"owner_id": "actor", "instance_id": "status"},
                     GameEvent("test", payload=payload), None, None,
+                    [],
                 ),
                 leaf=hooks.leaf,
             )

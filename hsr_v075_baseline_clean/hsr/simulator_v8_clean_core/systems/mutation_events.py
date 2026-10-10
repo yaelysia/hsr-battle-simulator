@@ -76,7 +76,7 @@ def events_for_mutation(
                 process_only=True,
                 payload={
                     **payload,
-                    "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+                    "callback_events": ["OnListenCharacterCreate"],
                     "listener_scope": "global_listener",
                     "unit_id": target_id,
                     "param_entity_id": target_id,

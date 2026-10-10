@@ -68,6 +68,14 @@ def exclude_presentation_passives(
                  for path in sorted(source_paths)}
     fingerprints = {path: sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
                     for path, value in documents.items()}
+    proven_controllers = []
+    for slot in slots:
+        path = str(slot.linked_ir_ids.get("ability_file_path") or "")
+        name = slot.linked_ir_ids.get("ability_name")
+        definitions = [value for value in documents.get(path, {}).get("AbilityList", [])
+                       if isinstance(value, dict) and value.get("Name") == name]
+        if slot.coverage_status != "blocked" and len(definitions) == 1 and _presentation_controller_tokens(definitions[0]):
+            proven_controllers.append(definitions[0])
     result = []
     for slot in slots:
         path = str(slot.linked_ir_ids.get("ability_file_path") or "")
@@ -80,7 +88,12 @@ def exclude_presentation_passives(
             continue
         definition = definitions[0]
         tokens = _presentation_controller_tokens(definition)
-        if not tokens or any(_escaped_token(value, tokens, definition) for value in documents.values()):
+        modifier_names = set(definition["Modifiers"]) if tokens else set()
+        # A proven sibling may share a TargetEntity-local visual key. Still scan it
+        # when it mentions this controller's globally named modifier.
+        excluded = tuple(other for other in proven_controllers
+                         if other is definition or not _escaped_token(other, modifier_names, ()))
+        if not tokens or any(_escaped_token(value, tokens, excluded) for value in documents.values()):
             result.append(slot)
             continue
         result.append(replace(
@@ -152,8 +165,8 @@ def _objects(value: Any):
             yield from _objects(child)
 
 
-def _escaped_token(value: Any, tokens: set[str], excluded: dict[str, Any]) -> bool:
-    if value is excluded:
+def _escaped_token(value: Any, tokens: set[str], excluded: tuple[dict[str, Any], ...]) -> bool:
+    if any(value is definition for definition in excluded):
         return False
     if isinstance(value, dict):
         return any(str(key) in tokens or _escaped_token(child, tokens, excluded)

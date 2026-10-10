@@ -379,6 +379,50 @@ class StatusSystem:
             ),
         )
 
+    def extend_modifier_lifetimes(
+        self, state: BattleState, target_id: str | None, behavior_flags: tuple[str, ...], amount: float,
+        *, metadata: dict[str, JSONValue],
+    ) -> StatusApplicationResult:
+        if (target_id not in state.units or len(behavior_flags) != 1
+                or any(type(flag) is not str or not flag for flag in behavior_flags)
+                or isinstance(amount, bool) or not isinstance(amount, (int, float))
+                or not math.isfinite(amount) or amount < 0):
+            return StatusApplicationResult(False, unsupported=("modifier_lifetime_input_invalid",))
+        unit = state.units[target_id]
+        before = list(unit.flags.get("status_details", ()))
+        after = []
+        changes = []
+        for detail in before:
+            if not isinstance(detail, dict) or not set(behavior_flags).intersection(detail.get("behavior_flags", ())):
+                after.append(detail)
+                continue
+            remaining = _number_or_none(detail.get("remaining_duration"))
+            admission = detail.get("duration_admission")
+            if (remaining is None or not math.isfinite(remaining) or remaining <= 0
+                    or detail.get("lifecycle_state") != "active" or not detail.get("instance_id")
+                    or not detail.get("status_id")
+                    or not isinstance(admission, dict) or admission.get("admission_status") != "executable"
+                    or not math.isfinite(remaining + amount)):
+                return StatusApplicationResult(False, unsupported=("modifier_lifetime_instance_not_admitted",))
+            after.append({**detail, "remaining_duration": remaining + amount})
+            changes.append({"status_instance_id": detail["instance_id"], "status_id": detail["status_id"],
+                            "remaining_before": remaining, "remaining_after": remaining + amount})
+        mutation = Mutation(
+            "set", ("units", target_id, "flags", "status_details"), before, after,
+            "extend modifier lifetime", "status_system", metadata=metadata,
+        ) if changes and amount else None
+        record = SettlementRecord(
+            record_type="status_lifecycle", source="status_system",
+            mutation_id=mutation.stable_id() if mutation else None, process_only=mutation is None,
+            payload={"operation": "extend_modifier_lifetime", "target_id": target_id,
+                     "behavior_flags": list(behavior_flags), "amount": amount, "changes": changes},
+            trace=metadata,
+        ).to_json()
+        return StatusApplicationResult(
+            True, mutations=(mutation,) if mutation else (), records=(record,),
+            events=events_for_mutation(mutation) if mutation else (),
+        )
+
     def apply_add_modifier(
         self,
         state: BattleState,

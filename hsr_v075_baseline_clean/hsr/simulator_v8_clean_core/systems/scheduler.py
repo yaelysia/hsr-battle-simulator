@@ -33,7 +33,7 @@ from .action_contract import _issue_action_submission_authorization
 from .action_selection import ActionTargetSelectionContext, ActionTargetSelectionSystem
 from .effect import EffectRegistry
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
-from .event_dispatch import EventDispatchSystem
+from .event_dispatch import EventDispatchResult, EventDispatchSystem
 from .queue import QUEUE_DRAIN_STEP_BUDGET, QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
 from .phase_machine import (
     ACTION_EXECUTION,
@@ -615,6 +615,8 @@ class CombatScheduler:
             actor_id = active_actor_id
             decision_state = state
             if command is None:
+                if UnitLifecycleSystem().view(state, actor_id).hp <= 0:
+                    return self.end_current_turn(state)
                 return self._blocked(
                     state,
                     "scheduler:decision_required",
@@ -1456,6 +1458,10 @@ class CombatScheduler:
         actor_id = actor_id or str(state.global_flags.get("turn_owner_id") or "")
         if not actor_id or actor_id not in state.units:
             return self._blocked(state, "timeline:turn_end", "active_turn_missing", {"active_turn": active_turn})
+        if state.units[actor_id].hp <= 0:
+            death_reason = UnitLifecycleSystem().death_settlement_blocked_reason(state)
+            if death_reason:
+                return self._blocked(state, "timeline:turn_end", death_reason, {"actor_id": actor_id})
         rule, rule_blocked_reason = self.rules.select_timeline_rule()
         if rule is None:
             return self._blocked(
@@ -1484,7 +1490,9 @@ class CombatScheduler:
             phase_end_mutations = phase_end.mutations
             phase_end_records = phase_end.records
             after_phase_end = self.reducer.apply_all(state, phase_end_mutations)
-        lifecycle = self._apply_status_lifecycle_tick(after_phase_end, "TurnEnd", actor_id=actor_id)
+        actor_defeated = after_phase_end.units[actor_id].hp <= 0
+        lifecycle = (_StatusLifecycleSweep(after_phase_end) if actor_defeated else
+                     self._apply_status_lifecycle_tick(after_phase_end, "TurnEnd", actor_id=actor_id))
         if lifecycle.errors:
             return self._blocked(
                 state, "status:turn_end_lifecycle",
@@ -1504,7 +1512,8 @@ class CombatScheduler:
                 "combat_phase": TURN_END,
             },
         )
-        dispatch = self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event)
+        dispatch = (EventDispatchResult(lifecycle.after_state) if actor_defeated else
+                    self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event))
         if dispatch.errors:
             return self._blocked(
                 state, "timeline:turn_end_dispatch",
@@ -1559,7 +1568,7 @@ class CombatScheduler:
                 },
                 "phase_machine": {
                     "schema_version": "p7_s9_combat_phase_machine_v1",
-                    "path": ([TURN_END, IDLE] if already_in_turn_end else [POST_ACTION, TURN_END, IDLE]),
+                    "path": ([TURN_END, IDLE] if already_in_turn_end else [self.phases.current_phase(state), TURN_END, IDLE]),
                 },
             },
         )

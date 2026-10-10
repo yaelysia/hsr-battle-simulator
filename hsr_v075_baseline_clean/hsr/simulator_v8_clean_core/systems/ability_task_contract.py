@@ -127,6 +127,11 @@ def ability_task_runtime_blocked_reason(
         if condition.coverage_status != "executable":
             return condition.blocked_reason or f"condition_not_executable:{condition.coverage_status}:{condition.opcode}"
         return ""
+    if task.opcode == "Retarget":
+        if topology_authority != "task_graph":
+            return "retarget_requires_formal_task_graph"
+        expression, reason = rules.target_expression_resolution(task.target_expression_id)
+        return reason if expression is None else ""
     if task.opcode == "LoopExecuteTaskListWithInterval":
         if task.repeat_count <= 0:
             return "fixed_positive_loop_count_required"
@@ -140,6 +145,18 @@ def ability_task_runtime_blocked_reason(
                 return "loop_child_task_missing"
             if child.parent_task_id != task.task_id:
                 return "loop_child_parent_mismatch"
+        return ""
+    if task.opcode == "FireProjectile":
+        effect = rules.effect(task.effect_id)
+        standard = effect.payload.get("standard") if effect is not None else None
+        contract = {key: value for key, value in standard.items() if key != "target_expression_refs"} if isinstance(standard, dict) else None
+        if topology_authority != "task_graph":
+            return "projectile_requires_formal_task_graph"
+        if effect is None or effect.coverage_status != "executable" or contract != {
+            "operation": "selected_single_projectile_impact", "target_count": 1,
+            "wait_for_finish": True, "completion_branch": "projectile_hit",
+        }:
+            return "projectile_impact_contract_not_admitted"
         return ""
     if task.opcode == "SummonMonster":
         intents = tuple(

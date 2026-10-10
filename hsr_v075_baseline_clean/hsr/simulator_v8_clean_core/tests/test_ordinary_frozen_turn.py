@@ -79,3 +79,25 @@ def test_turn_begin_callback_rng_reaches_formal_transition():
     step = scheduler.advance_to_next_turn(state)
     assert step.transition.outcome.successor_eligible
     assert step.transition.rng_events == (expected,)
+
+
+def test_defeated_waiting_actor_closes_turn_without_status_ticks_or_callbacks():
+    scheduler, state = _scheduler("enemy")
+    state = replace(state, units={"holder": replace(state.units["holder"], hp=0, lifecycle_status="defeated")},
+                    global_flags={"turn_owner_id": "holder", "combat_phase": "awaiting_decision",
+                                  "active_turn": {"actor_id": "holder", "turn_kind": "regular"}})
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("a defeated holder must not execute TurnEnd status callbacks")
+
+    scheduler._apply_status_lifecycle_tick = unexpected
+    scheduler.event_dispatcher.dispatch_event = unexpected
+    assert scheduler.action_availability(state).requires_scheduler_step
+    step = scheduler.step(state)
+    assert step.transition.outcome.successor_eligible, step.transition.outcome.reason_codes
+    assert step.after_state.global_flags["combat_phase"] == "idle"
+    assert not step.after_state.global_flags.get("turn_owner_id")
+    assert step.after_state.units["holder"].hp == 0
+    assert step.transition.coverage["phase_machine"]["path"] == ["awaiting_decision", "turn_end", "idle"]
+    living = replace(state, units={"holder": replace(state.units["holder"], hp=100, lifecycle_status="active")})
+    assert "turn_end" not in scheduler.phases.allowed_next_phases(living)

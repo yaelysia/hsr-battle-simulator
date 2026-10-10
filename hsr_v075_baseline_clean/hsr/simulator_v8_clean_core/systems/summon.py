@@ -1606,7 +1606,7 @@ def _spawn_event(state: BattleState, plan: SummonTransitionPlan, unit: UnitState
             "unit_id": unit.unit_id,
             "param_entity_id": unit.unit_id,
             "summon_kind": str(unit.flags.get("summon_kind") or ""),
-            "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+            "callback_events": ["OnListenCharacterCreate"],
             "listener_scope": "global_listener",
             "source_trace": plan.source_trace,
         },

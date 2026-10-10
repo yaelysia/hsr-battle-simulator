@@ -1376,7 +1376,6 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "action.after_attack": (
         ("OnListenAfterAttack", "global_listener", ""),
-        ("OnAfterAttack", "actor_local", ""),
     ),
     "action.attack_end": (
         ("OnAfterAttackEnd", "actor_local", ""),
@@ -1402,11 +1401,9 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "unit.created": (
         ("OnListenCharacterCreate", "global_listener", ""),
-        ("OnSnapshotCreate", "global_listener", ""),
     ),
     "summon.spawned": (
         ("OnListenCharacterCreate", "global_listener", ""),
-        ("OnSnapshotCreate", "global_listener", ""),
     ),
     "unit.departed.started": (
         ("OnListenDepartedStart", "global_listener", ""),

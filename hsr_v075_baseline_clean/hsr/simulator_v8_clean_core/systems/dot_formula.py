@@ -117,7 +117,7 @@ class DotFormula:
                     "applied": True,
                     "value": fixed_damage,
                     "source": "AttackProperty.DamageValue",
-                    "numeric_evaluation": base_eval.to_json(),
+                    "numeric_evaluation_key": "damage_value",
                 }
             )
         else:
@@ -180,8 +180,8 @@ class DotFormula:
                     "ratio": float(percentage_eval.value),
                     "value": percentage_damage,
                     "source": "AttackProperty.DamagePercentage",
-                    "numeric_evaluation": percentage_eval.to_json(),
-                    "basis_result": basis_result.to_json(),
+                    "numeric_evaluation_key": "damage_percentage",
+                    "basis_result_key": "damage_percentage_basis",
                 }
             )
         else:
@@ -227,7 +227,7 @@ class DotFormula:
                     "ratio": float(extra_eval.value),
                     "value": extra_damage,
                     "source": "AttackProperty.ExtraDamagePercentage",
-                    "numeric_evaluation": extra_eval.to_json(),
+                    "numeric_evaluation_key": "extra_damage_percentage",
                 }
             )
         else:
@@ -250,8 +250,8 @@ class DotFormula:
             dot_ledger={
                 "formula_family": "dot",
                 "terms": terms,
-                "applied_terms": [term for term in terms if term.get("applied") is True],
-                "skipped_terms": [term for term in terms if term.get("applied") is False],
+                "applied_term_indices": [index for index, term in enumerate(terms) if term.get("applied") is True],
+                "skipped_term_indices": [index for index, term in enumerate(terms) if term.get("applied") is False],
             },
         )
 
@@ -266,7 +266,11 @@ def _dot_binding_sources(
     status_source = binding_source_from_status_detail(detail, detail.get("dynamic_values"))
     if status_source is not None:
         sources.append(status_source)
-    store_source = binding_source_from_store(store_from_state(state))
+    store_source = binding_source_from_store(
+        store_from_state(state), excluded_scopes=("status",),
+        excluded_hashes=tuple(status_source.get("by_hash", ())) if status_source else (),
+        excluded_names=tuple(status_source.get("by_name", ())) if status_source else (),
+    )
     if store_source.get("entries"):
         sources.append(store_source)
     custom_source, reason = _custom_event_binding_source(
@@ -538,7 +542,7 @@ def _blocked(reason: str, source_trace: dict[str, JSONValue]) -> DotFormulaResul
         extra_damage=0.0,
         final_damage=0.0,
         numeric_evaluations={},
-        dot_ledger={"formula_family": "dot", "terms": [], "applied_terms": [], "skipped_terms": []},
+        dot_ledger={"formula_family": "dot", "terms": [], "applied_term_indices": [], "skipped_term_indices": []},
         blocked_reason=reason,
     )
 
@@ -564,9 +568,9 @@ def _blocked_with_eval(
         numeric_evaluations=evaluations,
         dot_ledger={
             "formula_family": "dot",
-            "terms": [],
-            "applied_terms": [],
-            "skipped_terms": [{"bucket": "dot", "key": "formula", "skipped_reason": reason}],
+            "terms": [{"bucket": "dot", "key": "formula", "applied": False, "skipped_reason": reason}],
+            "applied_term_indices": [],
+            "skipped_term_indices": [0],
             "source_trace": source_trace,
         },
         blocked_reason=reason,
@@ -586,9 +590,9 @@ def _blocked_with_evaluations(
         numeric_evaluations=evaluations,
         dot_ledger={
             "formula_family": "dot",
-            "terms": [],
-            "applied_terms": [],
-            "skipped_terms": [{"bucket": "dot", "key": "formula", "skipped_reason": reason}],
+            "terms": [{"bucket": "dot", "key": "formula", "applied": False, "skipped_reason": reason}],
+            "applied_term_indices": [],
+            "skipped_term_indices": [0],
             "source_trace": source_trace,
         },
         blocked_reason=reason,

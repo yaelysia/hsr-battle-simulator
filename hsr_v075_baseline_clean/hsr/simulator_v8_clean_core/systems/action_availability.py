@@ -461,6 +461,7 @@ class ActionAvailabilitySystem:
                     turn_owner_id,
                     queue,
                     blocked,
+                    requires_scheduler_step=actor_reason == "unit_defeated",
                     actor=ActorAvailability(
                         turn_owner_id,
                         actor.side,
@@ -1804,6 +1805,7 @@ class ActionAvailabilitySystem:
             action_resource_plan(
                 definition,
                 source="action_availability.resources",
+                rules=self.rules,
                 metadata={"definition_id": definition.definition_id},
                 queue_resource_policy=queue_resource_policy,
             ),
@@ -1843,14 +1845,15 @@ class ActionAvailabilitySystem:
         blocked: tuple[BlockedActionReason, ...],
         *,
         actor: ActorAvailability | None = None,
+        requires_scheduler_step: bool = False,
     ) -> ActionAvailabilityView:
         return ActionAvailabilityView(
             schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
-            mode="blocked",
+            mode="scheduler_required" if requires_scheduler_step else "blocked",
             state_phase=state_phase,
             current_window=current_window,
             turn_owner_id=turn_owner_id,
-            requires_scheduler_step=False,
+            requires_scheduler_step=requires_scheduler_step,
             ordinary_input_blocked=True,
             ordinary_input_blocked_reason=blocked[0].reason if blocked else "blocked",
             queue=queue,

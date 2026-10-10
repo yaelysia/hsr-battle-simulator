@@ -393,6 +393,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         ),
         None,
         sentinel_hooks,
+        [],
     )
     cast(Any, routed.leaf)(child_request, state)
     cast(Any, routed.condition)(child_request, state)

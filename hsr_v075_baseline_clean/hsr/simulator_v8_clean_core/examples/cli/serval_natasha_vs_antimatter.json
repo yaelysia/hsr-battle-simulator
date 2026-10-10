@@ -1,0 +1,80 @@
+{
+  "scenario_id": "mvp:serval-natasha-e0-lv1-vs-antimatter-lv8",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "serval",
+      "side": "ally",
+      "entity_ref": "avatar:1103",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "mvp:serval:e0-lv1-p0",
+        "character_card_id": "character_data_card:avatar:1103",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:serval:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1103",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "cae8aff1526e7fbd44d7bb429c0bd5313fed3395fe237e85a608e5f8392c5f1c"
+        },
+        "input_fingerprint": "6173ab7427331793c1d83e17b783f71c7fc3f469155edcf085ed5f56b475658b"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "mvp:natasha:e0-lv1-p0",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "81730c7c69d626d09427e3013f3512becf1be23fad0b52a637858e7544a00b76"
+        },
+        "input_fingerprint": "a95f2639de59620442df1fdd230d7a1a9ea23154c5275d9d2d328843e00161f5"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "200021050",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "MVP only: reuse the StageConfig wave for stage_ref 200021050; this is not a complete Mainline stage simulation."
+    }
+  }
+}

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from .battle_archive import read_archive, verify_archive, write_archive
+from .battle_archive import read_json_object, replay_archive, write_archive
 from .session import BattleSession, command_from_json
 from .tbgd.battle_catalog import build_battle_rulebook
 
@@ -114,15 +114,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if getattr(args, "output", None) is not None and args.output.exists():
             raise FileExistsError(f"输出文件已存在：{args.output}")
-        data = read_archive(args.archive if args.mode == "replay" else args.scenario)
-        scenario_data = data["scenario"] if args.mode == "replay" else data
-        commands = _script_commands(read_archive(args.commands)) if args.mode == "run" else None
-        print("正在编译所选战斗内容……", file=sys.stderr)
-        rules = build_battle_rulebook(args.data_root, scenario_data)
         if args.mode == "replay":
-            result = verify_archive(data, rules)
+            def rules_factory(scenario_data):
+                print("正在编译所选战斗内容……", file=sys.stderr)
+                return build_battle_rulebook(args.data_root, scenario_data)
+
+            result = replay_archive(args.archive, rules_factory)
             _dump(result)
             return 0 if result["ok"] else 2
+        scenario_data = read_json_object(args.scenario)
+        commands = _script_commands(read_json_object(args.commands)) if args.mode == "run" else None
+        print("正在编译所选战斗内容……", file=sys.stderr)
+        rules = build_battle_rulebook(args.data_root, scenario_data)
         session = BattleSession(rules, scenario_data)
         if args.mode == "query":
             decision = session.advance()

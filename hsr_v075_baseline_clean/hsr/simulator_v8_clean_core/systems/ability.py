@@ -988,6 +988,7 @@ class AbilityTaskSystem:
                             self.rules, state, invocation.actor_id, scoped.primary,
                             action_level=invocation.ability_level,
                             current_action_trigger_key=_formal_action_trigger_key(invocation),
+                            ability_instance_id=_ability_instance_id(state, invocation),
                         ),
                         *_expression_binding_sources(definition.expression),
                     ),
@@ -1055,6 +1056,16 @@ class AbilityTaskSystem:
         scoped_resolution = _task_graph_target_resolution(
             request, invocation.target_resolution
         )
+        if task.opcode == "FireProjectile":
+            reason = ability_task_runtime_blocked_reason(self.rules, task, topology_authority="task_graph")
+            if reason or len(scoped_resolution.selected) != 1 or scoped_resolution.selected[0] not in state.units:
+                return TaskGraphLeafResult(
+                    "blocked", outcome_kind="",
+                    blocked_reason=reason or "projectile_requires_one_resolved_target",
+                )
+            # ponytail: selected single-target, waiting projectiles only. Flight
+            # time is visual; independent in-flight outcomes need a projectile producer.
+            return TaskGraphLeafResult("resolved", outcome_kind="projectile_hit")
         scoped_invocation = replace(
             invocation,
             target_resolution=scoped_resolution,
@@ -1273,17 +1284,15 @@ class AbilityTaskSystem:
                     effect_coverage=effect_coverage,
                 )
             ]
-        ability_instance_prefix = (
-            "ability_action"
-            if invocation.invocation_kind == "action"
-            else f"ability_{invocation.invocation_kind}"
-        )
+        ability_instance_id = _ability_instance_id(state, invocation)
         result = self.effect_registry.execute(
             effect,
             EffectExecutionContext(
                 state=state,
                 caster_id=invocation.actor_id,
                 source_id=f"ability_task:{task.task_id}",
+                action_definition=invocation.action_definition,
+                ability_instance_id=ability_instance_id,
                 owner_id=invocation.actor_id,
                 param_entity_id=primary_target or invocation.actor_id,
                 current_action_target_id=primary_target,
@@ -1295,11 +1304,7 @@ class AbilityTaskSystem:
                     "task_id": task.task_id,
                     "hit_index": task.task_index,
                     "rng_decision_index": task.task_index,
-                    "ability_instance_id": (
-                        f"{ability_instance_prefix}:{state.event_index}:"
-                        f"{invocation.actor_id}:{invocation.ability_id}:"
-                        f"{invocation.ability_level}"
-                    ),
+                    "ability_instance_id": ability_instance_id,
                     "operation_event_id": (
                         f"ability_task:{state.event_index}:"
                         f"{invocation.actor_id}:{invocation.ability_id}:"
@@ -1313,6 +1318,7 @@ class AbilityTaskSystem:
                     primary_target,
                     action_level=invocation.ability_level,
                     current_action_trigger_key=_formal_action_trigger_key(invocation),
+                    ability_instance_id=ability_instance_id,
                 ),
                 include_ambient_status_bindings=False,
                 admitted_action_target_fact=invocation.admitted_action_target_fact,
@@ -1392,6 +1398,7 @@ class AbilityTaskSystem:
                     current_action_trigger_key=_formal_action_trigger_key(
                         invocation
                     ),
+                    ability_instance_id=_ability_instance_id(state, invocation),
                 ),
                 transient_condition_provider=_formal_condition_provider(
                     self.rules,
@@ -1484,6 +1491,7 @@ class AbilityTaskSystem:
                     scoped.primary,
                     action_level=invocation.ability_level,
                     current_action_trigger_key=_formal_action_trigger_key(invocation),
+                    ability_instance_id=_ability_instance_id(state, invocation),
                 ),
                 source_trace=definition.source.to_json(),
             ),
@@ -1555,6 +1563,7 @@ class AbilityTaskSystem:
                 primary,
                 action_level=invocation.ability_level,
                 current_action_trigger_key=_formal_action_trigger_key(invocation),
+                ability_instance_id=_ability_instance_id(state, invocation),
             ),
             transient_condition_provider=_formal_condition_provider(
                 self.rules, state, invocation, scoped, task.task_id
@@ -1562,12 +1571,7 @@ class AbilityTaskSystem:
         )
         if result.blocked:
             return TaskGraphTargetResult("blocked", blocked_reason=result.blocked_reason)
-        if result.rng_events:
-            return TaskGraphTargetResult(
-                "blocked",
-                blocked_reason="ability_task_graph_random_target_requires_hit_sequence",
-            )
-        return TaskGraphTargetResult("resolved", result.target_ids)
+        return TaskGraphTargetResult("resolved", result.target_ids, rng_events=result.rng_events)
 
     def _resolve_formal_nested_graph(
         self,
@@ -2582,6 +2586,10 @@ class AbilityTaskSystem:
                             primary_target,
                             action_level=command.action_level,
                             current_action_trigger_key=_action_trigger_key(action_definition),
+                            ability_instance_id=(
+                                f"ability_action:{state.event_index}:{command.actor_id}:"
+                                f"{command.action_id}:{command.action_level}"
+                            ),
                         ),
                         *_expression_binding_sources(emission.scaling_ratio_expr),
                     ),
@@ -2804,6 +2812,10 @@ class AbilityTaskSystem:
                             action_level=command.action_level,
                             current_action_trigger_key=_action_trigger_key(
                                 action_definition
+                            ),
+                            ability_instance_id=(
+                                f"ability_action:{state.event_index}:{command.actor_id}:"
+                                f"{command.action_id}:{command.action_level}"
                             ),
                         ),
                         *_expression_binding_sources(
@@ -3301,6 +3313,13 @@ def _formal_condition_provider(
     )
 
 
+def _ability_instance_id(state: BattleState, invocation: _FormalAbilityInvocation) -> str:
+    return (
+        f"ability_{invocation.invocation_kind}:{state.event_index}:"
+        f"{invocation.actor_id}:{invocation.ability_id}:{invocation.ability_level}"
+    )
+
+
 def _binding_sources(
     rules: RuleBook,
     state: BattleState,
@@ -3309,9 +3328,13 @@ def _binding_sources(
     *,
     action_level: int | None = None,
     current_action_trigger_key: str | None = None,
+    ability_instance_id: str = "",
 ) -> tuple[dict[str, JSONValue], ...]:
     return (
-        binding_source_from_store(store_from_state(state), excluded_scopes=("status",)),
+        binding_source_from_store(
+            store_from_state(state), excluded_scopes=("status",),
+            visible_scope={"target_id": actor_id, "ability_instance_id": ability_instance_id},
+        ),
         *character_skill_param_binding_sources(
             rules,
             state,

@@ -7031,8 +7031,11 @@ class AbilityTaskIR:
     blocked_reason: str = ""
     linked_standalone_graph_id: str = ""
     linked_ability_phase_id: str = ""
+    target_expression_id: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.target_expression_id, str):
+            raise TypeError("ability task target expression must be a string")
         if not isinstance(self.linked_standalone_graph_id, str) or not isinstance(
             self.linked_ability_phase_id, str
         ):
@@ -7069,6 +7072,7 @@ class AbilityTaskIR:
             "blocked_reason": self.blocked_reason,
             "linked_standalone_graph_id": self.linked_standalone_graph_id,
             "linked_ability_phase_id": self.linked_ability_phase_id,
+            "target_expression_id": self.target_expression_id,
         }
 
 

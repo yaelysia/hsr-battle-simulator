@@ -96,20 +96,21 @@ def test_selector_missing_source_or_build_context_is_blocked(selector_fixture, i
     assert state.snapshot().to_json() == before
 
 
+@pytest.mark.parametrize("family,field", [("WaitTimelineFinish", "TimelineName"), ("WaitSecond", "WaitTime")])
 @pytest.mark.parametrize("gameplay_field,with_branch", [(False, False), (True, False), (False, True)])
-def test_timeline_wait_only_retires_presentation_responsibility(gameplay_field, with_branch):
+def test_timeline_wait_only_retires_presentation_responsibility(family, field, gameplay_field, with_branch):
     from hsr.simulator_v8_clean_core.tests.test_p9_a2_p3_wait_anim_state_process_only_barrier_retirement import (
         _control, _responsibility, _task,
     )
     from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _node_status
 
-    control = _control(family="WaitTimelineFinish", gameplay_field=gameplay_field, with_branch=with_branch)
-    fields = (_responsibility(control.node_id, control.family, "TimelineName"),)
+    control = _control(family=family, gameplay_field=gameplay_field, with_branch=with_branch)
+    fields = (_responsibility(control.node_id, control.family, field),)
     if gameplay_field:
         fields += (control.field_responsibilities[-1],)
     control = replace(control, peer_field_names=tuple(sorted(item.field_name for item in fields)),
                       field_responsibilities=fields)
-    task = _task(family="WaitTimelineFinish")
+    task = _task(family=family)
     kind, status, owners, reason = _node_status(control, task)
     if gameplay_field or with_branch:
         assert status == "deferred" and reason
@@ -195,6 +196,252 @@ def test_selected_materialization_keeps_source_denominator_and_complete_guard(se
             catalog, rules.ir, source_snapshot=snapshot,
             selected_source_paths=frozenset({"Config/ConfigAbility/Avatar/Avatar_Arlan_00_Ability.json"}),
         )
+
+
+def test_standalone_trigger_excludes_only_resolved_camera_definition(selector_fixture):
+    _, _, _, lowerer = selector_fixture
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    _, phases, tasks, effects, *_ = lowerer._lower_standalone_ability_graphs([
+        root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json",
+    ])
+    phase = next(p for p in phases if p.ability_name == "Avatar_Natasha_00_Rank01_InsertSkill_Phase01")
+    calls = [t for t in tasks if t.phase_id == phase.phase_id and t.opcode == "TriggerAbility"]
+    effect_by_id = {effect.effect_id: effect for effect in effects}
+    camera = next(t for t in calls if effect_by_id[t.effect_id].payload["standard"]["ability_name"].endswith("Camera_Self"))
+    heal = next(t for t in calls if t is not camera)
+    assert camera.execution_mode == "process_only" and camera.coverage_status == "audit_only"
+    assert effect_by_id[camera.effect_id].payload["client_only_ability_source"]["source_path"] == (
+        "Config/ConfigAbility/Avatar/Camera/Avatar_Natasha_00_Camera.json"
+    )
+    assert heal.execution_mode == "runtime_effect" and heal.coverage_status == "executable"
+
+
+def test_healing_action_uses_character_selection_source(selector_fixture):
+    from hsr.simulator_v8_clean_core.tbgd.action_target_contracts import build_action_target_contract_catalog
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _lower_action_execution_ir
+
+    _, _, _, lowerer = selector_fixture
+    definition = next(d for d in lowerer._lower_action_definitions(
+        action_ids=frozenset({"avatar_skill:110502"}),
+    ) if d.level == 1)
+    catalog = build_action_target_contract_catalog(
+        lowerer.tbgd_root, definitions=[definition],
+        snapshot=lowerer._character_ability_raw_snapshot,
+        source_graph_catalog=lowerer.build_character_ability_source_graph_catalog(),
+        definition_scope_complete=False,
+    )
+    binding, phases, lowered = lowerer._avatar_action_binding(definition)
+    events, profiles = _lower_action_execution_ir([definition], [binding], phases, [], [], catalog)
+    assert not profiles
+    assert events[0].target_relation == "ally_or_self"
+    assert events[0].target_mode == "self_or_team"
+    assert not events[0].blocked_reason
+    assert all(step.phase not in {"before_attack", "after_attack"} for step in events[0].phase_steps)
+    camera_branch = next(t for t in lowered.ability_tasks
+                         if t.opcode == "PredicateTaskList" and t.ability_name.endswith("Phase01"))
+    assert camera_branch.execution_mode == "process_only" and not camera_branch.condition_id
+    assert next(e for e in lowered.effects if e.effect_id == camera_branch.effect_id).payload[
+        "process_only_contract"
+    ]["classification"] == "client_only_ability_branch"
+    assert all(t.execution_mode == "runtime_effect" for t in lowered.ability_tasks
+               if t.opcode == "PredicateTaskList" and t.ability_name.endswith("Phase02"))
+
+
+def test_healing_visual_effects_and_voice_reject_nested_gameplay():
+    from hsr.simulator_v8_clean_core.tbgd.coverage import ability_task_execution_mode
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json").read_text())
+    families = {"TriggerEffect", "CharacterPlayVO", "SetNoShadowCaster",
+                "SyncCharLightAndCameraDir", "TriggerUINotify", "StartAim"}
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if str(value.get("$type", "")).split(".")[-1] in families:
+                found.append(value)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(raw)
+    assert {t["$type"].split(".")[-1] for t in found} == families
+    for task in found:
+        opcode = task["$type"].split(".")[-1]
+        assert ability_task_execution_mode(opcode) == "process_only"
+        assert not _process_only_ability_task_source_blocked_reason(task, opcode)
+        assert _process_only_ability_task_source_blocked_reason({
+            **task, "TaskList": [{"$type": "RPG.GameCore.HealHP"}],
+        }, opcode)
+
+
+def test_serval_visual_mount_and_empty_animation_range_reject_nested_gameplay():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Serval_00_Ability.json").read_text())
+    tasks = [t for ability in raw["AbilityList"] for t in ability.get("OnStart", [])]
+    effect = next(t for t in tasks if t.get("AttachPoint") == "Origin")
+    animation = next(t for t in tasks if t.get("$type") == "RPG.GameCore.TriggerAnimStateWithMove"
+                     and t.get("MovingRangeList") == [])
+    assert effect["AttachPoint"] == "Origin"
+    assert animation["MovingRangeList"] == []
+    hide = [t for t in tasks if t.get("$type") == "RPG.GameCore.HideLevelStage"]
+    assert len(hide) == 2
+    for task in (effect, animation, *hide):
+        opcode = task["$type"].split(".")[-1]
+        assert not _process_only_ability_task_source_blocked_reason(task, opcode)
+        assert _process_only_ability_task_source_blocked_reason({
+            **task, "TaskList": [{"$type": "RPG.GameCore.HealHP"}],
+        }, opcode)
+
+
+def test_serval_passive_keeps_whole_retarget_and_shared_damage_source(selector_fixture):
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_task_admission
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _node_status, _status_task
+    from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
+
+    _, _, _, lowerer = selector_fixture
+    relative = "Config/ConfigAbility/Avatar/Avatar_Serval_00_Ability.json"
+    raw = json.loads((lowerer.tbgd_root / relative).read_text())
+    index, ability = next((i, a) for i, a in enumerate(raw["AbilityList"])
+                          if "Avatar_Serval_Passive01Modifier" in a.get("Modifiers", {}))
+    modifier = "Avatar_Serval_Passive01Modifier"
+    config = ability["Modifiers"][modifier]["_CallbackList"][0]["CallbackConfig"]
+    lowered = lowerer._lower_status_callback_tasks(
+        config, relative=relative, map_name="Modifiers", modifier_name=modifier,
+        callback_id="test:serval-passive", event="OnAfterAttack", callback_index=0,
+        task_list_json_path=f"$.AbilityList[{index}].Modifiers.{modifier}._CallbackList[0].CallbackConfig",
+        queue_priority_lookup={}, formal_source_context=lowerer._character_formal_task_source_context(),
+    )
+    tasks = lowered.status_callback_tasks
+    retarget = next(t for t in tasks if t.opcode == "Retarget")
+    expression = next(e for e in lowered.target_expressions if e.target_expression_id == retarget.target_expression_id)
+    expression = close_target_expression_language(expression, lowerer._strict_target_language_definitions())
+    assert expression.coverage_status == "executable" and expression.node.expression_kind == "Retarget"
+    assert expression.node.by_random and expression.node.predicate.opcode == "ByContainBehaviorFlag"
+    assert not expression.node.max_number_expr
+    damage = next(t for t in tasks if t.opcode == "DamageByAttackProperty")
+    assert damage.coverage_status == "executable" and not damage.blocked_reason
+    emission = next(e for e in lowered.status_damage_emissions if e.source_task_id == damage.task_id)
+    assert emission.coverage_status == "executable" and emission.damage_formula_family == "additional"
+    control = next(c for c in lowerer._character_formal_task_source_context_cache.control_by_location.values()
+                   if c.source.source_path == retarget.source.source_path
+                   and c.source.evidence["json_path"] == retarget.source.evidence["json_path"])
+    assert _node_status(control, _status_task(retarget)) == (
+        "target_scope", "materialized", ("task_graph_execution",), "",
+    )
+    finish = next(t for t in tasks if t.opcode == "DamagePerformFinish")
+    assert finish.blocked_reason == "source_proven_presentation_only"
+    effect = next(e for e in lowered.effects if e.effect_id == finish.effect_id)
+    assert effect.coverage_status == "audit_only" and effect.source == finish.source
+    assert _status_callback_task_admission("OnAfterAttack", "DamagePerformFinish", {
+        "$type": "RPG.GameCore.DamagePerformFinish", "SkipDeathSettlement": True,
+    })[0] == "blocked"
+
+
+def test_local_after_attack_is_not_repeated_by_each_target_listener():
+    from hsr.simulator_v8_clean_core.core.model import GameEvent
+    from hsr.simulator_v8_clean_core.systems.event_dispatch import _event_aliases
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _lower_status_event_families
+    from hsr.simulator_v8_clean_core.rules.ir import IRSource, StatusCallbackIR
+
+    callbacks = [StatusCallbackIR("test:" + event, "synthetic:passive", event, (),
+                                 IRSource("synthetic:callback", "test", event), (0, 0))
+                 for event in ("OnAfterAttack", "OnListenAfterAttack")]
+    rules = RuleBook(CanonicalIR(version="test:after-attack", status_callbacks=tuple(callbacks),
+                                status_event_families=tuple(_lower_status_event_families(callbacks, []))))
+    for event_type, window, expected in (
+        ("action.window.after_attack", "OnAfterAttack", {"OnAfterAttack"}),
+        ("action.after_attack", "OnListenAfterAttack", {"OnListenAfterAttack"}),
+    ):
+        event = GameEvent(event_type, source_id="actor", target_id="enemy", window=window)
+        assert {alias.callback_event for alias in _event_aliases(event, rules)} == expected
+
+
+def test_serval_ultimate_retarget_uses_formal_target_scope(selector_fixture):
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _ability_task, _node_status
+    from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
+
+    _, _, _, lowerer = selector_fixture
+    definition = next(d for d in lowerer._lower_action_definitions(
+        action_ids=frozenset({"avatar_skill:110303"}),
+    ) if d.level == 1)
+    _, _, lowered = lowerer._avatar_action_binding(definition)
+    for task in (t for t in lowered.ability_tasks if t.opcode == "Retarget"):
+        assert task.coverage_status == "executable" and not task.effect_id
+        formal = _ability_task(task)
+        expression = next(e for e in lowered.target_expressions
+                          if e.target_expression_id == formal.target_expression_id)
+        expression = close_target_expression_language(expression, lowerer._strict_target_language_definitions())
+        assert expression.coverage_status == "executable" and expression.node.expression_kind == "Retarget"
+        control = lowerer._character_formal_task_source_context_cache.control_by_location[
+            (task.source.source_path, task.source.evidence["json_path"], "Retarget")]
+        assert _node_status(control, formal)[0:2] == ("target_scope", "materialized")
+    extension = next(e for e in lowered.effects if e.opcode == "SetModifierValueByBehaviorFlag")
+    assert extension.coverage_status == "executable"
+    assert extension.payload["standard"]["operation"] == "extend_modifier_lifetime"
+
+
+def test_single_projectile_keeps_hit_tasks_and_blocks_async_or_collision_shapes():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _effect_payload, _effect_coverage_status
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json").read_text())
+    projectile = next(task for ability in raw["AbilityList"] for task in ability.get("OnStart", [])
+                      if task.get("$type") == "RPG.GameCore.FireProjectile")
+    payload = _effect_payload(projectile, "FireProjectile", "")
+    assert _effect_coverage_status("FireProjectile", payload) == "executable"
+    assert payload["OnProjectileHit"] == projectile["OnProjectileHit"]
+    for changed in (
+        {**projectile, "WaitProjectileFinish": False},
+        {**projectile, "Projectile": {**projectile["Projectile"], "IgnoreTargetHitbox": False}},
+        {**projectile, "OnProjectileMiss": []},
+    ):
+        assert _effect_coverage_status("FireProjectile", _effect_payload(changed, "FireProjectile", "")) == "blocked"
+
+
+def test_voice_only_retarget_is_excluded_but_healing_child_is_kept(selector_fixture):
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+
+    _, _, _, lowerer = selector_fixture
+    definition = next(d for d in lowerer._lower_action_definitions(
+        action_ids=frozenset({"avatar_skill:110502"}),
+    ) if d.level == 1)
+    _, _, lowered = lowerer._avatar_action_binding(definition)
+    task = next(t for t in lowered.ability_tasks if t.opcode == "Retarget")
+    assert task.execution_mode == "process_only" and task.coverage_status == "audit_only"
+    raw = json.loads((lowerer.tbgd_root / task.source.source_path).read_text())
+    phase = next(p for p in raw["AbilityList"] if p["Name"] == task.ability_name)
+    retarget = next(t for t in phase["OnStart"] if t["$type"] == "RPG.GameCore.Retarget")
+    assert not _process_only_ability_task_source_blocked_reason(retarget, "Retarget")
+    with_heal = {**retarget, "TaskList": [
+        *retarget["TaskList"], {"$type": "RPG.GameCore.HealHP"},
+    ]}
+    assert _process_only_ability_task_source_blocked_reason(with_heal, "Retarget")
+    unknown = {**retarget, "Unknown": True}
+    assert _process_only_ability_task_source_blocked_reason(unknown, "Retarget")
+
+
+def test_turn_heal_uses_shared_effect_and_validated_presentation_admission():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_task_admission
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json").read_text())
+    tasks = raw["GlobalModifiers"]["MAvatar_Natasha_00_HOT_HPByMaxHP"]["_CallbackList"][0][
+        "CallbackConfig"
+    ][0]["SuccessTaskList"]
+    visual, heal = tasks
+    assert _status_callback_task_admission("OnPhase1", "HealHP", heal) == ("executable", "")
+    assert _status_callback_task_admission("OnPhase1", "TriggerEffect", visual) == (
+        "blocked", "source_proven_presentation_only",
+    )
+    assert _status_callback_task_admission("OnPhase1", "TriggerEffect", {
+        **visual, "UnknownGameplay": True,
+    })[1] != "source_proven_presentation_only"
 
 
 def test_death_barrier_verifies_real_damage_lifecycle_without_new_mutations():

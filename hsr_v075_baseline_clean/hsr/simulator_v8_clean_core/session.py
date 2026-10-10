@@ -13,7 +13,7 @@ from .systems.decision import CurrentDecision, DecisionSystem
 from .systems.scheduler import SchedulerStepResult
 
 
-SESSION_SCHEMA = "hsr_battle_session_v1"
+SESSION_SCHEMA = "hsr_battle_session_v2"
 
 
 def command_from_json(value: dict[str, Any]) -> ActionCommand:
@@ -56,10 +56,10 @@ class BattleSession:
         self.decisions = DecisionSystem(rules)
         self.operations: list[dict[str, Any]] = []
         self.rules_fingerprint = canonical_ir_fingerprint(rules.ir)
-        self.initial_snapshot = self.state.snapshot().to_json()
+        self.initial_snapshot = self.state.snapshot().to_json(detach=False)
         self.setup_audit = {
             "records": list(self.build.setup_records),
-            "mutations": [item.to_json() for item in self.build.setup_mutations],
+            "mutations": [item.to_json(detach=False) for item in self.build.setup_mutations],
             "events": [item.to_json() for item in self.build.setup_events],
             "rng_events": [item.to_json() for item in self.build.setup_rng_events],
             "source_traces": list(self.build.source_traces),
@@ -67,7 +67,7 @@ class BattleSession:
         timeline = self.scenario.battle_setup.timeline
         explicit = tuple(sorted(set(timeline.action_values) | set(timeline.explicit_overrides))) if timeline else ()
         initialized = self.decisions.scheduler.initialize_timeline(self.state, explicit_overrides=explicit)
-        self.initialization = initialized.transition.to_json()
+        self.initialization = initialized.transition.to_json(detach=False)
         if not initialized.transition.outcome.successor_eligible:
             raise ValueError(f"timeline initialization blocked: {initialized.transition.outcome.reason_codes}")
         self._accept(initialized)
@@ -78,7 +78,7 @@ class BattleSession:
 
     def _accept(self, result: SchedulerStepResult) -> None:
         self.state = transition_successor_state(
-            self.state, result.after_state, result.transition.to_json(),
+            self.state, result.after_state, {"outcome": result.transition.outcome.to_json()},
         )
 
     def advance(self) -> CurrentDecision:
@@ -88,7 +88,7 @@ class BattleSession:
             "kind": "advance",
             "decision_id": result.decision.token.decision_id if result.decision.token else None,
             "blocked_reason": result.blocked_reason,
-            "transitions": [transition.to_json() for transition in result.transitions],
+            "transitions": [transition.to_json(detach=False) for transition in result.transitions],
         })
         return result.decision
 
@@ -104,7 +104,7 @@ class BattleSession:
         self._accept(result)
         self.operations.append({
             "kind": "submit", "command": command_to_json(command),
-            "transition": result.transition.to_json(),
+            "transition": result.transition.to_json(detach=False),
         })
         return result
 
@@ -117,6 +117,6 @@ class BattleSession:
             "setup_audit": self.setup_audit,
             "initialization": self.initialization,
             "operations": self.operations,
-            "final_snapshot": self.state.snapshot().to_json(),
+            "final_snapshot": self.state.snapshot().to_json(detach=False),
             "outcome": self.outcome,
         }

@@ -776,7 +776,7 @@ def _ability_task(task: AbilityTaskIR) -> _FormalTask:
         task.opcode,
         family if isinstance(family, str) and family else task.opcode,
         task.condition_id,
-        "",
+        task.target_expression_id,
         task.effect_id,
         task.linked_ability_phase_id or task.linked_standalone_graph_id,
         (
@@ -817,8 +817,8 @@ def _status_task(task: StatusCallbackTaskIR) -> _FormalTask:
             if task.linked_standalone_graph_id
             else ""
         ),
-        "runtime_effect",
-        task.coverage_status,
+        "process_only" if task.opcode == "DamagePerformFinish" and task.blocked_reason == "source_proven_presentation_only" else "runtime_effect",
+        "audit_only" if task.opcode == "DamagePerformFinish" and task.blocked_reason == "source_proven_presentation_only" else task.coverage_status,
         task.source,
     )
 
@@ -1470,7 +1470,7 @@ def _is_wait_anim_state_process_only_presentation_shape(
     if control is None:
         return False
     return (
-        control.family in {"WaitAnimState", "WaitTimelineFinish"}
+        control.family in {"WaitAnimState", "WaitTimelineFinish", "WaitSecond"}
         and control.control_role == "presentation_barrier"
         and control.coverage_status != "blocked"
         and task.family == control.family
@@ -1678,6 +1678,19 @@ def _references(
         _wait_anim_state_process_only_effect(task, indexes)
     if _is_process_only_settlement_barrier_shape(control, task):
         _process_only_settlement_barrier_effect(task, indexes)
+    if task.opcode == "Retarget" and task.execution_mode == "process_only":
+        _wait_anim_state_process_only_effect(task, indexes)
+    if _is_single_projectile_impact_shape(control, task):
+        effects = indexes.effects.get(task.effect_id, ())
+        standard = effects[0].payload.get("standard") if len(effects) == 1 else None
+        contract = {key: value for key, value in standard.items() if key != "target_expression_refs"} if isinstance(standard, dict) else None
+        if (len(effects) != 1 or effects[0].source != task.source
+                or effects[0].coverage_status != "executable"
+                or contract != {
+                    "operation": "selected_single_projectile_impact", "target_count": 1,
+                    "wait_for_finish": True, "completion_branch": "projectile_hit",
+                }):
+            raise _Blocked("task_graph_projectile_impact_effect_contract_invalid")
     if _is_death_settlement_barrier_shape(control, task):
         effects = indexes.effects.get(task.effect_id, ())
         sources = tuple(replace(item, evidence={key: value for key, value in item.evidence.items()
@@ -1766,20 +1779,41 @@ def _reference_owner(control: CharacterControlFlowNodeIR | None, kind: str, defa
     return default
 
 
+def _is_single_projectile_impact_shape(
+    control: CharacterControlFlowNodeIR | None, task: _FormalTask,
+) -> bool:
+    return (
+        control is not None and control.family == task.opcode == task.family == "FireProjectile"
+        and control.control_role == "projectile_sequence"
+        and task.execution_mode == "runtime_effect" and task.coverage_status == "executable"
+    )
+
+
 def _node_status(
     control: CharacterControlFlowNodeIR | None,
     task: _FormalTask,
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
-        if task.family in {"WaitAnimState", "WaitTimelineFinish"} and task.execution_mode == "process_only":
+        if task.family in {"WaitAnimState", "WaitTimelineFinish", "WaitSecond"} and task.execution_mode == "process_only":
             raise _Blocked("task_graph_wait_anim_state_source_contract_missing")
         return "leaf", "materialized", ("task_graph_execution",), ""
+    if _is_single_projectile_impact_shape(control, task):
+        return "sequence", "materialized", ("task_graph_execution",), ""
     if _is_wait_anim_state_process_only_presentation_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_process_only_settlement_barrier_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_death_settlement_barrier_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
+    if control.family == task.opcode == task.family == "Retarget" and task.execution_mode == "process_only" and task.coverage_status == "audit_only":
+        return "leaf", "materialized", ("task_graph_execution",), ""
+    if (control.family == task.opcode == task.family == "Retarget"
+            and control.control_role == "target_scope" and control.coverage_status != "blocked"
+            and not control.blocked_reason and task.coverage_status == "executable"
+            and task.target_expression_id
+            and {_owner_domain(stage) for stage in control.downstream_stages}
+            == {"task_graph_execution", "hit_random_sequence"}):
+        return "target_scope", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
         for stage in control.downstream_stages
@@ -1924,7 +1958,7 @@ def _materialization_dispositions(
         linked_nodes = tuple(linked_nodes_by_record.get(item.source_record_id, ()))
         retire_wait_anim_state_barrier = (
             item.source_kind == "control_node"
-            and item.family in {"WaitAnimState", "WaitTimelineFinish"}
+            and item.family in {"WaitAnimState", "WaitTimelineFinish", "WaitSecond"}
             and bool(linked_nodes)
             and all(
                 node.source_family == item.family
@@ -1982,6 +2016,30 @@ def _materialization_dispositions(
                 for node in linked_nodes
             )
         )
+        retire_presentation_retarget = (
+            item.source_kind == "control_node" and item.family == "Retarget"
+            and bool(linked_nodes) and all(
+                node.source_family == node.opcode == item.family and node.node_kind == "leaf"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].blocked_reason == "task_graph_definition_not_admitted:effect:audit_only"
+                and node.references[0].source == node.source
+                for node in linked_nodes
+            )
+        )
+        retire_runtime_retarget = (
+            item.source_kind == "control_node" and item.family == "Retarget"
+            and bool(linked_nodes) and all(
+                node.source_family == node.opcode == item.family and node.node_kind == "target_scope"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and any(ref.reference_kind == "target" and ref.resolution_status == "resolved"
+                        for ref in node.references)
+                for node in linked_nodes
+            )
+        )
         retire_death_barrier = (
             item.source_kind == "control_node" and item.family == "TriggerSkipDeadHandler"
             and bool(linked_nodes) and all(
@@ -1991,6 +2049,20 @@ def _materialization_dispositions(
                 and node.references[0].reference_kind == "effect"
                 and node.references[0].resolution_status == "resolved"
                 and node.references[0].owner_domain == "unit_lifecycle"
+                and node.references[0].source == node.source
+                for node in linked_nodes
+            )
+        )
+        retire_single_projectile = (
+            item.source_kind == "control_node" and item.family == "FireProjectile"
+            and bool(linked_nodes) and all(
+                node.source_family == node.opcode == item.family and node.node_kind == "sequence"
+                and node.materialization_status == "materialized"
+                and len(node.branches) == 1 and node.branches[0].branch_kind == "projectile_hit"
+                and bool(node.branches[0].child_node_ids)
+                and node.owner_domains == ("task_graph_execution",) and len(node.references) == 1
+                and node.references[0].reference_kind == "effect"
+                and node.references[0].resolution_status == "resolved"
                 and node.references[0].source == node.source
                 for node in linked_nodes
             )
@@ -2012,6 +2084,9 @@ def _materialization_dispositions(
                 and domain == "hit_random_sequence"
             )
             and not (retire_death_barrier and domain == "unit_lifecycle")
+            and not (retire_presentation_retarget and domain == "hit_random_sequence")
+            and not (retire_runtime_retarget and domain == "hit_random_sequence")
+            and not (retire_single_projectile and domain == "hit_random_sequence")
         )
         result.append(replace(
             item,

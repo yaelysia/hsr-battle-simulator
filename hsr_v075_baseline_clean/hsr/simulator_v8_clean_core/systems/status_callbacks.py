@@ -58,6 +58,7 @@ from .effect import (
     EffectExecutionContext,
     EffectRegistry,
     PreHealDispatchResult,
+    _resolve_target_alias,
 )
 from .mutation_events import events_for_mutation
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
@@ -105,8 +106,13 @@ class StatusCallbackExecutionResult:
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
     task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+    heal_ratio_delta: float = 0.0
 
     def __post_init__(self) -> None:
+        if type(self.heal_ratio_delta) not in (int, float) or not math.isfinite(self.heal_ratio_delta):
+            raise ValueError("status callback heal ratio must be finite")
+        if not self.ok and self.heal_ratio_delta != 0:
+            raise ValueError("blocked status callback leaks a heal ratio")
         projections = tuple(self.task_graph_projections)
         if any(type(item) is not TaskGraphNodeProjection for item in projections):
             raise TypeError("status callback task graph projections are invalid")
@@ -592,6 +598,7 @@ class StatusCallbackSystem:
         node_results: list[ExecutionNodeResult] = []
         task_graph_projections: list[TaskGraphNodeProjection] = []
         staged_damage_ledger = _stage_damage_window_ledger(damage_window_ledger)
+        heal_ratio_delta = 0.0
         for callback in callbacks:
             result = self._execute_callback(
                 current_state,
@@ -603,6 +610,7 @@ class StatusCallbackSystem:
                 nested_ability_hooks,
             )
             current_state = result.after_state
+            heal_ratio_delta += result.heal_ratio_delta
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
@@ -647,6 +655,7 @@ class StatusCallbackSystem:
             errors=tuple(errors),
             node_results=tuple(node_results),
             task_graph_projections=tuple(task_graph_projections),
+            heal_ratio_delta=heal_ratio_delta,
         )
 
     def _execute_callback(
@@ -825,6 +834,7 @@ class StatusCallbackSystem:
             if task_graph_continuation is not None
             else TaskGraphExecutionContext(invocation_id, context_values)
         )
+        heal_ratios: list[float] = []
         execution = self.task_graph_executor.execute(
             state,
             graph,
@@ -835,6 +845,7 @@ class StatusCallbackSystem:
                 trigger_event,
                 damage_window_ledger,
                 nested_ability_hooks,
+                heal_ratios,
             ),
         )
         if not execution.ok:
@@ -868,6 +879,7 @@ class StatusCallbackSystem:
             events=(callback_event, *execution.events),
             node_results=execution.outcome.node_results,
             task_graph_projections=execution.node_projections,
+            heal_ratio_delta=sum(heal_ratios),
         )
 
     def _formal_status_hooks(
@@ -877,6 +889,7 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
+        heal_ratios: list[float],
     ) -> TaskGraphExecutionHooks:
         status_hooks = TaskGraphExecutionHooks(
             leaf=lambda request, state: self._execute_formal_status_leaf(
@@ -886,6 +899,7 @@ class StatusCallbackSystem:
                 detail,
                 trigger_event,
                 damage_window_ledger,
+                heal_ratios,
             ),
             condition=lambda request, state: self._evaluate_formal_status_condition(
                 request, state, callback, detail, trigger_event
@@ -1067,7 +1081,9 @@ class StatusCallbackSystem:
             )
         if task is None:
             return None, node, "status_callback_task_graph_formal_task_missing"
-        if task.coverage_status != "executable":
+        if task.coverage_status != "executable" and task.blocked_reason not in {
+            "equipment_task_family_non_gameplay", "source_proven_presentation_only",
+        }:
             return None, node, (
                 task.blocked_reason
                 or f"status_callback_task_not_executable:{task.coverage_status}"
@@ -1091,6 +1107,7 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
+        heal_ratios: list[float],
     ) -> TaskGraphLeafResult:
         task, node, reason = self._formal_status_task_for_request(request, callback)
         if task is None or node is None:
@@ -1155,6 +1172,7 @@ class StatusCallbackSystem:
                     blocked_reason="status_callback_task_graph_leaf_settlement_invalid",
                 )
             current = result.after_state
+            heal_ratios.append(result.heal_ratio_delta)
             mutations.extend(result.mutations)
             events.extend(result.events)
             rng_events.extend(result.rng_events)
@@ -1359,6 +1377,7 @@ class StatusCallbackSystem:
     ) -> StatusCallbackExecutionResult:
 
         current_state = state
+        heal_ratio_delta = 0.0
         mutations: list[Mutation] = []
         callback_record, callback_event = _status_callback_envelope(callback, detail, trigger_event)
         records: list[dict[str, JSONValue]] = [callback_record]
@@ -1375,6 +1394,7 @@ class StatusCallbackSystem:
         for task in roots:
             result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
             current_state = result.after_state
+            heal_ratio_delta += result.heal_ratio_delta
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
@@ -1409,6 +1429,7 @@ class StatusCallbackSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
+            heal_ratio_delta=heal_ratio_delta,
         )
 
     def _execute_task(
@@ -1811,6 +1832,7 @@ class StatusCallbackSystem:
             records: list[dict[str, JSONValue]] = []
             events: list[GameEvent] = []
             rng_events: list[RNGEvent] = []
+            heal_ratio_delta = 0.0
             for loop_index in range(loop_count):
                 scoped_event = _callback_scoped_event(
                     trigger_event,
@@ -1841,6 +1863,7 @@ class StatusCallbackSystem:
                         errors=(reason,),
                     )
                 current_state = result.after_state
+                heal_ratio_delta += result.heal_ratio_delta
                 mutations.extend(result.mutations)
                 records.extend(result.records)
                 events.extend(result.events)
@@ -1852,6 +1875,7 @@ class StatusCallbackSystem:
                 records=tuple(records),
                 events=tuple(events),
                 rng_events=tuple(rng_events),
+                heal_ratio_delta=heal_ratio_delta,
             )
         return self._execute_random_config_task(
             state,
@@ -1985,6 +2009,7 @@ class StatusCallbackSystem:
         container_metadata: dict[str, JSONValue],
     ) -> StatusCallbackExecutionResult:
         current_state = state
+        heal_ratio_delta = 0.0
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = [
             _task_blocked_record(
@@ -2019,6 +2044,7 @@ class StatusCallbackSystem:
                 reason = result.errors[0] if result.errors else "container_child_failed"
                 return StatusCallbackExecutionResult(False, state, records=(_task_blocked_record(callback, parent_task, detail, f"container_atomic_rollback:{reason}"),), errors=(reason,))
             current_state = result.after_state
+            heal_ratio_delta += result.heal_ratio_delta
             mutations.extend(result.mutations)
             records.extend(result.records)
             events.extend(result.events)
@@ -2030,6 +2056,7 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             rng_events=tuple(rng_events),
+            heal_ratio_delta=heal_ratio_delta,
         )
 
     def _execute_predicate_task(
@@ -2070,6 +2097,7 @@ class StatusCallbackSystem:
             )
         selected_child_ids = task.success_task_ids if result.result else task.failed_task_ids
         current_state = state
+        heal_ratio_delta = 0.0
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = [
             _task_blocked_record(
@@ -2118,6 +2146,7 @@ class StatusCallbackSystem:
                 damage_window_ledger,
             )
             current_state = child_result.after_state
+            heal_ratio_delta += child_result.heal_ratio_delta
             mutations.extend(child_result.mutations)
             rng_events.extend(child_result.rng_events)
             records.extend(child_result.records)
@@ -2147,6 +2176,7 @@ class StatusCallbackSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
+            heal_ratio_delta=heal_ratio_delta,
         )
 
     def _evaluate_callback_condition(
@@ -2476,6 +2506,7 @@ class StatusCallbackSystem:
         records: list[dict[str, JSONValue]] = []
         events: list[GameEvent] = []
         rng_events: list[RNGEvent] = list(resolution.rng_events)
+        heal_ratio_delta = 0.0
         for target_index, candidate_id in enumerate(resolution.target_ids):
             retarget_event = _callback_scoped_event(
                 _retarget_event(trigger_event, candidate_id),
@@ -2508,6 +2539,7 @@ class StatusCallbackSystem:
                     errors=(reason,),
                 )
             current_state = child_result.after_state
+            heal_ratio_delta += child_result.heal_ratio_delta
             mutations.extend(child_result.mutations)
             rng_events.extend(child_result.rng_events)
             records.extend(child_result.records)
@@ -2531,6 +2563,7 @@ class StatusCallbackSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
+            heal_ratio_delta=heal_ratio_delta,
         )
 
     def _execute_effect_task(
@@ -3251,6 +3284,7 @@ class StatusCallbackSystem:
             ok=True,
             after_state=state,
             records=(record,),
+            heal_ratio_delta=float(evaluation.value),
         )
 
     def _execute_damage_modifier_task(
@@ -3358,12 +3392,12 @@ class StatusCallbackSystem:
                 errors=("pre_heal_standard_payload_missing",),
             )
         alias = str(standard.get("target_alias") or "")
-        target_id = {
-            "Caster": context.caster_id,
-            "ModifierOwnerEntity": context.owner_id,
-            "ParamEntity": context.param_entity_id,
-            "CurrentActionTarget": context.current_action_target_id,
-        }.get(alias)
+        target_id = _resolve_target_alias(
+            alias, caster_id=context.caster_id, owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
+        )
         if not isinstance(target_id, str) or target_id not in context.state.units:
             return PreHealDispatchResult(
                 ok=False,
@@ -3463,13 +3497,7 @@ class StatusCallbackSystem:
                 records.extend(result.records)
                 events.extend(result.events)
                 rng_events.extend(result.rng_events)
-                for record in result.records:
-                    if record.get("record_type") != "heal_modifier":
-                        continue
-                    payload = record.get("payload")
-                    value = payload.get("heal_ratio") if isinstance(payload, dict) else None
-                    if isinstance(value, (int, float)) and not isinstance(value, bool):
-                        heal_ratio += float(value)
+                heal_ratio += result.heal_ratio_delta
         return PreHealDispatchResult(
             ok=True,
             after_state=current_state,
@@ -4049,7 +4077,6 @@ class StatusCallbackSystem:
                 "can_continue_after_lethal": False,
                 "numeric_evaluation": formula_result.primary_numeric_evaluation,
                 "dot_formula_result": formula_result.to_json(),
-                "dot_ledger": formula_result.dot_ledger,
                 "source_trace": trace,
             },
         )

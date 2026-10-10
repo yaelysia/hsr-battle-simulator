@@ -157,7 +157,7 @@ def _execute_dot_case(rules: RuleBook, case: dict[str, Any] | None, *, target_hp
         "hp_reduced": result.after_state.units["enemy:dot_target"].hp < state.units["enemy:dot_target"].hp,
         "no_direct_crit_ledger": payload.get("normal_multiplier_terms") == [] and payload.get("uses_direct_multiplier_ledger") is False,
         "metadata_has_formula_result": all(
-            bool(mutation.metadata.get("dot_formula_result")) and bool(mutation.metadata.get("dot_ledger"))
+            bool(mutation.metadata.get("dot_formula_result")) and bool(mutation.metadata.get("dot_formula_result", {}).get("dot_ledger"))
             for mutation in dot_mutations
         ),
     }
@@ -165,8 +165,8 @@ def _execute_dot_case(rules: RuleBook, case: dict[str, Any] | None, *, target_hp
         checks["by_defence_extra_applied"] = any(
             term.get("key") == "ExtraFormulaType.ByDefence"
             for mutation in dot_mutations
-            for term in mutation.metadata.get("dot_ledger", {}).get("applied_terms", [])
-            if isinstance(term, dict)
+            for term in mutation.metadata.get("dot_formula_result", {}).get("dot_ledger", {}).get("terms", [])
+            if isinstance(term, dict) and term.get("applied") is True
         )
     checks["ok"] = all(checks.values())
     return {
@@ -257,11 +257,11 @@ def _percentage_basis_formula_case(rules: RuleBook, case: dict[str, Any]) -> dic
             source_trace={"selection_mode": "formula_capability_not_mechanic_coverage"},
         )
     )
-    applied_terms = formula_result.dot_ledger.get("applied_terms", []) if isinstance(formula_result.dot_ledger, dict) else []
+    applied_terms = formula_result.dot_ledger.get("terms", []) if isinstance(formula_result.dot_ledger, dict) else []
     basis_terms = [
         term
         for term in applied_terms
-        if isinstance(term, dict) and term.get("key") == "DamagePercentage"
+        if isinstance(term, dict) and term.get("applied") is True and term.get("key") == "DamagePercentage"
     ]
     checks = {
         "formula_ok": formula_result.ok,

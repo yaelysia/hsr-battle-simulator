@@ -232,14 +232,16 @@ def binding_source_from_store(
     excluded_hashes: tuple[str, ...] = (),
     excluded_names: tuple[str, ...] = (),
     excluded_scopes: tuple[str, ...] = (),
+    visible_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, JSONValue]:
     normalized = normalized_dynamic_value_store(store)
     excluded = {item for item in excluded_status_instance_ids if item}
     excluded_hash_keys = {str(item) for item in excluded_hashes if str(item)}
     excluded_name_keys = {str(item) for item in excluded_names if str(item)}
     excluded_scope_keys = {str(item) for item in excluded_scopes if str(item)}
-    if excluded or excluded_hash_keys or excluded_name_keys or excluded_scope_keys:
+    if excluded or excluded_hash_keys or excluded_name_keys or excluded_scope_keys or visible_scope is not None:
         entries = normalized.get("entries")
+        # Ponytail: scope lookup scans stored slots; add a scope index if long battles make it costly.
         filtered_entries = {
             key: entry
             for key, entry in (entries.items() if isinstance(entries, dict) else ())
@@ -249,6 +251,7 @@ def binding_source_from_store(
                 and str(entry.get("hash") or "") not in excluded_hash_keys
                 and str(entry.get("name") or "") not in excluded_name_keys
                 and str(entry.get("scope") or "") not in excluded_scope_keys
+                and (visible_scope is None or _entry_visible(entry, visible_scope))
             )
         }
         normalized = _reindex({"entries": filtered_entries})
@@ -2045,7 +2048,7 @@ def _reindex(store: dict[str, JSONValue]) -> dict[str, JSONValue]:
         entries = {}
     by_hash: dict[str, list[str]] = {}
     by_name: dict[str, list[str]] = {}
-    for key, item in entries.items():
+    for key, item in sorted(entries.items()):
         if not isinstance(item, dict):
             continue
         hash_key = item.get("hash")

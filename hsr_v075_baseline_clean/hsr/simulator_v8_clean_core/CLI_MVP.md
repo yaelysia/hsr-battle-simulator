@@ -42,13 +42,57 @@ export PYTHONPATH=hsr_v075_baseline_clean
 
 回放会从原始配置重新出生、初始化时间线、提交全部操作，并逐步比较状态、事件、随机结果、mutation 和结算。规则指纹不同或记录被修改会使校验失败。归档也保存了入场过程的原生事件与 mutation。
 
-推荐 `.json.gz`：完整来源审计包含大量重复内容，压缩能显著减少磁盘占用，不省略任何事实。
-仍支持普通 `.json`。首次编译和完整回放可能需要几分钟，当前没有跨进程编译缓存。
+归档使用 `hsr_battle_archive_v2` 引用表与 `hsr_battle_session_v2` 会话结构：相同审计对象只保存
+一次，读取时恢复共享内容，回放仍逐项核对完整事实。支持 `.json.gz` 和普通 `.json`，推荐前者。
+场景与操作文件仍是普通 JSON。按用户决定不兼容旧归档；旧文件会明确报格式错误。
+首次编译和完整回放仍有成本，当前没有跨进程编译缓存。
 
 脚本执行使用 `run 场景路径 --commands 操作路径 --output 记录路径`。操作文件形如 `{"commands": [...]}`，
 每项填写 `actor_id`、`action_id`、`action_level`、`target_ids`，或使用查询返回的 `command_template`。
 可信动作元数据由 `DecisionSystem` 补齐；同一个系统校验目标、资源与时机。
 脚本结束时战斗尚未结束，退出码为 `3`；执行或校验失败为 `2`，完成为 `0`。
+
+## 希露瓦与娜塔莎的完整胜利路线（2026-10-09）
+
+新增两名 E0 / 1 级、无额外行迹与装备，对来源关卡 `200021050` 两只 8 级重子的示例。
+双方从零能量出生，21 次提交覆盖希露瓦普攻、战技、感电、天赋追加伤害和终结技。
+终结技仍分申请与队列执行；本例在敌人行动前插入，击败当前行动者后由调度器关闭其回合，
+另一个敌人在下一次行动前被感电击败，最终获胜。
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/serval_natasha_vs_antimatter.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/serval_natasha_vs_antimatter.commands.json \
+  --output /tmp/serval-battle.json.gz
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli replay /tmp/serval-battle.json.gz
+```
+
+战技对两个感电目标各结算一次天赋追加伤害；终结技把存活目标的感电从 2 回合延长到 4 回合。
+独立状态副本检查覆盖两个目标均存活的情况：感电剩余 1/2 回合分别延长至 3/4 回合，
+完整目标随机记录由已有任务图原子执行器提交；任一目标实例不合法时不提交部分延长。
+终态希露瓦 HP124.8/能量25、娜塔莎 HP158.4/能量90、SP2，两怪 HP0。
+目标筛选、持续时间、伤害与回放使用共享内核，正式逻辑不按角色名分支。
+此结果只验收上述构筑与路线，额外星魂/行迹、属性变化时的 DOT 快照刷新及重施仍需单独贯通。
+
+内部快照复用已有不可变子树，公开 JSON 导出保持深度独立；同一实际状态的十次内部快照构造
+微测从 3.34 秒降到约 0.003 秒。该数字不代表整场加速倍数，首次来源编译仍约 70–94 秒，
+完整审计导出与跨进程重复编译仍有成本。
+2026-10-10 根因修复：伤害 metadata 不再嵌入整包别名，DoT 账本通过键与索引关联单份求值证据，
+击败与击杀回能通过 HP mutation ID 关联致死来源。审计检查对应同次执行中的 HP 变化与来源，
+不会把引用作为战斗规则输入。会话、原子提交证据和来源审计复用不可变数据，默认导出仍独立。
+归档保留原子发布、禁止覆盖、重复键和非有限数拒绝；引用表还拒绝循环、悬空及无关对象。
+回放直接读取引用表并复用已比较的共享子树，删除旧的逐转换分帧与暂存读取器。
+旧结构的同路线基线为展开约3.27GB、压缩约86MB，生成9分23秒、文件回放13分14秒，
+峰值内存分别约3.6/3.9GiB；全文读取曾超过14GiB。上述数字仅用于修复前后的实测对比。
+
+新结构同路线实测：压缩363808字节（约364KB），JSON引用表3204883字节（约3.2MB），
+12225个不同对象。生成并保存2分27.96秒、峰值926924KiB（约0.88GiB）；独立文件回放
+2分36.48秒、峰值895936KiB（约0.85GiB），返回 `ok=true, step_count=43, errors=[]`。
+两次进程均未换页，胜利终态不变。归档为 `/tmp/hsr-serval-audit-v2-20261010.json.gz`，
+同名前缀的 `-run.log/-run.time` 与 `-replay.log/-replay.time` 保留完整退出码和成本证据。
+本批73项不同的定向检查通过；整场只生成一次、独立文件回放一次，没有叠加同场内存回放。
+当前残余成本包括来源编译与战斗执行，不能把归档读取加速当成所有性能问题已解决。
 
 ## 配置与当前边界
 
@@ -102,3 +146,82 @@ export PYTHONPATH=hsr_v075_baseline_clean
 `/tmp/hsr-mvp-pr8-shared-final-20260928-replay.log`。
 
 逐项机制、内容和验证边界见 [2026-09-28 已知缺口清单](docs/MVP_KNOWN_GAPS_2026-09-28.md)。
+
+## 第二个可运行波次（2026-09-30）
+
+`examples/cli/arlan_lv20_vs_mixed_antimatter.json` 使用阿兰 E0/20 级和来源关卡 `80010011` 的单波：
+`8011020`、`8011010` 各一只，双方仍由操作文件逐步选择。两种怪物的纯表现控制器
+共享单位私有 `TimeSlowSpeed` 键；来源审计现在只在两者都证明无战斗输出时排除它们，
+并继续检查控制器外部对该键及全局 modifier 名称的引用。
+
+```bash
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_lv20_vs_mixed_antimatter.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_lv20_vs_mixed_antimatter.commands.json \
+  --output /tmp/arlan-mixed-battle.json.gz
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli replay /tmp/arlan-mixed-battle.json.gz
+```
+
+2026-10-08 已依据 PR #8 的已确认研究修正 `LoseHPByRatio.Floor`：它是剩余 HP 下限，
+不是损血量的取整标志。阿兰该请求保留至少 1 HP；正常损血保留小数，已经低于下限时
+不会因此获得治疗。定向检查覆盖正常 HP、濒死 HP、1 HP 和缺少下限绑定时零提交。
+本示例的 2026-09-30 胜利数值仍是当时记录，不作为本次修复后的新结果。
+
+## 双人治疗胜利路线（2026-10-08）
+
+`examples/cli/arlan_natasha_vs_antimatter.json` 使用阿兰与娜塔莎 E0/Lv1、空装备、无额外行迹，
+对同一波两只 Lv2 重子。十二次提交包括四次阿兰战技、三次治疗、四次怪物攻击及一次同速选择。
+第二次治疗选择娜塔莎自身，让阿兰原有的持续治疗触发两次并到期。
+
+```bash
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_natasha_vs_antimatter.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_natasha_vs_antimatter.commands.json \
+  --output /tmp/arlan-natasha-battle.json.gz
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli replay /tmp/arlan-natasha-battle.json.gz
+```
+
+娜塔莎战技使用角色配置中的友方选择关系；镜头、特效及纯语音选择保留来源后排除。
+每次治疗消耗一点战技点，真实 `AddRatio=1` 请求在来源位置增加一次动作 `SPBase=30`，
+统一资源计划不提前重复发放。治疗者/受治疗者的瞬时加成通过类型化回调结果传递，不读审计记录。
+重复施放的动作动态值按所属单位和本次能力实例读取，不混入历史实例或其他单位的同键值。
+
+本路线实跑得到 `victory`：阿兰 HP `138.72`、能量 `110`，娜塔莎 HP `158.4`、能量 `90`，
+剩余战技点 `0`，两只敌人 HP 均为 `0`。持续治疗基数为 `0.048 × 158.4 + 48 = 55.6032`，
+在目标回合开始结算并按缺失 HP 截顶。
+
+新进程完整场景检查及 `verify_archive` 回放均已通过；原阿兰九次胜利路线也通过回归。
+同一真实条件/参数的低 HP 组件探查确认 30% HP 边界享有 25% 天赋加成：
+请求治疗 `101.36`，HP `48.96 → 150.32`；该探查使用状态副本，不改上述胜利脚本历史。
+
+这是静态面板的一条完整战斗路径；普攻与终结技的后续进展见下一节。治疗者属性改变时的
+快照采样、同目标覆盖重施的精确刷新语义仍保留缺口，当前结果不能证明这些行为。
+
+## 双人普攻与终结技胜利路线（2026-10-09）
+
+复用上述 E0/Lv1 场景，改用 `arlan_natasha_ultimate_vs_antimatter.commands.json`。
+十四次提交包含娜塔莎普攻、两次治疗战技，以及一次终结技的申请和队列执行；怪物攻击目标
+由外部操作指定。娜塔莎通过战技、普攻及受击自然获得 90 点能量，在阿兰回合插入终结技，
+自动治疗两名队友，随后阿兰继续行动并获胜。两条终结技命令表示申请与执行，不是施放两次。
+
+```bash
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_natasha_vs_antimatter.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_natasha_ultimate_vs_antimatter.commands.json \
+  --output /tmp/arlan-natasha-ultimate-battle.json.gz
+.venv/bin/python -m hsr.simulator_v8_clean_core.cli replay /tmp/arlan-natasha-ultimate-battle.json.gz
+```
+
+普攻命中后回能 20、增加一点战技点；终结技消耗 90 能量，执行后回能 5，不消耗战技点。
+本路线终态为 `victory`：阿兰 HP `163.2` / 能量 `110`，娜塔莎 HP `158.4` / 能量 `5`，
+战技点 `4`，两只敌人 HP 均为 `0`。Lv1 群疗基数为 `0.092 × 158.4 + 92 = 106.5728`；
+各目标分别进入原有治疗回调与结算链，按各自缺失 HP 截顶。
+
+新进程完整场景检查通过，独立 CLI replay 为 `ok=true / step_count=29 / errors=[]`。
+同一正式终结技的状态副本探查确认：30% HP 的目标请求治疗 `133.216`，31% HP 的目标
+请求 `106.5728`，分别结算天赋加成；探查不改上述胜利脚本历史。
+
+动作准入使用正式构筑条件，排除未激活星魂/行迹分支；条件事实不足或分支实际激活时仍保留
+真实阻断。投射物当前只支持正式来源中单个已选目标、忽略碰撞且等待命中的路径，保留并执行
+命中子任务；不建立动画飞行时间轴。异步在途结果、碰撞分支、额外行迹/星魂及完整快照语义
+仍需随相应内容接入，不能将这条 E0 路线扩称为完整角色支持。

@@ -349,6 +349,8 @@ def validate(tbgd_root: Path) -> dict[str, Any]:
         _detail(cases["leaf"].callback),
         None,
         None,
+        None,
+        [],
     ).graph
     nested = nested_hook(None, _state()) if nested_hook is not None else None
 

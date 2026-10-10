@@ -5,11 +5,12 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
+from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.expression_ir import DynamicValueOperationIR, is_typed_numeric_expression
-from ..rules.ir import EffectIR
+from ..rules.ir import ActionDefinitionIR, EffectIR
 from ..rules.rulebook import RuleBook
 from ..unit_presence import plan_unit_departure_start
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
@@ -75,6 +76,9 @@ class EffectExecutionContext:
     admitted_action_target_fact: AdmittedActionTargetFact | None = None
     expected_action_window_scope: ActionWindowExpectedScope | None = None
     shield_exhaustion_fact: ShieldExhaustionFact | None = None
+    action_definition: ActionDefinitionIR | None = None
+    heal_ratio_delta: float = 0.0
+    ability_instance_id: str = ""
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -99,6 +103,7 @@ class EffectRegistry:
             self.register("RemoveModifier", self._execute_remove_modifier)
             self.register("RemoveSelfModifier", self._execute_remove_modifier)
             self.register("DispelStatus", self._execute_dispel_status)
+            self.register("SetModifierValueByBehaviorFlag", self._execute_modifier_lifetime)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
@@ -208,6 +213,15 @@ class EffectRegistry:
             return "blocked"
         if effect.opcode == "DispelStatus" and not _dispel_status_payload_is_executable(effect):
             return "blocked"
+        if effect.opcode == "SetModifierValueByBehaviorFlag":
+            standard = effect.payload.get("standard")
+            flags = standard.get("behavior_flags") if isinstance(standard, dict) else None
+            if not (isinstance(standard, dict) and not standard.get("blocked_reason")
+                    and standard.get("operation") == "extend_modifier_lifetime"
+                    and standard.get("target_alias") == "ParamEntity" and _typed_target_reference_admitted(standard)
+                    and isinstance(flags, list) and len(flags) == 1 and isinstance(flags[0], str) and bool(flags[0])
+                    and _runtime_numeric_payload_is_executable(standard.get("amount"))):
+                return "blocked"
         if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew", "ModifyTeamBoostPoint", "ModifyTeamBoostPointMax"} and not _fixed_payload_is_executable(effect):
             return "blocked"
         if effect.opcode == "RemoveShield" and not _remove_shield_payload_is_executable(effect):
@@ -346,7 +360,104 @@ class EffectRegistry:
             unsupported=result.unsupported,
         )
 
+    def _execute_modifier_lifetime(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        if self.status_system is None or self.targets is None or context is None:
+            return _unsupported_effect(effect, "modifier_lifetime_context_missing")
+        standard = effect.payload["standard"]
+        expression, reason = self.status_system.rules.target_expression_resolution(standard["target_expression_id"])
+        if expression is None or expression.alias != standard["target_alias"]:
+            return _unsupported_effect(effect, reason or "modifier_lifetime_target_inconsistent")
+        resolution = self.targets.resolve_target_expression(
+            context.state, expression,
+            context=TargetEvaluationContext(
+                caster_id=context.caster_id, effect_owner_id=context.owner_id,
+                parameter_entity_ids=(context.target_resolution.selected if context.target_resolution else
+                                      ((context.param_entity_id,) if context.param_entity_id else ())),
+                selected_target_ids=(context.target_resolution.selected if context.target_resolution else ()),
+                current_target_id=context.current_action_target_id,
+                turn_owner_id=committed_turn_owner_id(context.state),
+                admitted_action_target_fact=context.admitted_action_target_fact,
+                expected_action_window_scope=context.expected_action_window_scope,
+            ), target_resolution=context.target_resolution,
+        )
+        if not resolution.resolved:
+            return _unsupported_effect(effect, resolution.blocked_reason)
+        mutations, events, records = [], [], []
+        for target_id in resolution.target_ids:
+            target_context = replace(context, param_entity_id=target_id, current_action_target_id=target_id)
+            evaluation = _evaluate_numeric(effect, target_context, standard["amount"])
+            if not evaluation.ok or evaluation.value is None:
+                return _unsupported_effect(effect, "modifier_lifetime_amount_not_bound")
+            result = self.status_system.extend_modifier_lifetimes(
+                context.state, target_id, tuple(standard["behavior_flags"]), evaluation.value,
+                metadata=_effect_metadata(effect, target_context, standard, evaluation.value, evaluation),
+            )
+            if result.unsupported:
+                return EffectResult(unsupported=result.unsupported, records=result.records)
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            records.extend(result.records)
+        return EffectResult(events=tuple(events), mutations=tuple(mutations), records=tuple(records),
+                            rng_events=resolution.rng_events)
+
     def _execute_heal(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict) or standard.get("target_alias") not in _GROUP_HEAL_TARGET_ALIASES:
+            return self._execute_single_heal(effect, context)
+        if context is None or self.targets is None or self.status_system is None:
+            return _unsupported_effect(effect, "group_heal_requires_rulebook_target_context")
+        expression = self.status_system.rules.target_expression(str(standard.get("target_expression_id") or ""))
+        if expression is None or expression.alias != standard["target_alias"]:
+            return _unsupported_effect(effect, "group_heal_target_expression_missing_or_inconsistent")
+        resolution = self.targets.resolve_target_expression(
+            context.state, expression,
+            context=TargetEvaluationContext(
+                caster_id=context.caster_id, effect_owner_id=context.owner_id,
+                parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+                selected_target_ids=(context.target_resolution.selected if context.target_resolution else ()),
+                current_target_id=context.current_action_target_id,
+                turn_owner_id=committed_turn_owner_id(context.state),
+                admitted_action_target_fact=context.admitted_action_target_fact,
+                expected_action_window_scope=context.expected_action_window_scope,
+            ),
+            target_resolution=context.target_resolution,
+            condition_event_payload=context.event_payload,
+            dynamic_values=context.dynamic_values, binding_sources=_binding_sources(context),
+        )
+        if not resolution.resolved or not resolution.target_ids:
+            return _unsupported_effect(effect, resolution.blocked_reason or "group_heal_targets_missing")
+        current = context.state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events = list(resolution.rng_events)
+        records: list[dict[str, JSONValue]] = []
+        node_results: list[ExecutionNodeResult] = []
+        dispatched: set[str] = set()
+        for target_id in resolution.target_ids:
+            target = TargetResolution(
+                selected=(target_id,), primary=target_id, impact_group=(target_id,),
+                reason="resolved", metadata={"group_target_resolution": resolution.to_json()},
+            )
+            result = self._execute_single_heal(effect, replace(
+                context, state=current, target_resolution=target,
+                param_entity_id=target_id, current_action_target_id=target_id,
+            ))
+            if result.unsupported:
+                return EffectResult(unsupported=result.unsupported, records=result.records, node_results=result.node_results)
+            current = MutationReducer().apply_all(current, result.mutations)
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
+            records.extend(result.records)
+            node_results.extend(result.node_results)
+            dispatched.update(result.dispatched_event_ids)
+        return EffectResult(
+            events=tuple(events), mutations=tuple(mutations), rng_events=tuple(rng_events),
+            records=tuple(records), node_results=tuple(node_results),
+            dispatched_event_ids=frozenset(dispatched),
+        )
+
+    def _execute_single_heal(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         if context is None:
             return _execute_fixed_unit_delta(effect, context, kind="heal")
         payload = context.event_payload or {}
@@ -365,10 +476,10 @@ class EffectRegistry:
         heal_context = replace(
             context,
             state=pre.after_state,
+            heal_ratio_delta=pre.heal_ratio,
             event_payload={
                 **payload,
                 "pre_heal_dispatch_active": True,
-                "heal_modifier_ratio": pre.heal_ratio,
             },
         )
         healed = _execute_fixed_unit_delta(effect, heal_context, kind="heal")
@@ -499,6 +610,17 @@ def _typed_target_reference_admitted(standard: dict[str, JSONValue]) -> bool:
     )
 
 
+_FIXED_DELTA_TARGET_ALIASES = SUPPORTED_EFFECT_TARGET_ALIASES | {"AbilityTargetEntity"}
+_GROUP_HEAL_TARGET_ALIASES = {"AllTeamMember", "AllLightTeam"}
+
+
+def _fixed_delta_target_admitted(standard: dict[str, JSONValue]) -> bool:
+    return standard.get("target_alias") in _FIXED_DELTA_TARGET_ALIASES or (
+        standard.get("kind") == "heal" and standard.get("target_alias") in _GROUP_HEAL_TARGET_ALIASES
+        and _typed_target_reference_admitted(standard)
+    )
+
+
 def _fixed_payload_is_executable(effect: EffectIR) -> bool:
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
@@ -516,7 +638,7 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
         if not _runtime_numeric_payload_is_executable(standard["max_capacity"]):
             return False
     team_resource = resource in {"skill_points", "max_skill_points"}
-    if not team_resource and standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
+    if not team_resource and not _fixed_delta_target_admitted(standard):
         return False
     if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
         return False
@@ -540,6 +662,10 @@ def _hp_loss_ratio_payload_is_executable(effect: EffectIR) -> bool:
         standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
         and standard.get("ratio_type") in {"MaxHP", "CurrentHP"}
         and _runtime_numeric_payload_is_executable(standard.get("ratio"))
+        and (
+            "minimum_hp" not in standard
+            or _runtime_numeric_payload_is_executable(standard["minimum_hp"])
+        )
     )
 
 
@@ -687,7 +813,7 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
         elif not _typed_target_reference_admitted(standard):
             return "target_expression_id_missing_or_not_executable"
     if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"}:
-        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
+        if not _fixed_delta_target_admitted(standard):
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
         if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
             return "fixed_or_bound_numeric_required"
@@ -700,6 +826,8 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
             return f"hp_loss_ratio_type_not_supported:{standard.get('ratio_type')}"
         if not _runtime_numeric_payload_is_executable(standard.get("ratio")):
             return "fixed_or_bound_ratio_required"
+        if "minimum_hp" in standard and not _runtime_numeric_payload_is_executable(standard["minimum_hp"]):
+            return "fixed_or_bound_hp_loss_minimum_required"
         if "dynamic_result_name" in standard and (
             not isinstance(standard.get("dynamic_result_name"), str)
             or not standard.get("dynamic_result_name")
@@ -756,6 +884,7 @@ def _execute_fixed_unit_delta(
             owner_id=context.owner_id,
             param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
         )
     )
     if target_id is None:
@@ -770,7 +899,10 @@ def _execute_fixed_unit_delta(
             f"unsupported_formula:{amount_result.blocked_reason or 'numeric_evaluation_failed'}",
             {"numeric_evaluation": amount_result.to_json(), "standard": standard},
         )
-    amount, formula_details, formula_reason = _resolve_formula_amount(kind, context.state, standard, target_id, context.caster_id, amount_result.value)
+    amount, formula_details, formula_reason = _resolve_formula_amount(
+        kind, context.state, standard, target_id, context.caster_id, amount_result.value,
+        action_definition=context.action_definition,
+    )
     if formula_reason:
         return _unsupported_effect(
             effect,
@@ -818,16 +950,15 @@ def _execute_fixed_unit_delta(
             return _unsupported_effect(effect, "heal caster is not in state")
         outgoing = effective_unit_stat(caster, "outgoing_healing_ratio")
         incoming = effective_unit_stat(unit, "incoming_healing_ratio")
-        transient_ratio_raw = (context.event_payload or {}).get(
-            "heal_modifier_ratio",
-            0.0,
-        )
+        transient_ratio_raw = context.heal_ratio_delta
         transient_ratio = (
             float(transient_ratio_raw)
             if isinstance(transient_ratio_raw, (int, float))
             and not isinstance(transient_ratio_raw, bool)
-            else 0.0
+            else None
         )
+        if transient_ratio is None or not math.isfinite(transient_ratio):
+            return _unsupported_effect(effect, "heal_ratio_delta_invalid")
         healing_multiplier = max(
             0.0,
             1.0 + outgoing.value + incoming.value + transient_ratio,
@@ -1139,10 +1270,21 @@ def _execute_hp_loss_ratio(
     target = context.state.units[target_id]
     base_hp = target.max_hp if ratio_type == "MaxHP" else target.hp
     amount = base_hp * ratio
-    rounding_policy = "none"
-    if standard.get("floor") is True:
-        amount = float(math.floor(amount))
-        rounding_policy = "floor_from_tbgd_flag"
+    requested_amount = amount
+    minimum_hp = None
+    minimum_hp_evaluation = None
+    if "minimum_hp" in standard:
+        floor_result = _evaluate_numeric(effect, context, standard["minimum_hp"])
+        if not floor_result.ok or floor_result.value is None or floor_result.value < 0:
+            return _unsupported_effect(
+                effect,
+                f"unsupported_formula:{floor_result.blocked_reason or 'hp_loss_minimum_invalid'}",
+                {"minimum_hp_evaluation": floor_result.to_json(), "standard": standard},
+            )
+        minimum_hp = floor_result.value
+        minimum_hp_evaluation = floor_result.to_json()
+        # PR8: Floor bounds remaining HP; it does not round the loss to an integer.
+        amount = min(amount, max(0.0, target.hp - minimum_hp))
     effect_source = effect.source.to_json()
     packet = DamagePacket(
         attacker_id=context.caster_id,
@@ -1179,7 +1321,10 @@ def _execute_hp_loss_ratio(
             "ratio": ratio,
             "ratio_type": str(ratio_type),
             "base_hp": base_hp,
-            "rounding_policy": rounding_policy,
+            "rounding_policy": "none",
+            "requested_hp_loss": requested_amount,
+            "minimum_hp": minimum_hp,
+            "minimum_hp_evaluation": minimum_hp_evaluation,
             "damage_formula_family": "hp_loss",
         },
     )
@@ -2016,7 +2161,7 @@ def _execute_dynamic_value_operation(
         owner_id=context.owner_id or context.caster_id,
         param_entity_id=context.param_entity_id or "",
         current_action_target_id=context.current_action_target_id or "",
-        ability_instance_id=str(payload.get("ability_instance_id") or ""),
+        ability_instance_id=context.ability_instance_id or str(payload.get("ability_instance_id") or ""),
         status_instance_id=status_instance_id,
         event_id=str(payload.get("event_id") or ""),
         operation_event_id=str(payload.get("operation_event_id") or ""),
@@ -2596,6 +2741,10 @@ def _binding_sources(context: EffectExecutionContext) -> tuple[dict[str, JSONVal
         excluded_hashes=shadowed_hashes,
         excluded_names=shadowed_names,
         excluded_scopes=("status",) if not context.include_ambient_status_bindings else (),
+        visible_scope=(
+            {"target_id": context.caster_id, "ability_instance_id": context.ability_instance_id}
+            if context.ability_instance_id else None
+        ),
     )
     return (*explicit_sources, store_source)
 
@@ -2692,6 +2841,8 @@ def _resolve_formula_amount(
     target_id: str | None,
     caster_id: str,
     raw_value: float,
+    *,
+    action_definition: ActionDefinitionIR | None = None,
 ) -> tuple[float, dict[str, JSONValue], str]:
     formula_type = standard.get("formula_type")
     formula_base = str(standard.get("formula_base") or "flat")
@@ -2705,6 +2856,15 @@ def _resolve_formula_amount(
         scale_basis = str(standard.get("scale_basis") or "flat")
         details["operation"] = str(standard.get("operation") or "add")
         details["scale_basis"] = scale_basis
+        if scale_basis == "action_sp_base":
+            if type(action_definition) is not ActionDefinitionIR:
+                return 0.0, details, "unsupported_formula:resource_action_context_missing"
+            base = action_definition.sp_base
+            if type(base) not in (int, float) or not math.isfinite(base) or base < 0:
+                return 0.0, details, "unsupported_formula:resource_action_sp_base_invalid"
+            details["base_value"] = base
+            details["definition_id"] = action_definition.definition_id
+            return base * raw_value, details, ""
         if scale_basis == "max_skill_points":
             details["base_value"] = state.max_skill_points
             return state.max_skill_points * raw_value, details, ""
@@ -2756,6 +2916,7 @@ def _resolve_target_alias(
     owner_id: str | None,
     param_entity_id: str | None,
     current_action_target_id: str | None,
+    target_resolution: TargetResolution | None = None,
 ) -> str | None:
     if alias == "Caster":
         return caster_id
@@ -2765,6 +2926,9 @@ def _resolve_target_alias(
         return param_entity_id
     if alias == "CurrentActionTarget":
         return current_action_target_id
+    if alias == "AbilityTargetEntity" or (isinstance(alias, str) and alias in _GROUP_HEAL_TARGET_ALIASES):
+        selected = target_resolution.selected if target_resolution is not None else ()
+        return selected[0] if len(selected) == 1 else None
     if alias == "LevelEntity":
         return "level:global"
     return None

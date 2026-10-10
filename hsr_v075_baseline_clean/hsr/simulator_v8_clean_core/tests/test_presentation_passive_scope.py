@@ -14,6 +14,7 @@ from hsr.simulator_v8_clean_core.tbgd.monster_cards import (
 
 ROOT = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
 ABILITY = "Config/ConfigAbility/Monster/Monster_AML_Minion01_00_Ability.json"
+SIBLING = "Config/ConfigAbility/Monster/Monster_AML_Minion01_01_Ability.json"
 COMMON = "Config/ConfigAbility/Monster/Monster_Common_Ability.json"
 AVATAR_COMMON = "Config/ConfigAbility/Avatar/Avatar_Common_Ability.json"
 ARLAN = "Config/ConfigAbility/Avatar/Avatar_Arlan_00_Ability.json"
@@ -31,9 +32,9 @@ def _copy_sources(tmp_path: Path) -> None:
         copy2(ROOT / relative, target)
 
 
-def _slot(name: str):
+def _slot(name: str, monster_id: str = "8011010"):
     result = build_monster_card_ir(
-        ROOT, max_records_per_table=None, monster_ids=frozenset({"8011010"})
+        ROOT, max_records_per_table=None, monster_ids=frozenset({monster_id})
     )
     return next(
         slot
@@ -115,3 +116,21 @@ def test_common_stance_break_passive_is_never_classified_as_presentation(tmp_pat
     assert result.mechanism_kind == "monster_ability_list_passive"
     assert result.coverage_status == "lowered"
     assert not result.blocked_reason
+
+
+def test_two_visual_controllers_can_share_local_key_but_not_escape_it(tmp_path):
+    _copy_sources(tmp_path)
+    copy2(ROOT / SIBLING, tmp_path / SIBLING)
+    slots = [
+        _slot(VISUAL),
+        _slot("Monster_AML_Minion01_01_PassiveSkillInitiate", "8011020"),
+    ]
+    sources = SOURCES | {SIBLING}
+
+    admitted = exclude_presentation_passives(slots, tmp_path, sources)
+    assert all(slot.mechanism_kind == "presentation_only" for slot in admitted)
+
+    external = "Config/PresentationScopeEscape.json"
+    _write_json(tmp_path, external, {"external_reference": "TimeSlowSpeed"})
+    blocked = exclude_presentation_passives(slots, tmp_path, sources | {external})
+    assert all(slot.mechanism_kind == "monster_ability_list_passive" for slot in blocked)

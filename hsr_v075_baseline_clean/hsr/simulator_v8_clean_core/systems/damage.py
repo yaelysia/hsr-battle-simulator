@@ -313,6 +313,8 @@ class DamageSystem:
         *,
         window_ledger: DamageWindowLedger | None = None,
     ) -> DamageApplicationResult:
+        if "packet_fields" in packet.metadata:
+            return _damage_error(packet, "reserved_packet_metadata_field:packet_fields")
         dead_target_continuation = False
         if window_ledger is not None:
             admitted, reason, dead_target_continuation = window_ledger.admit_packet(state, packet)
@@ -401,7 +403,7 @@ class DamageSystem:
             mutation = ResourceSystem().gain_kill_energy(
                 state, owner.unit_id, rule, defeated_event_payload=defeat.payload,
                 source="damage_system.kill_energy", metadata={
-                    **hp_mutation.metadata, "source_frame": frame.to_json(),
+                    "source_frame": frame.to_json(), "source_trace": packet.source_trace,
                     "target_id": owner.unit_id, "defeated_target_id": packet.target_id,
                     "hp_mutation_id": hp_mutation.stable_id(),
                     "lifecycle_mutation_id": defeat.payload.get("lifecycle_mutation_id"),
@@ -490,9 +492,7 @@ class DamageSystem:
         pipeline_json = pipeline.to_json()
         packet_json = packet.to_json()
         metadata = {
-            **packet_json,
-            **packet.metadata,
-            "packet_metadata": packet.metadata,
+            **_packet_mutation_metadata(packet, packet_json),
             "final_damage": final_damage,
             "producer_base_amount": pipeline.producer_base_amount,
             "damage_pipeline": pipeline_json,
@@ -632,9 +632,7 @@ class DamageSystem:
         pipeline_json = _direct_pipeline_json(formula_json, state.event_index)
         packet_json = packet.to_json()
         mutation_metadata = {
-            **packet_json,
-            **packet.metadata,
-            "packet_metadata": packet.metadata,
+            **_packet_mutation_metadata(packet, packet_json),
             "formula_result": formula_json,
             "damage_pipeline": pipeline_json,
             "modifier_ledger": formula_json["modifier_ledger"],
@@ -788,9 +786,7 @@ class DamageSystem:
         pipeline_json = pipeline.to_json()
         packet_json = packet.to_json()
         metadata = {
-            **packet_json,
-            **packet.metadata,
-            "packet_metadata": packet.metadata,
+            **_packet_mutation_metadata(packet, packet_json),
             "final_damage": final_damage,
             "producer_base_amount": pipeline.producer_base_amount,
             "damage_pipeline": pipeline_json,
@@ -912,9 +908,7 @@ class DamageSystem:
         pipeline_json = pipeline.to_json()
         packet_json = packet.to_json()
         metadata = {
-            **packet_json,
-            **packet.metadata,
-            "packet_metadata": packet.metadata,
+            **_packet_mutation_metadata(packet, packet_json),
             "final_damage": final_damage,
             "producer_base_amount": pipeline.producer_base_amount,
             "damage_pipeline": pipeline_json,
@@ -1026,9 +1020,7 @@ class DamageSystem:
         packet_json = packet.to_json()
         pipeline_json = pipeline.to_json()
         metadata = {
-            **packet_json,
-            **packet.metadata,
-            "packet_metadata": packet.metadata,
+            **_packet_mutation_metadata(packet, packet_json),
             "producer_base_amount": pipeline.producer_base_amount,
             "final_damage": pipeline.final_amount,
             "damage_pipeline": pipeline_json,
@@ -1636,6 +1628,12 @@ def _damage_defeat_event(
     )
 
 
+def _packet_mutation_metadata(packet: DamagePacket, packet_json: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    # Keep producer fields separate from custom metadata without nesting the entire packet.
+    fields = {key: value for key, value in packet_json.items() if key != "metadata"}
+    return {**fields, **packet.metadata, "packet_fields": fields}
+
+
 def _defeat_lifecycle_artifacts(
     state: BattleState,
     packet: DamagePacket,
@@ -1662,11 +1660,9 @@ def _defeat_lifecycle_artifacts(
         "source_frame": source_frame.to_json(),
         "source_trace": packet.source_trace,
     }
-    packet_json = packet.to_json()
     damage_metadata: dict[str, JSONValue] = {
-        **hp_mutation.metadata,
         "hp_mutation_id": hp_mutation.stable_id(),
-        "damage_packet": packet_json,
+        "source_frame": source_frame.to_json(),
         "defeat_record": defeat_record,
     }
     lifecycle = UnitLifecycleSystem()

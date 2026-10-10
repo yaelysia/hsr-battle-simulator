@@ -1,0 +1,81 @@
+{
+  "scenario_id": "mvp:arlan-natasha-e0-lv1-vs-antimatter-minions",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "mvp:arlan:e0-lv1-p0",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:arlan:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "ae972022db22b6292c79c40b699e0a66e59d1debcfb18ee0e10fb8a03c54d5f2"
+        },
+        "input_fingerprint": "327adf6d7ab12d1e5b94e5c55c724d8f19267e2190533a39e69bc3d384e964b5"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "mvp:natasha:e0-lv1-p0",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "81730c7c69d626d09427e3013f3512becf1be23fad0b52a637858e7544a00b76"
+        },
+        "input_fingerprint": "a95f2639de59620442df1fdd230d7a1a9ea23154c5275d9d2d328843e00161f5"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "200020050",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "MVP only: reuse the StageConfig wave for stage_ref 200020050; this is not a complete Mainline stage simulation.",
+      "unsupported_global_stage_ability": "StageAbility_Elation from StageCommonTemplate is outside this scenario's supported scope."
+    }
+  }
+}

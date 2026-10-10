@@ -53,6 +53,7 @@ from ..systems.action_event_contract import (
     damage_listener_window_event as _damage_listener_window_event,
 )
 from ..systems.action_preflight import (
+    action_ability_grants_base_energy,
     action_binding_blocked_reason,
     action_event_blocked_reason,
     action_skill_point_delta,
@@ -2601,6 +2602,8 @@ def _action_resource_plan_with_value_resolution(
         blocked_reasons.append("ultimate_energy_cost_invalid")
     skill_point_delta = action_skill_point_delta(values.get("bp_need", 0.0), values.get("bp_add", 0.0))
     energy_gain = values.get("sp_base", 0.0)
+    if action_ability_grants_base_energy(resolver.rules, action_definition):
+        energy_gain = 0.0
     if queue_resource_policy.get("ignore_skill_point_delta") is True:
         skill_point_delta = 0
     if queue_resource_policy.get("ignore_energy_gain") is True:

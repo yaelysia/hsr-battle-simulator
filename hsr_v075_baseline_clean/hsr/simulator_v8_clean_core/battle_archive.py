@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import json
 import gzip
+import io
 import math
 import os
+from contextlib import nullcontext
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import Any, Callable
 
+from .archive_json import decode_archive_json, encode_archive_json, validate_json_graph
 from .builds.manifest import canonical_ir_fingerprint
 from .rules.rulebook import RuleBook
 from .session import BattleSession, SESSION_SCHEMA, command_from_json
@@ -30,26 +33,24 @@ _ARCHIVE_FIELDS = frozenset(
 
 
 def read_archive(path: str | Path) -> dict[str, Any]:
-    """Read one archive while rejecting ambiguous or non-standard JSON."""
+    """Read one v2 archive without expanding shared evidence."""
+    return decode_archive_json(read_json_object(path))
+
+
+def read_json_object(path: str | Path) -> dict[str, Any]:
+    """Read a strict JSON object used by scenarios, scripts and archive envelopes."""
     target = Path(path)
+    opener = gzip.open if target.suffix == ".gz" else open
     try:
-        if target.suffix == ".gz":
-            text = gzip.decompress(target.read_bytes()).decode("utf-8")
-        else:
-            text = target.read_text(encoding="utf-8")
+        with opener(target, "rt", encoding="utf-8") as stream:
+            value = json.load(stream, object_pairs_hook=_unique_object,
+                              parse_constant=_reject_json_constant, parse_float=_finite_float)
     except UnicodeDecodeError as exc:
         raise ValueError("archive is not valid UTF-8") from exc
-    try:
-        value = json.loads(
-            text,
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_json_constant,
-            parse_float=_finite_float,
-        )
     except json.JSONDecodeError as exc:
         raise ValueError(f"archive JSON is invalid: {exc.msg}") from exc
     if not isinstance(value, dict):
-        raise ValueError("archive root must be an object")
+        raise ValueError("JSON root must be an object")
     return value
 
 
@@ -63,19 +64,28 @@ def write_archive(path: str | Path, data: dict[str, Any]) -> Path:
     if not target.parent.is_dir():
         raise FileNotFoundError(f"archive directory does not exist: {target.parent}")
     try:
-        payload = _canonical_json(data).encode("utf-8") + b"\n"
-        if target.suffix == ".gz":
-            payload = gzip.compress(payload, compresslevel=6, mtime=0)
+        encoded_data = encode_archive_json(data)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"archive data is not strict JSON: {exc}") from exc
-
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
     )
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
+            encoded = (gzip.GzipFile(filename="", fileobj=stream, mode="wb", compresslevel=6, mtime=0)
+                       if target.suffix == ".gz" else nullcontext(stream))
+            with encoded as output:
+                text = io.TextIOWrapper(output, encoding="utf-8", newline="\n")
+                try:
+                    json.dump(encoded_data, text, allow_nan=False, ensure_ascii=False,
+                              separators=(",", ":"), sort_keys=True)
+                    text.write("\n")
+                    text.flush()
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"archive data is not strict JSON: {exc}") from exc
+                finally:
+                    text.detach()
             stream.flush()
             os.fsync(stream.fileno())
         try:
@@ -93,6 +103,17 @@ def write_archive(path: str | Path, data: dict[str, Any]) -> Path:
 
 def verify_archive(archive: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
     """Rebuild and replay a session archive through the DecisionSystem boundary."""
+    return _verify_archive(archive, rules)
+
+
+def replay_archive(path: str | Path, rules_factory: Callable[[dict[str, Any]], RuleBook]) -> dict[str, Any]:
+    """Read shared audit evidence and replay through the formal session boundary."""
+    archive = read_archive(path)
+    _validate_archive_shape(archive)
+    return _verify_archive(archive, rules_factory(archive["scenario"]))
+
+
+def _verify_archive(archive: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
     if not isinstance(archive, dict):
         return _failed(0, "archive_root_invalid")
     if archive.get("schema_version") != SESSION_SCHEMA:
@@ -121,17 +142,23 @@ def verify_archive(archive: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
         return _failed(0, "initialization_mismatch")
 
     step_count = 0
-    for index, operation in enumerate(archive["operations"]):
-        try:
-            _replay_operation(session, operation)
-        except (TypeError, ValueError, KeyError) as exc:
-            return _failed(step_count, f"operation[{index}]_invalid:{type(exc).__name__}:{exc}")
-        actual = session.operations[-1]
-        if not _json_equal(actual, operation):
-            return _failed(step_count, f"operation[{index}]_mismatch")
-        step_count += 1
+    try:
+        for operation in archive["operations"]:
+            index = step_count
+            try:
+                _replay_operation(session, operation)
+            except (TypeError, ValueError, KeyError) as exc:
+                return _failed(step_count, f"operation[{index}]_invalid:{type(exc).__name__}:{exc}")
+            actual = session.operations[-1]
+            if not _json_equal(actual, operation):
+                return _failed(step_count, f"operation[{index}]_mismatch")
+            step_count += 1
+            session.operations.clear()
+            del actual, operation
+    except (TypeError, ValueError, KeyError) as exc:
+        return _failed(step_count, f"archive_invalid:{exc}")
 
-    if not _json_equal(session.state.snapshot().to_json(), archive["final_snapshot"]):
+    if not _json_equal(session.state.snapshot().to_json(detach=False), archive["final_snapshot"]):
         return _failed(step_count, "final_snapshot_mismatch")
     if session.outcome != archive["outcome"]:
         return _failed(step_count, "outcome_mismatch")
@@ -183,7 +210,7 @@ def _validate_archive_shape(archive: dict[str, Any]) -> None:
         raise TypeError("archive.operations must be an array")
     if not isinstance(archive["outcome"], str):
         raise TypeError("archive.outcome must be a string")
-    _canonical_json(archive)
+    validate_json_graph(archive)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -217,7 +244,30 @@ def _canonical_json(value: Any) -> str:
 
 
 def _json_equal(left: Any, right: Any) -> bool:
-    return _canonical_json(left) == _canonical_json(right)
+    compared: set[tuple[int, int]] = set()
+
+    def equal(a: Any, b: Any) -> bool:
+        if a is b:
+            return True
+        pair = (id(a), id(b))
+        if pair in compared:
+            return True
+        if isinstance(a, dict) and isinstance(b, dict):
+            if all(isinstance(key, str) for key in a) and all(isinstance(key, str) for key in b):
+                result = a.keys() == b.keys() and all(equal(a[key], b[key]) for key in a)
+            else:
+                result = _canonical_json(a) == _canonical_json(b)
+        elif isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+            result = len(a) == len(b) and all(equal(x, y) for x, y in zip(a, b))
+        elif type(a) is type(b) and type(a) in (str, int, bool, type(None)):
+            return a == b
+        else:
+            return _canonical_json(a) == _canonical_json(b)
+        if result:
+            compared.add(pair)
+        return result
+
+    return equal(left, right)
 
 
 def _failed(step_count: int, error: str) -> dict[str, Any]:

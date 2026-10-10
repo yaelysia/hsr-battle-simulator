@@ -46,6 +46,7 @@ def finalize_selected_execution_graph(
     selected_graph_complete = bool(node_results) and all(item.complete for item in node_results)
     planned_evidence = [_planned_mutation_evidence(mutation) for mutation in planned_mutations]
     integrity = StateIntegrityResult.not_run()
+    candidate_changed = before_state.snapshot().data != candidate_after_state.snapshot().data
 
     if preflight_blocked or not selected_graph_complete:
         outcome = classify_transition_outcome(
@@ -65,8 +66,7 @@ def finalize_selected_execution_graph(
                 "commit_status": "preflight_blocked" if preflight_blocked else "selected_graph_incomplete",
                 "selected_graph_complete": selected_graph_complete,
                 "candidate_state_published": False,
-                "candidate_state_changed": before_state.snapshot().to_json()
-                != candidate_after_state.snapshot().to_json(),
+                "candidate_state_changed": candidate_changed,
                 "planned_mutation_count": len(planned_mutations),
                 "committed_mutation_count": 0,
                 "planned_mutations": planned_evidence,
@@ -81,7 +81,7 @@ def finalize_selected_execution_graph(
     candidate_matches_reduction = False
     if reduction.ok:
         candidate_matches_reduction = (
-            reduction.after_state.snapshot().to_json() == candidate_after_state.snapshot().to_json()
+            reduction.after_state.snapshot().data == candidate_after_state.snapshot().data
         )
         if not candidate_matches_reduction:
             commit_status = "candidate_state_mismatch"
@@ -145,8 +145,7 @@ def finalize_selected_execution_graph(
                 "commit_status": commit_status,
                 "selected_graph_complete": selected_graph_complete,
                 "candidate_state_published": False,
-                "candidate_state_changed": before_state.snapshot().to_json()
-                != candidate_after_state.snapshot().to_json(),
+                "candidate_state_changed": candidate_changed,
                 "candidate_matches_reduction": candidate_matches_reduction,
                 "planned_mutation_count": len(planned_mutations),
                 "committed_mutation_count": 0,
@@ -160,7 +159,7 @@ def finalize_selected_execution_graph(
     committed_mutations = planned_mutations
     outcome = classify_transition_outcome(
         commit_nodes,
-        state_changed=before_state.snapshot().to_json() != committed_after.snapshot().to_json(),
+        state_changed=candidate_changed,
         mutation_count=len(committed_mutations),
     )
     return AtomicCommitResult(
@@ -173,8 +172,7 @@ def finalize_selected_execution_graph(
             "commit_status": "committed",
             "selected_graph_complete": True,
             "candidate_state_published": True,
-            "candidate_state_changed": before_state.snapshot().to_json()
-            != candidate_after_state.snapshot().to_json(),
+            "candidate_state_changed": candidate_changed,
             "candidate_matches_reduction": True,
             "planned_mutation_count": len(planned_mutations),
             "committed_mutation_count": len(committed_mutations),
@@ -186,13 +184,12 @@ def finalize_selected_execution_graph(
 
 
 def _planned_mutation_evidence(mutation: Mutation) -> dict[str, JSONValue]:
-    payload = mutation.to_json()
     return {
-        "mutation_id": payload["mutation_id"],
-        "op": payload["op"],
-        "path": payload["path"],
-        "source": payload["source"],
-        "metadata": payload["metadata"],
+        "mutation_id": mutation.stable_id(),
+        "op": mutation.op,
+        "path": list(mutation.path),
+        "source": mutation.source,
+        "metadata": mutation.metadata,
     }
 
 

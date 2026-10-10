@@ -75,6 +75,13 @@ def test_missing_kill_rule_rejects_entire_lethal_damage():
     assert "resource_engine_rule_missing:kill_energy_gain" in result.errors
 
 
+def test_packet_metadata_reserved_field_rejects_without_losing_evidence():
+    state, packet = _primitive_case()
+    result = DamageSystem().apply_packet(state, replace(packet, metadata={"packet_fields": {"source": "custom"}}))
+    assert not result.ok and not result.mutations and not result.events
+    assert result.errors == ("reserved_packet_metadata_field:packet_fields",)
+
+
 @pytest.fixture(scope="module")
 def arlan_case():
     from hsr.simulator_v8_clean_core.tests.test_character_passive_startup import _source_case
@@ -134,10 +141,25 @@ def test_real_admitted_action_kill_energy_and_spbase_are_distinct_once(arlan_cas
     auditor = RuntimeSourceAuditor(rules)
     audit = auditor.validate_transition(transition)
     assert audit.ok, audit.to_json()
+    hp = next(m for m in mutations if m.path == ("units", "target", "hp"))
+    assert "packet_metadata" not in hp.metadata and "metadata" not in hp.metadata
+    assert hp.metadata["packet_fields"]["target_id"] == "target"
+    derived = [m for m in mutations if m.source == "damage_system"
+               and m.metadata.get("lifecycle_operation") in {"unit_defeat", "unit_defeat_record"}]
+    assert len(derived) == 2
+    for mutation in [*derived, kills[0]]:
+        assert mutation.metadata["hp_mutation_id"] == hp.stable_id()
+        assert not {"damage_packet", "formula_result", "dot_formula_result", "numeric_evaluation"} & mutation.metadata.keys()
+    for mutation in derived:
+        forged = replace(mutation, mutation_id=mutation.stable_id(),
+                         metadata={**mutation.metadata, "hp_mutation_id": "missing"})
+        altered = tuple(forged if m is mutation else m for m in mutations)
+        rejected = auditor.validate_execution(altered, transition.transaction.settlement.records)
+        assert any(v.reason == "damage_lifecycle_lethal_mutation_lineage_invalid" for v in rejected.violations)
     for changes in ({"raw_energy_gain": 999}, {"hp_mutation_id": "missing"},
                     {"energy_regeneration_rate": {}}, {"kill_credit_owner_id": "spare"},
                     {"kill_credit_source_id": "forged"}):
-        forged = replace(kills[0], metadata={**kills[0].metadata, **changes})
+        forged = replace(kills[0], mutation_id=kills[0].stable_id(), metadata={**kills[0].metadata, **changes})
         altered = tuple(forged if m is kills[0] else m for m in mutations)
         assert not auditor.validate_execution(altered, transition.transaction.settlement.records).ok
 
