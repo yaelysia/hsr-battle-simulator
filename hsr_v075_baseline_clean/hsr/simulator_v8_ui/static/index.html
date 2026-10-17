@@ -3,21 +3,31 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>星穹铁道 v8 测试台</title>
+    <title>星穹铁道 v8 战斗台</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <header class="topbar">
       <div>
-        <h1>星穹铁道 v8 测试台</h1>
+        <h1>星穹铁道 v8 战斗台</h1>
         <p id="health">未连接</p>
       </div>
       <div class="toolbar">
+        <select id="battleMode" aria-label="操作模式">
+          <option value="live">持续战斗</option>
+          <option value="route">路线测试</option>
+        </select>
         <select id="caseSelect" aria-label="用例"></select>
         <input id="caseId" type="text" value="identity_smoke_v0_204" aria-label="用例编号">
         <button id="loadCaseBtn" type="button">加载</button>
         <button id="saveCaseBtn" type="button">保存</button>
-        <button id="runBtn" type="button">运行</button>
+        <button id="runBtn" type="button">开始战斗</button>
+        <button id="refreshBattleBtn" type="button">刷新当前战斗</button>
+        <button id="downloadBattleBtn" type="button" disabled>下载战斗记录</button>
+        <button id="replayBattleBtn" type="button">校验回放文件</button>
+        <button id="resumeBattleBtn" type="button" aria-describedby="resumeHint">载入归档继续战斗</button>
+        <input id="replayFile" type="file" accept=".json,.gz" hidden>
+        <input id="resumeFile" type="file" accept=".json,.gz" hidden>
       </div>
     </header>
 
@@ -44,7 +54,31 @@
       </aside>
 
       <section class="battlePane">
-        <div id="message" class="message"></div>
+        <div id="message" class="message" role="status" aria-live="polite"></div>
+        <section id="setupPanel" class="panelBlock" aria-labelledby="setupTitle">
+          <h2 id="setupTitle">开战配置</h2>
+          <p>选择已有场景后可调整构筑。各场景的敌人与波次由内核校验。</p>
+          <p id="resumeHint">载入归档会在校验成功后替换当前战斗；需要保留当前进度时，请先下载战斗记录。</p>
+          <details id="stagePanel">
+            <summary>替换敌方波次</summary>
+            <p id="stageScopeHint">保留我方构筑，替换全部敌方并从第 1 波开始。此按钮默认只采用怪物波次；加载完整环境请使用 full_stage 场景配置，开战时检查实际依赖。目录存在不代表机制已可用。</p>
+            <p id="currentStage"></p>
+            <label for="stageSearch">关卡名称或编号</label>
+            <input id="stageSearch" type="search" maxlength="100">
+            <button id="searchStagesBtn" type="button">搜索来源目录</button>
+            <p id="stageSearchResult" role="status"></p>
+            <label for="stageChoice">来源波次</label>
+            <select id="stageChoice" aria-describedby="stageScopeHint"><option value="">请先搜索</option></select>
+            <button id="applyStageBtn" type="button">应用敌方波次</button>
+          </details>
+          <button id="prepareBuildsBtn" type="button" aria-describedby="buildPreviewHint">加载行迹选项并校验构筑</button>
+          <button id="loadCharactersBtn" type="button">加载角色目录</button>
+          <button id="loadLightConesBtn" type="button">加载光锥与遗器选项</button>
+          <p id="buildPreviewHint" class="mutedText">按当前配置加载角色规则。选择技能等级、属性行迹或额外能力后，可再次校验查看结果。</p>
+          <div id="partyFormation"></div>
+          <div id="setupFields" class="setupFields"></div>
+          <div id="buildPreview" aria-live="polite"></div>
+        </section>
         <section id="actionPrompt" class="actionPrompt"></section>
 
         <section class="battlefield" aria-label="战场">
@@ -59,6 +93,26 @@
           </div>
         </section>
 
+        <details id="observationPanel" class="observationPanel">
+          <summary>游戏实测对照</summary>
+          <p id="observationMoment" role="status"></p>
+          <p class="mutedText">填写同一时刻的游戏数值，未知项留空。差值 = 游戏观测 − 模拟值；不推断游戏显示的取整规则。韧性须使用相同数值单位，不能直接填百分比。</p>
+          <div class="observationFields">
+            <label>观测单位<select id="observationUnit"></select></label>
+            <label>生命<input id="observationHp" inputmode="decimal" maxlength="64"></label>
+            <label>能量<input id="observationEnergy" inputmode="decimal" maxlength="64"></label>
+            <label>韧性<input id="observationToughness" inputmode="decimal" maxlength="64"></label>
+            <label>护盾<input id="observationShield" inputmode="decimal" maxlength="64"></label>
+            <label>游戏版本<input id="observationVersion" maxlength="1000"></label>
+            <label>复刻说明或视频时间<input id="observationNote" maxlength="1000"></label>
+          </div>
+          <button id="compareObservationBtn" type="button">记录并对照</button>
+          <button id="resetObservationBtn" type="button">清空数值，按当前时刻填写</button>
+          <button id="exportObservationsBtn" type="button">导出观测 JSON</button>
+          <p class="mutedText">新增记录暂存于本页。请保存用例或导出观测，并下载对应战斗记录；战斗归档不包含游戏观测。</p>
+          <div id="observationResults" aria-live="polite"></div>
+        </details>
+
         <section class="advancedArea">
           <details>
             <summary>高级：测试用例 JSON</summary>
@@ -68,7 +122,7 @@
             <summary>游戏观测对照 JSON</summary>
             <textarea id="observationsEditor" spellcheck="false">{}</textarea>
           </details>
-          <details>
+          <details id="legacyRunOptions">
             <summary>运行选项</summary>
             <div class="optionGrid">
               <input type="hidden" name="mode" value="decision">
@@ -86,6 +140,11 @@
             <span id="runState" class="mutedText">未运行</span>
           </div>
           <div id="eventReplay" class="eventReplay"></div>
+          <div id="forkPanel" hidden>
+            <label>从哪次提交前重新选择<select id="forkChoice" aria-describedby="forkHint"></select></label>
+            <p id="forkHint" class="mutedText">回溯会替换当前战斗。请先下载要保留的完整记录；新战斗保留分支点之前的历史。</p>
+            <button id="forkBattleBtn" type="button">回到所选提交前</button>
+          </div>
         </section>
         <section class="panelBlock">
           <h2>伤害审计</h2>

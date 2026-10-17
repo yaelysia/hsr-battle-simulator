@@ -755,11 +755,11 @@ _EVENT_OR_ENTITY_PRODUCER_KINDS = frozenset({
     "TargetFetchProjectileHitEntity", "TargetFetchProjectileHitPos", "TargetFetchSnapshotEntityList",
     "TargetFetchStanceBreakTargetEntity", "TargetFetchTaskActionTarget", "TargetFetchTemplateEntityList",
     "TargetFetchTurnActionEntity", "TargetMapCharacterChangeSource",
-    "TargetMapCharacterChangeTarget", "TargetMapCreatedBattleEvent", "TargetMapDamageAttacker",
+    "TargetMapCharacterChangeTarget", "TargetMapDamageAttacker",
     "TargetMapDamageDefender", "TargetMapDummyEntity", "TargetMapSkillActualAttacker",
     "TargetMapSkillIndicatorTarget", "TargetMapSkillSubTarget", "TargetMapSkillTarget",
     "TargetMapSnapshotEntity", "TargetFetchPartner", "TargetFetchUniqueNameEntity",
-    "TargetMapSkillPointEntity", "TargetFetchLevelEntity",
+    "TargetMapSkillPointEntity",
 })
 
 

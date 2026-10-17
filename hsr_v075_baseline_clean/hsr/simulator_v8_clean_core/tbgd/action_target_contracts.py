@@ -25,6 +25,7 @@ from .character_ability_scope import CharacterAbilityRawSnapshot
 
 _TARGET_TYPE_SELECTION = {
     "Caster": ("automatic", "self", 0, 0),
+    "CasterServant": ("automatic", "ally_or_self", 0, 0),
     "EnemySelect": ("explicit", "enemy", 1, 1),
     "FriendSelect": ("explicit", "ally_or_self", 1, 1),
     "AllEnemy": ("automatic", "enemy", 0, 0),
@@ -572,13 +573,17 @@ def _selection_from_target_info(
             blocked_reasons.append("action_target_avoid_self_schema_invalid")
 
     selection_filter = None
-    if "TargetFilter" in target_info:
-        raw_filter = target_info["TargetFilter"]
+    if "TargetFilter" in target_info or target_type == "CasterServant":
+        filter_field = "TargetFilter" if "TargetFilter" in target_info else "TargetType"
+        raw_filter = target_info.get("TargetFilter", {"$type": "RPG.GameCore.TargetAlias", "Alias": target_type})
+        if target_type == "CasterServant" and "TargetFilter" in target_info:
+            # ponytail: one filter slot; a combined source needs typed intersection support.
+            blocked_reasons.append("owned_servant_with_additional_target_filter_not_supported")
         filter_source = IRSource(
             source_path=source_path,
             raw_type="ActionSelectionTargetFilter",
             raw_id=raw_id,
-            evidence={"json_path": f"{target_info_path}.TargetFilter"},
+            evidence={"json_path": f"{target_info_path}.{filter_field}"},
         )
         try:
             selection_filter = (
@@ -588,7 +593,7 @@ def _selection_from_target_info(
                         definition.action_id,
                         definition.level,
                         source_path,
-                        f"{target_info_path}.TargetFilter",
+                        f"{target_info_path}.{filter_field}",
                     ),
                     source=filter_source,
                 )
@@ -602,7 +607,7 @@ def _selection_from_target_info(
             if selection_filter is not None and selection_filter.coverage_status == "executable"
             else f"blocked_target_expression:{selection_filter.blocked_reason if selection_filter is not None else 'not_lowerable'}"
         )
-        add_component("TargetFilter", "target_filter", "action_selection", decoded_filter)
+        add_component(filter_field, "target_filter", "action_selection", decoded_filter)
         if selection_filter is None or selection_filter.coverage_status != "executable":
             expression_reason = (
                 selection_filter.blocked_reason

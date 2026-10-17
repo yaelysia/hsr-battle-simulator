@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
+from ..core.model import (
+    BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, RNGEvent,
+    StanceCountDownFact, _BREAK_NOTIFICATION_PRODUCER, _STANCE_COUNT_DOWN_PRODUCER,
+)
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
@@ -10,11 +13,12 @@ from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTempla
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .dynamic_values import find_status_detail
-from .event_dispatch import EventDispatchSystem
+from .event_dispatch import EventDispatchSystem, EventNormalization
 from .effect import EffectExecutionContext, EffectRegistry
 from .status_callbacks import StatusCallbackSystem
 from .target import TargetSystem
-from .toughness import ToughnessApplicationResult, ToughnessPacket
+from .toughness import ToughnessApplicationResult, ToughnessPacket, ToughnessSystem
+from .toughness_state import read_toughness_segments
 from .unit_relation import TargetEvaluationContext
 
 
@@ -27,10 +31,12 @@ class BreakApplicationResult:
     events: tuple[GameEvent, ...] = ()
     errors: tuple[str, ...] = ()
     rng_events: tuple[RNGEvent, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
+    event_normalizations: tuple[EventNormalization, ...] = ()
 
 
 class BreakSystem:
-    """Normal weakness-break lifecycle boundary.
+    """Weakness-break and intermediate toughness-segment lifecycle boundary.
 
     The system only consumes Canonical IR admitted through RuleBook. It does
     not infer break behavior from raw task names or display-only fields.
@@ -50,6 +56,7 @@ class BreakSystem:
         self.effects = effects
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem(rules)
+        self.toughness = ToughnessSystem(rules)
         self.targets = TargetSystem(rules)
         self.evaluator = RuleEvaluator()
         self.event_dispatcher = event_dispatcher or EventDispatchSystem(
@@ -68,13 +75,156 @@ class BreakSystem:
         target = state.units.get(result.packet.target_id)
         if target is None or target.toughness > 0 or bool(target.flags.get("broken", False)):
             return None
-        metadata = dict(result.packet.metadata)
-        for mutation in result.mutations:
-            if mutation.source == "toughness_system":
-                for key in ("numeric_evaluation", "weakness_check", "amount"):
-                    if key in mutation.metadata:
-                        metadata[key] = mutation.metadata[key]
-        return self.enter_break(state, replace(result.packet, metadata=metadata))
+        current = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        dispatched_ids: set[str] = set()
+        normalizations: list[EventNormalization] = []
+        while current.units[result.packet.target_id].toughness <= 0:
+            try:
+                segments = read_toughness_segments(current.units[result.packet.target_id])
+            except ValueError as exc:
+                return _blocked(state, result.packet, str(exc))
+            metadata = dict(result.packet.metadata)
+            for mutation in result.mutations:
+                if mutation.source == "toughness_system":
+                    for key in ("numeric_evaluation", "weakness_check", "amount"):
+                        if key in mutation.metadata:
+                            metadata[key] = mutation.metadata[key]
+            packet = replace(result.packet, metadata=metadata)
+            layer = (self._enter_stance_count_down(current, packet)
+                     if segments.remaining_segments > 1 else self.enter_break(current, packet))
+            if not layer.ok:
+                return replace(layer, after_state=state, mutations=(), events=(), rng_events=(),
+                               dispatched_event_ids=frozenset(), event_normalizations=())
+            current = layer.after_state
+            mutations.extend(layer.mutations)
+            records.extend(layer.records)
+            events.extend(layer.events)
+            rng_events.extend(layer.rng_events)
+            dispatched_ids.update(layer.dispatched_event_ids)
+            normalizations.extend(layer.event_normalizations)
+            if result.overflow is None:
+                break
+            result = self.toughness.apply_overflow(current, result.overflow)
+            if not result.ok:
+                return _blocked(state, packet, ",".join(result.errors))
+            reduction = self.reducer.apply_all_result(current, result.mutations)
+            if not reduction.ok:
+                return _blocked(state, packet, "toughness_overflow_mutation_conflict")
+            current = reduction.after_state
+            mutations.extend(result.mutations)
+            records.extend(result.records)
+            for event in result.events:
+                dispatched = self.event_dispatcher.dispatch_event(current, event=event)
+                if dispatched.errors:
+                    return _blocked(state, packet, ",".join(dispatched.errors))
+                current = dispatched.after_state
+                mutations.extend(dispatched.mutations)
+                records.extend(dispatched.records)
+                events.extend(dispatched.events)
+                rng_events.extend(dispatched.rng_events)
+                normalizations.extend(dispatched.event_normalizations)
+                dispatched_ids.update(dispatched.dispatched_event_ids)
+                dispatched_ids.update(str(item.to_json()["event_id"]) for item in dispatched.events)
+        return BreakApplicationResult(
+            ok=True, after_state=current, mutations=tuple(mutations), records=tuple(records),
+            events=tuple(replace(event, event_id=str(event.to_json()["event_id"]))
+                         if str(event.to_json()["event_id"]) in dispatched_ids else event for event in events),
+            rng_events=tuple(rng_events),
+            dispatched_event_ids=frozenset(dispatched_ids),
+            event_normalizations=tuple(normalizations),
+        )
+
+    def _enter_stance_count_down(
+        self, state: BattleState, packet: ToughnessPacket,
+    ) -> BreakApplicationResult:
+        target = state.units[packet.target_id]
+        segments = read_toughness_segments(target)
+        if (segments.remaining_segments <= 1 or target.toughness != 0
+                or target.flags.get("broken", False)
+                or target.flags.get("weakness_locked", False) or target.flags.get("mute_break", False)):
+            return _blocked(state, packet, "stance_count_down_state_invalid")
+        template = self.rules.break_template_for_element(packet.element_type, trigger_kind="stance_count_down")
+        if (template is None or template.coverage_status != "executable"
+                or self.rules.break_status_emissions_for_template(template.template_id)
+                or not self.rules.break_damage_emissions_for_template(template.template_id)):
+            return _blocked(state, packet, "stance_count_down_template_missing_or_not_executable", template=template)
+        metadata = _break_metadata(packet, template)
+        metadata["break_lifecycle"] = {
+            "operation": "stance_count_down", "reason": "toughness_segment_depleted",
+            "event_types": ["OnBeingStanceCountDown", "OnTriggerStanceCountDown"],
+            "break_template_id": template.template_id,
+        }
+        count_mutation = Mutation(
+            op="set", path=("units", packet.target_id, "flags", "stance_segments_remaining"),
+            before=segments.remaining_segments, after=segments.remaining_segments - 1,
+            reason="consume a nonfinal toughness segment", source="break_system", metadata=metadata,
+        )
+        current = self.reducer.apply_all(state, (count_mutation,))
+        mutations = [count_mutation]
+        records = list(_lifecycle_records(packet, template, (count_mutation,)))
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        for emission in self.rules.break_damage_emissions_for_template(template.template_id):
+            result = self._apply_break_damage_emission(current, packet, template, emission)
+            if not result.ok:
+                return _blocked(state, packet, ",".join(result.errors), template=template)
+            current = result.after_state
+            mutations.extend(result.mutations)
+            records.extend(result.records)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
+        if current.units[packet.target_id].toughness != 0:
+            return _blocked(state, packet, "stance_count_down_bar_changed_before_refill", template=template)
+        refill = Mutation(
+            op="set", path=("units", packet.target_id, "toughness"),
+            before=current.units[packet.target_id].toughness,
+            after=target.max_toughness, reason="expose the next toughness segment",
+            source="break_system", metadata=metadata,
+        )
+        current = self.reducer.apply_all(current, (refill,))
+        mutations.append(refill)
+        records.extend(_lifecycle_records(packet, template, (refill,)))
+        event_id = f"event:{state.event_index}:stance_count_down:{count_mutation.stable_id()}"
+        notification = GameEvent(
+            "toughness.segment_depleted", source_id=packet.attacker_id, target_id=packet.target_id,
+            event_id=event_id, window="toughness_segment", process_only=True,
+            payload={"source_trace": metadata["source_trace"]},
+            stance_count_down_fact=StanceCountDownFact(
+                source_mutation=count_mutation, event_id=event_id, event_index=state.event_index,
+                target_id=packet.target_id, attacker_id=packet.attacker_id,
+                element_type=packet.element_type, template_id=template.template_id,
+                _state=current, _producer_token=_STANCE_COUNT_DOWN_PRODUCER,
+            ),
+        )
+        dispatched_ids: set[str] = set()
+        normalizations: list[EventNormalization] = []
+        emitted = []
+        for event in (*events, notification):
+            if str(event.to_json()["event_id"]) in dispatched_ids:
+                continue
+            dispatched = self.event_dispatcher.dispatch_event(current, event=event)
+            if dispatched.errors:
+                return _blocked(state, packet, ",".join(dispatched.errors), template=template)
+            current = dispatched.after_state
+            mutations.extend(dispatched.mutations)
+            records.extend(dispatched.records)
+            emitted.extend(dispatched.events)
+            rng_events.extend(dispatched.rng_events)
+            normalizations.extend(dispatched.event_normalizations)
+            dispatched_ids.update(dispatched.dispatched_event_ids)
+            dispatched_ids.update(str(item.to_json()["event_id"]) for item in dispatched.events)
+        return BreakApplicationResult(
+            ok=True, after_state=current, mutations=tuple(mutations), records=tuple(records),
+            # Preserve the identity already recorded as consumed at this boundary.
+            events=tuple(replace(event, event_id=str(event.to_json()["event_id"])) for event in emitted),
+            rng_events=tuple(rng_events),
+            dispatched_event_ids=frozenset(dispatched_ids),
+            event_normalizations=tuple(normalizations),
+        )
 
     def recover_ordinary_before_action(
         self, state: BattleState, *, unit_id: str,
@@ -99,9 +249,14 @@ class BreakSystem:
             )
 
         source = target.flags.get("break_source")
+        try:
+            segments = read_toughness_segments(target)
+        except ValueError as exc:
+            return blocked(str(exc))
         if (
             target.max_toughness <= 0 or target.toughness > 0
             or not isinstance(source, dict)
+            or segments.maximum_segments > 1 and segments.remaining_segments != 0
         ):
             return blocked("ordinary_break_recovery_state_invalid")
         template_id = source.get("break_template_id")
@@ -138,6 +293,14 @@ class BreakSystem:
             return blocked("ordinary_break_recovery_callback_blocked:" + ",".join(dispatched.errors))
         current = dispatched.after_state
         current_target = current.units[unit_id]
+        if segments.maximum_segments > 1:
+            try:
+                restored = read_toughness_segments(current_target)
+            except ValueError as exc:
+                return blocked(str(exc))
+            if (restored.remaining_segments != segments.maximum_segments
+                    or current_target.toughness != current_target.max_toughness):
+                return blocked("multilayer_break_recovery_callbacks_not_committed")
         metadata: dict[str, JSONValue] = {
             "break_template_id": template_id,
             "toughness_emission_id": emission_id,
@@ -192,13 +355,17 @@ class BreakSystem:
         return BreakApplicationResult(
             ok=True, after_state=reduction.after_state,
             mutations=(*dispatched.mutations, *mutations),
-            events=(*dispatched.events, GameEvent(
+            events=(*(replace(event, event_id=str(event.to_json()["event_id"])) for event in dispatched.events), GameEvent(
                 "break.recovered", source_id=unit_id, target_id=unit_id,
                 window="break_recovery", process_only=True,
                 payload={"break_template_id": template_id, "source_trace": trace},
             )),
             records=(*dispatched.records, *records),
             rng_events=dispatched.rng_events,
+            dispatched_event_ids=dispatched.dispatched_event_ids | {
+                str(event.to_json()["event_id"]) for event in dispatched.events
+            },
+            event_normalizations=dispatched.event_normalizations,
         )
 
     def enter_break(self, state: BattleState, packet: ToughnessPacket) -> BreakApplicationResult:
@@ -215,6 +382,12 @@ class BreakSystem:
             return _skipped(state, packet, "target_weakness_locked")
         if bool(target.flags.get("mute_break", False)):
             return _skipped(state, packet, "target_mute_break")
+        try:
+            segments = read_toughness_segments(target)
+        except ValueError as exc:
+            return _blocked(state, packet, str(exc))
+        if segments.maximum_segments > 1 and segments.remaining_segments != 1:
+            return _blocked(state, packet, "full_break_requires_the_final_toughness_segment")
         template = self.rules.break_template_for_element(packet.element_type)
         if template is None:
             return _blocked(state, packet, "break_template_missing")
@@ -266,6 +439,12 @@ class BreakSystem:
             metadata=metadata,
         )
         lifecycle_mutations = (broken_mutation, element_mutation, source_mutation)
+        if segments.maximum_segments > 1:
+            lifecycle_mutations += (Mutation(
+                op="set", path=("units", packet.target_id, "flags", "stance_segments_remaining"),
+                before=1, after=0, reason="consume the final toughness segment",
+                source="break_system", metadata=metadata,
+            ),)
         current_state = self.reducer.apply_all(state, lifecycle_mutations)
         records: list[dict[str, JSONValue]] = [
             *_lifecycle_records(packet, template, lifecycle_mutations),
@@ -274,6 +453,52 @@ class BreakSystem:
         mutations: list[Mutation] = list(lifecycle_mutations)
         events: list[GameEvent] = []
         rng_events: list[RNGEvent] = []
+
+        notification = GameEvent(
+            "break.triggered",
+            source_id=packet.attacker_id,
+            target_id=packet.target_id,
+            event_id=f"event:{state.event_index}:break:{source_mutation.stable_id()}",
+            window="break",
+            process_only=True,
+            payload={
+                "callback_events": ["OnTriggerBreak", "OnListenBreak"],
+                "attacker_id": packet.attacker_id,
+                "actor_id": packet.attacker_id,
+                "target_id": packet.target_id,
+                "current_hit_target_id": packet.target_id,
+                "element_type": packet.element_type,
+                "break_template_id": template.template_id,
+                "source_trace": metadata.get("source_trace", packet.source_trace),
+            },
+        )
+        notification = replace(
+            notification,
+            break_notification_fact=BreakNotificationFact(
+                source_mutation=source_mutation,
+                event_id=str(notification.to_json()["event_id"]),
+                event_index=state.event_index,
+                target_id=packet.target_id,
+                _producer_token=_BREAK_NOTIFICATION_PRODUCER,
+            ),
+        )
+        # Install the target's broken-state callbacks before initial break
+        # damage, so the hit consumes the post-break reduction state.
+        entered = self.event_dispatcher.dispatch_event(
+            current_state,
+            event=replace(
+                notification, event_type="break.entered", window="break_entered",
+                event_id=f"{notification.event_id}:entered",
+                payload={**notification.payload, "callback_events": ["OnBeingBreak"]},
+            ),
+        )
+        if entered.errors:
+            return _blocked(state, packet, ",".join(entered.errors), template=template)
+        current_state = entered.after_state
+        mutations.extend(entered.mutations)
+        records.extend(entered.records)
+        events.extend(replace(event, event_id=str(event.to_json()["event_id"])) for event in entered.events)
+        rng_events.extend(entered.rng_events)
 
         for emission in self.rules.break_status_emissions_for_template(template.template_id):
             result = self._apply_status_emission(current_state, packet, template, emission)
@@ -306,27 +531,14 @@ class BreakSystem:
             after_state=current_state,
             mutations=tuple(mutations),
             records=tuple(records),
-            events=(
-                *events,
-                GameEvent(
-                    "break.triggered",
-                    source_id=packet.attacker_id,
-                    target_id=packet.target_id,
-                    window="break",
-                    process_only=True,
-                    payload={
-                        "callback_events": ["OnTriggerBreak", "OnBeingBreak", "OnListenBreak"],
-                        "attacker_id": packet.attacker_id,
-                        "actor_id": packet.attacker_id,
-                        "target_id": packet.target_id,
-                        "current_hit_target_id": packet.target_id,
-                        "element_type": packet.element_type,
-                        "break_template_id": template.template_id,
-                        "source_trace": metadata.get("source_trace", packet.source_trace),
-                    },
-                ),
-            ),
+            events=(*events, notification),
             rng_events=tuple(rng_events),
+            # The dispatcher also returns callback audit markers. They belong
+            # to this completed dispatch and must not be dispatched anew.
+            dispatched_event_ids=entered.dispatched_event_ids | {
+                str(event.to_json()["event_id"]) for event in entered.events
+            },
+            event_normalizations=entered.event_normalizations,
         )
 
     def _apply_break_damage_emission(
@@ -530,6 +742,10 @@ class BreakSystem:
             effect,
             EffectExecutionContext(
                 state=state,
+                application_instance_id=(
+                    f"break_status:{state.event_index}:{packet.attacker_id}:{packet.target_id}:"
+                    f"{emission.break_status_emission_id}"
+                ),
                 caster_id=packet.attacker_id,
                 source_id=emission.break_status_emission_id,
                 owner_id=packet.target_id,
@@ -820,7 +1036,9 @@ def _lifecycle_records(
                 payload={
                     "target_id": packet.target_id,
                     "field": field,
-                    "event_types": ["OnTriggerBreak", "OnBeingBreak"],
+                    "event_types": (["OnBeingStanceCountDown", "OnTriggerStanceCountDown"]
+                                    if template.trigger_kind == "stance_count_down"
+                                    else ["OnTriggerBreak", "OnBeingBreak"]),
                     "toughness_emission_id": packet.toughness_emission_id,
                     "source_task_id": packet.source_task_id,
                     "hit_profile_id": packet.hit_profile_id,

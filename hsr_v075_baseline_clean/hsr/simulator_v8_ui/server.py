@@ -3,14 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import re
+import tempfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .runner import UIRunOptions, UIRunner, load_json_file
+from .live import LiveBattle, SessionConflict
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -21,6 +24,7 @@ CASE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 class V8UIRequestHandler(BaseHTTPRequestHandler):
     runner: UIRunner
+    battle: LiveBattle
     cases_root: Path
 
     server_version = "HSRV8UITestbench/0.1"
@@ -30,6 +34,29 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/health":
                 self._send_json({"ok": True, "service": "simulator_v8_ui", "message": "服务已就绪", "report_schema": "v8_ui_report_v0_1"})
+            elif path == "/api/battle/examples":
+                self._send_json(self.battle.examples())
+            elif path == "/api/battle":
+                self._send_json(self.battle.view())
+            elif path == "/api/battle/characters":
+                self._send_json(self.battle.characters())
+            elif path == "/api/battle/content-support":
+                query = parse_qs(urlparse(self.path).query)
+                self._send_json(self.battle.support(query.get('kind', [''])[0],
+                                                   query.get('content_id', [''])[0]))
+            elif path == "/api/battle/stages":
+                self._send_json(self.battle.stages(parse_qs(urlparse(self.path).query).get('q', [''])[0]))
+            elif path == "/api/battle/archive":
+                content = self.battle.download(self._battle_query())
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/gzip")
+                self.send_header("Content-Disposition", 'attachment; filename="hsr-battle.json.gz"')
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(content)
+            elif path.startswith("/api/battle/steps/"):
+                self._send_json(self.battle.detail(self._battle_query(), int(path.rsplit('/', 1)[1])))
             elif path == "/api/catalog":
                 self._send_json(self.runner.catalog())
             elif path == "/api/cases":
@@ -45,6 +72,10 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
                 self._serve_static(path)
         except FileNotFoundError as exc:
             self._send_error_json(HTTPStatus.NOT_FOUND, str(exc))
+        except SessionConflict as exc:
+            self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+        except (ValueError, TypeError, KeyError) as exc:
+            self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except Exception as exc:  # pragma: no cover - HTTP boundary
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
@@ -74,6 +105,38 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         path = urlparse(self.path).path
         try:
+            if path in {"/api/battle", "/api/battle/submit", "/api/battle/replay", "/api/battle/resume", "/api/battle/builds", "/api/battle/light-cone", "/api/battle/relic-affixes", "/api/battle/relic", "/api/battle/character", "/api/battle/fork", "/api/battle/stage", "/api/battle/initial-condition", "/api/battle/party-order", "/api/battle/observation"}:
+                data = self._read_json_body()
+                if path == "/api/battle":
+                    result = self.battle.start(data)
+                elif path.endswith("/submit"):
+                    result = self.battle.submit(data)
+                elif path.endswith("/resume"):
+                    result = self.battle.resume(data)
+                elif path.endswith("/builds"):
+                    result = self.battle.prepare_builds(data)
+                elif path.endswith("/light-cone"):
+                    result = self.battle.configure_light_cone(data)
+                elif path.endswith("/relic-affixes"):
+                    result = self.battle.relic_affixes(data)
+                elif path.endswith("/relic"):
+                    result = self.battle.configure_relic(data)
+                elif path.endswith("/character"):
+                    result = self.battle.configure_character(data)
+                elif path.endswith("/stage"):
+                    result = self.battle.configure_stage(data)
+                elif path.endswith("/initial-condition"):
+                    result = self.battle.configure_initial_condition(data)
+                elif path.endswith("/party-order"):
+                    result = self.battle.configure_party_order(data)
+                elif path.endswith("/observation"):
+                    result = self.battle.compare_observation(data)
+                elif path.endswith("/fork"):
+                    result = self.battle.fork(data)
+                else:
+                    result = self.battle.replay(data)
+                self._send_json(result)
+                return
             if path != "/api/run":
                 self._send_error_json(HTTPStatus.NOT_FOUND, f"未知接口：{path}")
                 return
@@ -85,13 +148,20 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
             observations = data.get("observations") if isinstance(data.get("observations"), dict) else {}
             report = self.runner.run_data(scenario, options=options, observations=observations)
             self._send_json(report)
-        except ValueError as exc:
+        except SessionConflict as exc:
+            self._send_error_json(HTTPStatus.CONFLICT, str(exc))
+        except (ValueError, TypeError, KeyError) as exc:
             self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
         except Exception as exc:  # pragma: no cover - HTTP boundary
             self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[simulator_v8_ui] {self.address_string()} - {fmt % args}")
+
+    def _battle_query(self) -> dict[str, Any]:
+        query = parse_qs(urlparse(self.path).query)
+        return {'session_id': query.get('session_id', [None])[0],
+                'revision': int(query.get('revision', ['-1'])[0])}
 
     def _read_json_body(self) -> dict[str, Any]:
         raw_length = self.headers.get("Content-Length")
@@ -110,6 +180,7 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -165,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     cases_root = args.cases_root.resolve()
     cases_root.mkdir(parents=True, exist_ok=True)
     V8UIRequestHandler.runner = UIRunner(tbgd_root=args.tbgd_root)
+    V8UIRequestHandler.battle = LiveBattle(V8UIRequestHandler.runner.tbgd_root)
     V8UIRequestHandler.cases_root = cases_root
     server = ThreadingHTTPServer((args.host, args.port), V8UIRequestHandler)
     url = f"http://{args.host}:{args.port}"
@@ -194,8 +266,20 @@ def _observations_path(root: Path, case_id: str) -> Path:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
+    encoded = json.dumps(data, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

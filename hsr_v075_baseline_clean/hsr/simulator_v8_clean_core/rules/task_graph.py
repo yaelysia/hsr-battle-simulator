@@ -403,6 +403,41 @@ class TaskGraphBranchIR:
 
 
 @dataclass(frozen=True)
+class TaskGraphTemplateParameterIR:
+    parameter_name: str
+    destination_hash: str
+    expression: Mapping[str, Any]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskGraphTemplateParameterIR:
+            raise TypeError("task graph template parameter must not be subclassed")
+        if not isinstance(self.parameter_name, str) or not self.parameter_name:
+            raise ValueError("task graph template parameter name is required")
+        if (not isinstance(self.destination_hash, str) or not self.destination_hash
+                or not self.destination_hash.removeprefix('-').isdigit()):
+            raise ValueError("task graph template parameter hash is invalid")
+        if not isinstance(self.expression, Mapping) or not is_exact_numeric_expression(self.expression):
+            raise ValueError("task graph template parameter expression is invalid")
+        object.__setattr__(self, "expression", freeze_json(dict(self.expression)))
+        object.__setattr__(self, "source", _source(self.source, "task graph template parameter"))
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {"parameter_name": self.parameter_name, "destination_hash": self.destination_hash,
+                "expression": cast(JSONValue, thaw_json(self.expression)), "source": self.source.to_json()}
+
+    @classmethod
+    def from_json(cls, value: object) -> "TaskGraphTemplateParameterIR":
+        item = _exact(value, {"parameter_name", "destination_hash", "expression", "source"}, "task graph template parameter")
+        expression = item.get("expression")
+        if not isinstance(expression, Mapping):
+            raise TypeError("task graph template parameter expression must be an object")
+        return cls(_string(item, "parameter_name", "task graph template parameter"),
+                   _string(item, "destination_hash", "task graph template parameter"), expression,
+                   _source_from_json(item.get("source"), "task graph template parameter"))
+
+
+@dataclass(frozen=True)
 class TaskGraphNodeIR:
     graph_node_id: str
     graph_id: str
@@ -429,6 +464,7 @@ class TaskGraphNodeIR:
     owner_domains: tuple[str, ...]
     source: IRSource
     status_reason: str = ""
+    template_parameters: tuple[TaskGraphTemplateParameterIR, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphNodeIR:
@@ -460,6 +496,19 @@ class TaskGraphNodeIR:
         if not isinstance(self.source_contract_node_id, str):
             raise TypeError("task graph source contract identity must be a string")
         source = _source(self.source, "task graph node")
+        parameters = tuple(self.template_parameters)
+        if any(type(item) is not TaskGraphTemplateParameterIR for item in parameters):
+            raise TypeError("task graph template parameters must be typed")
+        if parameters and self.node_kind != "template_call":
+            raise ValueError("task graph parameters require a template call")
+        if (len({item.parameter_name for item in parameters}) != len(parameters)
+                or len({item.destination_hash for item in parameters}) != len(parameters)):
+            raise ValueError("task graph template parameters must be unique")
+        for parameter in parameters:
+            if (parameter.source.source_path != source.source_path
+                    or parameter.source.evidence.get("content_sha256") != source.evidence.get("content_sha256")
+                    or parameter.source.evidence.get("json_path") != f"{source.evidence['json_path']}.DynamicValues[{json.dumps(parameter.parameter_name, ensure_ascii=True)}]"):
+                raise ValueError("task graph template parameter source is inconsistent")
         evidence_families = tuple(
             value
             for value in (
@@ -526,6 +575,7 @@ class TaskGraphNodeIR:
         object.__setattr__(self, "references", tuple(sorted(references, key=lambda item: item.reference_id)))
         object.__setattr__(self, "owner_domains", domains)
         object.__setattr__(self, "source", source)
+        object.__setattr__(self, "template_parameters", parameters)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -546,19 +596,23 @@ class TaskGraphNodeIR:
             "owner_domains": list(self.owner_domains),
             "source": self.source.to_json(),
             "status_reason": self.status_reason,
+            "template_parameters": [item.to_json() for item in self.template_parameters],
         }
 
     @classmethod
     def from_json(cls, value: object) -> "TaskGraphNodeIR":
+        if isinstance(value, Mapping) and "template_parameters" not in value:
+            value = {**value, "template_parameters": []}
         item = _exact(value, {
             "graph_node_id", "graph_id", "source_occurrence_id", "source_contract_node_id",
             "formal_task_id", "opcode", "source_family", "node_kind", "branches", "references",
             "termination_kind", "termination_status", "termination_numeric_definition_id",
-            "materialization_status", "owner_domains", "source", "status_reason",
+            "materialization_status", "owner_domains", "source", "status_reason", "template_parameters",
         }, "task graph node")
         branches = item.get("branches")
         references = item.get("references")
-        if not isinstance(branches, list) or not isinstance(references, list):
+        parameters = item.get("template_parameters")
+        if not isinstance(branches, list) or not isinstance(references, list) or not isinstance(parameters, list):
             raise TypeError("task graph node members must be arrays")
         return cls(
             graph_node_id=_string(item, "graph_node_id", "task graph node"),
@@ -580,6 +634,7 @@ class TaskGraphNodeIR:
             owner_domains=_strings(item.get("owner_domains"), "task graph node owners"),
             source=_source_from_json(item.get("source"), "task graph node"),
             status_reason=_string(item, "status_reason", "task graph node"),
+            template_parameters=tuple(TaskGraphTemplateParameterIR.from_json(value) for value in parameters),
         )
 
 
@@ -1078,7 +1133,7 @@ class TaskGraphCatalogIR:
         )
         canonical_entries = tuple(sorted(entries, key=lambda item: item.entry_id))
         canonical_graphs = tuple(sorted(graphs, key=lambda item: item.graph_id))
-        identity = json.dumps({
+        identity = {
             "scope_mode": self.scope_mode,
             "source_catalog_id": self.source_catalog_id,
             "snapshot_id": self.snapshot_id,
@@ -1087,17 +1142,21 @@ class TaskGraphCatalogIR:
             "dependency_fingerprint": self.dependency_fingerprint,
             "source_record_count": self.source_record_count,
             "source_record_fingerprint": self.source_record_fingerprint,
-            "source_dispositions": [item.to_json() for item in canonical_dispositions],
-            "entry_materializations": [item.to_json() for item in canonical_entries],
-            "graphs": [item.to_json() for item in canonical_graphs],
+            "source_dispositions": canonical_dispositions,
+            "entry_materializations": canonical_entries,
+            "graphs": canonical_graphs,
             "selected_entry_ids": list(selected),
             "source_ledger_complete": self.source_ledger_complete,
-        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        }
+        digest = sha256()
+        encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), default=lambda item: item.to_json())
+        for chunk in encoder.iterencode(identity):
+            digest.update(chunk.encode("utf-8"))
         object.__setattr__(self, "source_dispositions", canonical_dispositions)
         object.__setattr__(self, "entry_materializations", canonical_entries)
         object.__setattr__(self, "graphs", canonical_graphs)
         object.__setattr__(self, "selected_entry_ids", selected)
-        object.__setattr__(self, "catalog_id", f"task_graph_catalog:{sha256(identity).hexdigest()}")
+        object.__setattr__(self, "catalog_id", f"task_graph_catalog:{digest.hexdigest()}")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {

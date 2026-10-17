@@ -245,6 +245,10 @@ class TriggerSystem:
                         effect,
                         EffectExecutionContext(
                             state=current,
+                            application_instance_id=(
+                                f"trigger:{state.event_index}:{command.actor_id}:{canonical_window}:"
+                                f"{trigger.trigger_id}:{effect_index}:{owner_id}"
+                            ),
                             caster_id=command.actor_id,
                             source_id=f"trigger:{canonical_window}:{trigger.trigger_id}:{effect_index}",
                             owner_id=owner_id,

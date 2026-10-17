@@ -350,7 +350,7 @@ def validate(tbgd_root: Path) -> dict[str, Any]:
         None,
         None,
         None,
-        [],
+        [], [], set(),
     ).graph
     nested = nested_hook(None, _state()) if nested_hook is not None else None
 

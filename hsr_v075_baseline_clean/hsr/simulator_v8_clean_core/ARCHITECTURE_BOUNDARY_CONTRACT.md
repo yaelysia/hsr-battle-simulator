@@ -38,8 +38,9 @@ fail-closed，形成产品范围裁决；不得为追求目录“全兼容”污
 
 2026-10-08 用户明确以实际战斗行为还原为目标。原生引擎的任务组织和内部调用协议不要求
 一一复制；需要保留的是会影响合法动作、目标、状态、资源、结算或后续触发的语义与顺序。
-逆向研究和视频观察用于确定、验证这些语义；已确认规则仍经 L0 编译/注册，由 L1 通用执行，
-不把观测答案、视频记录或审计字段作为 runtime 输入。阻断按实际配置及行为依赖定位；
+2026-10-12 用户明确可靠攻略、数据网站和条件明确的实测结论可直接作为规则依据，不要求
+再从 TBGD 或原生内部协议重复证明。规则经 L0 编译/注册，由 L1 通用执行，注明实际来源；
+runtime 不直接解释网页、视频记录或审计字段。阻断按实际配置及行为依赖定位；
 只有已证明无战斗影响的表现或不可达分支才可排除，必需被动与来源完整性错误仍不得绕过。
 
 ## 2. 分层总览
@@ -64,8 +65,8 @@ Combat Core / RuleBook consumer / reducer / systems
         ↑ 只读取 Canonical IR / 数据卡 IR / Runtime State
 
 L0 来源编译层
-TBGD raw / discovery / lowering / 数据卡构建 / 文本解释
-把事实来源编译成 Canonical IR / 数据卡 IR
+TBGD / 已采纳机制资料 / discovery / lowering / 数据卡构建 / 规则注册
+把事实来源转为 Canonical IR / 数据卡 IR / RuleBook
 
 横切约束：source audit / settlement / replay / coverage / gap attribution
 ```
@@ -76,7 +77,7 @@ TBGD raw / discovery / lowering / 数据卡构建 / 文本解释
 UI / 推演器 -> Core public query / transition
 内容卡 -> Core mechanism contract
 Core -> Canonical IR / 数据卡 IR / RuleBook / BattleState
-Lowering -> TBGD raw
+Lowering / 规则注册 -> TBGD raw / 已采纳机制资料
 ```
 
 runtime 不允许直接读取 raw TBGD、TextMap、旧 v7、旧 model pack，也不允许把审计字段当成主要规则输入。
@@ -90,7 +91,7 @@ L0 负责把事实来源转成结构化事实：
 - 从 `turnbasedgamedata-main` 读取 raw TBGD。
 - 做 discovery、lowering、source ledger、coverage 统计。
 - 构建 Canonical IR、数据卡 IR、机制 slot、参数绑定和 source trace。
-- 在允许范围内读取技能文本或外部资料，用于数据卡解释、展示或人工审查。
+- 从可靠攻略、数据网站和实测资料整理公式、参数、条件与时序，注册正式规则并保留来源。
 
 ### 允许
 
@@ -98,13 +99,14 @@ L0 负责把事实来源转成结构化事实：
 - 读取 TextMap 或文本资料，用于数据卡构建和 UI 展示。
 - 输出 `source_trace`、coverage、gap、blocked reason、audit-only 记录。
 - 把 raw 中的结构化事实投影到 Canonical IR / 数据卡 IR。
+- 把已采纳的研究结论直接注册为类型化规则；复用已有入口，不强制开发网页导入器或新证据框架。
 
 ### 禁止
 
 - 把 raw TBGD schema 暴露给 runtime。
-- 为了 runtime 方便伪造 TBGD 中不存在的规则事实。
+- 把外部研究结论伪装成 TBGD 字段或 raw 节点。
 - 把 `engine_convention` 伪装成 TBGD 来源。
-- 用观测伤害、旧模拟器输出、固定答案补规则。
+- 用孤立观测值、旧模拟器输出或固定结算答案代替规则；条件明确的机制研究不属于此禁令。
 - 因验证脚本扫不到正例，就直接断言 raw 没来源；必须先区分 raw source gap、lowering gap、admission gap 和 validation gap。
 
 ## 4. L1 机制执行层
@@ -273,15 +275,13 @@ source audit、settlement、replay、coverage 和 gap attribution 不是可选�
 - 产生了哪些 mutation。
 - settlement 是否能追到 mutation，或明确 process-only。
 - before snapshot + action input + IR + RNG events + mutations 是否能 replay 成 after snapshot。
-- source audit 是否能追到 Canonical IR / 数据卡 IR / TBGD source。
+- source audit 是否能追到正式规则定义及其 TBGD 或已采纳机制资料来源。
 - 失败时是否有 blocked reason 且 state unchanged。
 
-每个新增机制至少需要：
-
-- 真实来源正例。
-- 缺来源 / 缺上下文 / 缺目标 / 缺 payload / unsupported condition 的负例。
-- mutation → settlement → source audit → replay 链路。
-- gap 分类：`executable`、`source_gap_blocked`、`lowering_gap`、`admission_gap`、`validation_gap`、`implementation_missing` 或 `out_of_scope`。
+非平凡机制保留一个能发现实际错误的行为检查，已有检查能覆盖时直接复用。
+不要求每个机制重复构造全套缺字段负例、整场战斗和独立回放；只在对应提交边界、状态、
+随机性或归档路径受影响时补相关检查。生产中的审计、原子提交和回放能力仍须保持。
+验证选择统一遵循 [本地执行与验证约定](docs/AGENT_WORKFLOW_AND_VALIDATION.md#验证选择)。
 
 ## 8. 架构审查
 

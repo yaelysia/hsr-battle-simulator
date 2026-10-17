@@ -387,6 +387,7 @@ class ActionTargetImpactResult:
     context_fingerprint: str
     resolution: TargetResolution
     blocked_reason: str = ""
+    target_rng_events: tuple[RNGEvent, ...] = ()
     impact_fingerprint: str = field(init=False)
     admitted_action_target_fact: AdmittedActionTargetFact | None = field(
         default=None,
@@ -401,6 +402,8 @@ class ActionTargetImpactResult:
             raise ValueError("action target impact context identity is required")
         if type(self.resolution) is not TargetResolution:
             raise TypeError("action target impact requires an exact target resolution")
+        if any(type(event) is not RNGEvent for event in self.target_rng_events):
+            raise TypeError("action target impact RNG events are invalid")
         if (
             self.admitted_action_target_fact is not None
             and type(self.admitted_action_target_fact) is not AdmittedActionTargetFact
@@ -410,7 +413,7 @@ class ActionTargetImpactResult:
             if self.blocked_reason or not self.resolution.selected or not self.resolution.impact_group:
                 raise ValueError("resolved action target impact is inconsistent")
         elif self.status == "blocked":
-            if not self.blocked_reason or self.resolution.selected or self.resolution.impact_group:
+            if not self.blocked_reason or self.resolution.selected or self.resolution.impact_group or self.target_rng_events:
                 raise ValueError("blocked action target impact carries executable targets")
         else:
             raise ValueError("action target impact status is invalid")
@@ -436,7 +439,7 @@ class ActionTargetImpactResult:
 
     @property
     def rng_events(self) -> tuple[RNGEvent, ...]:
-        return ()
+        return self.target_rng_events
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -788,19 +791,34 @@ class ActionTargetSelectionSystem:
                     context,
                     bounce_policy.blocked_reason,
                 )
-        elif context.dynamic_target:
-            return self._blocked_impact(
-                command,
-                context,
-                "action_dynamic_target_control_flow_deferred_to_p9_s8",
-            )
         if target_mode not in {"single", "self_or_team", "aoe", "blast", "bounce"}:
             return self._blocked_impact(
                 command,
                 context,
                 f"action_impact_mode_not_supported:{target_mode or 'missing'}",
             )
+        target_rng_events: list[RNGEvent] = []
         selected = context.accepted.selected_target_ids
+        if contract.selection_filter is not None:
+            candidates, reason = self._candidate_ids(
+                state, command.actor_id, contract,
+                transient_provider=action_condition_fact_provider(
+                    self.rules, state, actor_id=command.actor_id,
+                    action_id=command.action_id, action_level=command.action_level,
+                    invocation_id=(
+                        f"action_query:{context.accepted.state_revision}:{command.actor_id}:"
+                        f"{command.action_id}:{command.action_level}:{contract.contract_fingerprint}"
+                    ), window="action_target_query",
+                ),
+                target_rng_events=target_rng_events,
+                event_payload=command.metadata,
+            )
+            if reason or not candidates:
+                return self._blocked_impact(command, context, reason or "action_target_candidates_empty")
+            if contract.selection_mode == "automatic":
+                selected = candidates
+            elif any(target_id not in candidates for target_id in selected):
+                return self._blocked_impact(command, context, "action_target_filter_rejected_selection")
         impact = list(selected)
         adjacent: list[str] = []
         teammate: list[str] = []
@@ -830,7 +848,7 @@ class ActionTargetSelectionSystem:
                 adjacent.extend(result.target_ids[:limit])
             impact = list(_ordered_unique((*selected, *adjacent)))
         elif target_mode == "aoe":
-            impact = list(context.accepted.candidate_ids)
+            impact = list(selected)
         groups = {
             "primary": selected[:1],
             "selected": selected,
@@ -885,6 +903,7 @@ class ActionTargetSelectionSystem:
             status="resolved",
             context_fingerprint=context.context_fingerprint,
             resolution=resolution,
+            target_rng_events=tuple(target_rng_events),
         )
         target_mode = str(action_event.target_mode or "")
         unavailable_reason = ""
@@ -907,6 +926,12 @@ class ActionTargetSelectionSystem:
             target_mode=target_mode or "unknown",
             target_ids=resolution.impact_group if not unavailable_reason else (),
             unavailable_reason=unavailable_reason,
+            skill_target_ids=selected,
+            skill_sub_target_ids=(
+                _ordered_unique(teammate) if context.impact_sub_target == "all_teammate"
+                else _ordered_unique(adjacent) if context.impact_sub_target == "adjacent" or target_mode == "blast"
+                else ()
+            ),
         )
         return ActionTargetImpactResult(
             status=result.status,
@@ -914,6 +939,7 @@ class ActionTargetSelectionSystem:
             resolution=result.resolution,
             blocked_reason=result.blocked_reason,
             admitted_action_target_fact=fact,
+            target_rng_events=result.rng_events,
         )
 
     def _candidate_ids(
@@ -923,6 +949,8 @@ class ActionTargetSelectionSystem:
         contract: ActionTargetContractIR,
         *,
         transient_provider: ActionConditionFactProvider,
+        target_rng_events: list[RNGEvent] | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
     ) -> tuple[tuple[str, ...], str]:
         context = TargetEvaluationContext(
             caster_id=actor_id,
@@ -960,16 +988,23 @@ class ActionTargetSelectionSystem:
         if contract.avoid_self:
             candidates = tuple(item for item in candidates if item != actor_id)
         if contract.selection_filter is not None:
+            filter_payload = {"action_id": contract.action_id, "action_level": contract.level}
+            for key in ("rng_mode", "rng_choices", "rng_choice_ledger"):
+                if event_payload is not None and key in event_payload:
+                    filter_payload[key] = event_payload[key]
             filter_result = self.expressions.resolve_target_expression(
                 state,
                 contract.selection_filter,
                 context=context,
                 transient_condition_provider=transient_provider,
+                condition_event_payload=filter_payload,
             )
             if filter_result.blocked:
                 return (), filter_result.blocked_reason
-            if filter_result.rng_events:
-                return (), "action_target_filter_rng_deferred_to_p9_s5d"
+            # Queries are pure previews. Only the submitted action publishes RNG
+            # decisions to its transaction; repeated queries never advance state.
+            if target_rng_events is not None:
+                target_rng_events.extend(filter_result.rng_events)
             admitted = set(filter_result.target_ids)
             candidates = tuple(item for item in candidates if item in admitted)
         return tuple(sorted(candidates)), ""

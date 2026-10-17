@@ -1065,6 +1065,15 @@ def build_relic_catalog_from_documents(
     )
 
 
+def load_relic_set_display_names(tbgd_root: Path, text_map: Mapping[str, str]) -> dict[str, str]:
+    """Display-only names; never used by equipment admission or calculation."""
+    rows = json.loads((tbgd_root / "ExcelOutput/RelicSetConfig.json").read_text(encoding="utf-8"))
+    return {
+        str(row["SetID"]): text_map.get(str(row["SetName"]["Hash"]), str(row["SetID"]))
+        for row in rows
+    }
+
+
 def _load_decimal_json(raw: bytes) -> object:
     def reject_constant(value: str) -> object:
         raise ValueError(f"non-finite JSON number {value!r} is not allowed")

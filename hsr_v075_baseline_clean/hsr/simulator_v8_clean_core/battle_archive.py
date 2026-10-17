@@ -103,66 +103,96 @@ def write_archive(path: str | Path, data: dict[str, Any]) -> Path:
 
 def verify_archive(archive: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
     """Rebuild and replay a session archive through the DecisionSystem boundary."""
-    return _verify_archive(archive, rules)
+    return _verify_archive(archive, rules)[0]
 
 
 def replay_archive(path: str | Path, rules_factory: Callable[[dict[str, Any]], RuleBook]) -> dict[str, Any]:
     """Read shared audit evidence and replay through the formal session boundary."""
     archive = read_archive(path)
     _validate_archive_shape(archive)
-    return _verify_archive(archive, rules_factory(archive["scenario"]))
+    return _verify_archive(archive, rules_factory(archive["scenario"]))[0]
 
 
-def _verify_archive(archive: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
+def restore_session(archive: dict[str, Any], rules: RuleBook) -> BattleSession:
+    """Return only a fully replayed and verified session, retaining its history."""
+    from copy import deepcopy
+
+    report, session = _verify_archive(archive, rules)
+    if session is None:
+        raise ValueError("archive_restore_failed:" + ";".join(report["errors"]))
+    # State comes from replay. Only the already-compared audit history is copied;
+    # caller-owned archive dictionaries must not mutate the resumed session.
+    session.operations = deepcopy(archive["operations"])
+    return session
+
+
+def fork_session(original: BattleSession, operation_count: int) -> BattleSession:
+    """Replay a verified prefix of an existing session into an independent branch."""
+    from copy import deepcopy
+
+    if not isinstance(original, BattleSession):
+        raise TypeError("fork requires a BattleSession")
+    if type(operation_count) is not int or not 0 <= operation_count <= len(original.operations):
+        raise ValueError("fork operation count is outside session history")
+    archive = original.archive()
+    report, session = _verify_archive(archive, original.rules, operation_count=operation_count)
+    if session is None:
+        raise ValueError("archive_fork_failed:" + ";".join(report["errors"]))
+    session.operations = deepcopy(original.operations[:operation_count])
+    return session
+
+
+def _verify_archive(archive: dict[str, Any], rules: RuleBook, *, operation_count: int | None = None) -> tuple[dict[str, Any], BattleSession | None]:
     if not isinstance(archive, dict):
-        return _failed(0, "archive_root_invalid")
+        return _failed(0, "archive_root_invalid"), None
     if archive.get("schema_version") != SESSION_SCHEMA:
-        return _failed(0, "schema_version_mismatch")
+        return _failed(0, "schema_version_mismatch"), None
     if not isinstance(rules, RuleBook):
-        return _failed(0, "rules_invalid")
+        return _failed(0, "rules_invalid"), None
     fingerprint = archive.get("canonical_ir_fingerprint")
     if not isinstance(fingerprint, str) or not fingerprint:
-        return _failed(0, "canonical_ir_fingerprint_invalid")
+        return _failed(0, "canonical_ir_fingerprint_invalid"), None
     if fingerprint != canonical_ir_fingerprint(rules.ir):
-        return _failed(0, "canonical_ir_fingerprint_mismatch")
+        return _failed(0, "canonical_ir_fingerprint_mismatch"), None
     try:
         _validate_archive_shape(archive)
     except (TypeError, ValueError) as exc:
-        return _failed(0, f"archive_invalid:{exc}")
+        return _failed(0, f"archive_invalid:{exc}"), None
     try:
         session = BattleSession(rules, archive["scenario"])
     except (TypeError, ValueError, KeyError) as exc:
-        return _failed(0, f"session_rebuild_failed:{type(exc).__name__}:{exc}")
+        return _failed(0, f"session_rebuild_failed:{type(exc).__name__}:{exc}"), None
 
     if not _json_equal(session.initial_snapshot, archive["initial_snapshot"]):
-        return _failed(0, "initial_snapshot_mismatch")
+        return _failed(0, "initial_snapshot_mismatch"), None
     if not _json_equal(session.setup_audit, archive["setup_audit"]):
-        return _failed(0, "setup_audit_mismatch")
+        return _failed(0, "setup_audit_mismatch"), None
     if not _json_equal(session.initialization, archive["initialization"]):
-        return _failed(0, "initialization_mismatch")
+        return _failed(0, "initialization_mismatch"), None
 
     step_count = 0
     try:
-        for operation in archive["operations"]:
+        for operation in (archive["operations"] if operation_count is None else archive["operations"][:operation_count]):
             index = step_count
             try:
                 _replay_operation(session, operation)
             except (TypeError, ValueError, KeyError) as exc:
-                return _failed(step_count, f"operation[{index}]_invalid:{type(exc).__name__}:{exc}")
+                return _failed(step_count, f"operation[{index}]_invalid:{type(exc).__name__}:{exc}"), None
             actual = session.operations[-1]
             if not _json_equal(actual, operation):
-                return _failed(step_count, f"operation[{index}]_mismatch")
+                return _failed(step_count, f"operation[{index}]_mismatch"), None
             step_count += 1
             session.operations.clear()
             del actual, operation
     except (TypeError, ValueError, KeyError) as exc:
-        return _failed(step_count, f"archive_invalid:{exc}")
+        return _failed(step_count, f"archive_invalid:{exc}"), None
 
-    if not _json_equal(session.state.snapshot().to_json(detach=False), archive["final_snapshot"]):
-        return _failed(step_count, "final_snapshot_mismatch")
-    if session.outcome != archive["outcome"]:
-        return _failed(step_count, "outcome_mismatch")
-    return {"ok": True, "step_count": step_count, "errors": []}
+    if operation_count is None or operation_count == len(archive["operations"]):
+        if not _json_equal(session.state.snapshot().to_json(detach=False), archive["final_snapshot"]):
+            return _failed(step_count, "final_snapshot_mismatch"), None
+        if session.outcome != archive["outcome"]:
+            return _failed(step_count, "outcome_mismatch"), None
+    return {"ok": True, "step_count": step_count, "errors": []}, session
 
 
 def _replay_operation(session: BattleSession, operation: Any) -> None:

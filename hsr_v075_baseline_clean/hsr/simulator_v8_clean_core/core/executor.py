@@ -61,7 +61,7 @@ from ..systems.action_preflight import (
     combined_blocked_reason,
 )
 from ..systems.break_system import BreakApplicationResult, BreakSystem
-from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
+from ..systems.damage import DamageModifierContribution, DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
 from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
@@ -75,6 +75,7 @@ from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.event_dispatch import (
+    MAX_CALLBACK_EMITTED_EVENT_DEPTH,
     EventDispatchResult,
     EventDispatchSystem,
     EventNormalization,
@@ -135,6 +136,8 @@ class CombatExecutor:
         actor_id: str | None = None,
         producer_ok: bool = True,
         blocked_reason: str = "",
+        dispatched_event_ids: frozenset[str] = frozenset(),
+        event_normalizations: tuple[EventNormalization, ...] = (),
     ) -> EventDispatchResult:
         """Publish a system result only after its events complete on the candidate."""
 
@@ -151,6 +154,7 @@ class CombatExecutor:
                 events,
                 producer_id=producer_id,
                 actor_id=actor_id,
+                event_normalizations=event_normalizations,
             )
         except _EventIdentityConflict as conflict:
             events = ()
@@ -186,9 +190,10 @@ class CombatExecutor:
         dispatch_rng_events: list[RNGEvent] = []
         dispatch_records: list[dict[str, JSONValue]] = []
         listener_records: list[dict[str, JSONValue]] = []
-        event_normalizations: list[EventNormalization] = []
+        all_event_normalizations = list(event_normalizations)
         errors: list[str] = []
         creation_targets: set[str] = set()
+        consumed_event_ids = set(dispatched_event_ids)
 
         if identity_conflict is not None:
             errors.append(identity_conflict.reason_code)
@@ -237,17 +242,20 @@ class CombatExecutor:
                     break
                 if creation_target:
                     creation_targets.add(creation_target)
+                if str(event.to_json()["event_id"]) in consumed_event_ids:
+                    continue
                 dispatched = self.event_dispatcher.dispatch_event(
                     current_state,
                     event=event,
                 )
                 current_state = dispatched.after_state
+                consumed_event_ids.update(dispatched.dispatched_event_ids)
                 dispatch_mutations.extend(dispatched.mutations)
                 dispatch_events.extend(dispatched.events)
                 dispatch_rng_events.extend(dispatched.rng_events)
                 dispatch_records.extend(dispatched.records)
                 listener_records.extend(dispatched.listener_records)
-                event_normalizations.extend(
+                all_event_normalizations.extend(
                     dispatched.event_normalizations
                 )
                 errors.extend(dispatched.errors)
@@ -262,7 +270,7 @@ class CombatExecutor:
                     *events,
                     *dispatch_events,
                     event_normalizations=tuple(
-                        event_normalizations
+                        all_event_normalizations
                     ),
                 )
             except _EventIdentityConflict as conflict:
@@ -332,6 +340,8 @@ class CombatExecutor:
             listener_records=tuple(listener_records),
             errors=tuple(dict.fromkeys(error for error in errors if error)),
             node_results=atomic_commit.outcome.node_results,
+            dispatched_event_ids=frozenset(consumed_event_ids) if atomic_commit.outcome.successor_eligible else frozenset(),
+            event_normalizations=tuple(all_event_normalizations) if atomic_commit.outcome.successor_eligible else (),
         )
 
     def execute(
@@ -679,6 +689,9 @@ class CombatExecutor:
         break_mutations: tuple[Mutation, ...] = ()
         ability_task_results: list[AbilityTaskExecutionResult] = []
         damage_window_ledger = DamageWindowLedger()
+        action_damage_modifiers: list[DamageModifierContribution] = []
+        sequence_modifiers: dict[tuple[str, str], tuple[DamageModifierContribution, ...]] = {}
+        target_modifiers: dict[str, tuple[DamageModifierContribution, ...]] = {}
         action_hit_targets: list[str] = []
         hit_sequence_order: list[tuple[str, str]] = []
         hit_sequence_context: dict[
@@ -691,7 +704,7 @@ class CombatExecutor:
         target_hit_sequence_final_damage: dict[str, float] = {}
         target_hit_sequences_started: set[str] = set()
 
-        def dispatch_listener_window(event: GameEvent) -> None:
+        def dispatch_listener_window(event: GameEvent) -> tuple[DamageModifierContribution, ...]:
             nonlocal current_state
             result = self.event_dispatcher.dispatch_event(
                 current_state,
@@ -702,25 +715,23 @@ class CombatExecutor:
             listener_dispatch_results.append(result)
             ordered_mutations.extend(result.mutations)
             runtime_records.extend(result.records)
+            return result.damage_modifiers
 
         def dispatch_ability_events(
             ability_result: AbilityTaskExecutionResult,
         ) -> None:
-            nonlocal current_state
+            nonlocal current_state, action_target_fact
+            action_hit_targets.extend(ability_result.hit_target_ids)
+            if ability_result.hit_target_ids and (
+                target_selection_context.dynamic_target or action_event_ir.target_mode == "bounce"
+            ):
+                action_target_fact = action_target_fact.with_resolved_targets(tuple(dict.fromkeys(action_hit_targets)))
             dispatched_event_ids = (
                 ability_result.dispatched_event_ids
                 if ability_result.dispatched_event_ids is not None
                 else _dispatched_event_ids(ability_result.records)
             )
             for emitted_event in ability_result.events:
-                if emitted_event.event_type == "damage.hit":
-                    hit_target_id = str(
-                        emitted_event.target_id
-                        or emitted_event.payload.get("target_id")
-                        or ""
-                    )
-                    if hit_target_id:
-                        action_hit_targets.append(hit_target_id)
                 if str(emitted_event.to_json()["event_id"]) in dispatched_event_ids:
                     continue
                 if emitted_event.event_type not in {
@@ -746,23 +757,43 @@ class CombatExecutor:
                 runtime_records.extend(dispatch_result.records)
 
         if action_enabled:
+            pending_before_callbacks: list[str] = []
             for step_index, step in enumerate(action_execution_plan.event_steps):
+                callback_kinds: tuple[str, ...] = ()
                 if step.kind == "trigger_window":
                     callback_kind = _callback_kind_for_step(step.phase)
                     if callback_kind and not use_action_damage_plan_fallback:
-                        ability_result = self.ability_tasks.execute_callback(
-                            current_state,
-                            phases=ability_phases,
-                            callback_kind=callback_kind,
-                            command=command,
-                            action_definition=action_definition,
-                            target_resolution=target_result.resolution,
-                        )
-                        current_state = ability_result.after_state
-                        ability_task_results.append(ability_result)
-                        ordered_mutations.extend(ability_result.mutations)
-                        runtime_records.extend(ability_result.records)
-                        dispatch_ability_events(ability_result)
+                        if step.phase in {"before_skill_use", "before_attack"}:
+                            pending_before_callbacks.append(callback_kind)
+                        else:
+                            callback_kinds = (callback_kind,)
+                if step.kind == "damage" or (
+                    step.kind == "trigger_window"
+                    and step.phase not in {"before_skill_use", "before_attack"}
+                ):
+                    # OnStart can run the complete damage graph. Finish both
+                    # action pre-windows before invoking it, including for
+                    # actions whose source graph contains no damage stage.
+                    callback_kinds = (*pending_before_callbacks, *callback_kinds)
+                    pending_before_callbacks.clear()
+                for callback_kind in callback_kinds:
+                    ability_result = self.ability_tasks.execute_callback(
+                        current_state,
+                        phases=ability_phases,
+                        callback_kind=callback_kind,
+                        command=command,
+                        action_definition=action_definition,
+                        target_resolution=target_result.resolution,
+                        action_damage_modifiers=tuple(action_damage_modifiers),
+                        admitted_action_target_fact=action_target_fact,
+                        action_execution_token=action_execution_token,
+                    )
+                    current_state = ability_result.after_state
+                    ability_task_results.append(ability_result)
+                    ordered_mutations.extend(ability_result.mutations)
+                    runtime_records.extend(ability_result.records)
+                    dispatch_ability_events(ability_result)
+                if step.kind == "trigger_window":
                     dispatch_event, expected_window_scope = _action_window_dispatch_event(
                         current_state,
                         command,
@@ -805,6 +836,8 @@ class CombatExecutor:
                     trigger_results.append(listener_result)
                     ordered_mutations.extend(listener_result.mutations)
                     runtime_records.extend(listener_result.records)
+                    if step.phase == "before_attack":
+                        action_damage_modifiers.extend(listener_result.damage_modifiers)
                     continue
                 if step.kind == "damage":
                     if ability_task_damage_authoritative:
@@ -836,6 +869,9 @@ class CombatExecutor:
                             command=command,
                             action_definition=action_definition,
                             target_resolution=target_result.resolution,
+                            action_damage_modifiers=tuple(action_damage_modifiers),
+                            admitted_action_target_fact=action_target_fact,
+                            action_execution_token=action_execution_token,
                         )
                         current_state = ability_result.after_state
                         ability_task_results.append(ability_result)
@@ -1038,15 +1074,14 @@ class CombatExecutor:
                             damage_packet.target_id,
                         )
                         if hit_sequence_key not in hit_sequence_context:
-                            dispatch_listener_window(
+                            sequence_modifiers[hit_sequence_key] = dispatch_listener_window(
                                 _damage_listener_window_event(
                                     current_state,
                                     command,
                                     action_definition,
                                     event_type="damage.hit_sequence.before",
                                     target_id=(
-                                        action_execution_plan.primary_action_target_id
-                                        or damage_packet.target_id
+                                        damage_packet.target_id
                                     ),
                                     selected_target_ids=target_result.resolution.selected,
                                     primary_target_id=action_execution_plan.primary_action_target_id,
@@ -1076,11 +1111,12 @@ class CombatExecutor:
                                 ),
                             }
                         if damage_packet.target_id not in target_hit_sequences_started:
+                            target_modifiers[damage_packet.target_id] = ()
                             for event_type in (
                                 "damage.target_attack.before",
                                 "damage.target_hit_sequence.before",
                             ):
-                                dispatch_listener_window(
+                                target_modifiers[damage_packet.target_id] += dispatch_listener_window(
                                     _damage_listener_window_event(
                                         current_state,
                                         command,
@@ -1131,40 +1167,12 @@ class CombatExecutor:
                         listener_dispatch_results.append(dispatch_result)
                         ordered_mutations.extend(dispatch_result.mutations)
                         runtime_records.extend(dispatch_result.records)
-                        modifier_terms, modifier_records, modifier_blockers = _collect_direct_damage_modifiers(
-                            current_state,
-                            self.rules,
-                            self.targets,
-                            command.actor_id,
-                            damage_packet.target_id,
-                            damage_packet,
-                        )
-                        if modifier_records:
-                            runtime_records.extend(modifier_records)
-                        if modifier_blockers:
-                            execution_node_results.extend(
-                                ExecutionNodeResult(
-                                    node_kind="damage_modifier",
-                                    node_id=(
-                                        f"damage_modifier:{command.actor_id}:"
-                                        f"{damage_packet.target_id}:{damage_plan.hit_index}:{index}"
-                                    ),
-                                    status="blocked",
-                                    reason_code=reason,
-                                )
-                                for index, reason in enumerate(modifier_blockers)
-                            )
-                            continue
-                        if modifier_terms:
-                            damage_packet = replace(
-                                damage_packet,
-                                metadata={
-                                    **damage_packet.metadata,
-                                    "direct_modifier_terms": [term for term in modifier_terms],
-                                    "modifier_collection_state_event_index": current_state.event_index,
-                                    "modifier_collection_after_before_hit": True,
-                                },
-                            )
+                        damage_packet = replace(damage_packet, modifier_contributions=(
+                            *action_damage_modifiers,
+                            *sequence_modifiers.get(hit_sequence_key, ()),
+                            *target_modifiers.get(damage_packet.target_id, ()),
+                            *dispatch_result.damage_modifiers,
+                        ))
                         damage_result = self.damage.apply_packet(
                             current_state,
                             damage_packet,
@@ -1295,6 +1303,8 @@ class CombatExecutor:
                                 ordered_mutations.extend(break_result.mutations)
                                 runtime_records.extend(break_result.records)
                                 for emitted_event in break_result.events:
+                                    if str(emitted_event.to_json()["event_id"]) in break_result.dispatched_event_ids:
+                                        continue
                                     dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
                                     current_state = dispatch_result.after_state
                                     listener_dispatch_results.append(dispatch_result)
@@ -1367,6 +1377,8 @@ class CombatExecutor:
                             ordered_mutations.extend(break_result.mutations)
                             runtime_records.extend(break_result.records)
                             for emitted_event in break_result.events:
+                                if str(emitted_event.to_json()["event_id"]) in break_result.dispatched_event_ids:
+                                    continue
                                 dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
                                 current_state = dispatch_result.after_state
                                 listener_dispatch_results.append(dispatch_result)
@@ -1379,6 +1391,9 @@ class CombatExecutor:
                         command=command,
                         action_definition=action_definition,
                         target_resolution=target_result.resolution,
+                        action_damage_modifiers=tuple(action_damage_modifiers),
+                        admitted_action_target_fact=action_target_fact,
+                        action_execution_token=action_execution_token,
                     )
                     current_state = ability_result.after_state
                     ability_task_results.append(ability_result)
@@ -1744,6 +1759,7 @@ class CombatExecutor:
                 *trigger_results,
                 *listener_dispatch_results,
                 *halo_dispatch_results,
+                *break_results,
             )
             for normalization in result.event_normalizations
         )
@@ -2154,12 +2170,15 @@ def _validated_dispatch_normalization(
             }
         )
     elif normalization.kind == "mutation_event_depth":
+        depth = after.payload.get("mutation_event_depth")
         payload_ok = bool(
             "mutation_event_depth" not in before.payload
+            and type(depth) is int
+            and 1 <= depth <= MAX_CALLBACK_EMITTED_EVENT_DEPTH
             and after.payload
             == {
                 **before.payload,
-                "mutation_event_depth": 1,
+                "mutation_event_depth": depth,
             }
         )
     else:
@@ -2179,6 +2198,7 @@ def _eventful_transition_events(
     *,
     producer_id: str,
     actor_id: str | None = None,
+    event_normalizations: tuple[EventNormalization, ...] = (),
 ) -> tuple[GameEvent, ...]:
     """Add mutation-backed events without duplicating an explicit birth event."""
 
@@ -2229,7 +2249,7 @@ def _eventful_transition_events(
             ):
                 continue
             supplements.append(event)
-    return _dedupe_events(*explicit_events, *supplements)
+    return _dedupe_events(*explicit_events, *supplements, event_normalizations=event_normalizations)
 
 
 def _action_event_plan_compat_payload(action_definition: ActionDefinitionIR, action_event_ir) -> dict[str, JSONValue]:
@@ -2685,86 +2705,6 @@ def _damage_value_resolution(
     )
 
 
-def _collect_direct_damage_modifiers(
-    state: BattleState,
-    rules: RuleBook,
-    targets: TargetSystem,
-    actor_id: str,
-    target_id: str,
-    packet: DamagePacket,
-) -> tuple[
-    tuple[dict[str, JSONValue], ...],
-    tuple[dict[str, JSONValue], ...],
-    tuple[str, ...],
-]:
-    if packet.damage_formula_family != "direct":
-        return (), (), ()
-    actor = state.units.get(actor_id)
-    target = state.units.get(target_id)
-    if actor is None or target is None:
-        return (), (), ()
-    evaluator = RuleEvaluator()
-    terms: list[dict[str, JSONValue]] = []
-    records: list[dict[str, JSONValue]] = []
-    blockers: list[str] = []
-    event_payload = {
-        **packet.metadata,
-        "target_id": target_id,
-        "current_hit_target_id": target_id,
-        "param_entity_id": target_id,
-        "damage_custom_name": packet.metadata.get("damage_custom_name"),
-        "attack_type": packet.attack_type,
-        "AttackType": packet.attack_type,
-        "SkillType": packet.metadata.get("SkillType"),
-        "skill_type": packet.metadata.get("skill_type"),
-    }
-    callback_sources = (
-        (actor, ("OnBeforeAttack", "OnBeforeHitAll", "OnBeforeHit")),
-        (target, ("OnBeforeBeingHitAll", "OnBeforeBeingHit")),
-    )
-    for status_unit, callback_events in callback_sources:
-        details = status_unit.flags.get("status_details", ())
-        if not isinstance(details, (list, tuple)):
-            continue
-        for detail in details:
-            if not isinstance(detail, dict):
-                continue
-            modifier_name = str(detail.get("modifier_name") or "")
-            owner_id = str(detail.get("owner_id") or status_unit.unit_id)
-            for callback_event in callback_events:
-                callback_ids = _trigger_ids_for_detail_event(
-                    detail,
-                    callback_event,
-                )
-                callbacks = rules.status_callbacks_for_modifier_event(
-                    modifier_name,
-                    callback_event,
-                )
-                if callback_ids is not None:
-                    callbacks = tuple(
-                        callback
-                        for callback in callbacks
-                        if callback.callback_id in callback_ids
-                    )
-                for callback in callbacks:
-                    callback_terms, callback_records, callback_blockers = _collect_callback_damage_modifiers(
-                        state,
-                        rules,
-                        evaluator,
-                        targets,
-                        callback=callback,
-                        actor_id=actor_id,
-                        owner_id=owner_id,
-                        target_id=target_id,
-                        detail=detail,
-                        event_payload=event_payload,
-                    )
-                    terms.extend(callback_terms)
-                    records.extend(callback_records)
-                    blockers.extend(callback_blockers)
-    return tuple(terms), tuple(records), tuple(blockers)
-
-
 def _legacy_callback_damage_roots(
     tasks: dict[str, StatusCallbackTaskIR],
 ) -> tuple[StatusCallbackTaskIR, ...]:
@@ -2987,16 +2927,6 @@ def _damage_modifier_record(
             "terms": [term.get("source_trace") for term in terms],
         },
     ).to_json()
-
-
-def _trigger_ids_for_detail_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:
-    mapping = detail.get("trigger_ids_by_event")
-    if not isinstance(mapping, dict):
-        return None
-    value = mapping.get(event)
-    if not isinstance(value, list):
-        return None
-    return tuple(str(item) for item in value if isinstance(item, str) and item)
 
 
 def _toughness_plans_for_damage_plan(

@@ -207,7 +207,6 @@ def test_no_payload_settlement_barrier_is_a_materialized_audit_leaf(family: str)
     ("family", "payload", "reason"),
     (
         ("DamagePerformFinish", {"IsFakeAvatarAttack": True}, "damage_perform_finish_settlement_payload_not_admitted"),
-        ("DamagePerformFinish", {"SkipDeathSettlement": True}, "damage_perform_finish_settlement_payload_not_admitted"),
         ("SkillPerformFinish", {"SkipAttackSettlement": True}, "skill_perform_finish_settlement_payload_not_admitted"),
     ),
 )
@@ -225,6 +224,21 @@ def test_settlement_payload_source_shapes_remain_closed(
         ("damage_heal_shield",),
         "task_graph_control_requires_domains:damage_heal_shield",
     )
+
+
+def test_skip_death_settlement_true_is_an_audit_barrier_with_verified_payload() -> None:
+    control = _control('DamagePerformFinish', peer_fields=('SkipDeathSettlement',))
+    task = _task('DamagePerformFinish')
+    effect = _effect(task)
+    contract = {**effect.payload['process_only_contract'],
+                'source_fields': ['$type', 'SkipDeathSettlement'],
+                'source_field_types': {'$type': 'str', 'SkipDeathSettlement': 'bool'}}
+    effect = replace(effect, payload={'process_only_contract': contract, 'SkipDeathSettlement': True})
+    assert _is_process_only_settlement_barrier_shape(control, task)
+    assert _references(task, control, 'node:fixture', task.source, _indexes(task, effect), {})
+    with pytest.raises(Exception, match='settlement_barrier_effect_contract_invalid'):
+        _references(task, control, 'node:fixture', task.source,
+                    _indexes(task, replace(effect, payload={**effect.payload, 'SkipDeathSettlement': False})), {})
 
 
 def test_wrong_control_role_or_blocked_contract_is_not_retired() -> None:

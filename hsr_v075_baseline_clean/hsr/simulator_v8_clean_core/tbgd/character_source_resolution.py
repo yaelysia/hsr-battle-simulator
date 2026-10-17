@@ -809,7 +809,9 @@ def build_character_ability_source_resolution(
         raise TypeError("S3 source resolution requires the exact S1 source graph catalog")
     if (
         not snapshot.source_catalog_complete
-        or not scope_catalog.scope_reconciliation_complete
+        or not scope_catalog.source_catalog_complete
+        or scope_catalog.family_filter
+        or any(issue.code == "source_traversal_incomplete" for issue in scope_catalog.issues)
         or not source_graph_catalog.source_catalog_complete
         or snapshot.snapshot_id != scope_catalog.snapshot_id
         or snapshot.snapshot_id != source_graph_catalog.snapshot_id
@@ -824,6 +826,8 @@ def build_character_ability_source_resolution(
         != 1
     ):
         raise ValueError("S3 source resolution prerequisite closure is inconsistent")
+    # Unknown semantics stay in the scope ledger. Resolving source references
+    # requires complete traversal, not permission to execute those semantics.
     lowering_gaps = tuple(
         gap for gap in source_graph_catalog.gaps if gap.gap_kind == "lowering_gap"
     )

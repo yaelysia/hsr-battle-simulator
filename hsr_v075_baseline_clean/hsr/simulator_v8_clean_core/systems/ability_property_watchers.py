@@ -33,8 +33,15 @@ class AbilityPropertyWatcherResult:
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
     task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        dispatched = frozenset(self.dispatched_event_ids)
+        if any(type(event_id) is not str or not event_id for event_id in dispatched):
+            raise ValueError("ability property watcher dispatched event identities are invalid")
+        if not self.ok and dispatched:
+            raise ValueError("blocked ability property watcher leaks dispatched events")
+        object.__setattr__(self, "dispatched_event_ids", dispatched)
         projections = tuple(self.task_graph_projections)
         if any(type(item) is not TaskGraphNodeProjection for item in projections):
             raise TypeError("ability property watcher task graph projections are invalid")
@@ -75,6 +82,7 @@ class AbilityPropertyWatcherSystem:
         records: list[dict[str, JSONValue]] = []
         nodes: list[ExecutionNodeResult] = []
         projections: list[TaskGraphNodeProjection] = []
+        dispatched_event_ids: set[str] = set()
 
         for unit_id in tuple(dict.fromkeys(unit_ids)):
             result = self._reconcile_unit(
@@ -99,6 +107,7 @@ class AbilityPropertyWatcherSystem:
             records.extend(result.records)
             nodes.extend(result.node_results)
             projections.extend(result.task_graph_projections)
+            dispatched_event_ids.update(result.dispatched_event_ids)
         return AbilityPropertyWatcherResult(
             ok=True,
             after_state=current_state,
@@ -108,6 +117,7 @@ class AbilityPropertyWatcherSystem:
             records=tuple(records),
             node_results=tuple(nodes),
             task_graph_projections=tuple(projections),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _reconcile_unit(
@@ -131,6 +141,7 @@ class AbilityPropertyWatcherSystem:
         nodes: list[ExecutionNodeResult] = []
         projections: list[TaskGraphNodeProjection] = []
         removed_watcher_instance_ids: set[str] = set()
+        dispatched_event_ids: set[str] = set()
 
         for original_detail in details:
             instance_id = str(original_detail.get("instance_id") or "")
@@ -326,6 +337,7 @@ class AbilityPropertyWatcherSystem:
                         projections.extend(
                             callback_result.task_graph_projections
                         )
+                        dispatched_event_ids.update(callback_result.dispatched_event_ids)
                         removed_watcher_instance_ids.update(
                             _formally_removed_status_instance_ids(
                                 callback_result.mutations,
@@ -413,6 +425,7 @@ class AbilityPropertyWatcherSystem:
             records=tuple(records),
             node_results=tuple(nodes),
             task_graph_projections=tuple(projections),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _range_contains(

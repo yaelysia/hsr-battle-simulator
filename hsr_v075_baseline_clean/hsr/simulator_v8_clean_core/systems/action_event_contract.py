@@ -13,7 +13,7 @@ from ..rules.condition_state import (
     TransientConditionOperandRequest,
     TransientConditionOperandResolution,
 )
-from ..rules.ir import ActionDefinitionIR
+from ..rules.ir import ActionDefinitionIR, ActionEventIR
 from ..rules.rulebook import RuleBook
 
 
@@ -147,6 +147,8 @@ class AdmittedActionTargetFact:
     window: str = ""
     step_id: str = ""
     step_index: int = -1
+    skill_target_ids: tuple[str, ...] | None = None
+    skill_sub_target_ids: tuple[str, ...] | None = None
     _execution_token: object | None = field(default=None, repr=False, compare=False)
     _issuer: object | None = field(default=None, repr=False, compare=False)
     _claims: tuple[object, ...] = field(default=(), repr=False, compare=False)
@@ -189,6 +191,13 @@ class AdmittedActionTargetFact:
         if bool(self.event_id) != (self.step_index >= 0):
             raise ValueError("action target fact step binding is incomplete")
         object.__setattr__(self, "target_ids", targets)
+        for name in ("skill_target_ids", "skill_sub_target_ids"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if (not isinstance(value, tuple) or any(type(item) is not str or not item for item in value)
+                    or len(value) != len(set(value))):
+                raise ValueError(f"action target fact {name} is invalid")
         if self._issuer is _ACTION_TARGET_FACT_ISSUER and self._claims != self._claim_values():
             raise ValueError("action target fact claims do not match content")
 
@@ -208,6 +217,8 @@ class AdmittedActionTargetFact:
             self.window,
             self.step_id,
             self.step_index,
+            self.skill_target_ids,
+            self.skill_sub_target_ids,
             self._execution_token,
         )
 
@@ -246,7 +257,22 @@ class AdmittedActionTargetFact:
             window=expected_scope.window,
             step_id=expected_scope.step_id,
             step_index=expected_scope.step_index,
+            skill_target_ids=self.skill_target_ids,
+            skill_sub_target_ids=self.skill_sub_target_ids,
             execution_token=expected_scope._execution_token,
+        )
+
+    def with_resolved_targets(self, target_ids: tuple[str, ...]) -> "AdmittedActionTargetFact":
+        """The owning execution replaces deferred impact with produced packet targets."""
+        if self._issuer is not _ACTION_TARGET_FACT_ISSUER or self._claims != self._claim_values() or self.event_id:
+            raise ValueError("resolved targets require an issued, unbound action fact")
+        return _issue_admitted_action_target_fact(
+            actor_id=self.actor_id, action_id=self.action_id, action_level=self.action_level,
+            selection_context_fingerprint=self.selection_context_fingerprint,
+            contract_fingerprint=self.contract_fingerprint, impact_fingerprint=self.impact_fingerprint,
+            canonical_action_event_id=self.canonical_action_event_id,
+            target_mode=self.target_mode, target_ids=target_ids,
+            skill_target_ids=self.skill_target_ids, skill_sub_target_ids=self.skill_sub_target_ids,
         )
 
     def invocation_blocked_reason(
@@ -307,6 +333,8 @@ def _issue_admitted_action_target_fact(
     window: str = "",
     step_id: str = "",
     step_index: int = -1,
+    skill_target_ids: tuple[str, ...] | None = None,
+    skill_sub_target_ids: tuple[str, ...] | None = None,
     execution_token: object | None = None,
 ) -> AdmittedActionTargetFact:
     fields = {
@@ -324,6 +352,8 @@ def _issue_admitted_action_target_fact(
         "window": window,
         "step_id": step_id,
         "step_index": step_index,
+        "skill_target_ids": skill_target_ids,
+        "skill_sub_target_ids": skill_sub_target_ids,
         "_execution_token": execution_token,
     }
     claims = (
@@ -341,6 +371,8 @@ def _issue_admitted_action_target_fact(
         window,
         step_id,
         step_index,
+        skill_target_ids,
+        skill_sub_target_ids,
         execution_token,
     )
     return AdmittedActionTargetFact(
@@ -348,6 +380,84 @@ def _issue_admitted_action_target_fact(
         _issuer=_ACTION_TARGET_FACT_ISSUER,
         _claims=claims,
     )
+
+
+def parallel_action_target_fact(
+    *, parent_fact: AdmittedActionTargetFact, execution_token: object,
+    command: ActionCommand, definition: ActionDefinitionIR, action_event: ActionEventIR,
+) -> AdmittedActionTargetFact:
+    """Carry admitted action targets into a parallel participant's own scope."""
+    if (type(parent_fact) is not AdmittedActionTargetFact
+            or parent_fact._issuer is not _ACTION_TARGET_FACT_ISSUER
+            or parent_fact._claims != parent_fact._claim_values()
+            or parent_fact.event_id or execution_token is None
+            or parent_fact.action_id != command.action_id
+            or parent_fact.action_level != command.action_level
+            or definition.action_id != command.action_id or definition.level != command.action_level
+            or action_event.action_event_id != parent_fact.canonical_action_event_id
+            or action_event.action_id != command.action_id or action_event.level != command.action_level):
+        raise ValueError("parallel_attack_parent_action_fact_invalid")
+    return _issue_admitted_action_target_fact(
+        actor_id=command.actor_id, action_id=command.action_id, action_level=command.action_level,
+        selection_context_fingerprint=parent_fact.selection_context_fingerprint,
+        contract_fingerprint=parent_fact.contract_fingerprint,
+        impact_fingerprint=parent_fact.impact_fingerprint,
+        canonical_action_event_id=action_event.action_event_id, target_mode=parent_fact.target_mode,
+        target_ids=parent_fact.target_ids, unavailable_reason=parent_fact.unavailable_reason,
+        skill_target_ids=parent_fact.skill_target_ids,
+        skill_sub_target_ids=parent_fact.skill_sub_target_ids,
+    )
+
+
+def parallel_attack_window_event(
+    *, parent_fact: AdmittedActionTargetFact, execution_token: object,
+    command: ActionCommand, definition: ActionDefinitionIR, action_event: ActionEventIR,
+    target_resolution: TargetResolution, invocation_id: str,
+    window: str,
+) -> tuple[GameEvent, ActionWindowExpectedScope]:
+    """Derive a child attack window from an admitted parallel action invocation."""
+    fact = parallel_action_target_fact(
+        parent_fact=parent_fact, execution_token=execution_token, command=command,
+        definition=definition, action_event=action_event,
+    )
+    if window not in {"before_attack", "after_attack"}:
+        raise ValueError("parallel_attack_window_not_admitted")
+    steps = [(i, step) for i, step in enumerate(action_event.phase_steps)
+             if step.kind == "trigger_window" and step.canonical_window == window]
+    if (len(steps) != 1 or steps[0][1].coverage_status not in {"lowered", "executable"}
+            or steps[0][1].blocked_reason):
+        raise ValueError("parallel_attack_completion_window_not_admitted")
+    index, step = steps[0]
+    scope = _issue_action_window_expected_scope(
+        execution_token=execution_token, actor_id=command.actor_id, action_id=command.action_id,
+        action_level=command.action_level, canonical_action_event_id=action_event.action_event_id,
+        impact_fingerprint=parent_fact.impact_fingerprint,
+        event_id=f"{invocation_id}:{window}", window=step.canonical_window,
+        step_id=f"{index}:{step.phase}:{step.canonical_window}:{step.tbgd_event}", step_index=index,
+    )
+    fact = fact.bind_invocation(scope)
+    primary = target_resolution.primary
+    event = GameEvent(
+        event_type=f"action.window.{window}", source_id=command.actor_id,
+        target_id=primary, event_id=scope.event_id, window=scope.window, process_only=True,
+        admitted_action_target_fact=fact, expected_action_window_scope=scope,
+        payload={
+            "tbgd_event": step.tbgd_event, "phase": step.phase,
+            "action_id": command.action_id, "action_level": command.action_level,
+            "action_event_id": action_event.action_event_id,
+            "actor_id": command.actor_id, "attacker_id": command.actor_id,
+            "damage_attacker_id": command.actor_id, "parallel_parent_actor_id": parent_fact.actor_id,
+            "target_ids": list(target_resolution.selected),
+            "selected_target_ids": list(target_resolution.selected),
+            "primary_action_target_id": primary, "primary_target_id": primary,
+            "current_hit_target_id": primary, "target_id": primary,
+            "attack_type": definition.attack_type, "AttackType": definition.attack_type,
+            "skill_type": condition_skill_type(definition), "SkillType": condition_skill_type(definition),
+            "skill_effect": definition.skill_effect, "is_current_skill_active": True,
+            "is_insert_action": command.source == "queue", "source_trace": action_event.source.to_json(),
+        },
+    )
+    return event, scope
 
 
 @dataclass(frozen=True)
@@ -651,7 +761,10 @@ def damage_listener_window_event(
             "actor_id": command.actor_id,
             "attacker_id": command.actor_id,
             "damage_attacker_id": command.actor_id,
-            "param_entity_id": target_id,
+            "param_entity_id": command.actor_id if event_type in {
+                "damage.target_attack.before", "damage.target_attack.after",
+                "damage.target_hit_sequence.before", "damage.target_hit_sequence.after",
+            } else target_id,
             "primary_target_id": primary_target_id or target_id,
             "primary_action_target_id": primary_target_id or target_id,
             "current_hit_target_id": target_id,

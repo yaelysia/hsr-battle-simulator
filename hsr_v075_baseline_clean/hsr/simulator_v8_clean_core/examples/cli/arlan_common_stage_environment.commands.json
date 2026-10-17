@@ -1,0 +1,242 @@
+{
+  "commands": [
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:200020050:wave:0:pos:0"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {
+        "selection_controller": "external",
+        "skill_index": "0",
+        "combatant_action_set_id": "combatant_action_set:avatar:1008",
+        "actor_data_card": {
+          "card_kind": "character_data_card",
+          "card_id": "character_data_card:avatar:1008",
+          "entity_ref": "avatar:1008",
+          "owner_entity_ref": null,
+          "coverage_status": "executable"
+        },
+        "character_build_effective_skill_level": {
+          "action_id": "avatar_skill:100801",
+          "effective_level": 1,
+          "level_sources": [
+            {
+              "source_kind": "trace_base",
+              "level_value": 1,
+              "source_ref": {
+                "definition_kind": "character_mechanism_slot",
+                "definition_identity": "character_mechanism_slot:character_data_card:avatar:1008:trace:1008001:1:skill_level",
+                "stable_id": "character_mechanism_slot::character_mechanism_slot:character_data_card:avatar:1008:trace:1008001:1:skill_level"
+              },
+              "source": {
+                "source_path": "ExcelOutput/AvatarSkillTreeConfig.json",
+                "raw_type": "AvatarSkillTreeConfig",
+                "raw_id": "1008001:1",
+                "evidence": {
+                  "row_index": 400,
+                  "avatar_id": "1008",
+                  "enhanced_id": null,
+                  "point_id": "1008001",
+                  "level": 1,
+                  "point_type": 2,
+                  "anchor_type": "Point01",
+                  "point_trigger_key": "PointNormal",
+                  "ability_name": "",
+                  "status_add_list": [],
+                  "extra_effect_id_list": [],
+                  "builder": "character_trace_node_v0_265",
+                  "avatar_promotion_limit_present": false,
+                  "avatar_promotion_limit": null,
+                  "avatar_level_limit_present": false,
+                  "avatar_level_limit": null,
+                  "pre_point_present": true,
+                  "pre_point": []
+                }
+              }
+            }
+          ],
+          "action_definition": {
+            "definition_id": "action_def:avatar_skill:100801:1",
+            "level": 1,
+            "action_record_source": {
+              "source_path": "ExcelOutput/AvatarSkillConfig.json",
+              "raw_type": "AvatarSkillConfig",
+              "raw_id": "100801",
+              "evidence": {
+                "row_index": 150,
+                "id_key": "SkillID",
+                "level": 1,
+                "builder": "character_action_set_v0_265"
+              }
+            },
+            "source": {
+              "source_path": "ExcelOutput/AvatarSkillConfig.json",
+              "raw_type": "AvatarSkillConfig",
+              "raw_id": "100801",
+              "evidence": {
+                "row_index": 150,
+                "id_key": "SkillID",
+                "level": 1,
+                "skill_desc_hash": "13276900518395540662",
+                "skill_trigger_key": "Skill01",
+                "damage_type": "",
+                "sp_hit_base": null,
+                "monster_target_source": {},
+                "servant_target_source": {},
+                "resource_mapping": {
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "SPBase": "energy_gain",
+                  "SPNeed": "action_energy_cost_not_capacity"
+                },
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:200020050:wave:0:pos:1",
+      "action_id": "monster_skill:801101001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {
+        "selection_controller": "external",
+        "candidate_kind": "external_card_action",
+        "candidate_constraint": {
+          "ok": true,
+          "mode": "external_card_actions",
+          "monster_data_card_id": "monster_data_card:monster:8011010",
+          "ai_policy_status": "blocked",
+          "ai_policy_blocked_reason": "monster_ai_policy_not_simple_sequence"
+        },
+        "skill_index": "0",
+        "combatant_action_set_id": "combatant_action_set:monster:8011010",
+        "actor_data_card": {
+          "card_kind": "monster_data_card",
+          "card_id": "monster_data_card:monster:8011010",
+          "entity_ref": "monster:8011010",
+          "owner_entity_ref": null,
+          "coverage_status": "lowered"
+        }
+      }
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:200020050:wave:0:pos:1"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {
+        "selection_controller": "external",
+        "skill_index": "0",
+        "combatant_action_set_id": "combatant_action_set:avatar:1008",
+        "actor_data_card": {
+          "card_kind": "character_data_card",
+          "card_id": "character_data_card:avatar:1008",
+          "entity_ref": "avatar:1008",
+          "owner_entity_ref": null,
+          "coverage_status": "executable"
+        },
+        "character_build_effective_skill_level": {
+          "action_id": "avatar_skill:100801",
+          "effective_level": 1,
+          "level_sources": [
+            {
+              "source_kind": "trace_base",
+              "level_value": 1,
+              "source_ref": {
+                "definition_kind": "character_mechanism_slot",
+                "definition_identity": "character_mechanism_slot:character_data_card:avatar:1008:trace:1008001:1:skill_level",
+                "stable_id": "character_mechanism_slot::character_mechanism_slot:character_data_card:avatar:1008:trace:1008001:1:skill_level"
+              },
+              "source": {
+                "source_path": "ExcelOutput/AvatarSkillTreeConfig.json",
+                "raw_type": "AvatarSkillTreeConfig",
+                "raw_id": "1008001:1",
+                "evidence": {
+                  "row_index": 400,
+                  "avatar_id": "1008",
+                  "enhanced_id": null,
+                  "point_id": "1008001",
+                  "level": 1,
+                  "point_type": 2,
+                  "anchor_type": "Point01",
+                  "point_trigger_key": "PointNormal",
+                  "ability_name": "",
+                  "status_add_list": [],
+                  "extra_effect_id_list": [],
+                  "builder": "character_trace_node_v0_265",
+                  "avatar_promotion_limit_present": false,
+                  "avatar_promotion_limit": null,
+                  "avatar_level_limit_present": false,
+                  "avatar_level_limit": null,
+                  "pre_point_present": true,
+                  "pre_point": []
+                }
+              }
+            }
+          ],
+          "action_definition": {
+            "definition_id": "action_def:avatar_skill:100801:1",
+            "level": 1,
+            "action_record_source": {
+              "source_path": "ExcelOutput/AvatarSkillConfig.json",
+              "raw_type": "AvatarSkillConfig",
+              "raw_id": "100801",
+              "evidence": {
+                "row_index": 150,
+                "id_key": "SkillID",
+                "level": 1,
+                "builder": "character_action_set_v0_265"
+              }
+            },
+            "source": {
+              "source_path": "ExcelOutput/AvatarSkillConfig.json",
+              "raw_type": "AvatarSkillConfig",
+              "raw_id": "100801",
+              "evidence": {
+                "row_index": 150,
+                "id_key": "SkillID",
+                "level": 1,
+                "skill_desc_hash": "13276900518395540662",
+                "skill_trigger_key": "Skill01",
+                "damage_type": "",
+                "sp_hit_base": null,
+                "monster_target_source": {},
+                "servant_target_source": {},
+                "resource_mapping": {
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "SPBase": "energy_gain",
+                  "SPNeed": "action_energy_cost_not_capacity"
+                },
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

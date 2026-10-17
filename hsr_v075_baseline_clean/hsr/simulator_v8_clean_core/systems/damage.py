@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 import math
 from typing import Literal
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, PendingDefeatPlan, RNGEvent
 from ..core.settlement import SettlementRecord
 from ..rules.engine_rule_registry import (
     ENGINE_RULE_REGISTRY_VERSION,
@@ -14,14 +14,15 @@ from ..rules.engine_rule_registry import (
     engine_rule_admission_reason,
     select_damage_route_rule,
 )
-from ..rules.ir import ActionDefinitionIR
+from ..rules.ir import ActionDefinitionIR, DamageModifierIR, FormulaIR
 from ..rules.rulebook import RuleBook
-from .damage_formula import DamageFormulaInput, DirectDamageFormula
-from .damage_pipeline import DamagePipelineResult, DamageStagePipeline
+from .damage_formula import DamageFormulaInput, DirectDamageFormula, resolve_damage_crit
+from .damage_pipeline import DamagePipelineResult, DamageStageBucket, DamageStagePipeline
 from .mutation_events import events_for_mutation, mutation_backed_event_id
 from .resource import ResourceSystem
 from .unit_lifecycle import UnitLifecycleSystem
 from .shield import HPDamageRoute, ShieldSystem
+from .elation import ElationDamageContext
 
 
 DamageFormulaFamily = Literal[
@@ -120,15 +121,11 @@ DAMAGE_FAMILY_POLICIES: dict[str, DamageFamilyPolicy] = {
     ),
     "elation": DamageFamilyPolicy(
         family="elation",
-        runtime_status="blocked",
-        record_type="damage_blocked",
+        runtime_status="executable_with_admitted_elation_inputs",
+        record_type="damage",
         uses_direct_multiplier_ledger=False,
         bypasses_normal_multipliers=False,
-        source_requirement="Elation formula inputs admitted from TBGD",
-        blocked_reason=(
-            "Elation damage is a mainline 4.0 damage formula family, "
-            "but the complete TBGD formula inputs are not admitted"
-        ),
+        source_requirement="executable elation level/multiplier FormulaIR + emission ratio + typed per-hit ElationDamageContext",
     ),
 }
 
@@ -203,6 +200,32 @@ class DamageWindowLedger:
 
 
 @dataclass(frozen=True)
+class DamageModifierContribution:
+    modifier: DamageModifierIR
+    term_index: int
+    value: float
+
+    def __post_init__(self) -> None:
+        if (type(self.modifier) is not DamageModifierIR
+                or self.modifier.coverage_status != "executable" or self.modifier.blocked_reason
+                or type(self.term_index) is not int
+                or not 0 <= self.term_index < len(self.modifier.modifier_terms)
+                or type(self.value) not in (int, float) or not math.isfinite(self.value)):
+            raise ValueError("damage modifier contribution is not source-closed and finite")
+
+    def formula_term(self) -> dict[str, JSONValue]:
+        return {
+            **self.modifier.modifier_terms[self.term_index],
+            "value": self.value,
+            "source_type": "damage_modifier_ir",
+            "source_id": self.modifier.damage_modifier_id,
+            "source_task_id": self.modifier.source_task_id,
+            "condition": f"{self.modifier.event}_condition_passed",
+            "source_trace": self.modifier.source.to_json(),
+        }
+
+
+@dataclass(frozen=True)
 class DamagePacket:
     attacker_id: str
     target_id: str
@@ -231,12 +254,20 @@ class DamagePacket:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     hit_energy_gain: float | None = None
     base_includes_break_bonus: bool = False
+    modifier_contributions: tuple[DamageModifierContribution, ...] = ()
+    extra_scaling_ratio: float | None = None
+    elation_context: ElationDamageContext | None = None
 
     def __post_init__(self) -> None:
         if self.damage_formula_family == FOLLOW_UP_ATTACK_TYPE:
             raise ValueError("follow_up is an attack type, not a damage formula family")
         if self.amount is not None and self.amount < 0:
             raise ValueError("damage amount must be non-negative")
+        if any(type(item) is not DamageModifierContribution for item in self.modifier_contributions):
+            raise TypeError("damage packet modifier contributions must be typed")
+        object.__setattr__(self, "modifier_contributions", tuple(self.modifier_contributions))
+        if self.elation_context is not None and type(self.elation_context) is not ElationDamageContext:
+            raise TypeError("damage packet elation context must be typed")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -261,12 +292,15 @@ class DamagePacket:
             "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
             "scaling_ratio": self.scaling_ratio,
+            "extra_scaling_ratio": self.extra_scaling_ratio,
             "scaling_basis": self.scaling_basis,
             "hit_source_trace": self.hit_source_trace,
             "source_trace": self.source_trace,
             "source_frame": source_frame_for_packet(self).to_json(),
             "metadata": self.metadata,
             "hit_energy_gain": self.hit_energy_gain,
+            "elation_context": self.elation_context.to_json() if self.elation_context is not None else None,
+            "direct_modifier_terms": [item.formula_term() for item in self.modifier_contributions],
             "bypasses_normal_multipliers": _family_policy(self.damage_formula_family).bypasses_normal_multipliers,
             "uses_direct_multiplier_ledger": _family_policy(self.damage_formula_family).uses_direct_multiplier_ledger,
         }
@@ -315,6 +349,8 @@ class DamageSystem:
     ) -> DamageApplicationResult:
         if "packet_fields" in packet.metadata:
             return _damage_error(packet, "reserved_packet_metadata_field:packet_fields")
+        if packet.modifier_contributions and packet.damage_formula_family not in {"direct", "elation"}:
+            return _damage_error(packet, "transient_damage_modifiers_require_direct_consumer")
         dead_target_continuation = False
         if window_ledger is not None:
             admitted, reason, dead_target_continuation = window_ledger.admit_packet(state, packet)
@@ -326,6 +362,8 @@ class DamageSystem:
                 return _damage_source_skip(packet, reason, None)
         if packet.damage_formula_family == "direct":
             result = self._apply_direct_damage(state, packet, dead_target_continuation=dead_target_continuation)
+        elif packet.damage_formula_family == "elation":
+            result = self._apply_elation_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "break":
             result = self._apply_break_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "super_break":
@@ -357,7 +395,7 @@ class DamageSystem:
         if result.ok and packet.hit_energy_gain is not None:
             result = self._with_hit_energy(state, packet, result)
         if result.ok:
-            result = self._with_kill_energy(state, packet, result)
+            result = self._with_pending_defeat(state, packet, result)
         if result.ok:
             hp_events = tuple(
                 event
@@ -374,58 +412,64 @@ class DamageSystem:
                 window_ledger.record_defeat_event(event)
         return result
 
-    def _with_kill_energy(
+    def _with_pending_defeat(
         self, state: BattleState, packet: DamagePacket, result: DamageApplicationResult,
     ) -> DamageApplicationResult:
-        defeat = next((event for event in result.events if event.event_type == "unit.defeated"), None)
-        if defeat is None:
+        terminal = next((event for event in result.events if event.event_type == "unit.defeated"), None)
+        if terminal is None:
             return result
+        hp = next((mutation for mutation in result.mutations
+                   if mutation.path == ("units", packet.target_id, "hp")), None)
         frame = source_frame_for_packet(packet)
-        owner = state.units.get(frame.owner_id)
+        try:
+            plan = PendingDefeatPlan(packet.target_id, state.event_index, hp, frame.owner_id,
+                                     frame.to_json(), packet.source_trace, terminal)
+            lifecycle = UnitLifecycleSystem()
+            mutations = lifecycle.begin_limbo_mutations(state, plan)
+            root_event = lifecycle.limbo_events(plan)[0]
+        except (TypeError, ValueError) as exc:
+            return _damage_error(packet, str(exc))
+        return replace(result, mutations=(*result.mutations, *mutations),
+            events=tuple(root_event if event is terminal else event for event in result.events),
+            records=(*result.records, *lifecycle_settlement_records(mutations)))
+
+    def kill_energy_artifacts(
+        self, state: BattleState, plan: PendingDefeatPlan, defeat: GameEvent,
+    ) -> tuple[tuple[Mutation, ...], tuple[GameEvent, ...], tuple[dict[str, JSONValue], ...]]:
+        """Credit only a finalized native lethal cause, after its rescue callbacks."""
+        owner = state.units.get(plan.kill_credit_owner_id)
         if owner is None or owner.hp <= 0 or owner.lifecycle_status != "active" or owner.max_energy <= 0:
-            return result
-        if any(mutation.path == ("units", owner.unit_id, "hp") and mutation.after <= 0
-               for mutation in result.mutations):
-            return result
+            return (), (), ()
         rules = tuple(rule for rule in self.engine_rules.resource_rules if rule.rule_kind == "kill_energy_gain")
         if len(rules) != 1:
-            return _damage_error(packet, "resource_engine_rule_" + ("missing" if not rules else "ambiguous") + ":kill_energy_gain")
+            raise ValueError("resource_engine_rule_" + ("missing" if not rules else "ambiguous") + ":kill_energy_gain")
         rule = rules[0]
         reason = engine_rule_admission_reason(rule, expected_applicability=KILL_ENERGY_RULE_APPLICABILITY,
                                             numeric_value_required=True)
         if reason:
-            return _damage_error(packet, reason)
-        hp_mutation = next((mutation for mutation in result.mutations
-                            if mutation.path == ("units", packet.target_id, "hp")), None)
-        if hp_mutation is None:
-            return _damage_error(packet, "kill_energy_lethal_hp_mutation_missing")
-        try:
-            mutation = ResourceSystem().gain_kill_energy(
-                state, owner.unit_id, rule, defeated_event_payload=defeat.payload,
-                source="damage_system.kill_energy", metadata={
-                    "source_frame": frame.to_json(), "source_trace": packet.source_trace,
-                    "target_id": owner.unit_id, "defeated_target_id": packet.target_id,
-                    "hp_mutation_id": hp_mutation.stable_id(),
-                    "lifecycle_mutation_id": defeat.payload.get("lifecycle_mutation_id"),
-                    "energy_capacity": owner.max_energy,
-                },
-            )
-        except ValueError as exc:
-            return _damage_error(packet, str(exc))
+            raise ValueError(reason)
+        mutation = ResourceSystem().gain_kill_energy(
+            state, owner.unit_id, rule, defeated_event_payload=defeat.payload,
+            source="damage_system.kill_energy", metadata={
+                "source_frame": plan.source_frame, "source_trace": plan.source_trace,
+                "target_id": owner.unit_id, "defeated_target_id": plan.unit_id,
+                "hp_mutation_id": plan.hp_mutation.stable_id(),
+                "lifecycle_mutation_id": defeat.payload.get("lifecycle_mutation_id"),
+                "energy_capacity": owner.max_energy,
+            },
+        )
         if mutation.before == mutation.after:
-            return result
+            return (), (), ()
         record = SettlementRecord(
             record_type="kill_energy_gain", source="damage_system.kill_energy",
             mutation_id=mutation.stable_id(), process_only=False,
-            payload={"owner_id": owner.unit_id, "defeated_target_id": packet.target_id,
+            payload={"owner_id": owner.unit_id, "defeated_target_id": plan.unit_id,
                      "before_energy": mutation.before, "after_energy": mutation.after,
                      "resource_rule_id": rule.resource_rule_id}, trace=mutation.metadata,
         ).to_json()
-        return replace(result, mutations=(*result.mutations, mutation),
-                       events=(*result.events, *events_for_mutation(
-                           mutation, actor_id=owner.unit_id, source_id=owner.unit_id,
-                           event_index=state.event_index,
-                       )), records=(*result.records, record))
+        return (mutation,), events_for_mutation(
+            mutation, actor_id=owner.unit_id, source_id=owner.unit_id, event_index=state.event_index,
+        ), (record,)
 
     def _with_hit_energy(
         self, state: BattleState, packet: DamagePacket, result: DamageApplicationResult,
@@ -435,10 +479,6 @@ class DamageSystem:
                 or not packet.damage_emission_id or not packet.source_task_id):
             return _damage_error(packet, "hit_energy_contract_invalid")
         target = state.units[packet.target_id]
-        hp_after = next((mutation.after for mutation in result.mutations
-                         if mutation.path == ("units", packet.target_id, "hp")), target.hp)
-        if hp_after <= 0:
-            return _damage_error(packet, "hit_energy_lethal_eligibility_not_admitted")
         try:
             mutation = ResourceSystem().change_unit_energy(
                 state, packet.target_id, amount, "damage_system.hit_energy",
@@ -466,24 +506,127 @@ class DamageSystem:
                            source_id=packet.source_task_id, event_index=state.event_index,
                        )), records=(*result.records, record))
 
+    def _apply_elation_damage(
+        self, state: BattleState, packet: DamagePacket, *, dead_target_continuation: bool = False,
+    ) -> DamageApplicationResult:
+        if packet.amount is not None or packet.extra_scaling_ratio is not None or "elation_formula" in packet.metadata:
+            return _damage_error(packet, "elation_base_runtime_override_not_admitted")
+        if type(packet.elation_context) is not ElationDamageContext:
+            return _damage_error(packet, "elation_damage_context_missing")
+        reason = packet.elation_context.blocked_reason(
+            actor_id=packet.attacker_id, state=state,
+            modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions),
+        )
+        if reason:
+            return _damage_error(packet, reason)
+        if (type(packet.scaling_ratio) not in (int, float) or not math.isfinite(packet.scaling_ratio)
+                or packet.scaling_ratio < 0 or packet.scaling_basis.get("kind") != "elation_level_base"):
+            return _damage_error(packet, "elation_scaling_ratio_or_basis_not_admitted")
+        if self.rules is None or packet.attacker_id not in state.units:
+            return _damage_error(packet, "elation_formal_rules_or_actor_missing")
+        selected = {}
+        for kind in ("elation_level_base", "elation_multiplier_rule"):
+            candidates = tuple(formula for formula in self.rules.ir.formulas if formula.kind == kind)
+            if (len(candidates) != 1 or candidates[0].coverage_status != "executable"
+                    or self.rules.formula_resolution(candidates[0].formula_id)[0] is None):
+                return _damage_error(packet, f"{kind}_formula_not_admitted")
+            selected[kind] = candidates[0]
+        base_formula = selected["elation_level_base"]
+        values = base_formula.expression.get("values")
+        raw_base = values.get(str(state.units[packet.attacker_id].level)) if isinstance(values, dict) else None
+        try:
+            base = float(raw_base) if type(raw_base) in (int, float, str) else math.nan
+        except ValueError:
+            base = math.nan
+        if not math.isfinite(base) or base < 0:
+            return _damage_error(packet, "elation_level_base_missing_or_invalid")
+        for contribution in packet.modifier_contributions:
+            term = contribution.formula_term()
+            bucket, key = term.get("bucket"), str(term.get("key") or "")
+            admitted = ((bucket == "crit" and key in {"critical_chance", "critical_damage"})
+                or (bucket == "defense" and key == "defender_defence_added_ratio")
+                or (bucket == "resistance" and key in {"all_res_pen", *(f"{element}_res_pen" for element in (
+                    "Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary"))})
+                or (bucket == "damage_taken" and key == "damage_taken_ratio")
+                or (bucket == "damage_reduction" and key == "damage_reduction")
+                or (bucket == "base" and key == "attack_added_ratio")
+                or (bucket == "damage_bonus" and key == "damage_added_ratio")
+                or (bucket == "elation_bonus" and key == "elation_damage_added_ratio")
+                or (bucket == "elation_context" and key in {"points", "point_multiplier_enabled"})
+                or bucket == "weakness")
+            if not admitted:
+                return _damage_error(packet, f"elation_transient_modifier_not_admitted:{bucket}:{key}")
+        base_amount = base * packet.scaling_ratio
+        if not math.isfinite(base_amount):
+            return _damage_error(packet, "elation_base_amount_not_finite")
+        prepared = replace(packet, amount=base_amount, amount_stage="family_base", metadata={
+            **packet.metadata, "elation_formula": {
+                "level_base": base, "scaling_ratio": packet.scaling_ratio, "ratio_delta": 0.0,
+                "original_multiplier": 1.0, "context": packet.elation_context.to_json(),
+                "level_formula_source": base_formula.source.to_json(),
+                "multiplier_rule_source": selected["elation_multiplier_rule"].source.to_json(),
+            },
+        })
+        return self._apply_dot_damage(state, prepared, dead_target_continuation=dead_target_continuation,
+                                      elation_rule=selected["elation_multiplier_rule"])
+
     def _apply_dot_damage(
         self,
         state: BattleState,
         packet: DamagePacket,
         *,
         dead_target_continuation: bool = False,
+        elation_rule: FormulaIR | None = None,
     ) -> DamageApplicationResult:
         is_dot = packet.damage_formula_family == "dot"
-        record_type = "dot_damage" if is_dot else "additional_damage"
+        is_elation = packet.damage_formula_family == "elation"
+        record_type = "dot_damage" if is_dot else "damage" if is_elation else "additional_damage"
         if packet.amount is None:
             return _damage_error(packet, f"{record_type} requires admitted amount")
-        if not packet.status_damage_emission_id:
+        if not packet.status_damage_emission_id and not (is_elation and packet.damage_emission_id):
             return _damage_error(packet, f"{record_type} requires status_damage_emission_id")
+        critical_bucket = None
+        crit_resolution = None
+        rng_events = ()
+        if not is_dot:
+            try:
+                crit_resolution, rng_event, bucket = resolve_damage_crit(
+                    state, state.units[packet.attacker_id], packet.target_id,
+                    identity={
+                        "definition_id": packet.status_damage_emission_id or packet.damage_emission_id,
+                        "task_id": packet.source_task_id,
+                        "phase_id": (packet.status_callback_id or str(packet.metadata.get("phase_id") or "damage"))
+                                    if is_elation else packet.status_callback_id,
+                        "status_instance_id": packet.status_instance_id,
+                        "derived_event_id": ((packet.metadata.get("derived_event_id") or packet.metadata.get("trigger_event_id")
+                                              or packet.status_damage_emission_id or packet.damage_emission_id)
+                                             if is_elation else packet.metadata.get("trigger_event_id") or packet.status_damage_emission_id),
+                        **({"hit_index": packet.metadata.get("hit_index", 0)} if is_elation else {}),
+                    },
+                    source_trace=packet.source_trace,
+                    crit_mode=_metadata_str(packet.metadata, "crit_mode"),
+                    rng_choices=_metadata_dict(packet.metadata, "rng_choices"),
+                    rng_mode=_metadata_str(packet.metadata, "rng_mode"),
+                    crit_modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions
+                        if item.formula_term().get("bucket") == "crit" and item.formula_term().get("key") == "critical_chance"),
+                    crit_damage_modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions
+                        if item.formula_term().get("bucket") == "crit" and item.formula_term().get("key") == "critical_damage"),
+                )
+            except ValueError as exc:
+                return _damage_error(packet, str(exc))
+            critical_bucket = DamageStageBucket(
+                "critical", True, bucket.multiplier,
+                tuple(term.to_json() for term in bucket.applied_terms),
+                tuple(term.to_json() for term in bucket.skipped_terms), bucket.metadata,
+            )
+            rng_events = (rng_event,)
         pipeline = _non_direct_pipeline(
             state,
             packet,
             required_amount_stage="family_base",
             engine_rules=self.engine_rules,
+            critical_bucket=critical_bucket,
+            elation_rule=elation_rule,
         )
         if not pipeline.ok:
             return _damage_error(packet, pipeline.blocked_reason)
@@ -499,6 +642,8 @@ class DamageSystem:
             "normal_multiplier_terms": list(pipeline.applied_terms),
             "uses_direct_multiplier_ledger": False,
             "bypasses_normal_multipliers": False,
+            **({"crit_resolution": crit_resolution.to_json()} if crit_resolution is not None else {}),
+            **({"elation_formula": packet.metadata["elation_formula"]} if is_elation else {}),
         }
         route = _shield_route(state, packet, final_damage, metadata, self.engine_rules)
         if not route.ok:
@@ -513,15 +658,6 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
-        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
-            state,
-            packet,
-            before_hp=target.hp,
-            after_hp=after,
-            record_type=record_type,
-            hp_mutation=mutation,
-        )
-        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -547,9 +683,12 @@ class DamageSystem:
             "shared_multiplier_terms": list(pipeline.applied_terms),
             "skipped_multiplier_terms": list(pipeline.skipped_terms),
             "numeric_evaluation": packet.metadata.get("numeric_evaluation", {}),
+            **({"damage_emission_id": packet.damage_emission_id,
+                "elation_formula": packet.metadata["elation_formula"]} if is_elation else {}),
             "target_before_hp": target.hp,
             "target_after_hp": after,
             "hp_route": _hp_route_json(route),
+            **({"crit_resolution": crit_resolution.to_json()} if crit_resolution is not None else {}),
         }
         if dead_target_continuation:
             record_payload["dead_target_continuation"] = True
@@ -557,17 +696,17 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
+            rng_events=rng_events,
             events=route.events + _damage_events(
                 packet,
                 record_type=record_type,
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
-                lifecycle_mutation_id=lifecycle_mutation_id,
+                is_critical=crit_resolution.is_crit if crit_resolution is not None else False,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
-            + ((mutation,) if mutation is not None else ())
-            + lifecycle_mutations,
+            + ((mutation,) if mutation is not None else ()),
             records=(
                 *route.records,
                 SettlementRecord(
@@ -584,7 +723,6 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
-                *lifecycle_records,
             ),
         )
 
@@ -609,12 +747,13 @@ class DamageSystem:
                     attack_type=packet.attack_type,
                     element_type=packet.element_type,
                     scaling_ratio=packet.scaling_ratio,
+                    extra_scaling_ratio=packet.extra_scaling_ratio,
                     scaling_basis=packet.scaling_basis,
                     source_trace=packet.source_trace,
                     crit_mode=_metadata_str(packet.metadata, "crit_mode"),
                     rng_choices=_metadata_dict(packet.metadata, "rng_choices"),
                     rng_mode=_metadata_str(packet.metadata, "rng_mode"),
-                    direct_modifier_terms=_direct_modifier_terms_from_metadata(packet.metadata),
+                    direct_modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions),
                     decision_identity={
                         "task_id": packet.source_task_id,
                         "phase_id": str(packet.metadata.get("phase_id") or "damage"),
@@ -706,15 +845,6 @@ class DamageSystem:
             source="damage_system",
             metadata=mutation_metadata,
         )
-        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
-            state,
-            packet,
-            before_hp=target.hp,
-            after_hp=after,
-            record_type="damage",
-            hp_mutation=mutation,
-        )
-        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         return DamageApplicationResult(
             packet=packet,
             ok=True,
@@ -724,12 +854,10 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
-                lifecycle_mutation_id=lifecycle_mutation_id,
                 is_critical=formula_result.crit_resolution.is_crit,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
-            + ((mutation,) if mutation is not None else ())
-            + lifecycle_mutations,
+            + ((mutation,) if mutation is not None else ()),
             rng_events=formula_result.rng_events,
             records=(
                 *route.records,
@@ -747,7 +875,6 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
-                *lifecycle_records,
             ),
         )
 
@@ -807,15 +934,6 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
-        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
-            state,
-            packet,
-            before_hp=target.hp,
-            after_hp=after,
-            record_type=record_type,
-            hp_mutation=mutation,
-        )
-        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -859,11 +977,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
-                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
-            + ((mutation,) if mutation is not None else ())
-            + lifecycle_mutations,
+            + ((mutation,) if mutation is not None else ()),
             records=(
                 *route.records,
                 SettlementRecord(
@@ -880,7 +996,6 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
-                *lifecycle_records,
             ),
         )
 
@@ -928,15 +1043,6 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
-        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
-            state,
-            packet,
-            before_hp=target.hp,
-            after_hp=after,
-            record_type="super_break_damage",
-            hp_mutation=mutation,
-        )
-        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -974,11 +1080,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
-                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
-            + ((mutation,) if mutation is not None else ())
-            + lifecycle_mutations,
+            + ((mutation,) if mutation is not None else ()),
             records=(
                 *route.records,
                 SettlementRecord(
@@ -995,7 +1099,6 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
-                *lifecycle_records,
             ),
         )
 
@@ -1063,15 +1166,6 @@ class DamageSystem:
         if dead_target_continuation:
             record_payload["dead_target_continuation"] = True
             record_payload["continuation_reason"] = "same_damage_sequence_after_lethal"
-        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
-            state,
-            packet,
-            before_hp=target.hp,
-            after_hp=after,
-            record_type=record_type,
-            hp_mutation=mutation,
-        )
-        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         return DamageApplicationResult(
             packet=packet,
             ok=True,
@@ -1081,11 +1175,9 @@ class DamageSystem:
                 amount=pipeline.final_amount,
                 before_hp=target.hp,
                 after_hp=after,
-                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
-            + ((mutation,) if mutation is not None else ())
-            + lifecycle_mutations,
+            + ((mutation,) if mutation is not None else ()),
             records=(
                 *route.records,
                 SettlementRecord(
@@ -1102,7 +1194,6 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
-                *lifecycle_records,
             ),
         )
 
@@ -1204,13 +1295,6 @@ def _metadata_dict(metadata: dict[str, JSONValue], key: str) -> dict[str, JSONVa
     return {str(item_key): item_value for item_key, item_value in value.items()} if isinstance(value, dict) else {}
 
 
-def _direct_modifier_terms_from_metadata(metadata: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:
-    value = metadata.get("direct_modifier_terms")
-    if not isinstance(value, list):
-        return ()
-    return tuple(item for item in value if isinstance(item, dict))
-
-
 def source_frame_for_packet(packet: DamagePacket) -> DamageSourceFrame:
     if packet.source_frame is not None:
         return packet.source_frame
@@ -1246,6 +1330,8 @@ def _non_direct_pipeline(
     *,
     required_amount_stage: str,
     engine_rules: EngineRuleRegistry,
+    critical_bucket: DamageStageBucket | None = None,
+    elation_rule: FormulaIR | None = None,
 ) -> DamagePipelineResult:
     if packet.amount is None:
         return DamagePipelineResult(
@@ -1284,6 +1370,10 @@ def _non_direct_pipeline(
             element_type=packet.element_type,
             attack_type=packet.attack_type,
             source_trace=packet.source_trace,
+            critical_bucket=critical_bucket,
+            elation_context=packet.elation_context,
+            elation_rule=elation_rule,
+            modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions),
         )
     except ValueError as exc:
         return DamagePipelineResult(
@@ -1464,6 +1554,12 @@ def _damage_events(
         after_hp=after_hp,
         is_critical=is_critical,
     )
+    # Attacker and defender callbacks receive different ParamEntity values.
+    # Produce both from the typed packet instead of changing listener payloads.
+    hit_events = (hit_event,)
+    if packet.action_definition is not None:
+        hit_events += (replace(hit_event, event_type="damage.attacker_hit",
+                              payload={**hit_event.payload, "param_entity_id": packet.target_id}),)
     defeat_event = _damage_defeat_event(
         packet,
         hit_event=hit_event,
@@ -1475,21 +1571,8 @@ def _damage_events(
         is_critical=is_critical,
     )
     if defeat_event is None:
-        return (hit_event,)
-    before_dying_event = GameEvent(
-        event_type="unit.before_dying",
-        source_id=defeat_event.source_id,
-        target_id=defeat_event.target_id,
-        window="OnBeforeDying",
-        process_only=True,
-        payload={
-            **defeat_event.payload,
-            "callback_events": ["OnBeforeDying"],
-            "listener_scope": "owner_local",
-            "death_transition_stage": "before_dying",
-        },
-    )
-    return (hit_event, before_dying_event, defeat_event)
+        return hit_events
+    return (*hit_events, defeat_event)
 
 
 def _damage_hit_event(
@@ -1634,98 +1717,15 @@ def _packet_mutation_metadata(packet: DamagePacket, packet_json: dict[str, JSONV
     return {**fields, **packet.metadata, "packet_fields": fields}
 
 
-def _defeat_lifecycle_artifacts(
-    state: BattleState,
-    packet: DamagePacket,
-    *,
-    before_hp: float,
-    after_hp: float,
-    record_type: str,
-    hp_mutation: Mutation | None,
-) -> tuple[tuple[Mutation, ...], tuple[dict[str, JSONValue], ...]]:
-    if hp_mutation is None or before_hp <= 0 or after_hp > 0:
-        return (), ()
-    source_frame = source_frame_for_packet(packet)
-    defeat_record: dict[str, JSONValue] = {
-        "record_type": record_type,
-        "target_id": packet.target_id,
-        "defeated_unit_id": packet.target_id,
-        "target_before_hp": before_hp,
-        "target_after_hp": after_hp,
-        "hp_mutation_id": hp_mutation.stable_id(),
-        "kill_credit_owner_id": source_frame.owner_id,
-        "kill_credit_source_id": source_frame.source_id,
-        "kill_credit_source_kind": source_frame.source_kind,
-        "damage_sequence_id": source_frame.sequence_id,
-        "source_frame": source_frame.to_json(),
-        "source_trace": packet.source_trace,
-    }
-    damage_metadata: dict[str, JSONValue] = {
-        "hp_mutation_id": hp_mutation.stable_id(),
-        "source_frame": source_frame.to_json(),
-        "defeat_record": defeat_record,
-    }
-    lifecycle = UnitLifecycleSystem()
-    status_mutation = lifecycle.defeat_mutation(
-        state,
-        packet.target_id,
-        reason="unit defeated by damage",
-        source="damage_system",
-        source_trace=packet.source_trace,
-        defeat_record=defeat_record,
-        metadata=damage_metadata,
-    )
-    persisted_defeat_record = (
-        {
-            **defeat_record,
-            "lifecycle_mutation_id": status_mutation.stable_id(),
-        }
-        if status_mutation is not None
-        else defeat_record
-    )
-    record_mutation = lifecycle.defeat_record_mutation(
-        state,
-        packet.target_id,
-        reason="record unit defeat",
-        source="damage_system",
-        defeat_record=persisted_defeat_record,
-        source_trace=packet.source_trace,
-        metadata={
-            **damage_metadata,
-            "lifecycle_mutation_id": (
-                status_mutation.stable_id()
-                if status_mutation is not None
-                else ""
-            ),
-        },
-    )
-    mutations = tuple(mutation for mutation in (status_mutation, record_mutation) if mutation is not None)
-    records = tuple(
-        SettlementRecord(
-            record_type="unit_lifecycle",
-            source=mutation.source,
-            mutation_id=mutation.stable_id(),
-            process_only=False,
-            payload={
-                "operation": mutation.metadata.get("lifecycle_operation"),
-                "path": list(mutation.path),
-                "before": mutation.before,
-                "after": mutation.after,
-                "reason": mutation.reason,
-                "metadata": mutation.metadata,
-            },
-            trace=packet.source_trace,
-        ).to_json()
-        for mutation in mutations
-    )
-    return mutations, records
-
-
-def _lifecycle_defeat_mutation_id(mutations: tuple[Mutation, ...]) -> str:
-    for mutation in mutations:
-        if mutation.metadata.get("lifecycle_operation") == "unit_defeat":
-            return mutation.stable_id()
-    return ""
+def lifecycle_settlement_records(mutations: tuple[Mutation, ...]) -> tuple[dict[str, JSONValue], ...]:
+    return tuple(SettlementRecord(
+        record_type="unit_lifecycle", source=mutation.source, mutation_id=mutation.stable_id(),
+        process_only=False, payload={
+            "operation": mutation.metadata.get("lifecycle_operation"), "path": list(mutation.path),
+            "before": mutation.before, "after": mutation.after, "reason": mutation.reason,
+            "metadata": mutation.metadata,
+        }, trace=mutation.metadata.get("source_trace", {}),
+    ).to_json() for mutation in mutations)
 
 
 def _action_definition_summary(action_definition: ActionDefinitionIR | None) -> dict[str, JSONValue] | None:

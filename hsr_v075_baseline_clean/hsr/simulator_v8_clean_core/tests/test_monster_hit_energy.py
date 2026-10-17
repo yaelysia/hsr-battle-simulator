@@ -47,6 +47,20 @@ def _execute(ir, state):
     )
 
 
+def test_real_monster_action_query_uses_external_choices(source_ir):
+    from hsr.simulator_v8_clean_core.systems.action_availability import ActionAvailabilitySystem
+    from hsr.simulator_v8_clean_core.systems.enemy_action import EnemyActionSystem
+    state = _state()
+    rules = RuleBook(source_ir)
+    constraint = EnemyActionSystem(rules).candidate_constraint(state, 'enemy')
+    assert constraint['ok'] and constraint['mode'] == 'external_card_actions'
+    choices, blocked = ActionAvailabilitySystem(rules)._enemy_choices(state, state.units['enemy'])
+    assert choices, [reason.to_json() for reason in blocked]
+    assert all(choice.choice_kind == 'normal_action' for choice in choices)
+    assert {choice.action_id for choice in choices} == {'monster_skill:801101001'}
+    assert all(choice.metadata['selection_controller'] == 'external' for choice in choices)
+
+
 def test_real_single_monster_hit_gains_target_energy_without_toughness(source_ir):
     from hsr.simulator_v8_clean_core.core.action_plan import _damage_plan_from_emissions
     from hsr.simulator_v8_clean_core.core.executor import _damage_packet
@@ -87,14 +101,21 @@ def test_real_single_monster_hit_gains_target_energy_without_toughness(source_ir
         assert not auditor.validate_execution((forged,), forged_records).ok
 
 
-def test_lethal_hit_with_unidentified_energy_eligibility_rolls_back(source_ir):
+@pytest.mark.parametrize('initial_energy', [20.0, 95.0])
+def test_real_lethal_hit_commits_damage_defeat_and_target_energy(source_ir, initial_energy):
     state = _state(hp=1)
-    before = state.snapshot().to_json()
+    state = replace(state, units={**state.units,
+        'ally': replace(state.units['ally'], energy=initial_energy)})
     after, transition = _execute(source_ir, state)
-    assert not transition.outcome.successor_eligible
-    assert "hit_energy_lethal_eligibility_not_admitted" in transition.outcome.reason_codes
-    assert not transition.transaction.mutations
-    assert after.snapshot().to_json() == before
+    assert transition.outcome.successor_eligible, transition.outcome.to_json()
+    assert after.units['ally'].hp == 0 and after.units['ally'].lifecycle_status == 'defeated'
+    assert after.units['ally'].energy == min(100, initial_energy + 10 * 1.25)
+    assert after.units['enemy'].energy == state.units['enemy'].energy
+    energy = [m for m in transition.transaction.mutations if m.path[-1] == 'energy']
+    assert len(energy) == 1 and energy[0].metadata['resource_operation'] == 'hit_energy_gain'
+    assert MutationReducer().replay_snapshot(state, transition.transaction.mutations, after.snapshot().to_json()).ok
+    audit = RuntimeSourceAuditor(RuleBook(source_ir)).validate_transition(transition)
+    assert audit.ok, audit.to_json()
 
 
 @pytest.mark.parametrize("initial_energy", [20.0, 95.0])

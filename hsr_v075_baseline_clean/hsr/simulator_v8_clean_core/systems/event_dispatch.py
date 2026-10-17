@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, PendingDefeatPlan, RNGEvent, TargetResolution, QueueActionStartFact, QueueActionTerminalFact, StanceCountDownFact, StatusImmunityFact
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -12,7 +12,7 @@ from ..resource_event_contract import (
 )
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
-from .damage import DamageSystem, DamageWindowLedger
+from .damage import DamageModifierContribution, DamageSystem, DamageWindowLedger, lifecycle_settlement_records
 from .ability_property_watchers import AbilityPropertyWatcherSystem
 from .action_event_contract import ActionWindowExpectedScope
 from .effect import EffectRegistry
@@ -32,7 +32,7 @@ from .task_graph import (
 )
 from .timeline import TimelineSystem
 from .trigger import TriggerSystem
-from .unit_lifecycle import UnitLifecycleSystem
+from .unit_lifecycle import LIMBO_CALLBACKS, UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -56,8 +56,14 @@ class EventDispatchResult:
     event_normalizations: tuple[EventNormalization, ...] = ()
     task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
     dispatched_event_ids: frozenset[str] = frozenset()
+    damage_modifiers: tuple[DamageModifierContribution, ...] = ()
 
     def __post_init__(self) -> None:
+        if any(type(item) is not DamageModifierContribution for item in self.damage_modifiers):
+            raise TypeError("event dispatch damage modifiers must be typed")
+        if self.errors and self.damage_modifiers:
+            raise ValueError("blocked event dispatch leaks damage modifiers")
+        object.__setattr__(self, "damage_modifiers", tuple(self.damage_modifiers))
         projections = tuple(self.task_graph_projections)
         if any(type(item) is not TaskGraphNodeProjection for item in projections):
             raise TypeError("event dispatch task graph projections are invalid")
@@ -164,6 +170,7 @@ class EventDispatchSystem:
             reducer=self.reducer,
         )
         self.phases = CombatPhaseMachine()
+        self._registered_event_nested_provider = None
 
     def dispatch_action_window(
         self,
@@ -299,6 +306,36 @@ class EventDispatchSystem:
     ) -> EventDispatchResult:
         from .ability import StatusNestedAbilityHookProvider
 
+        if event.event_type == "status.immunity":
+            fact = event.status_immunity_fact
+            reason = ""
+            if type(fact) is not StatusImmunityFact or not fact.matches(state, event):
+                reason = "status_immunity_fact_missing_or_mismatched"
+            elif ((unit_id is not None and unit_id != fact.target_id)
+                    or (modifier_name is not None and modifier_name != fact.protection_modifier_name)):
+                reason = "status_immunity_receiver_identity_mismatch"
+            elif event.window != "OnImmuneDebuff":
+                reason = "status_immunity_callback_window_mismatch"
+            elif any(value is not None for value in (command, action_definition, target_resolution)):
+                reason = "status_immunity_action_context_not_admitted"
+            elif event.payload.get("param_entity_id") not in (None, fact.target_id):
+                reason = "status_immunity_parameter_identity_mismatch"
+            elif any(
+                isinstance(detail, dict)
+                and detail.get("owner_id") == unit.unit_id
+                and detail.get("status_id") in unit.statuses
+                and detail.get("lifecycle_state") in {"active", "active_partial"}
+                and isinstance(detail.get("trigger_ids_by_event"), dict)
+                and any(name.startswith("OnListenImmune") and trigger_ids
+                        for name, trigger_ids in detail["trigger_ids_by_event"].items())
+                for unit in state.units.values()
+                for detail in unit.flags.get("status_details", ())
+            ):
+                reason = "status_immunity_global_listener_not_admitted"
+            if reason:
+                return self.dispatch_blocked(state, event=event, listener_kind="status_immunity_dispatch",
+                    scope="owner_local", reason=reason)
+            unit_id, modifier_name = fact.target_id, fact.protection_modifier_name
         transport_reason = _task_graph_transport_reason(
             task_graph_continuation,
             nested_ability_hooks,
@@ -420,11 +457,86 @@ class EventDispatchSystem:
             task_graph_continuation=task_graph_continuation,
             nested_ability_hooks=nested_ability_hooks,
         )
+        result = self._complete_limbo_window(
+            state, result, event=event, damage_window_ledger=damage_window_ledger,
+            task_graph_continuation=task_graph_continuation, nested_ability_hooks=nested_ability_hooks,
+            status_nested_ability_provider=status_nested_ability_provider,
+        )
         return _with_controlled_event_normalization(
             _with_event_dispatch_node_result(result, event),
             before=event_before_normalization,
             after=event,
         )
+
+    def _complete_limbo_window(
+        self, before: BattleState, result: EventDispatchResult, *, event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None,
+        task_graph_continuation: TaskGraphContinuation | None,
+        nested_ability_hooks: TaskGraphExecutionHooks | None,
+        status_nested_ability_provider: StatusNestedAbilityHookProvider | None,
+    ) -> EventDispatchResult:
+        stages = tuple(item[0] for item in LIMBO_CALLBACKS)
+        if event.event_type not in stages or result.errors:
+            return result
+        plan = event.pending_defeat_plan
+        lifecycle = UnitLifecycleSystem()
+        try:
+            # Queued rescue needs a binding to this pending cause and limbo
+            # admission in the queue consumer. Until connected, reject the
+            # actual request instead of killing its target ahead of the queue.
+            if any(mutation.path[:1] == ("queues",) for mutation in result.mutations):
+                raise ValueError("limbo_queue_rescue_not_connected")
+            current = lifecycle.pending_defeat(result.after_state, plan.unit_id)
+            if current is None:
+                unit = result.after_state.units[plan.unit_id]
+                if unit.lifecycle_status == "active" and unit.hp > 0:
+                    return result
+                raise ValueError("pending_defeat_window_closed_without_resolution")
+            if current != plan:
+                raise ValueError("pending_defeat_window_identity_mismatch")
+            stage = stages.index(event.event_type)
+            if stage + 1 < len(stages):
+                emitted = (lifecycle.limbo_events(plan)[stage + 1],)
+            else:
+                mutations = lifecycle.finalize_pending_defeat_mutations(result.after_state, plan)
+                terminal = replace(plan.terminal_event,
+                    event_id=mutation_backed_event_id(mutations[0].stable_id(), "unit.defeated"),
+                    payload={**plan.terminal_event.payload, "lifecycle_mutation_id": mutations[0].stable_id(),
+                             "pending_defeat_id": plan.pending_id, "param_entity_id": plan.unit_id})
+                energy, energy_events, energy_records = self.damage.kill_energy_artifacts(
+                    result.after_state, plan, terminal)
+                reduction = self.reducer.apply_all_result(result.after_state, (*mutations, *energy))
+                if not reduction.ok:
+                    raise ValueError("pending_defeat_finalization_mutation_failed")
+                result = replace(result, after_state=reduction.after_state,
+                    mutations=(*result.mutations, *mutations, *energy),
+                    records=(*result.records, *lifecycle_settlement_records(mutations), *energy_records))
+                emitted = (terminal, *energy_events)
+            for child in emitted:
+                child = replace(child, event_id=str(child.to_json()["event_id"]))
+                dispatched = self._dispatch_event(result.after_state, event=child,
+                    damage_window_ledger=damage_window_ledger,
+                    task_graph_continuation=task_graph_continuation, nested_ability_hooks=nested_ability_hooks,
+                    status_nested_ability_provider=status_nested_ability_provider)
+                result = replace(result, after_state=dispatched.after_state,
+                    mutations=(*result.mutations, *dispatched.mutations),
+                    events=(*result.events, *dispatched.events),
+                    rng_events=(*result.rng_events, *dispatched.rng_events),
+                    records=(*result.records, *dispatched.records),
+                    trigger_windows=(*result.trigger_windows, *dispatched.trigger_windows),
+                    listener_records=(*result.listener_records, *dispatched.listener_records),
+                    errors=(*result.errors, *dispatched.errors),
+                    node_results=(*result.node_results, *dispatched.node_results),
+                    event_normalizations=(*result.event_normalizations, *dispatched.event_normalizations),
+                    task_graph_projections=(*result.task_graph_projections, *dispatched.task_graph_projections),
+                    dispatched_event_ids=result.dispatched_event_ids | dispatched.dispatched_event_ids)
+                if result.errors:
+                    return _atomic_dispatch_failure(before, result)
+                if damage_window_ledger is not None:
+                    damage_window_ledger.record_defeat_event(child)
+            return result
+        except ValueError as exc:
+            return _atomic_dispatch_failure(before, replace(result, errors=(*result.errors, str(exc))))
 
     def _remove_exhausted_shield_owners(
         self,
@@ -444,7 +556,7 @@ class EventDispatchSystem:
         ):
             return _atomic_dispatch_failure(
                 result.after_state,
-                replace(result, errors=("shield_exhaustion_typed_fact_missing_or_mismatch",)),
+                replace(result, errors=("shield_exhaustion_typed_fact_missing_or_mismatch",), damage_modifiers=()),
             )
         current = result.after_state
         mutations = list(result.mutations)
@@ -463,14 +575,14 @@ class EventDispatchSystem:
             }:
                 return _atomic_dispatch_failure(
                     result.after_state,
-                    replace(result, errors=("shield_exhausted_instance_still_present",)),
+                    replace(result, errors=("shield_exhausted_instance_still_present",), damage_modifiers=()),
                 )
             if not owner.modifier_name and not owner.status_instance_id:
                 continue
             if not owner.modifier_name or not owner.status_instance_id:
                 return _atomic_dispatch_failure(
                     result.after_state,
-                    replace(result, errors=("shield_exhausted_owner_identity_incomplete",)),
+                    replace(result, errors=("shield_exhausted_owner_identity_incomplete",), damage_modifiers=()),
                 )
             owner_key = (owner.modifier_name, owner.status_instance_id, owner.caster_id)
             if owner_key in removed_owners:
@@ -487,13 +599,13 @@ class EventDispatchSystem:
             if not removal.ok:
                 return _atomic_dispatch_failure(
                     result.after_state,
-                    replace(result, errors=removal.unsupported or ("shield_owner_status_remove_failed",)),
+                    replace(result, errors=removal.unsupported or ("shield_owner_status_remove_failed",), damage_modifiers=()),
                 )
             reduction = self.reducer.apply_all_result(current, removal.mutations)
             if not reduction.ok:
                 return _atomic_dispatch_failure(
                     result.after_state,
-                    replace(result, errors=("shield_owner_status_mutation_conflict",)),
+                    replace(result, errors=("shield_owner_status_mutation_conflict",), damage_modifiers=()),
                 )
             current = reduction.after_state
             mutations.extend(removal.mutations)
@@ -503,7 +615,7 @@ class EventDispatchSystem:
                 if dispatched.errors:
                     return _atomic_dispatch_failure(
                         result.after_state,
-                        replace(result, errors=dispatched.errors),
+                        replace(result, errors=dispatched.errors, damage_modifiers=()),
                     )
                 current = dispatched.after_state
                 mutations.extend(dispatched.mutations)
@@ -560,6 +672,7 @@ class EventDispatchSystem:
                     result,
                     records=(*result.records, *watcher_result.records),
                     errors=(*result.errors, *watcher_result.errors),
+                    damage_modifiers=(),
                     node_results=(
                         *result.node_results,
                         *watcher_result.node_results,
@@ -580,12 +693,13 @@ class EventDispatchSystem:
             *result.task_graph_projections,
             *watcher_result.task_graph_projections,
         ]
-        dispatched_event_ids = set(result.dispatched_event_ids)
+        dispatched_event_ids = set(result.dispatched_event_ids | watcher_result.dispatched_event_ids)
         child_depth = _event_mutation_depth(event)
         dispatchable_events = tuple(
             emitted_event
             for emitted_event in watcher_result.events
             if emitted_event.event_type in CALLBACK_EMITTED_EVENT_TYPES
+            and str(emitted_event.to_json()["event_id"]) not in dispatched_event_ids
         )
         if (
             dispatchable_events
@@ -597,9 +711,12 @@ class EventDispatchSystem:
             events = [
                 *result.events,
                 *(emitted for emitted in watcher_result.events
-                  if emitted.event_type not in CALLBACK_EMITTED_EVENT_TYPES),
+                  if emitted.event_type not in CALLBACK_EMITTED_EVENT_TYPES
+                  or str(emitted.to_json()["event_id"]) in dispatched_event_ids),
             ]
             for emitted_event in dispatchable_events:
+                if str(emitted_event.to_json()["event_id"]) in dispatched_event_ids:
+                    continue
                 child_event = emitted_event
                 if "mutation_event_depth" not in emitted_event.payload:
                     child_event = replace(
@@ -620,6 +737,8 @@ class EventDispatchSystem:
                             kind="mutation_event_depth",
                         )
                     )
+                if child_event.event_type == "status.lifecycle" and event.break_notification_fact is not None:
+                    child_event = replace(child_event, break_notification_fact=event.break_notification_fact)
                 child_result = self.dispatch_event(
                     current_state,
                     event=child_event,
@@ -649,6 +768,7 @@ class EventDispatchSystem:
             event_normalizations=tuple(normalizations),
             dispatched_event_ids=frozenset(dispatched_event_ids),
             task_graph_projections=(() if errors else tuple(projections)),
+            damage_modifiers=() if errors else result.damage_modifiers,
         )
         return (
             _atomic_dispatch_failure(before_state, merged)
@@ -781,6 +901,12 @@ class EventDispatchSystem:
             unit_id=unit_id,
             modifier_name=modifier_name,
         )
+        if event.event_type == "status.immunity" and not any(
+            match.status == "matched" and match.callback_event == "OnImmuneDebuff" for match in matches
+        ):
+            return self.dispatch_blocked(state, event=event, listener_kind="status_immunity_dispatch",
+                scope="owner_local", reason=next((match.reason for match in matches if match.status == "blocked"),
+                                                 "status_immunity_callback_not_admitted"))
         if not matches:
             reason = "listener_match_missing"
             alias = aliases[0] if aliases else EventAlias(
@@ -826,6 +952,7 @@ class EventDispatchSystem:
         node_results: list[ExecutionNodeResult] = []
         event_normalizations: list[EventNormalization] = []
         task_graph_projections: list[TaskGraphNodeProjection] = []
+        damage_modifiers: list[DamageModifierContribution] = []
         dispatched_event_ids: set[str] = set()
         for match in matches:
             listener_record = _listener_record(
@@ -843,6 +970,14 @@ class EventDispatchSystem:
                 if match.status == "blocked" and match.reason:
                     errors.append(match.reason)
                 continue
+            listener_event = event
+            if match.callback_event == "OnListenBeforeHitAll":
+                if event.event_type != "damage.hit_sequence.before" or event.source_id not in current_state.units:
+                    errors.append("before_hit_all_listener_attacker_missing")
+                    continue
+                # Global listeners receive the actual attacker. Actor-local
+                # OnBeforeHitAll retains the current victim as its ParamEntity.
+                listener_event = replace(event, payload={**event.payload, "param_entity_id": event.source_id})
             if status_nested_ability_provider is not None:
                 if match.callback is None:
                     errors.append("action_window_formal_root_callback_missing")
@@ -853,11 +988,31 @@ class EventDispatchSystem:
                     unit_id=match.unit_id,
                     modifier_name=match.modifier_name,
                     event=match.callback_event,
-                    trigger_event=event,
+                    trigger_event=listener_event,
                     damage_window_ledger=damage_window_ledger,
                     detail_override=match.status_detail,
                     nested_ability_provider=status_nested_ability_provider,
                     expected_window_scope=expected_window_scope,
+                )
+            elif (task_graph_continuation is None and nested_ability_hooks is None
+                    and not event.event_type.startswith("action.window.")
+                    and match.callback is not None
+                    and match.callback.source_mode in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}
+                    and self.rules.status_event_family(match.callback_event) is not None
+                    and any(task.opcode == "TriggerAbility"
+                            for task in self.rules.status_callback_tasks_for_callback(match.callback.callback_id))):
+                if getattr(self, "_registered_event_nested_provider", None) is None:
+                    from .ability import AbilityTaskSystem
+
+                    self._registered_event_nested_provider = AbilityTaskSystem(
+                        self.rules, self.status_callbacks.effect_registry, reducer=self.reducer,
+                        damage=self.damage, event_dispatcher=self,
+                    ).formal_status_nested_ability_provider()
+                result = self.status_callbacks.execute_registered_event_formal_root(
+                    current_state, callback_id=match.callback.callback_id, unit_id=match.unit_id,
+                    modifier_name=match.modifier_name, event=match.callback_event, trigger_event=listener_event,
+                    damage_window_ledger=damage_window_ledger, detail_override=match.status_detail,
+                    nested_ability_provider=self._registered_event_nested_provider,
                 )
             else:
                 result = self.status_callbacks.execute(
@@ -865,7 +1020,7 @@ class EventDispatchSystem:
                     unit_id=match.unit_id,
                     modifier_name=match.modifier_name,
                     event=match.callback_event,
-                    trigger_event=event,
+                    trigger_event=listener_event,
                     damage_window_ledger=damage_window_ledger,
                     detail_override=match.status_detail,
                     task_graph_continuation=task_graph_continuation,
@@ -878,11 +1033,14 @@ class EventDispatchSystem:
             errors.extend(result.errors)
             node_results.extend(result.node_results)
             task_graph_projections.extend(result.task_graph_projections)
+            damage_modifiers.extend(result.damage_modifiers)
+            dispatched_event_ids.update(result.dispatched_event_ids)
             child_depth = _event_mutation_depth(event)
             dispatchable_events = tuple(
                 emitted_event
                 for emitted_event in result.events
                 if emitted_event.event_type in CALLBACK_EMITTED_EVENT_TYPES
+                and str(emitted_event.to_json()["event_id"]) not in dispatched_event_ids
             )
             if (
                 dispatchable_events
@@ -895,8 +1053,11 @@ class EventDispatchSystem:
                 events.extend(
                     emitted for emitted in result.events
                     if emitted.event_type not in CALLBACK_EMITTED_EVENT_TYPES
+                    or str(emitted.to_json()["event_id"]) in dispatched_event_ids
                 )
                 for emitted_event in dispatchable_events:
+                    if str(emitted_event.to_json()["event_id"]) in dispatched_event_ids:
+                        continue
                     child_event = emitted_event
                     if (
                         "mutation_event_depth"
@@ -927,6 +1088,8 @@ class EventDispatchSystem:
                                 kind="mutation_event_depth",
                             )
                         )
+                    if child_event.event_type == "status.lifecycle" and event.break_notification_fact is not None:
+                        child_event = replace(child_event, break_notification_fact=event.break_notification_fact)
                     child_result = self.dispatch_event(
                         current_state,
                         event=child_event,
@@ -978,6 +1141,7 @@ class EventDispatchSystem:
                 () if errors else tuple(task_graph_projections)
             ),
             dispatched_event_ids=frozenset(dispatched_event_ids),
+            damage_modifiers=() if errors else tuple(damage_modifiers),
         )
         return _atomic_dispatch_failure(state, result) if errors else result
 
@@ -1064,7 +1228,9 @@ class EventDispatchSystem:
         unit_id: str,
         modifier_name: str,
     ) -> tuple[ListenerMatch, ...]:
-        detail = _status_detail_for_unit_modifier(state, unit_id, modifier_name)
+        fact = event.status_immunity_fact if event.event_type == "status.immunity" else None
+        detail = _status_detail_for_unit_modifier(state, unit_id, modifier_name,
+            status_instance_id=fact.protection_instance_id if type(fact) is StatusImmunityFact else "")
         if detail is None:
             detached = _detached_status_detail(event)
             if (
@@ -1225,7 +1391,7 @@ def _with_controlled_event_normalization(
     before: GameEvent,
     after: GameEvent,
 ) -> EventDispatchResult:
-    if before == after:
+    if before.to_json() == after.to_json():
         return result
     return replace(
         result,
@@ -1257,6 +1423,8 @@ def _atomic_dispatch_failure(
         ),
         trigger_windows=(),
         task_graph_projections=(),
+        damage_modifiers=(),
+        dispatched_event_ids=frozenset(),
     )
 
 
@@ -1336,6 +1504,7 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "summon.retiring": (("OnDeathrattle", "being_hit_target_local", ""),),
     # These callbacks are produced by StatusSystem._status_lifecycle_events.
     # A scoped source slice may contain no listener for one of them; existing
     # source families still take precedence over this producer-side mapping.
@@ -1386,10 +1555,14 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "queue.action.before": (
         ("OnBeforeInsertActionPrepare", "actor_local", ""),
         ("OnInsertActionStart", "actor_local", ""),
+        ("OnListenInsertAbilityStart", "global_listener", ""),
     ),
     "queue.action.after": (
         ("OnInsertActionFinish", "actor_local", ""),
-        ("OnListenInsertAbilityFinish", "actor_local", ""),
+        ("OnListenInsertAbilityFinish", "global_listener", ""),
+    ),
+    "queue.action.abort": (
+        ("OnListenInsertAbilityAbort", "global_listener", ""),
     ),
     "unit.defeated": (
         ("OnTriggerDeath", "owner_local", ""),
@@ -1414,13 +1587,17 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "unit.before_dying": (
         ("OnBeforeDying", "owner_local", ""),
     ),
+    "unit.being_limbo": (("OnBeingLimbo", "being_hit_target_local", ""),),
+    "unit.limbo_wait_heal": (("OnLimboWaitHeal", "being_hit_target_local", ""),),
     "damage.hit": (
-        ("OnAfterHit", "per_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", ""),
         ("OnBeingHit", "being_hit_target_local", ""),
     ),
+    "damage.attacker_hit": (
+        ("OnAfterHit", "actor_local", ""),
+    ),
     "damage.before_hit": (
-        ("OnBeforeHit", "per_hit_target_local", ""),
+        ("OnBeforeHit", "actor_local", ""),
     ),
     "damage.hit_sequence.before": (
         ("OnBeforeHitAll", "actor_local", ""),
@@ -1444,9 +1621,15 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnBeingStanceDamage", "being_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", ""),
     ),
+    "break.entered": (
+        ("OnBeingBreak", "being_hit_target_local", ""),
+    ),
+    "toughness.segment_depleted": (
+        ("OnBeingStanceCountDown", "being_hit_target_local", ""),
+        ("OnTriggerStanceCountDown", "actor_local", ""),
+    ),
     "break.triggered": (
         ("OnTriggerBreak", "actor_local", ""),
-        ("OnBeingBreak", "being_hit_target_local", ""),
         ("OnListenBreak", "global_listener", ""),
     ),
     "status.callback": (
@@ -1464,10 +1647,12 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 
 
 CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
+    "unit.before_dying",
     "custom.event",
     "status.lifecycle",
     "summon.spawned",
     "summon.removed",
+    "summon.retiring",
 }
 MAX_CALLBACK_EMITTED_EVENT_DEPTH = 16
 
@@ -1494,6 +1679,24 @@ def _lifecycle_event_payload_block_reason(
     event: GameEvent,
 ) -> str:
     payload = event.payload
+    if event.event_type in {item[0] for item in LIMBO_CALLBACKS}:
+        plan = event.pending_defeat_plan
+        if type(plan) is not PendingDefeatPlan:
+            return "limbo_event_native_plan_missing"
+        try:
+            lifecycle = UnitLifecycleSystem()
+            if lifecycle.pending_defeat(state, plan.unit_id) != plan:
+                return "limbo_event_pending_cause_mismatch"
+            expected = next(item for item in lifecycle.limbo_events(plan) if item.event_type == event.event_type)
+            if "mutation_event_depth" in payload:
+                depth = payload["mutation_event_depth"]
+                if type(depth) is not int or not 0 <= depth <= MAX_CALLBACK_EMITTED_EVENT_DEPTH:
+                    return "limbo_event_dispatch_depth_invalid"
+                expected = replace(expected, payload={**expected.payload, "mutation_event_depth": depth})
+            if expected.to_json() != event.to_json():
+                return "limbo_event_native_context_mismatch"
+        except ValueError as exc:
+            return str(exc)
     if event.event_type == "unit.defeated":
         if event.window != "unit.defeated":
             return "unit_defeated_window_invalid"
@@ -1589,7 +1792,26 @@ def _event_with_typed_param_entity(
 ) -> tuple[GameEvent, str]:
     """Bind callback target resolution to one validated event entity identity."""
 
+    if not event.event_id:
+        event = replace(event, event_id=str(event.to_json()["event_id"]))
     payload = dict(event.payload)
+    if event.event_type == "toughness.segment_depleted":
+        fact = event.stance_count_down_fact
+        if type(fact) is not StanceCountDownFact or not fact.matches(state, event):
+            return event, "stance_count_down_fact_missing_or_mismatched"
+        if payload.get("param_entity_id") not in (None, fact.target_id):
+            return event, "stance_count_down_parameter_identity_mismatch"
+        return replace(event, payload={**payload, "param_entity_id": fact.target_id}), ""
+    if event.event_type == "queue.action.before":
+        fact = event.queue_action_start_fact
+        if type(fact) is not QueueActionStartFact or not fact.matches(state, event):
+            return event, "queue_action_start_fact_missing_or_mismatched"
+        return event, ""
+    if event.event_type in {"queue.action.after", "queue.action.abort"}:
+        fact = event.queue_action_terminal_fact
+        if type(fact) is not QueueActionTerminalFact or not fact.matches(state, event):
+            return event, "queue_action_terminal_fact_missing_or_mismatched"
+        return event, ""
     raw_param_entity_id = payload.get("param_entity_id")
     callback_events = payload.get("callback_events")
     creation_event = (
@@ -1699,7 +1921,7 @@ def _battle_state_transition_event_block_reason(
 
 
 def _detached_status_detail(event: GameEvent) -> dict[str, JSONValue] | None:
-    if event.event_type != "status.lifecycle" or event.payload.get(
+    if event.event_type != "status.lifecycle" or event.window != "OnDestroy" or event.payload.get(
         "lifecycle_operation"
     ) not in {"remove", "expire", "dispel", "stack_reduce_remove"}:
         return None
@@ -1708,6 +1930,22 @@ def _detached_status_detail(event: GameEvent) -> dict[str, JSONValue] | None:
 
 
 def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[EventAlias, ...]:
+    if event.event_type == "status.immunity":
+        return (_event_alias_for_callback(event, "OnImmuneDebuff", "status_immunity_fact", rules),)
+    if event.event_type == "toughness.segment_depleted":
+        return tuple(_event_alias_for_callback(event, callback, "stance_count_down_fact", rules)
+                     for callback in ("OnBeingStanceCountDown", "OnTriggerStanceCountDown"))
+    if event.event_type == "queue.action.before":
+        fact = event.queue_action_start_fact
+        if type(fact) is not QueueActionStartFact:
+            return ()
+        callbacks = ()
+        if fact.queue_kind == "turn_insert_ability" and fact.window_family == "insert_ability":
+            callbacks = ("OnListenInsertAbilityStart",)
+        elif fact.queue_kind == "turn_insert_action" and fact.window_family == "insert_action":
+            callbacks = ("OnBeforeInsertActionPrepare", "OnInsertActionStart")
+        return tuple(_event_alias_for_callback(event, callback, "queue_action_start_fact", rules)
+                     for callback in callbacks)
     if event.event_type == "wave.monster":
         payload_reason = _wave_monster_payload_block_reason(event)
         if payload_reason:
@@ -1887,7 +2125,7 @@ def _event_scope_kind(event: GameEvent) -> str:
     resource_scope = resource_scope_for_event(event.event_type)
     if resource_scope:
         return resource_scope
-    if event.event_type in {"damage.before_hit", "damage.hit", "toughness.hit"}:
+    if event.event_type in {"damage.before_hit", "damage.hit", "damage.attacker_hit", "toughness.hit"}:
         return "per_hit_target_local"
     if event.event_type in {
         "damage.hit_sequence.before",
@@ -1965,7 +2203,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return resource_scope
     if callback_event == "OnListenAllowAction":
         return "owner_local"
-    if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal", "OnTriggerBreak"}:
+    if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal", "OnTriggerBreak", "OnTriggerStanceCountDown"}:
         return "actor_local"
     if callback_event in {
         "OnHPChange",
@@ -1981,6 +2219,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     }:
         return "being_hit_target_local"
     if callback_event in {
+        "OnBeforeHit",
+        "OnAfterHit",
         "OnBeforeHitAll",
         "OnAfterHitAll",
         "OnAfterSkillUse",
@@ -1991,7 +2231,6 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         "OnBeforeInsertActionPrepare",
         "OnInsertActionStart",
         "OnInsertActionFinish",
-        "OnListenInsertAbilityFinish",
     }:
         return "actor_local"
     if callback_event == "OnSnapshotCreate":
@@ -2042,12 +2281,15 @@ def _status_detail_for_unit_modifier(
     state: BattleState,
     unit_id: str,
     modifier_name: str,
+    *,
+    status_instance_id: str = "",
 ) -> dict[str, JSONValue] | None:
     unit = state.units.get(unit_id)
     if unit is None:
         return None
     for detail in unit.flags.get("status_details", ()):
-        if isinstance(detail, dict) and detail.get("modifier_name") == modifier_name:
+        if (isinstance(detail, dict) and detail.get("modifier_name") == modifier_name
+                and (not status_instance_id or detail.get("instance_id") == status_instance_id)):
             return detail
     return None
 
@@ -2128,6 +2370,23 @@ def _scope_matches(
     *,
     explicit: bool,
 ) -> tuple[bool, str]:
+    if event.event_type in {item[0] for item in LIMBO_CALLBACKS}:
+        plan = event.pending_defeat_plan
+        if type(plan) is not PendingDefeatPlan:
+            return False, "limbo_event_native_plan_missing"
+        if scope_kind not in {"owner_local", "being_hit_target_local", "per_hit_target_local"}:
+            return False, "limbo_listener_scope_not_admitted"
+        return detail.get("owner_id") == plan.unit_id, "scope_dying_owner_mismatch"
+    if event.event_type == "toughness.segment_depleted":
+        fact = event.stance_count_down_fact
+        owner_id = str(detail.get("owner_id") or "")
+        if type(fact) is not StanceCountDownFact:
+            return False, "stance_count_down_fact_missing_or_mismatched"
+        if scope_kind == "actor_local":
+            return owner_id == fact.attacker_id, "scope_actor_mismatch"
+        if scope_kind == "being_hit_target_local":
+            return owner_id == fact.target_id, "scope_being_hit_target_mismatch"
+        return False, "stance_count_down_listener_scope_not_admitted"
     if explicit:
         return True, ""
     owner_id = str(detail.get("owner_id") or "")
@@ -2148,9 +2407,13 @@ def _scope_matches(
     if scope_kind == "owner_local":
         if event.event_type == "unit.defeated":
             return (owner_id == actor_id, "scope_kill_credit_owner_mismatch")
+        if event.event_type == "unit.before_dying":
+            return (owner_id == current_hit_target_id, "scope_dying_owner_mismatch")
         return (owner_id in {actor_id, primary_target_id, current_hit_target_id}, "scope_owner_not_in_event_context")
     if scope_kind == "status_local":
         target_id = str(event.target_id or event.payload.get("target_id") or "")
+        if event.event_type == "status.lifecycle" and event.window in {"OnModifierAdd", "OnModifierRemove"}:
+            return (owner_id == target_id, "scope_modifier_owner_mismatch")
         event_modifier = event.payload.get("modifier_name")
         status_instance_id = str(detail.get("instance_id") or "")
         event_status_instance_id = event.payload.get("status_instance_id")
@@ -2175,6 +2438,13 @@ def _status_detail_admits_callback(detail: dict[str, JSONValue], callback: Statu
 
 
 def _event_actor_id(event: GameEvent) -> str:
+    if event.event_type == "toughness.segment_depleted" and type(event.stance_count_down_fact) is StanceCountDownFact:
+        return event.stance_count_down_fact.attacker_id
+    queue_fact = (event.queue_action_start_fact if event.event_type == "queue.action.before"
+                  else event.queue_action_terminal_fact if event.event_type in {"queue.action.after", "queue.action.abort"}
+                  else None)
+    if type(queue_fact) in {QueueActionStartFact, QueueActionTerminalFact}:
+        return queue_fact.actor_id
     for key in ("actor_id", "attacker_id"):
         value = event.payload.get(key)
         if isinstance(value, str) and value:
@@ -2183,6 +2453,8 @@ def _event_actor_id(event: GameEvent) -> str:
 
 
 def _event_primary_target_id(event: GameEvent) -> str:
+    if event.event_type == "toughness.segment_depleted" and type(event.stance_count_down_fact) is StanceCountDownFact:
+        return event.stance_count_down_fact.target_id
     value = event.payload.get("primary_action_target_id")
     if isinstance(value, str) and value:
         return value
@@ -2190,6 +2462,8 @@ def _event_primary_target_id(event: GameEvent) -> str:
 
 
 def _event_current_hit_target_id(event: GameEvent) -> str:
+    if event.event_type == "toughness.segment_depleted" and type(event.stance_count_down_fact) is StanceCountDownFact:
+        return event.stance_count_down_fact.target_id
     value = event.payload.get("current_hit_target_id")
     if isinstance(value, str) and value:
         return value

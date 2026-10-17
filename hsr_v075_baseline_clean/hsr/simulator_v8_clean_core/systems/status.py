@@ -3,9 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
+from typing import Callable
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
+from ..core.model import (
+    BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution,
+    StatusImmunityFact, _STATUS_IMMUNITY_PRODUCER,
+)
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
@@ -172,6 +176,7 @@ class StatusLifecyclePlan:
     unsupported: tuple[str, ...] = ()
     partial: bool = False
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
+    duration_delta: float | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -185,6 +190,7 @@ class StatusLifecyclePlan:
             "unsupported": list(self.unsupported),
             "partial": self.partial,
             "source_trace": self.source_trace,
+            "duration_delta": self.duration_delta,
         }
 
 
@@ -224,6 +230,7 @@ class StatusApplicationResult:
     unsupported: tuple[str, ...] = ()
     status_instance: StatusInstance | None = None
     lifecycle_result: StatusLifecycleResult | None = None
+    dispatched_event_ids: frozenset[str] = frozenset()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -235,6 +242,7 @@ class StatusApplicationResult:
             "unsupported": list(self.unsupported),
             "status_instance": self.status_instance.to_json() if self.status_instance else None,
             "lifecycle_result": self.lifecycle_result.to_json() if self.lifecycle_result else None,
+            "dispatched_event_ids": sorted(self.dispatched_event_ids),
         }
 
 
@@ -244,9 +252,11 @@ class _ChanceCheck:
     record: dict[str, JSONValue] | None = None
     rng_events: tuple[RNGEvent, ...] = ()
     unsupported: tuple[str, ...] = ()
+    immunity_fact: StatusImmunityFact | None = None
 
 
-def status_control_gate_for_actor(actor: object) -> dict[str, JSONValue] | None:
+def status_control_gate_for_actor(actor: object, *, for_expiring_turn: bool = False,
+                                  skill_type: str | None = None) -> dict[str, JSONValue] | None:
     flags = getattr(actor, "flags", None)
     if not isinstance(flags, dict):
         return None
@@ -260,7 +270,15 @@ def status_control_gate_for_actor(actor: object) -> dict[str, JSONValue] | None:
             continue
         control_kind = str(detail.get("control_kind") or "")
         status_category = str(detail.get("status_category") or "")
-        if not control_kind and status_category != "control":
+        disabled = (skill_type is not None and skill_type in detail.get("disabled_skill_types", ())
+                    and detail.get("status_id") in getattr(actor, "statuses", ()))
+        if not control_kind and status_category != "control" and not disabled:
+            continue
+        if disabled and not control_kind:
+            control_kind = "skill_type:" + skill_type
+        # These controls delay the action; natural expiry does not consume it.
+        # https://hsr.keqingmains.com/misc/speed-guide/#in-combat-action-gauge-modifier
+        if for_expiring_turn and control_kind in {"Entangle", "Confine"}:
             continue
         source_trace = detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {}
         status_instance_id = str(detail.get("instance_id") or "")
@@ -379,6 +397,95 @@ class StatusSystem:
             ),
         )
 
+    def modify_modifier_value(
+        self, state: BattleState, target_id: str | None, modifier_name: str, value_kind: str,
+        function: str, amount: float, *, caster_id: str, metadata: dict[str, JSONValue],
+        status_instance_id: str | None = None,
+    ) -> StatusApplicationResult:
+        if (target_id not in state.units or value_kind not in {"Layer", "independent_count", "LifeTime"}
+                or function not in {"Set", "Add"} or isinstance(amount, bool)
+                or not isinstance(amount, (int, float)) or not math.isfinite(amount)
+                or value_kind != "LifeTime" and not float(amount).is_integer()
+                or function == "Set" and amount < 0
+                or value_kind == "LifeTime" and (function != "Add" or amount < 0)
+                or status_instance_id is not None and (not isinstance(status_instance_id, str) or not status_instance_id)):
+            return StatusApplicationResult(False, unsupported=("modifier_value_input_invalid",))
+        unit = state.units[target_id]
+        before = _status_details(unit.flags)
+        matches = [detail for detail in before if isinstance(detail, dict)
+                   and (detail.get("instance_id") == status_instance_id if status_instance_id is not None
+                        else detail.get("modifier_name") == modifier_name and detail.get("caster_id") == caster_id)]
+        if len(matches) != 1:
+            return StatusApplicationResult(False, unsupported=("modifier_value_instance_missing_or_ambiguous",))
+        detail = matches[0]
+        if value_kind == "LifeTime":
+            old = _number_or_none(detail.get("remaining_duration"))
+            admission = detail.get("duration_admission")
+            if (old is None or not math.isfinite(old) or old <= 0
+                    or detail.get("owner_id") != target_id or detail.get("lifecycle_state") != "active"
+                    or not detail.get("instance_id") or detail.get("status_id") not in unit.statuses
+                    or not isinstance(admission, dict) or admission.get("admission_status") != "executable"
+                    or not math.isfinite(old + amount)):
+                return StatusApplicationResult(False, unsupported=("modifier_lifetime_instance_not_admitted",))
+            result = self._apply_lifecycle_plan(state, StatusLifecyclePlan(
+                operation="extend_lifetime" if amount else "idempotent", target_id=target_id,
+                status_id=detail["status_id"], source="status_system", before_details=tuple(before),
+                existing_detail=detail, duration_delta=float(amount), source_trace={
+                    **metadata, "modifier_name": detail.get("modifier_name"),
+                    "value_kind": value_kind, "modify_function": function, "duration_admission": admission,
+                },
+            ))
+            return StatusApplicationResult(result.ok, mutations=result.mutations, events=result.events,
+                records=result.records, unsupported=result.unsupported, lifecycle_result=result)
+        old = detail.get("stacks")
+        if (type(old) is not int or old <= 0 or detail.get("owner_id") != target_id
+                or detail.get("lifecycle_state") != "active" or not detail.get("instance_id")
+                or detail.get("status_id") not in unit.statuses):
+            return StatusApplicationResult(False, unsupported=("modifier_value_instance_invalid",))
+        value = int(amount) if function == "Set" else old + int(amount)
+        if value_kind == "independent_count":
+            if value < 0 or function == "Add" and detail.get("stack_policy") != "independent_count":
+                return StatusApplicationResult(False, unsupported=("modifier_count_state_not_admitted",))
+        else:
+            maximum = detail.get("max_stacks")
+            if type(maximum) is not int or maximum <= 0 or detail.get("stack_policy") == "independent_count":
+                return StatusApplicationResult(False, unsupported=("modifier_layer_limit_not_admitted",))
+            value = max(0, min(maximum, value))
+        trace = {**metadata, "value_kind": value_kind, "modify_function": function,
+                 "stack_plan": {"stacks_before": old, "stacks_after": value}}
+        if value == 0:
+            result = self._apply_lifecycle_plan(state, StatusLifecyclePlan(
+                operation="stack_reduce_remove", target_id=target_id, status_id=detail["status_id"],
+                source="status_system", before_details=tuple(before), existing_detail=detail,
+                source_trace=trace,
+            ))
+            return self._with_halo_reconciliation(state, StatusApplicationResult(
+                result.ok, mutations=result.mutations, events=result.events, records=result.records,
+                unsupported=result.unsupported, lifecycle_result=result,
+            ))
+        if value_kind == "Layer":
+            instance = StatusInstance(**{item.name: detail[item.name] for item in fields(StatusInstance) if item.name in detail})
+            operation = "stack" if value >= old else "stack_reduce"
+            result = self._apply_lifecycle_plan(state, StatusLifecyclePlan(
+                operation=operation, target_id=target_id, status_id=detail["status_id"], source="status_system",
+                before_details=tuple(before), existing_detail=detail,
+                status_instance=replace(instance, stacks=value, application_operation=operation), source_trace=trace,
+            ))
+            return self._with_halo_reconciliation(state, StatusApplicationResult(
+                result.ok, mutations=result.mutations, events=result.events, records=result.records,
+                unsupported=result.unsupported, lifecycle_result=result,
+            ))
+        # Independent counts do not scale modifier values: property expressions
+        # already produce their total contribution, separately from this count.
+        updated = {**detail, "stacks": value, "max_stacks": None, "stack_policy": "independent_count"}
+        after = [updated if entry is detail else entry for entry in before]
+        mutation = Mutation("set", ("units", target_id, "flags", "status_details"), before, after,
+                            "modify independent modifier count", "status_system", metadata=trace)
+        record = SettlementRecord(record_type="status_lifecycle", source="status_system",
+            mutation_id=mutation.stable_id(), payload={"operation": "modify_modifier_count",
+                "status_instance_id": detail["instance_id"], "before": old, "after": value}, trace=trace).to_json()
+        return StatusApplicationResult(True, mutations=(mutation,), events=events_for_mutation(mutation), records=(record,))
+
     def extend_modifier_lifetimes(
         self, state: BattleState, target_id: str | None, behavior_flags: tuple[str, ...], amount: float,
         *, metadata: dict[str, JSONValue],
@@ -390,37 +497,32 @@ class StatusSystem:
             return StatusApplicationResult(False, unsupported=("modifier_lifetime_input_invalid",))
         unit = state.units[target_id]
         before = list(unit.flags.get("status_details", ()))
-        after = []
-        changes = []
+        current = state
+        mutations, events, records, rng_events = [], [], [], []
+        dispatched_event_ids: set[str] = set()
         for detail in before:
             if not isinstance(detail, dict) or not set(behavior_flags).intersection(detail.get("behavior_flags", ())):
-                after.append(detail)
                 continue
-            remaining = _number_or_none(detail.get("remaining_duration"))
-            admission = detail.get("duration_admission")
-            if (remaining is None or not math.isfinite(remaining) or remaining <= 0
-                    or detail.get("lifecycle_state") != "active" or not detail.get("instance_id")
-                    or not detail.get("status_id")
-                    or not isinstance(admission, dict) or admission.get("admission_status") != "executable"
-                    or not math.isfinite(remaining + amount)):
+            name, instance_id = detail.get("modifier_name"), detail.get("instance_id")
+            if not isinstance(name, str) or not name or not isinstance(instance_id, str) or not instance_id:
                 return StatusApplicationResult(False, unsupported=("modifier_lifetime_instance_not_admitted",))
-            after.append({**detail, "remaining_duration": remaining + amount})
-            changes.append({"status_instance_id": detail["instance_id"], "status_id": detail["status_id"],
-                            "remaining_before": remaining, "remaining_after": remaining + amount})
-        mutation = Mutation(
-            "set", ("units", target_id, "flags", "status_details"), before, after,
-            "extend modifier lifetime", "status_system", metadata=metadata,
-        ) if changes and amount else None
-        record = SettlementRecord(
-            record_type="status_lifecycle", source="status_system",
-            mutation_id=mutation.stable_id() if mutation else None, process_only=mutation is None,
-            payload={"operation": "extend_modifier_lifetime", "target_id": target_id,
-                     "behavior_flags": list(behavior_flags), "amount": amount, "changes": changes},
-            trace=metadata,
-        ).to_json()
+            result = self.modify_modifier_value(current, target_id, name, "LifeTime", "Add", amount,
+                caster_id=str(detail.get("caster_id") or ""), metadata=metadata, status_instance_id=instance_id)
+            if not result.ok:
+                return StatusApplicationResult(False,
+                    unsupported=result.unsupported or ("modifier_lifetime_instance_not_admitted",))
+            reduction = MutationReducer().apply_all_result(current, result.mutations)
+            if not reduction.ok:
+                return StatusApplicationResult(False, unsupported=("modifier_lifetime_mutation_conflict",))
+            current = reduction.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            records.extend(result.records)
+            rng_events.extend(result.rng_events)
+            dispatched_event_ids.update(result.dispatched_event_ids)
         return StatusApplicationResult(
-            True, mutations=(mutation,) if mutation else (), records=(record,),
-            events=events_for_mutation(mutation) if mutation else (),
+            True, mutations=tuple(mutations), records=tuple(records), events=tuple(events),
+            rng_events=tuple(rng_events), dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def apply_add_modifier(
@@ -440,6 +542,9 @@ class StatusSystem:
         retained_runtime_hashes: tuple[str, ...] = (),
         admitted_action_target_fact: AdmittedActionTargetFact | None = None,
         expected_action_window_scope: ActionWindowExpectedScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
+        application_instance_id: str = "",
+        immunity_dispatcher: Callable[[BattleState, StatusImmunityFact], StatusApplicationResult] | None = None,
         _addition_chain: tuple[str, ...] = (),
         _resolved_target_ids: tuple[str, ...] | None = None,
         _halo_projection: dict[str, JSONValue] | None = None,
@@ -455,6 +560,9 @@ class StatusSystem:
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
+        inherit_caster = standard.get("inherit_caster", "effect_caster")
+        if inherit_caster not in {"effect_caster", "target_self"}:
+            return _unsupported_result(effect, "AddModifier caster inheritance is not admitted")
         watcher_attachment_reason = (
             _ability_property_watcher_attachment_blocked_reason(
                 self.rules,
@@ -483,6 +591,7 @@ class StatusSystem:
                 binding_sources=binding_sources,
                 admitted_action_target_fact=admitted_action_target_fact,
                 expected_action_window_scope=expected_action_window_scope,
+                template_target_ids=template_target_ids,
             )
         else:
             target_ids = tuple(dict.fromkeys(_resolved_target_ids))
@@ -541,14 +650,29 @@ class StatusSystem:
                 ),
             )
 
-        plans: list[StatusLifecyclePlan] = []
+        original_state = state
         lifecycle_results: list[StatusLifecycleResult] = []
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        dispatched_event_ids: set[str] = set()
         status_instances: list[StatusInstance] = []
         process_records: list[dict[str, JSONValue]] = []
         rng_events: list[RNGEvent] = list(target_rng_events)
         blocked_reasons: list[str] = []
         target_resolution_trace = target_resolution.to_json() if target_resolution is not None else None
+        effect_caster_id = caster_id
         for target_id in target_ids:
+            caster_id = target_id if inherit_caster == "target_self" else effect_caster_id
+            caster = state.units.get(caster_id)
+            card_id = caster.flags.get("character_data_card_id") if caster is not None else None
+            card = (
+                self.rules.character_data_card(str(card_id)) if card_id is not None
+                else self.rules.character_data_card_for_entity(caster.template_id) if caster is not None else None
+            )
+            character_bindings = (
+                self.rules.character_dynamic_value_bindings_for_card(card.card_id)
+                if card is not None and caster is not None and card.entity_ref == caster.template_id else {}
+            )
             resolved_dynamic_values = _resolve_dynamic_values(
                 standard,
                 definition,
@@ -556,6 +680,7 @@ class StatusSystem:
                 binding_sources,
                 {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
                 retained_runtime_hashes,
+                character_bindings=character_bindings,
             )
             on_create_dynamic_values, on_create_dynamic_reason = (
                 _on_create_define_dynamic_values(
@@ -585,7 +710,49 @@ class StatusSystem:
             )
             formula_bindings = _status_formula_bindings(standard)
             before_details = _status_details(unit_flags=state.units[target_id].flags)
-            existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
+            independent_instance_id = ""
+            multiple = definition.fields.get("stacking") == "Multiple"
+            if multiple:
+                if not isinstance(application_instance_id, str) or not application_instance_id:
+                    return _unsupported_result(effect, "status_multiple_application_identity_missing")
+                independent_instance_id = (
+                    _status_instance_id(target_id, modifier_name, effect.effect_id, source_id)
+                    + ":application:" + hashlib.sha256(application_instance_id.encode("utf-8")).hexdigest()
+                )
+                if any(row.get("instance_id") == independent_instance_id for row in before_details):
+                    return _unsupported_result(effect, "status_application_instance_replayed")
+                existing_detail = None
+            else:
+                existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
+            if existing_detail is None and not isinstance(_halo_projection, dict):
+                # Counters and empty presence markers belong to their holder/
+                # caster, not the task that ensures the same instance exists.
+                presence_marker = not any(definition.fields.get(key) for key in (
+                    "stacking", "lifetime", "behavior_flags", "dynamic_values",
+                    "stack_properties", "addition_effect_ids",
+                )) and all(_is_missing_numeric_expr(definition.fields.get(key)) for key in (
+                    "max_layer_expr", "layer_add_when_stack_expr",
+                ))
+                callback_events = definition.fields.get("callback_events") or ()
+                # Ponytail: passive subscriptions coalesce only within one formal
+                # leaf; cross-leaf subscriptions need an explicit identity policy.
+                passive_listener = presence_marker and bool(callback_events) and all(
+                    (family := self.rules.status_event_family(event)) is not None
+                    and family.runtime_event_sources and "status.lifecycle" not in family.runtime_event_sources
+                    for event in callback_events
+                )
+                counters = [detail for detail in before_details if isinstance(detail, dict)
+                            and detail.get("owner_id") == target_id and detail.get("caster_id") == caster_id
+                            and detail.get("modifier_name") == modifier_name
+                            and (detail.get("stack_policy") == "independent_count"
+                                 or presence_marker and detail.get("stack_policy") == "single_instance" and (
+                                     not callback_events or passive_listener and detail.get("instance_id") ==
+                                     _status_instance_id(target_id, modifier_name, effect.effect_id, str(detail.get("source_id") or ""))
+                                 ))
+                            and not detail.get("halo_relations") and not _status_detail_halo_relation_id(detail)
+                            and _parameterless_same_source_reapplication(detail, caster_id=caster_id, standard=standard)]
+                if len(counters) == 1:
+                    existing_detail = counters[0]
             existing_halo_reason = _existing_halo_relation_blocked_reason(
                 existing_detail,
                 parent_owner_id=target_id,
@@ -610,6 +777,8 @@ class StatusSystem:
                 binding_sources=binding_sources,
                 value_resolver=self.value_resolver,
             )
+            if multiple and (stack_admission.get("stack_policy") != "independent_instance" or standard.get("is_refresh") is True):
+                return _unsupported_result(effect, "status_multiple_layer_or_refresh_contract_not_admitted")
             refresh_admission = _runtime_refresh_admission(
                 standard,
                 definition,
@@ -640,7 +809,7 @@ class StatusSystem:
                 status_id=status_id,
                 source_stack_key=_source_stack_key(target_id, modifier_name, effect.effect_id, source_id),
             )
-            if isinstance(_halo_projection, dict):
+            if isinstance(_halo_projection, dict) or multiple:
                 # Halo projections are source-isolated child instances.  Two
                 # independent parent relations may legitimately project the
                 # same modifier name onto one member; their stable source keys
@@ -716,6 +885,11 @@ class StatusSystem:
                 event_payload=event_payload,
                 rules=self.rules,
                 status_metadata=status_metadata,
+                allow_immunity_callbacks=immunity_dispatcher is not None,
+                immunity_event_id=(
+                    f"event:{state.event_index}:status.immunity:{effect.effect_id}:"
+                    f"{application_instance_id or source_id}:{target_id}"
+                ),
             )
             rng_events.extend(chance_check.rng_events)
             if chance_check.record is not None:
@@ -723,13 +897,31 @@ class StatusSystem:
             if chance_check.unsupported:
                 blocked_reasons.extend(chance_check.unsupported)
                 continue
+            if chance_check.immunity_fact is not None:
+                if immunity_dispatcher is None:
+                    return _unsupported_result(effect, "status_immunity_consumer_missing")
+                immunity_result = immunity_dispatcher(state, chance_check.immunity_fact)
+                if not immunity_result.ok or immunity_result.unsupported:
+                    return StatusApplicationResult(
+                        ok=False, records=(*process_records, *immunity_result.records),
+                        unsupported=immunity_result.unsupported or ("status_immunity_callback_failed",),
+                    )
+                reduction = MutationReducer().apply_all_result(state, immunity_result.mutations)
+                if not reduction.ok:
+                    return _unsupported_result(effect, "status_immunity_callback_mutation_conflict")
+                state = reduction.after_state
+                mutations.extend(immunity_result.mutations)
+                events.extend(immunity_result.events)
+                rng_events.extend(immunity_result.rng_events)
+                process_records.extend(immunity_result.records)
+                dispatched_event_ids.update(immunity_result.dispatched_event_ids)
             if not chance_check.allowed:
                 continue
             stacks = _stack_plan_stacks_after(stack_plan)
             remaining_duration = _refresh_plan_remaining_after(refresh_plan, duration)
             status_duration = _refresh_plan_duration(refresh_plan, duration)
             status_instance = StatusInstance(
-                instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
+                instance_id=independent_instance_id or _status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
                 status_id=status_id,
                 modifier_name=modifier_name,
                 owner_id=target_id,
@@ -799,26 +991,31 @@ class StatusSystem:
                 break_status_emission_id=str(standard.get("break_status_emission_id") or ""),
                 halo_relations=_existing_halo_relations(existing_detail),
             )
-            plans.append(
-                StatusLifecyclePlan(
-                    operation=application_operation,
-                    target_id=target_id,
-                    status_id=status_instance.status_id,
-                    source="status_system",
-                    status_instance=status_instance,
-                    before_details=tuple(before_details),
-                    existing_detail=existing_detail,
-                    unsupported=tuple(unsupported),
-                    partial=status_instance.partial,
-                    source_trace=status_instance.source_trace,
-                )
+            plan = StatusLifecyclePlan(
+                operation=application_operation,
+                target_id=target_id,
+                status_id=status_instance.status_id,
+                source="status_system",
+                status_instance=status_instance,
+                before_details=tuple(before_details),
+                existing_detail=existing_detail,
+                unsupported=tuple(unsupported),
+                partial=status_instance.partial,
+                source_trace=status_instance.source_trace,
             )
+            result = self._apply_lifecycle_plan(state, plan)
+            if not result.ok or result.unsupported:
+                return StatusApplicationResult(ok=False, records=result.records, unsupported=result.unsupported)
+            reduction = MutationReducer().apply_all_result(state, result.mutations)
+            if not reduction.ok:
+                return _unsupported_result(effect, "status_application_mutation_conflict")
+            state = reduction.after_state
+            lifecycle_results.append(result)
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            process_records.extend(result.records)
             status_instances.append(status_instance)
-        for plan in plans:
-            lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
-        mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
-        events = tuple(event for result in lifecycle_results for event in result.events)
-        records = (*tuple(process_records), *(record for result in lifecycle_results for record in result.records))
+        records = tuple(process_records)
         unsupported = (
             *tuple(blocked_reasons),
             *(reason for result in lifecycle_results for reason in result.unsupported),
@@ -828,13 +1025,14 @@ class StatusSystem:
         ok = ok and not blocked_reasons
         base_result = StatusApplicationResult(
             ok=ok,
-            mutations=mutations,
-            events=events,
-            rng_events=tuple(rng_events),
+            mutations=tuple(mutations) if ok else (),
+            events=tuple(events) if ok else (),
+            rng_events=tuple(rng_events) if ok else (),
             records=records,
             unsupported=unsupported,
             status_instance=status_instances[-1] if status_instances else None,
             lifecycle_result=lifecycle_result,
+            dispatched_event_ids=frozenset(dispatched_event_ids) if ok else frozenset(),
         )
         if not base_result.ok:
             return base_result
@@ -847,7 +1045,7 @@ class StatusSystem:
         if not addition_effect_ids:
             return base_result
 
-        reduction = MutationReducer().apply_all_result(state, base_result.mutations)
+        reduction = MutationReducer().apply_all_result(original_state, base_result.mutations)
         if not reduction.ok:
             return _unsupported_result(
                 effect,
@@ -931,6 +1129,7 @@ class StatusSystem:
                     combined_events.extend(halo_result.events)
                     combined_rng_events.extend(halo_result.rng_events)
                     combined_records.extend(halo_result.records)
+                    dispatched_event_ids.update(halo_result.dispatched_event_ids)
                 continue
             addition_result = self.apply_add_modifier(
                 working_state,
@@ -945,6 +1144,12 @@ class StatusSystem:
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
                 retained_runtime_hashes=retained_runtime_hashes,
+                immunity_dispatcher=immunity_dispatcher,
+                template_target_ids=template_target_ids,
+                application_instance_id=(
+                    f"{application_instance_id}:addition:{addition_effect_id}"
+                    if application_instance_id else ""
+                ),
                 _addition_chain=(*_addition_chain, modifier_name),
             )
             if not addition_result.ok:
@@ -969,6 +1174,7 @@ class StatusSystem:
             combined_events.extend(addition_result.events)
             combined_rng_events.extend(addition_result.rng_events)
             combined_records.extend(addition_result.records)
+            dispatched_event_ids.update(addition_result.dispatched_event_ids)
         return StatusApplicationResult(
             ok=True,
             mutations=tuple(combined_mutations),
@@ -977,6 +1183,7 @@ class StatusSystem:
             records=tuple(combined_records),
             status_instance=base_result.status_instance,
             lifecycle_result=base_result.lifecycle_result,
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def reconcile_halo_relations(
@@ -1349,6 +1556,9 @@ class StatusSystem:
                 owner_id=parent_owner_id,
                 dynamic_values=resolved_dynamic_values,
                 binding_sources=binding_sources,
+                application_instance_id=(
+                    f"halo:{parent_instance_id}:{relation['relation_id']}:{effect_id}"
+                ),
                 _addition_chain=(str(relation["parent_modifier_name"]),),
                 _resolved_target_ids=apply_members,
                 _halo_projection=projection,
@@ -1567,6 +1777,7 @@ class StatusSystem:
         binding_sources: tuple[dict[str, JSONValue], ...],
         admitted_action_target_fact: AdmittedActionTargetFact | None,
         expected_action_window_scope: ActionWindowExpectedScope | None,
+        template_target_ids: tuple[str, ...] | None = None,
     ) -> tuple[tuple[str, ...], str, dict[str, JSONValue], tuple[RNGEvent, ...]]:
         target_expression_id = standard.get("target_expression_id")
         if isinstance(target_expression_id, str) and target_expression_id and self.rules is not None:
@@ -1590,6 +1801,7 @@ class StatusSystem:
                 expression,
                 context=TargetEvaluationContext(
                     caster_id=caster_id,
+                    template_entity_ids=template_target_ids,
                     effect_owner_id=owner_id,
                     parameter_entity_ids=((param_entity_id,) if param_entity_id else ()),
                     selected_target_ids=(
@@ -1639,6 +1851,7 @@ class StatusSystem:
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
         admitted_action_target_fact: AdmittedActionTargetFact | None = None,
         expected_action_window_scope: ActionWindowExpectedScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
     ) -> StatusApplicationResult:
         if effect.opcode not in {"RemoveModifier", "RemoveSelfModifier"}:
             return _unsupported_result(effect, "effect is not RemoveModifier or RemoveSelfModifier")
@@ -1647,12 +1860,18 @@ class StatusSystem:
             return _unsupported_result(effect, f"{effect.opcode} effect has no standardized payload")
         if self.rules is None:
             return _unsupported_result(effect, "StatusSystem requires RuleBook for RemoveModifier")
+        only_caster = standard.get("only_remove_caster_added", False)
+        if type(only_caster) is not bool or standard.get("blocked_reason"):
+            return _unsupported_result(effect, "remove_modifier_caster_filter_invalid")
+        if only_caster and caster_id not in state.units:
+            return _unsupported_result(effect, "remove_modifier_caster_missing")
         if effect.opcode == "RemoveSelfModifier":
             if not remove_self_intrinsic_target_admitted(standard):
                 return _unsupported_result(effect, "remove_self_intrinsic_target_invalid")
             resolved = EntityRelationResolver().resolve(
                 state, "context.owner",
-                TargetEvaluationContext(caster_id=caster_id, effect_owner_id=owner_id),
+                TargetEvaluationContext(caster_id=caster_id, effect_owner_id=owner_id,
+                                        template_entity_ids=template_target_ids),
             )
             target_ids = resolved.target_ids if resolved.resolved else ()
             target_blocked_reason = "" if resolved.resolved else resolved.blocked_reason
@@ -1676,6 +1895,7 @@ class StatusSystem:
                 binding_sources=binding_sources,
                 admitted_action_target_fact=admitted_action_target_fact,
                 expected_action_window_scope=expected_action_window_scope,
+                template_target_ids=template_target_ids,
             )
         if target_blocked_reason:
             return _unsupported_result(
@@ -1696,9 +1916,20 @@ class StatusSystem:
         lifecycle_results: list[StatusLifecycleResult] = []
         for target_id in target_ids:
             before_details = _status_details(unit_flags=state.units[target_id].flags)
-            existing_detail = _find_status_detail(before_details, status_id)
+            candidates = before_details
+            if only_caster:
+                same_status = [detail for detail in before_details
+                               if isinstance(detail, dict) and detail.get("status_id") == status_id]
+                if (any(not isinstance(detail.get("caster_id"), str) or not detail["caster_id"]
+                        for detail in same_status)
+                        or not same_status and status_id in state.units[target_id].statuses):
+                    return _unsupported_result(effect, "remove_modifier_instance_caster_missing")
+                candidates = [detail for detail in same_status if detail["caster_id"] == caster_id]
+            existing_detail = _find_status_detail(candidates, status_id)
             plan = StatusLifecyclePlan(
-                operation="remove",
+                operation=("idempotent" if existing_detail is None and (
+                    only_caster or status_id not in state.units[target_id].statuses
+                ) else "remove"),
                 target_id=target_id,
                 status_id=status_id,
                 source="status_system",
@@ -1708,6 +1939,7 @@ class StatusSystem:
                     "effect_id": effect.effect_id,
                     "effect_source": effect.source.to_json(),
                     "target_expression": target_expression_trace,
+                    "caster_filter": caster_id if only_caster else None,
                 },
             )
             lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
@@ -1738,6 +1970,7 @@ class StatusSystem:
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
         admitted_action_target_fact: AdmittedActionTargetFact | None = None,
         expected_action_window_scope: ActionWindowExpectedScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
     ) -> StatusApplicationResult:
         if effect.opcode != "DispelStatus":
             return _unsupported_result(effect, "effect is not DispelStatus")
@@ -1761,6 +1994,7 @@ class StatusSystem:
             binding_sources=binding_sources,
             admitted_action_target_fact=admitted_action_target_fact,
             expected_action_window_scope=expected_action_window_scope,
+            template_target_ids=template_target_ids,
         )
         if target_blocked_reason:
             return _unsupported_result(
@@ -1929,6 +2163,7 @@ class StatusSystem:
             records=(*base_result.records, *halo_result.records),
             status_instance=base_result.status_instance,
             lifecycle_result=base_result.lifecycle_result,
+            dispatched_event_ids=base_result.dispatched_event_ids | halo_result.dispatched_event_ids,
         )
 
     def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
@@ -1956,8 +2191,8 @@ class StatusSystem:
             )
         if plan.operation in {"remove", "dispel", "stack_reduce_remove"}:
             return _apply_remove_lifecycle_plan(state, plan)
-        if plan.operation == "tick":
-            return _apply_tick_lifecycle_plan(state, plan)
+        if plan.operation in {"tick", "extend_lifetime"}:
+            return _apply_duration_lifecycle_plan(state, plan)
         if plan.operation == "expire":
             return _apply_expire_lifecycle_plan(state, plan)
         if plan.operation in {"reapply_blocked", "coexist_blocked"}:
@@ -2414,16 +2649,25 @@ def _remove_lifecycle_record_type(operation: str, fallback: str) -> str:
     return fallback
 
 
-def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+def _apply_duration_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
     unit = state.units[plan.target_id]
     before_details = list(plan.before_details)
     existing = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
     if existing is None:
         return _blocked_lifecycle_result(plan, "status_detail_missing_for_tick")
     remaining = _number_or_none(existing.get("remaining_duration"))
-    if remaining is None or remaining <= 1:
-        return _blocked_lifecycle_result(plan, "tick_requires_remaining_duration_above_one")
-    updated_detail = {**existing, "remaining_duration": float(remaining - 1), "lifecycle_state": "active"}
+    if plan.operation == "tick":
+        if remaining is None or remaining <= 1:
+            return _blocked_lifecycle_result(plan, "tick_requires_remaining_duration_above_one")
+        value = remaining - 1
+    else:
+        delta = plan.duration_delta
+        if (remaining is None or not math.isfinite(remaining) or remaining <= 0
+                or type(delta) not in (int, float) or not math.isfinite(delta) or delta < 0
+                or not math.isfinite(remaining + delta)):
+            return _blocked_lifecycle_result(plan, "modifier_lifetime_delta_not_admitted")
+        value = remaining + delta
+    updated_detail = {**existing, "remaining_duration": float(value), "lifecycle_state": "active"}
     after_details = [
         updated_detail
         if isinstance(item, dict) and item.get("instance_id") == existing.get("instance_id")
@@ -2435,7 +2679,7 @@ def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) ->
         path=("units", plan.target_id, "flags", "status_details"),
         before=before_details if "status_details" in unit.flags else None,
         after=after_details,
-        reason="status lifecycle tick duration",
+        reason=f"status lifecycle {plan.operation} duration",
         source="status_system",
         before_exists="status_details" in unit.flags,
         metadata={
@@ -2453,7 +2697,7 @@ def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) ->
             "operation": plan.operation,
             "status_id": plan.status_id,
             "remaining_before": remaining,
-            "remaining_after": float(remaining - 1),
+            "remaining_after": float(value),
             "lifecycle_plan": plan.to_json(),
         },
         trace=plan.source_trace,
@@ -2759,6 +3003,7 @@ def _status_lifecycle_events(
                 ),
                 window=callback_event,
                 process_only=True,
+                status_lifecycle_plan=plan if remove_like else None,
                 payload={
                     "callback_event": callback_event,
                     "listener_scope": "status_local",
@@ -2825,10 +3070,10 @@ def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, .
             "OnListenModifierAdd",
             *dot_add_events,
         )
-    if plan.operation in {"stack", "stack_reduce"}:
+    if plan.operation in {"stack", "stack_refresh", "stack_reduce"}:
         return ("OnStack", "OnModifierAdd", "OnModifierOnStack", "OnListenModifierOnStack")
     if plan.operation in {"refresh", "replace", "refresh_or_replace_partial", "replace_partial"}:
-        return ("OnModifierAdd", "OnListenModifierAdd")
+        return ("OnStack", "OnModifierAdd", "OnListenModifierAdd")
     if plan.operation in {"remove", "expire", "dispel", "stack_reduce_remove"}:
         return ("OnDestroy", "OnModifierRemove", "OnListenModifierRemove")
     return ()
@@ -2899,11 +3144,32 @@ def _resolve_dynamic_values(
     binding_sources: tuple[dict[str, JSONValue], ...],
     source_trace: dict[str, JSONValue],
     retained_runtime_hashes: tuple[str, ...] = (),
+    *,
+    character_bindings: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     definition_bindings = definition.fields.get("dynamic_value_bindings")
     callback_definition_bindings = _definition_callback_dynamic_hashes(
         definition.fields.get("callback_dynamic_hashes")
     )
+    if isinstance(character_bindings, dict) and not character_bindings.get("blocked_reason"):
+        definition_bindings = dict(definition_bindings) if isinstance(definition_bindings, dict) else {}
+        local_slots = dict(definition_bindings.get("by_hash") or {})
+        configured = character_bindings.get("by_hash")
+        for hash_key in callback_definition_bindings:
+            slot = configured.get(hash_key) if isinstance(configured, dict) else None
+            info = slot.get("read_info") if isinstance(slot, dict) else None
+            if (
+                hash_key in local_slots or not isinstance(info, dict)
+                or set(info) != {"Type", "Index"} or info.get("Type") != "None"
+                or type(info.get("Index")) is not int or info["Index"] < 0
+                or not isinstance(slot.get("source_path"), str) or not slot["source_path"]
+            ):
+                continue
+            local_slots[hash_key] = {
+                **slot, "source_scope": "character_dynamic_values",
+                "source_json_path": slot.get("raw_path", ""),
+            }
+        definition_bindings["by_hash"] = local_slots
     definition_binding_evidence = _json_safe(
         definition_bindings if isinstance(definition_bindings, dict) else {}
     )
@@ -2956,11 +3222,15 @@ def _resolve_dynamic_values(
         for field_name in ("lifetime", "layer_add_when_stack", "max_layer", "chance")
         for hash_key in numeric_dynamic_hashes(standard.get(field_name))
     }
+    named_dynamic_hashes = standard.get("named_dynamic_hashes")
+    if not isinstance(named_dynamic_hashes, dict):
+        named_dynamic_hashes = {}
     admitted_runtime_hashes = (
         declared_hashes
         | callback_hashes
         | request_hashes
         | status_control_hashes
+        | {hash_key for hash_key in named_dynamic_hashes.values() if isinstance(hash_key, str) and hash_key}
         | {str(hash_key) for hash_key in retained_runtime_hashes if str(hash_key)}
     )
     for key, value in bindings.items():
@@ -3004,9 +3274,6 @@ def _resolve_dynamic_values(
     dynamic_values = standard.get("dynamic_values")
     if not isinstance(dynamic_values, dict):
         dynamic_values = {}
-    named_dynamic_hashes = standard.get("named_dynamic_hashes")
-    if not isinstance(named_dynamic_hashes, dict):
-        named_dynamic_hashes = {}
     for key, expr in dynamic_values.items():
         result = RuleEvaluator().evaluate_numeric(
             expr,
@@ -3054,7 +3321,7 @@ def _resolve_dynamic_values(
                     },
                 }
             )
-    # Ability/modifier-local ``Type=None`` entries are source-declared mutable
+    # Character/ability/modifier ``Type=None`` entries are declared mutable
     # callback slots.  They have no external reader and therefore begin at
     # numeric zero until a callback writer replaces them.  Named slots retain
     # their DynamicKey relation; anonymous slots remain hash-only, so this
@@ -3070,6 +3337,27 @@ def _resolve_dynamic_values(
         if isinstance(definition_bindings, dict)
         else None
     )
+    # Formal content defaults fill only declared slots; explicit application
+    # parameters and retained runtime values above remain authoritative.
+    for hash_key, hash_binding in (
+        definition_by_hash.items() if isinstance(definition_by_hash, dict) else ()
+    ):
+        if hash_key in by_hash or not isinstance(hash_binding, dict) or "initial_value" not in hash_binding:
+            continue
+        if any(name in by_name and isinstance(binding, dict)
+               and hash_key in map(str, binding.get("hashes", ()))
+               for name, binding in (definition_by_name.items() if isinstance(definition_by_name, dict) else ())):
+            continue
+        value = _number_or_none(hash_binding["initial_value"])
+        if value is None or not math.isfinite(value):
+            continue
+        by_hash[hash_key] = value
+        values[hash_key] = value
+        evaluations.append({"name": f"content_initial_value:{hash_key}", "result": {
+            "ok": True, "value": value, "expression_kind": "declared_dynamic_initial_value",
+            "bindings": {"hash": hash_key, "source": hash_binding.get("initial_value_source", {})},
+            "source_trace": source_trace,
+        }})
     for dynamic_name, named_binding in (
         definition_by_name.items()
         if isinstance(definition_by_name, dict)
@@ -3095,14 +3383,20 @@ def _resolve_dynamic_values(
                 else None
             )
             if (
-                hash_key in by_hash
-                or not isinstance(read_info, dict)
+                not isinstance(read_info, dict)
                 or str(read_info.get("Type") or "") != "None"
                 or hash_binding.get("source_scope") not in {
+                    "character_dynamic_values",
                     "ability_dynamic_values",
                     "modifier_dynamic_values",
                 }
             ):
+                continue
+            if hash_key in by_hash:
+                # A name is an alias of the declared slot, including when an
+                # existing runtime value was resolved before its initial value.
+                by_name[str(dynamic_name)] = by_hash[hash_key]
+                values[str(dynamic_name)] = by_hash[hash_key]
                 continue
             named_value = by_name.get(str(dynamic_name))
             value = (
@@ -3132,8 +3426,11 @@ def _resolve_dynamic_values(
                             "source_type": (
                                 "named_dynamic_value_to_declared_type_none_slot"
                                 if named_value is not None
+                                else "character_dynamic_values_type_none"
+                                if hash_binding.get("source_scope") == "character_dynamic_values"
                                 else "ability_dynamic_values_type_none"
                             ),
+                            "source_path": hash_binding.get("source_path"),
                             "source_json_path": str(
                                 hash_binding.get("source_json_path") or ""
                             ),
@@ -3159,6 +3456,7 @@ def _resolve_dynamic_values(
         if (
             not isinstance(hash_binding, dict)
             or hash_binding.get("source_scope") not in {
+                "character_dynamic_values",
                 "ability_dynamic_values",
                 "modifier_dynamic_values",
             }
@@ -3175,7 +3473,12 @@ def _resolve_dynamic_values(
                     "expression_kind": "declared_type_none_dynamic_slot_default",
                     "bindings": {
                         "hash": hash_key,
-                        "source_type": "ability_dynamic_values_type_none",
+                        "source_type": (
+                            "character_dynamic_values_type_none"
+                            if hash_binding.get("source_scope") == "character_dynamic_values"
+                            else "ability_dynamic_values_type_none"
+                        ),
+                        "source_path": hash_binding.get("source_path"),
                         "source_json_path": str(
                             hash_binding.get("source_json_path") or ""
                         ),
@@ -3201,7 +3504,7 @@ def _on_create_root_tasks(
     callback: StatusCallbackIR,
     tasks: tuple[StatusCallbackTaskIR, ...],
 ) -> tuple[tuple[StatusCallbackTaskIR, ...], str]:
-    if callback.source_mode != "mainline_avatar_ability":
+    if callback.source_mode not in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}:
         if callback.source_mode not in {
             "mainline_equipment_ability",
             "mainline_monster_ability",
@@ -3340,7 +3643,7 @@ def _merge_dynamic_values(
             merged[key] = current
         elif key == "__evaluations":
             merged[key] = [*(merged.get(key) if isinstance(merged.get(key), list) else []), *(value if isinstance(value, list) else [])]
-        elif key not in merged:
+        elif key not in merged or not key.startswith("__"):
             merged[key] = value
     return merged
 
@@ -3662,7 +3965,9 @@ def _runtime_stack_admission(
         layer_delta = int(layer_result.value)
         layer_status = "executable"
 
-    if max_stacks > 1 and layer_status != "executable":
+    if definition is not None and definition.fields.get("stacking") == "Multiple" and max_status == layer_status == "not_applicable":
+        stack_policy = "independent_instance"
+    elif max_stacks > 1 and layer_status != "executable":
         stack_policy = "stackable_delta_missing"
     elif layer_status == "executable" and layer_delta < 0:
         stack_policy = "stack_reduce"
@@ -4134,6 +4439,8 @@ def _status_chance_check(
     event_payload: dict[str, JSONValue] | None,
     rules: RuleBook | None = None,
     status_metadata: dict[str, JSONValue] | None = None,
+    allow_immunity_callbacks: bool = False,
+    immunity_event_id: str = "",
 ) -> _ChanceCheck:
     trace = {
         "effect_id": effect.effect_id,
@@ -4153,10 +4460,27 @@ def _status_chance_check(
             unsupported=(reason,),
         )
     immunity = _status_immunity_source(state, target_id, status_id=status_id)
+    immunity_fact = None
     if rules is not None:
-        shared_immunity, blocked_reason = _shared_status_immunity_source(
+        shared_immunity, blocked_reason, callback_detail = _shared_status_immunity_source(
             rules, state, target_id, status_metadata or {},
+            allow_callbacks=allow_immunity_callbacks,
         )
+        if callback_detail is not None and not blocked_reason:
+            if immunity is not None:
+                blocked_reason = "status_immunity_competing_protection_order_not_admitted"
+            elif _probability(chance_admission.get("base_chance"), default=0.0) <= 0:
+                blocked_reason = "status_immunity_zero_base_chance_order_not_admitted"
+            elif not immunity_event_id:
+                blocked_reason = "status_immunity_event_identity_missing"
+            else:
+                immunity_fact = StatusImmunityFact(
+                    effect.effect_id, target_id, caster_id, modifier_name,
+                    tuple((status_metadata or {}).get("behavior_flags") or ()),
+                    str(callback_detail["instance_id"]), str(callback_detail["modifier_name"]),
+                    f"{immunity_event_id}:{callback_detail['instance_id']}",
+                    _state=state, _producer_token=_STATUS_IMMUNITY_PRODUCER,
+                )
         if blocked_reason:
             return _ChanceCheck(
                 allowed=False,
@@ -4175,6 +4499,7 @@ def _status_chance_check(
                 "status_immunity",
                 {**trace, "immunity_source": immunity},
             ),
+            immunity_fact=immunity_fact,
         )
     final_probability = _probability(chance_admission.get("final_success_probability"), default=0.0)
     if final_probability <= 0.0:
@@ -4538,10 +4863,12 @@ def _shared_status_immunity_source(
     state: BattleState,
     target_id: str,
     status_metadata: dict[str, JSONValue],
-) -> tuple[dict[str, JSONValue] | None, str]:
+    *,
+    allow_callbacks: bool = False,
+) -> tuple[dict[str, JSONValue] | None, str, dict[str, JSONValue] | None]:
     unit = state.units.get(target_id)
     if unit is None:
-        return None, "status_immunity_target_missing"
+        return None, "status_immunity_target_missing", None
     incoming_flags = set(status_metadata.get("behavior_flags") or ())
     status_type = status_metadata.get("status_type")
     details = tuple(
@@ -4549,6 +4876,7 @@ def _shared_status_immunity_source(
         if detail.get("status_id") in unit.statuses
         and detail.get("owner_id") == target_id
         and detail.get("instance_id")
+        and detail.get("lifecycle_state") in {"active", "active_partial"}
     )
     matches: list[dict[str, JSONValue]] = []
     immunity_rules = rules.entities_by_type("status_immunity_rule")
@@ -4557,7 +4885,7 @@ def _shared_status_immunity_source(
         for rule in immunity_rules:
             grant = rule.fields.get("granting_behavior_flag")
             if not isinstance(grant, str) or not grant:
-                return None, "status_immunity_rule_not_admitted"
+                return None, "status_immunity_rule_not_admitted", None
             if grant not in flags:
                 continue
             behavior_flags = rule.fields.get("behavior_flags")
@@ -4569,9 +4897,9 @@ def _shared_status_immunity_source(
                 or not all(isinstance(item, str) and item for item in (*behavior_flags, *status_types))
                 or not (behavior_flags or status_types)
             ):
-                return None, "status_immunity_rule_not_admitted"
+                return None, "status_immunity_rule_not_admitted", None
             if status_types and status_type not in {"Buff", "Debuff", "Other"}:
-                return None, "status_immunity_application_type_unknown"
+                return None, "status_immunity_application_type_unknown", None
             if not incoming_flags.intersection(behavior_flags) and status_type not in status_types:
                 continue
             matches.append({
@@ -4583,19 +4911,30 @@ def _shared_status_immunity_source(
                 "source_trace": detail.get("source_trace", {}),
             })
     if not matches:
-        return None, ""
+        return None, "", None
     source: dict[str, JSONValue] = {"shared_immunity_matches": matches}
     installed_flags = {flag for detail in details for flag in detail.get("behavior_flags", ())}
     if "STAT_ForceControl" in incoming_flags or "AntiDebuffResist_CTRL" in (incoming_flags | installed_flags):
-        return source, "status_immunity_override_order_not_admitted"
-    # Ponytail: immunity callbacks need an explicit ordering/consumption contract before they can run.
-    if any(
-        event.startswith("OnImmune") or event.startswith("OnListenImmune")
+        return source, "status_immunity_override_order_not_admitted", None
+    callbacks = tuple(
+        (detail, event)
         for detail in details
         for event in (detail.get("trigger_ids_by_event") or {})
+        if event.startswith("OnImmune") or event.startswith("OnListenImmune")
+    )
+    if not callbacks:
+        return source, "", None
+    if not allow_callbacks:
+        return source, "status_immunity_callback_order_not_admitted", None
+    # Ponytail: only a single matching protection has established consumption order;
+    # competing protections and other immunity notifications remain fail-closed.
+    identities = {str(match["status_instance_id"]) for match in matches}
+    if status_type != "Debuff" or len(identities) != 1 or any(
+        event != "OnImmuneDebuff" or detail["instance_id"] not in identities
+        for detail, event in callbacks
     ):
-        return source, "status_immunity_callback_order_not_admitted"
-    return source, ""
+        return source, "status_immunity_callback_order_not_admitted", None
+    return source, "", callbacks[0][0]
 
 
 def _status_immunity_source(
@@ -4641,6 +4980,7 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
         "DefenseDelta": ("attribute", "defense_delta", "target"),
         "SpeedAddedRatio": ("attribute", "speed_added_ratio", "actor"),
         "SpeedDelta": ("attribute", "speed_delta", "actor"),
+        "BaseSpeed": ("attribute", "speed_base_delta", "actor"),
         "CriticalChanceBase": ("crit", "critical_chance", "actor"),
         "CriticalDamageBase": ("crit", "critical_damage", "actor"),
         "BreakDamageAddedRatioBase": (
@@ -4669,6 +5009,9 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
             "elation_damage_added_ratio",
             "actor",
         ),
+        "ElationDamageAddedRatio": ("damage_bonus", "elation_damage_added_ratio", "actor"),
+        "ElationDamageExtraAddedRatio": ("damage_bonus", "elation_damage_extra_added_ratio", "actor"),
+        "ElationEchoPoint": ("resource", "elation_echo_point", "actor"),
         "DotDamageAddedRatio": ("damage_bonus", "dot_damage_added_ratio", "actor"),
         "AggroAddedRatio": ("aggro", "aggro_added_ratio", "actor"),
         "AllDamageReduce": ("damage_reduction", "damage_reduction", "target"),
@@ -5179,13 +5522,11 @@ def _target_expression_matches_effect_raw_row(
     effect_json_path = effect_evidence.get("json_path")
     if not isinstance(effect_json_path, str) or not effect_json_path:
         return False
-    if expression_evidence.get("json_path") != effect_json_path:
-        return False
     if (
         expression.source.raw_type == effect.source.raw_type
         and expression.source.raw_id == effect.source.raw_id
     ):
-        return True
+        return expression_evidence.get("json_path") == effect_json_path
     return bool(
         expression.source.raw_type == "TargetExpression"
         and expression_evidence.get("source_raw_type")
@@ -5193,7 +5534,7 @@ def _target_expression_matches_effect_raw_row(
         and expression_evidence.get("source_raw_id") == effect.source.raw_id
         and expression_evidence.get("target_expression_field")
         == "TargetType"
-        and expression_evidence.get("target_json_path")
+        and expression_evidence.get("json_path")
         == f"{effect_json_path}.TargetType"
     )
 

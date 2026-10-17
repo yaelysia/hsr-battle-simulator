@@ -1,0 +1,50 @@
+{
+  "scenario_id": "mvp:aglaea-e0-lv1-servant-vs-antimatter",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "aglaea",
+      "side": "ally",
+      "entity_ref": "avatar:1402",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "aglaea:build",
+        "character_card_id": "character_data_card:avatar:1402",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "aglaea:equipment",
+          "character_card_id": "character_data_card:avatar:1402",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "7eb5ec38b5ce3d873ebe31282ce2bbf8406d9d974432861a9fbcf1574b9c4b56"
+        },
+        "input_fingerprint": "cc3d788f934f51bb0ff9b057de6c862bfa2f709cf44bb231d457a58838ccde84"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "200020050",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "MVP only: reuse the StageConfig wave for stage_ref 200020050; this is not a complete Mainline stage simulation.",
+      "unsupported_global_stage_ability": "StageAbility_Elation from StageCommonTemplate is outside this scenario's supported scope."
+    }
+  }
+}

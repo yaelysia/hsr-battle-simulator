@@ -162,7 +162,9 @@ def resolve_rng_request(
         request.before_state,
         request.event_id,
         request.choice_key,
-        [outcome.to_json() for outcome in request.outcomes],
+        # Outcome references may contain catalog fingerprints. Draw from the
+        # distribution and execution identity, independent of those audit links.
+        [{"probability": outcome.probability, "weight": outcome.weight} for outcome in request.outcomes],
     )
     selected = _deterministic_outcome(request.outcomes, roll, request.decision_kind)
     return _resolved(request, selected, choice_source="deterministic_seed", roll=roll)

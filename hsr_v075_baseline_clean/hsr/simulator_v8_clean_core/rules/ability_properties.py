@@ -9,8 +9,12 @@ _ABILITY_PROPERTY_STATS: dict[str, str] = {
     "Defence": "defense",
     "Defense": "defense",
     "ElationDamageAddedRatio": "elation_damage_added_ratio",
+    "ElationDamageExtraAddedRatio": "elation_damage_extra_added_ratio",
+    "ElationEchoPoint": "elation_echo_point",
     "MaxHP": "max_hp",
+    "CurrentHP": "hp",
     # TBGD uses SP for per-unit ultimate energy; team skill points are BP.
+    "CurrentSP": "energy",
     "MaxSP": "max_energy",
     "Speed": "speed",
     "StatusProbability": "effect_hit_rate",
@@ -26,4 +30,4 @@ def ability_property_stat_name(property_name: object) -> str | None:
 
 
 def ability_property_is_runtime_readable(property_name: object) -> bool:
-    return property_name == "Shield" or ability_property_stat_name(property_name) is not None
+    return property_name in ("Shield", "BaseHP") or ability_property_stat_name(property_name) is not None

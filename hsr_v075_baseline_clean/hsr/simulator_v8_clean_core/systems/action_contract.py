@@ -336,6 +336,11 @@ def _formal_action_task_graph_projection(
                 blocked_reasons=_stable_unique(blocked_reasons),
                 blocker_provenance=tuple(blocker_provenance),
             )
+    elif "build_startup" in roles:
+        block(
+            "character_build_ability_requires_startup_invocation",
+            source="action_invocation_role",
+        )
     elif "standalone_root" in roles:
         block(
             "standalone_ability_requires_admitted_queue_invocation",
@@ -894,6 +899,30 @@ class ActionContractSystem:
                 admission=admission,
                 blocked_reason="action_definition_missing",
             )
+        mapping = actor.flags.get("control_skill_mappings", {})
+        slot = {"Normal": "basic", "BPSkill": "skill", "Ultra": "ultimate"}.get(definition.attack_type)
+        if not isinstance(mapping, dict) or any(key not in {"basic", "skill", "ultimate"}
+                or not isinstance(value, str) or not value for key, value in mapping.items()):
+            return ActionContractDecision(**base, ok=False, admission=admission,
+                                          blocked_reason="control_skill_mapping_state_invalid")
+        selected_key = mapping.get(slot)
+        action_set = self.rules.combatant_action_set(actor.template_id)
+        if selected_key is None and slot is not None and action_set is not None and action_set.entity_ref.partition(":")[0] in {"avatar", "servant"}:
+            # The first declared action in a control slot is its initial choice;
+            # subsequent source mappings select alternate forms explicitly.
+            levels = actor.flags.get("effective_skill_levels_by_action_id", {})
+            for _, entry in sorted(action_set.skill_index_map.items(), key=lambda item: int(item[0])):
+                candidate = self.rules.action_definition(entry.get("action_ref"),
+                    levels.get(entry.get("action_ref"), command.action_level))
+                if candidate is not None and candidate.attack_type == definition.attack_type:
+                    selected_key = candidate.skill_trigger_key
+                    break
+        if mode != "queue" and selected_key and definition.skill_trigger_key != selected_key:
+            return ActionContractDecision(**base, ok=False, admission=admission,
+                                          blocked_reason="action_replaced_by_control_skill_mapping")
+        control_gate = status_control_gate_for_actor(actor, skill_type={"BPSkill": "Skill"}.get(definition.attack_type, definition.attack_type))
+        if control_gate is not None:
+            return ActionContractDecision(**base, ok=False, admission=admission, blocked_reason=str(control_gate["reason"]))
         energy_reason = (
             ultimate_energy_blocked_reason(actor, definition.sp_need)
             if admission.resource_gate_kind == "ultimate_energy"

@@ -64,6 +64,7 @@ _NUMERIC_OPERAND_PARAMETER_SCHEMAS: dict[str, dict[str, str]] = {
     "team_resource": {"resource_name": "str"},
     "character_count": {
         "source_target_alias": "str",
+        "source_target_expression_id": "str",
         "alive_only": "optional_bool",
         "predicate_json": "str",
     },

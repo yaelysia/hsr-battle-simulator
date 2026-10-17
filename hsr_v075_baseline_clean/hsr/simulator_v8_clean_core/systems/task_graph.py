@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -17,6 +17,7 @@ from ..rules.task_graph import (
     TaskGraphIR,
     TaskGraphNodeIR,
     TaskGraphNumericDefinitionIR,
+    TaskGraphTemplateParameterIR,
     TaskGraphWeightedSelectionIR,
 )
 from .rng import RNGOutcome, RNGRequest, choice_key_for_identity, event_id_for_identity, resolve_rng_request
@@ -53,10 +54,26 @@ def _frozen_object(value: object, subject: str) -> Mapping[str, JSONValue]:
 
 
 @dataclass(frozen=True)
+class TaskGraphStatusScope:
+    owner_id: str
+    instance_id: str
+
+    def __post_init__(self) -> None:
+        if type(self) is not TaskGraphStatusScope:
+            raise TypeError("task graph status scope must not be subclassed")
+        if any(not isinstance(value, str) or not value for value in (self.owner_id, self.instance_id)):
+            raise ValueError("task graph status scope identity is incomplete")
+
+
+@dataclass(frozen=True)
 class TaskGraphExecutionContext:
     invocation_id: str
     values: Mapping[str, JSONValue] = field(default_factory=dict)
     active_graph_stack: tuple[str, ...] = ()
+    parent_execution_path: tuple[str, ...] = ()
+    status_scope: TaskGraphStatusScope | None = None
+    template_target_ids: tuple[str, ...] | None = None
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphExecutionContext:
@@ -66,6 +83,15 @@ class TaskGraphExecutionContext:
         stack = _strings(self.active_graph_stack, "task graph active stack")
         object.__setattr__(self, "active_graph_stack", stack)
         object.__setattr__(self, "values", _frozen_object(self.values, "task graph context"))
+        object.__setattr__(self, "parent_execution_path", _strings(
+            self.parent_execution_path, "task graph parent execution path", unique=False))
+        if self.status_scope is not None and type(self.status_scope) is not TaskGraphStatusScope:
+            raise TypeError("task graph context status scope is invalid")
+        if self.template_target_ids is not None:
+            object.__setattr__(self, "template_target_ids", _strings(
+                self.template_target_ids, "task graph context template targets"))
+        object.__setattr__(self, "template_binding_sources", tuple(
+            _frozen_object(item, "task graph template bindings") for item in self.template_binding_sources))
 
 
 @dataclass(frozen=True)
@@ -82,6 +108,10 @@ class TaskGraphHookRequest:
     frame_ids: tuple[str, ...]
     target_ids: tuple[str, ...]
     iteration_index: int | None
+    execution_path: tuple[str, ...]
+    status_scope: TaskGraphStatusScope | None = None
+    template_target_ids: tuple[str, ...] | None = None
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphHookRequest:
@@ -113,6 +143,17 @@ class TaskGraphHookRequest:
         object.__setattr__(self, "active_graph_stack", active_graph_stack)
         object.__setattr__(self, "frame_ids", _strings(self.frame_ids, "task graph frame identities"))
         object.__setattr__(self, "target_ids", _strings(self.target_ids, "task graph hook targets"))
+        path = _strings(self.execution_path, "task graph hook execution path", unique=False)
+        if not path:
+            raise ValueError("task graph hook execution path is missing")
+        object.__setattr__(self, "execution_path", path)
+        if self.status_scope is not None and type(self.status_scope) is not TaskGraphStatusScope:
+            raise TypeError("task graph hook status scope is invalid")
+        if self.template_target_ids is not None:
+            object.__setattr__(self, "template_target_ids", _strings(
+                self.template_target_ids, "task graph hook template targets"))
+        object.__setattr__(self, "template_binding_sources", tuple(
+            _frozen_object(item, "task graph hook template bindings") for item in self.template_binding_sources))
 
 
 @dataclass(frozen=True, init=False)
@@ -123,6 +164,10 @@ class TaskGraphContinuation:
     parent_formal_task_id: str
     context_values: Mapping[str, JSONValue]
     active_graph_stack: tuple[str, ...]
+    parent_execution_path: tuple[str, ...]
+    status_scope: TaskGraphStatusScope | None
+    template_target_ids: tuple[str, ...] | None
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...]
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         raise TypeError("task graph continuation must be derived from a hook request")
@@ -138,6 +183,10 @@ class TaskGraphContinuation:
         object.__setattr__(value, "parent_formal_task_id", request.formal_task_id)
         object.__setattr__(value, "context_values", request.context_values)
         object.__setattr__(value, "active_graph_stack", request.active_graph_stack)
+        object.__setattr__(value, "parent_execution_path", request.execution_path)
+        object.__setattr__(value, "status_scope", request.status_scope)
+        object.__setattr__(value, "template_target_ids", request.template_target_ids)
+        object.__setattr__(value, "template_binding_sources", request.template_binding_sources)
         return value
 
     def child_context(
@@ -151,7 +200,77 @@ class TaskGraphContinuation:
             invocation_id,
             self.context_values if context_values is None else context_values,
             self.active_graph_stack,
+            self.parent_execution_path,
+            self.status_scope,
+            self.template_target_ids,
+            self.template_binding_sources,
         )
+
+
+def with_template_binding_sources(sources, template_sources):
+    """Lexical template arguments shadow outer hash/name slots, never peers."""
+    if not template_sources:
+        return tuple(sources)
+    keys = {str(key) for source in template_sources for field in ("by_hash", "by_name", "values")
+            for key in source.get(field, {})}
+    outer = tuple({
+        **{key: value for key, value in source.items() if key not in keys},
+        **{field: {key: value for key, value in source.get(field, {}).items() if str(key) not in keys}
+           for field in ("by_hash", "by_name", "values") if isinstance(source.get(field), Mapping)},
+        **({"entries": {key: entry for key, entry in source["entries"].items()
+            if str(key) not in keys and (not isinstance(entry, Mapping) or not {
+                str(entry.get("hash")), str(entry.get("name")),
+            }.intersection(keys))}} if isinstance(source.get("entries"), Mapping) else {}),
+    } for source in sources)
+    return (*template_sources, *outer)
+
+
+@dataclass(frozen=True)
+class TaskGraphTemplateBindingsResult:
+    status: HookStatus
+    binding_source: Mapping[str, JSONValue] = field(default_factory=dict)
+    blocked_reason: str = ""
+    body_consumption_record: TaskGraphSettlementRecord | None = None
+
+    def __post_init__(self):
+        if type(self) is not TaskGraphTemplateBindingsResult:
+            raise TypeError("task graph template binding result type is invalid")
+        if ((self.status == "resolved" and self.blocked_reason)
+                or (self.status == "blocked" and (not self.blocked_reason or self.binding_source))
+                or self.status not in {"resolved", "blocked"}):
+            raise ValueError("task graph template binding result is inconsistent")
+        object.__setattr__(self, "binding_source", _frozen_object(self.binding_source, "template binding result"))
+        if self.body_consumption_record is not None and (
+            self.status != "resolved" or self.binding_source
+            or type(self.body_consumption_record) is not TaskGraphSettlementRecord
+            or not self.body_consumption_record.process_only
+        ):
+            raise ValueError("consumed template body requires a resolved domain acknowledgement")
+
+
+def evaluate_task_graph_template_bindings(request, parameters, state, *, binding_sources):
+    from ..rules.value_binding import resolve_runtime_numeric_expression
+
+    by_hash, by_name = {}, {}
+    for parameter in parameters:
+        if type(parameter) is not TaskGraphTemplateParameterIR:
+            return TaskGraphTemplateBindingsResult("blocked", blocked_reason="template_parameter_type_invalid")
+        evaluated = resolve_runtime_numeric_expression(parameter.expression,
+            binding_sources=tuple(binding_sources), source_trace=parameter.source.to_json())
+        if not evaluated.ok or evaluated.value is None or not math.isfinite(evaluated.value):
+            return TaskGraphTemplateBindingsResult("blocked", blocked_reason=
+                evaluated.blocked_reason or "template_parameter_value_unresolved")
+        entry = {"value": float(evaluated.value), "source_trace": {
+            "parameter_source": parameter.source.to_json(), "numeric_evaluation": evaluated.to_json(),
+        }, "parameter_name": parameter.parameter_name, "frame_invocation_id": request.invocation_id,
+            "graph_node_id": request.graph_node_id}
+        if parameter.destination_hash in by_hash or parameter.parameter_name in by_name:
+            return TaskGraphTemplateBindingsResult("blocked", blocked_reason="template_parameter_duplicate_slot")
+        by_hash[parameter.destination_hash] = entry
+        by_name[parameter.parameter_name] = entry
+    return TaskGraphTemplateBindingsResult("resolved", {
+        "source_type": "task_template_parameter", "by_hash": by_hash, "by_name": by_name,
+    })
 
 
 @dataclass(frozen=True)
@@ -234,6 +353,7 @@ class TaskGraphTargetResult:
     target_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
     rng_events: tuple[RNGEvent, ...] = ()
+    status_scopes: tuple[TaskGraphStatusScope, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphTargetResult:
@@ -241,15 +361,21 @@ class TaskGraphTargetResult:
         if not isinstance(self.blocked_reason, str):
             raise TypeError("task graph target blocker must be a string")
         targets = _strings(self.target_ids, "task graph resolved targets")
+        scopes = tuple(self.status_scopes)
+        if any(type(item) is not TaskGraphStatusScope for item in scopes) or len(scopes) != len(set(scopes)):
+            raise ValueError("task graph resolved status scopes are invalid")
+        if targets and scopes:
+            raise ValueError("task graph target and status scopes cannot be mixed")
         if self.status == "resolved":
             if self.blocked_reason:
                 raise ValueError("resolved task graph targets carry a blocker")
         elif self.status == "blocked":
-            if targets or self.rng_events or not self.blocked_reason:
+            if targets or scopes or self.rng_events or not self.blocked_reason:
                 raise ValueError("blocked task graph targets are inconsistent")
         else:
             raise ValueError("task graph target status is invalid")
         object.__setattr__(self, "target_ids", targets)
+        object.__setattr__(self, "status_scopes", scopes)
         object.__setattr__(self, "rng_events", tuple(_freeze_rng_event(item) for item in self.rng_events))
 
 
@@ -307,13 +433,8 @@ def _freeze_event(event: GameEvent) -> GameEvent:
         raise TypeError("task graph leaf event source is invalid")
     if event.target_id is not None and not isinstance(event.target_id, str):
         raise TypeError("task graph leaf event target is invalid")
-    return GameEvent(
-        event_type=event.event_type,
-        source_id=event.source_id,
-        target_id=event.target_id,
-        event_id=event.event_id,
-        window=event.window,
-        process_only=event.process_only,
+    return replace(
+        event,
         payload=cast(
             dict[str, JSONValue], _frozen_object(event.payload, "task graph event payload")
         ),
@@ -360,10 +481,13 @@ class TaskGraphLeafResult:
     outcome_label: str = ""
     blocked_reason: str = ""
     child_projections: tuple[TaskGraphNodeProjection, ...] = ()
+    continuation_target_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphLeafResult:
             raise TypeError("task graph leaf result must not be subclassed")
+        targets = (None if self.continuation_target_ids is None else
+                   _strings(self.continuation_target_ids, "task graph continuation targets"))
         if not all(
             isinstance(item, str)
             for item in (self.outcome_kind, self.outcome_label, self.blocked_reason)
@@ -413,6 +537,7 @@ class TaskGraphLeafResult:
                 or rng_events
                 or records
                 or projections
+                or targets is not None
                 or self.outcome_kind
                 or self.outcome_label
                 or not self.blocked_reason
@@ -425,6 +550,7 @@ class TaskGraphLeafResult:
         object.__setattr__(self, "rng_events", rng_events)
         object.__setattr__(self, "settlement_records", records)
         object.__setattr__(self, "child_projections", tuple(projections))
+        object.__setattr__(self, "continuation_target_ids", targets)
 
 
 @dataclass(frozen=True)
@@ -530,9 +656,7 @@ def resolve_task_graph_weighted_selection(
         "decision_scope": request.invocation_id,
         "decision_index": request.iteration_index or 0,
         "task_id": request.formal_task_id,
-        "graph_node_id": request.graph_node_id,
-        "selection_id": selection.selection_id,
-        "frame_ids": list(request.frame_ids),
+        "execution_path": list(request.execution_path),
         "target_ids": list(request.target_ids),
     }
     rng_type = "task_graph_weighted_selection"
@@ -585,6 +709,7 @@ class TaskGraphExecutionHooks:
         [TaskGraphHookRequest, TaskGraphWeightedSelectionIR, BattleState],
         TaskGraphWeightedSelectionResult,
     ] | None = None
+    template_bindings: Callable[..., TaskGraphTemplateBindingsResult] | None = None
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphExecutionHooks:
@@ -597,6 +722,7 @@ class TaskGraphExecutionHooks:
             "targets",
             "graph",
             "weighted_selection",
+            "template_bindings",
         ):
             value = getattr(self, name)
             if value is not None and not callable(value):
@@ -747,6 +873,8 @@ class _TemplateFrame:
     frame_id: str
     graph_id: str
     sequences: Mapping[str, tuple[str, ...]]
+    parameter_target_ids: tuple[str, ...] | None
+    parameter_binding_sources: tuple[Mapping[str, JSONValue], ...]
 
 
 class _ExecutionBlocked(RuntimeError):
@@ -767,6 +895,7 @@ class _TaskGraphRun:
         self.active_graphs = list(context.active_graph_stack)
         self.frames: list[_TemplateFrame] = []
         self.target_stack: list[tuple[str, ...]] = []
+        self.status_stack: list[TaskGraphStatusScope] = []
         self.iteration_stack: list[int] = []
         self.mutations: list[Mutation] = []
         self.events: list[GameEvent] = []
@@ -779,6 +908,7 @@ class _TaskGraphRun:
         self.mutation_ids: set[str] = set()
         self.event_ids: set[str] = set()
         self.rng_event_ids: set[str] = set()
+        self.execution_path: tuple[str, ...] = ()
 
     def execute_graph(self, graph: TaskGraphIR, path: tuple[str, ...]) -> None:
         if graph.graph_id in self.active_graphs:
@@ -813,6 +943,8 @@ class _TaskGraphRun:
             raise _ExecutionBlocked(f"task_graph_duplicate_execution_identity:{execution_id}")
         self.execution_ids.add(execution_id)
         projection_index = len(self.projections)
+        previous_path = self.execution_path
+        self.execution_path = path
         try:
             if node.materialization_status != "materialized" or node.node_kind == "deferred":
                 raise _ExecutionBlocked(
@@ -845,6 +977,8 @@ class _TaskGraphRun:
                 ),
             )
             raise
+        finally:
+            self.execution_path = previous_path
         self.projections.insert(
             projection_index,
             TaskGraphNodeProjection(
@@ -871,6 +1005,10 @@ class _TaskGraphRun:
             tuple(item.frame_id for item in self.frames),
             self.target_stack[-1] if self.target_stack else (),
             self.iteration_stack[-1] if self.iteration_stack else None,
+            self.execution_path,
+            self.status_stack[-1] if self.status_stack else self.context.status_scope,
+            self.frames[-1].parameter_target_ids if self.frames else self.context.template_target_ids,
+            self.frames[-1].parameter_binding_sources if self.frames else self.context.template_binding_sources,
         )
 
     def call_hook(self, name: str, *args: object) -> object:
@@ -952,7 +1090,16 @@ class _TaskGraphRun:
             raise _ExecutionBlocked(
                 f"task_graph_leaf_outcome_not_admitted:{result.outcome_kind}:{result.outcome_label}"
             )
-        self._children(graph, node_by_id, children, (*path, "continuation"))
+        if result.continuation_target_ids is None:
+            self._children(graph, node_by_id, children, (*path, "continuation"))
+            return
+        if any(unit_id not in self.state.units for unit_id in result.continuation_target_ids):
+            raise _ExecutionBlocked("task_graph_continuation_target_missing")
+        self.target_stack.append(result.continuation_target_ids)
+        try:
+            self._children(graph, node_by_id, children, (*path, "continuation"))
+        finally:
+            self.target_stack.pop()
 
     def _admit_leaf(self, result: TaskGraphLeafResult) -> None:
         own_projection_by_id = {item.execution_id: item for item in self.projections}
@@ -1102,9 +1249,8 @@ class _TaskGraphRun:
             branch.child_node_ids,
             (
                 *path,
-                f"selection:{selection.selection_id}",
-                f"choice:{choice.choice_id}",
-                f"branch:{branch.branch_id}:{branch.ordinal}",
+                f"choice:{choice.ordinal}",
+                f"branch:weighted_choice:{branch.ordinal}",
             ),
         )
 
@@ -1244,14 +1390,14 @@ class _TaskGraphRun:
 
     def _resolve_targets(
         self, graph: TaskGraphIR, node: TaskGraphNodeIR
-    ) -> tuple[str, ...]:
+    ) -> TaskGraphTargetResult:
         result = self.call_hook("targets", self.request(graph, node), self.state)
         if type(result) is not TaskGraphTargetResult:
             raise _ExecutionBlocked("task_graph_target_hook_result_type_invalid")
         if result.status == "blocked":
             raise _ExecutionBlocked(result.blocked_reason)
         self._admit_control_rng_events(result.rng_events)
-        return result.target_ids
+        return result
 
     def _execute_target_scope(
         self,
@@ -1260,8 +1406,8 @@ class _TaskGraphRun:
         node_by_id: Mapping[str, TaskGraphNodeIR],
         path: tuple[str, ...],
     ) -> None:
-        targets = self._resolve_targets(graph, node)
-        if not targets:
+        resolution = self._resolve_targets(graph, node)
+        if not resolution.target_ids and not resolution.status_scopes:
             children = self._branch_children(
                 node, "target_scope_failed", allow_absent=True
             )
@@ -1274,7 +1420,20 @@ class _TaskGraphRun:
         )
         if len(candidates) != 1:
             raise _ExecutionBlocked("task_graph_target_scope_branch_not_unique")
-        self.target_stack.append(targets)
+        if candidates[0].branch_kind == "status_scope":
+            if not resolution.status_scopes:
+                raise _ExecutionBlocked("task_graph_status_scope_identity_missing")
+            for scope in resolution.status_scopes:
+                self.status_stack.append(scope)
+                try:
+                    self._children(graph, node_by_id, candidates[0].child_node_ids,
+                        (*path, _stable_id("status_scope", scope.owner_id, scope.instance_id)))
+                finally:
+                    self.status_stack.pop()
+            return
+        if resolution.status_scopes:
+            raise _ExecutionBlocked("task_graph_status_scope_branch_mismatch")
+        self.target_stack.append(resolution.target_ids)
         try:
             self._children(
                 graph,
@@ -1295,6 +1454,24 @@ class _TaskGraphRun:
         refs = tuple(item for item in node.references if item.reference_kind == "template")
         if len(refs) != 1 or refs[0].resolution_status != "resolved":
             raise _ExecutionBlocked("task_graph_template_reference_not_resolved")
+        parameter_sources = self.frames[-1].parameter_binding_sources if self.frames else self.context.template_binding_sources
+        if node.template_parameters or self.hooks.template_bindings is not None:
+            result = self.call_hook("template_bindings", self.request(graph, node), node.template_parameters, self.state)
+            if type(result) is not TaskGraphTemplateBindingsResult:
+                raise _ExecutionBlocked("task_graph_template_binding_hook_result_type_invalid")
+            if result.status == "blocked":
+                raise _ExecutionBlocked(result.blocked_reason)
+            if result.body_consumption_record is not None:
+                self.records.append(result.body_consumption_record)
+                return
+            if result.binding_source:
+                parameter_sources = with_template_binding_sources(parameter_sources, (result.binding_source,))
+        parameter_targets = self.frames[-1].parameter_target_ids if self.frames else self.context.template_target_ids
+        if any(item.reference_kind == "target" for item in node.references):
+            resolution = self._resolve_targets(graph, node)
+            if resolution.status_scopes:
+                raise _ExecutionBlocked("task_graph_template_parameter_requires_unit_targets")
+            parameter_targets = resolution.target_ids
         sequences: dict[str, tuple[str, ...]] = {}
         bodies = []
         for branch in node.branches:
@@ -1316,6 +1493,8 @@ class _TaskGraphRun:
             ),
             graph.graph_id,
             MappingProxyType(dict(sequences)),
+            parameter_targets,
+            parameter_sources,
         )
         self.frames.append(frame)
         try:
@@ -1400,15 +1579,64 @@ class TaskGraphExecutor:
             return self._blocked(state, (), reason)
         run = _TaskGraphRun(state, context, hooks)
         try:
-            run.execute_graph(graph, (f"invocation:{context.invocation_id}",))
+            run.execute_graph(graph, (*context.parent_execution_path, f"invocation:{context.invocation_id}"))
         except _ExecutionBlocked as exc:
             return self._blocked(state, tuple(run.projections), str(exc))
+        return self._committed(run)
+
+    def execute_interleaved(
+        self,
+        state: BattleState,
+        entries: tuple[tuple[TaskGraphIR, TaskGraphExecutionContext, TaskGraphExecutionHooks, tuple[float, ...]], ...],
+    ) -> TaskGraphExecutionResult:
+        """Execute source-ordered roots on one shared, atomic state timeline."""
+        if type(state) is not BattleState:
+            raise TypeError("task graph executor requires exact BattleState")
+        if not entries:
+            return self._blocked(state, (), "parallel_task_graph_entries_missing")
+        schedule = []
+        authority = None
+        for ordinal, (graph, context, hooks, times) in enumerate(entries):
+            reason = self._preflight(graph, context, hooks)
+            if reason:
+                return self._blocked(state, (), reason)
+            identity = (graph.source_catalog_id, graph.source_fingerprint)
+            if authority is not None and identity != authority:
+                return self._blocked(state, (), "parallel_task_graph_authority_mismatch")
+            authority = identity
+            if (len(times) != len(graph.root_node_ids)
+                    or any(type(time) not in (int, float) or not math.isfinite(time) or time < 0 for time in times)
+                    or any(left > right for left, right in zip(times, times[1:]))):
+                return self._blocked(state, (), "parallel_task_graph_time_order_invalid")
+            # ponytail: barriers between roots only. Nested/dynamic barriers
+            # need resumable control frames before this ceiling can be lifted.
+            if any(node.opcode == "WaitParallelTimeStamp" and node.graph_node_id not in graph.root_node_ids
+                   for node in graph.nodes):
+                return self._blocked(state, (), "parallel_task_graph_nested_barrier_not_supported")
+            schedule.extend((time, ordinal, root_ordinal) for root_ordinal, time in enumerate(times))
+        run = _TaskGraphRun(state, entries[0][1], entries[0][2])
+        try:
+            for _, ordinal, root_ordinal in sorted(schedule):
+                graph, context, hooks, _ = entries[ordinal]
+                run.context, run.hooks = context, hooks
+                run.active_graphs = [*context.active_graph_stack, graph.graph_id]
+                node_by_id = {node.graph_node_id: node for node in graph.nodes}
+                run.execute_node(
+                    graph, node_by_id[graph.root_node_ids[root_ordinal]], node_by_id,
+                    (*context.parent_execution_path, f"invocation:{context.invocation_id}", f"root:{root_ordinal}"),
+                )
+        except _ExecutionBlocked as exc:
+            return self._blocked(state, tuple(run.projections), str(exc))
+        return self._committed(run)
+
+    @staticmethod
+    def _committed(run: _TaskGraphRun) -> TaskGraphExecutionResult:
         projections = (*run.projections, *run.child_projections)
         node_results = tuple(item.to_node_result() for item in projections)
         outcome = TransitionOutcome("committed", (), node_results)
         return TaskGraphExecutionResult(
             True,
-            state,
+            run.before_state,
             run.state,
             tuple(run.mutations),
             tuple(run.events),

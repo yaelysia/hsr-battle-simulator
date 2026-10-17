@@ -1,0 +1,76 @@
+{
+  "scenario_id": "mvp:asta-bounce-danheng-technique",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "asta",
+      "side": "ally",
+      "entity_ref": "avatar:1009",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "asta:build",
+        "character_card_id": "character_data_card:avatar:1009",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "asta:equipment",
+          "character_card_id": "character_data_card:avatar:1009",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "06dc93523804d735c047f786d0e518985d315a5332a94913f54ccd84baaafd9a"
+        },
+        "input_fingerprint": "11076cfff4ee66bb0af2d9e9de46a25cf857b4e5994d35d4b2000d6831a2f6fa"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "danheng",
+      "side": "ally",
+      "entity_ref": "avatar:1002",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "danheng:build",
+        "character_card_id": "character_data_card:avatar:1002",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "danheng:equipment",
+          "character_card_id": "character_data_card:avatar:1002",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "e3ca59d22f8d85aed483e76893ef4f4aa1b76bfdee721eb4e505781e3c07dcb7"
+        },
+        "input_fingerprint": "3f2a6baf86bb4c9250b09c9afaf452f02df1cf78b1bf62dfad21d162a74e1417"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "200020050",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {"mode": "runtime_initialize"},
+    "techniques": [{"actor_id": "danheng", "action_ref": "avatar_skill:100207"}],
+    "metadata": {"stage_scope": "wave_only"}
+  }
+}

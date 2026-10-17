@@ -4,7 +4,10 @@ import math
 import json
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..core.model import GameEvent
 
 from ..unit_eligibility import (
     runtime_unit_is_dark_team,
@@ -50,6 +53,7 @@ class EvaluationContext:
     transient_invocation_id: str | None = None
     transient_window: str | None = None
     transient_condition_provider: TransientConditionOperandProvider | None = None
+    trigger_event: GameEvent | None = None
 
 
 @dataclass(frozen=True)
@@ -675,6 +679,10 @@ def _evaluate_condition_payload(
     if opcode in {"ByRankActivated", "BySkillPointActivated"}:
         selector = payload.get("build_selector")
         actor_id = context.actor_id
+        if "TargetType" in payload:
+            actor_id, target_details = _condition_single_target(payload["TargetType"], context)
+            if actor_id is None:
+                return _condition_blocked(condition_id, opcode, "character_build_selector_target_unresolved", target_details, source_trace)
         if not isinstance(selector, dict) or not actor_id:
             return _condition_blocked(
                 condition_id, opcode, "character_build_selector_context_missing", {}, source_trace
@@ -766,10 +774,30 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByCheckModifierCallBackBehaviorFlag":
+        from ..core.model import GameEvent, StatusImmunityFact
+
         expected = payload.get("Flag")
         if not isinstance(expected, str) or not expected:
             return _condition_blocked(condition_id, opcode, "behavior_flag_missing", {}, source_trace)
-        raw_flags = event_payload.get("behavior_flags")
+        trigger = context.trigger_event
+        if trigger is not None and type(trigger) is not GameEvent:
+            return _condition_blocked(condition_id, opcode, "callback_trigger_event_invalid", {}, source_trace)
+        if (trigger is not None and (trigger.event_type == "status.immunity" or trigger.status_immunity_fact is not None)
+                or event_payload.get("event_window") == "OnImmuneDebuff"):
+            fact = trigger.status_immunity_fact if trigger is not None else None
+            detail = context.status_detail or {}
+            # Callback leaves can already have changed current state. Validate
+            # this event against the producer's original immutable boundary.
+            if (type(fact) is not StatusImmunityFact or trigger.window != "OnImmuneDebuff"
+                    or not fact.matches(fact._state, trigger)
+                    or detail.get("instance_id") != fact.protection_instance_id
+                    or detail.get("modifier_name") != fact.protection_modifier_name
+                    or detail.get("owner_id") != fact.target_id):
+                return _condition_blocked(condition_id, opcode,
+                    "status_immunity_condition_fact_missing_or_mismatched", {}, source_trace)
+            raw_flags = fact.incoming_behavior_flags
+        else:
+            raw_flags = event_payload.get("behavior_flags")
         if not isinstance(raw_flags, (list, tuple)):
             return _condition_blocked(condition_id, opcode, "callback_behavior_flags_missing", {}, source_trace)
         flags = tuple(str(item) for item in raw_flags if isinstance(item, str))
@@ -1157,7 +1185,10 @@ def _evaluate_condition_payload(
         matched = abs(values[target_id] - minimum) <= 1e-12
         return _condition_result(matched, condition_id, opcode, "minimum_property_ratio_checked", {"target_id": target_id, "values": values, "minimum": minimum}, source_trace)
     if opcode == "ByIsTargetValid":
-        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        target_ids, target_details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids is None or len(target_ids) > 1:
+            return _condition_blocked(condition_id, opcode, "target_validity_target_unresolved_or_ambiguous", target_details, source_trace)
+        target_id = target_ids[0] if target_ids else None
         unit = _state_unit(context, target_id) if target_id else None
         if unit is None:
             return _condition_result(False, condition_id, opcode, "target_missing", target_details, source_trace)
@@ -1358,10 +1389,13 @@ def _evaluate_condition_payload(
         return _comparison_condition(condition_id, opcode, actual.value, payload.get("CompareType"), compare_value.value, source_trace)
     if opcode == "ByCompareModifierValue":
         if payload.get("TargetType") is None:
-            target_id = context.owner_id or context.actor_id
+            alias = payload.get("default_target_alias", "ModifierOwnerEntity")
+            if alias not in {"Caster", "ModifierOwnerEntity"}:
+                return _condition_blocked(condition_id, opcode, "modifier_value_default_target_not_admitted", {}, source_trace)
+            target_id = context.actor_id if alias == "Caster" else context.owner_id or context.actor_id
             target_details = {
-                "alias": "ModifierOwnerEntity",
-                "source": "tbgd_condition_default",
+                "alias": alias,
+                "source": "canonical_condition_target" if "default_target_alias" in payload else "tbgd_condition_default",
             }
         else:
             target_id, target_details = _resolve_condition_target(
@@ -2136,6 +2170,19 @@ def _evaluate_contextual_condition(
             "status_callback.modifier_value",
             parameters={"value_type": payload.get("ValueType")},
         )
+        if (payload.get("ValueType") == "LifeTime" and operand.status == "resolved"
+                and operand.value_type == "string" and operand.value == "permanent"):
+            expected = evaluator.evaluate_numeric(payload.get("CompareValue"), NumericEvaluationContext(
+                dynamic_values=context.dynamic_values, binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ))
+            # The canonical permanent kind has no countdown. Do not invent a
+            # native numeric sentinel for comparisons beyond this timed filter.
+            if expected.ok and expected.value == 0 and payload.get("CompareType") == "Greater":
+                return _condition_result(False, condition_id, opcode,
+                    "permanent_modifier_has_no_positive_lifetime", {"operand": operand.to_json()}, source_trace)
+            return _condition_blocked(condition_id, opcode, "permanent_lifetime_comparison_not_admitted",
+                {"operand": operand.to_json()}, source_trace)
         return _contextual_numeric_comparison(
             evaluator, condition_id, opcode, payload, context, operand, source_trace
         )
@@ -2737,6 +2784,15 @@ def _compare(actual: float, compare_type: object, expected: float) -> bool | Non
 
 
 def _resolve_condition_target(alias_value: object, context: EvaluationContext) -> tuple[str | None, dict[str, Any]]:
+    key = _condition_target_key(alias_value)
+    if key in (context.target_resolution_errors or {}):
+        return None, {"target_key": key, "reason": context.target_resolution_errors[key],
+                      "source": "pre_resolved_target_expression"}
+    if key in (context.resolved_target_groups or {}):
+        targets = context.resolved_target_groups[key]
+        return (targets[0] if len(targets) == 1 else None), {
+            "target_key": key, "target_ids": list(targets), "source": "pre_resolved_target_expression",
+        }
     alias = _target_alias(alias_value)
     payload = context.event_payload or {}
     mapping = {

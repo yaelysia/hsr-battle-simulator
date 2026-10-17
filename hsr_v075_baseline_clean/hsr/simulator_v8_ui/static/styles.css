@@ -53,7 +53,7 @@ button.active {
 }
 
 button:disabled {
-  color: #97a3b1;
+  color: var(--muted);
   cursor: not-allowed;
   background: #eef2f6;
 }
@@ -103,13 +103,46 @@ p {
 }
 
 #caseId,
-#caseSelect {
+#caseSelect,
+#battleMode {
   min-width: 210px;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 7px 9px;
   background: var(--surface);
 }
+
+.setupFields fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+}
+
+.setupFields label { display: grid; gap: 4px; }
+.observationPanel { padding: 12px; border: 1px solid var(--line); }
+.observationFields { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 12px; }
+.observationFields label { display: grid; gap: 4px; flex: 1 1 9rem; min-width: 0; }
+.observationFields input, .observationFields select { width: 100%; min-width: 0; padding: 6px; }
+.partyFormation { display: flex; flex-wrap: wrap; gap: 12px; padding: 0; list-style: none; }
+.partyFormation li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.setupFields input { width: 6rem; padding: 6px; }
+.buildTraces { flex-basis: 100%; min-width: 0; }
+.buildTraces select { max-width: 100%; padding: 6px; }
+.buildTraces summary { cursor: pointer; padding: 6px 0; }
+.relicEditor { margin-block: 16px; }
+.relicEditor > label { display: block; margin-block: 8px; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 3px;
+}
+[hidden] { display: none !important; }
+input, textarea { caret-color: var(--teal); }
+::selection { background: var(--teal); color: var(--surface); }
+.unitStats, .cardSmall { font-variant-numeric: tabular-nums; }
+.message, .cardSmall, code { overflow-wrap: anywhere; }
 
 .battleShell {
   display: grid;
@@ -128,10 +161,13 @@ p {
 }
 
 .battlePane {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
+
+.battlePane > * { flex-shrink: 0; }
+.battlefield { flex: 1; }
 
 .panelBlock,
 .actionPrompt,

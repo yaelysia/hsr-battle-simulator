@@ -202,8 +202,8 @@ def _coverage_case(rules: RuleBook) -> dict[str, Any]:
         > 0,
         "has_missing_ability_blocked": by_blocked.get("monster_passive_ability_missing", 0) > 0,
         "has_non_startup_or_non_add_modifier_blocked": (
-            by_blocked.get("monster_passive_startup_on_start_add_modifier_missing", 0)
-            + by_blocked.get("monster_passive_startup_no_admitted_on_start_add_modifier", 0)
+            by_blocked.get("monster_passive_startup_on_start_effect_missing", 0)
+            + by_blocked.get("monster_passive_startup_no_admitted_on_start_effect", 0)
             + by_blocked.get("monster_passive_startup_root_on_start_has_unadmitted_tasks", 0)
         )
         > 0,

@@ -72,11 +72,11 @@ def _expression() -> TargetExpressionNodeIR:
     return expression.node
 
 
-def _map_expression(fetch_type: str | None) -> TargetExpressionNodeIR:
+def _map_expression(fetch_type: str | None, map_kind: str = "TargetMapAttackTargetList") -> TargetExpressionNodeIR:
     sequence = []
     if fetch_type is not None:
         sequence.append({"$type": fetch_type, "Name": "", "UniqueName": ""})
-    sequence.append({"$type": "RPG.GameCore.TargetMapAttackTargetList"})
+    sequence.append({"$type": "RPG.GameCore." + map_kind})
     expression = _target_expression_from_raw(
         {"$type": "RPG.GameCore.TargetSequence", "Sequence": sequence},
         field_name="TargetType",
@@ -151,6 +151,70 @@ def _resolved_impact(selection_fixture, target_mode: str):
     return rules, state, system, command, accepted.context, event, impact
 
 
+def test_random_filter_query_is_read_only_and_submission_keeps_rng(selection_fixture):
+    import json
+    from hsr.simulator_v8_clean_core.rules.ir import TargetExpressionIR
+    from hsr.simulator_v8_clean_core.rules.expression_ir import numeric_fixed
+    catalog, selected = selection_fixture
+    contract = selected["automatic"]
+    origin = next(component for component in contract.source_components
+                  if component.component_kind == "target_type")
+    raw = {"$type": "RPG.GameCore.Retarget", "TargetType": {
+        "$type": "RPG.GameCore.TargetAlias", "Alias": "AllEnemy"},
+        "ByRandom": True, "MaxNumber": {"IsDynamic": False, "FixedValue": {"Value": 1}}}
+    source = replace(origin.source, evidence={**origin.source.evidence,
+        "component_kind": "target_filter", "source_field": "TargetFilter",
+        "semantic_role": "action_selection", "raw_value": json.dumps(raw),
+        "json_path": "$.fixture.TargetFilter"})
+    node = TargetExpressionNodeIR.build("Retarget", source, {
+        "target": TargetExpressionNodeIR.build("TargetFetchTeamEntity", replace(source, raw_id=source.raw_id + ":target",
+            evidence={**source.evidence, "json_path": "$.fixture.TargetFilter.TargetType"}), {"team_type": "TeamDark"}),
+        "predicate": None, "by_random": True, "max_number_expr": numeric_fixed(1),
+        "include_limbo": False,
+    })
+    expression = TargetExpressionIR("fixture:random-filter", "Retarget", "", source,
+                                   node, "executable", "", "validation_fixture")
+    decoded = f"typed_target_expression:{expression.fingerprint}"
+    source = replace(source, evidence={**source.evidence, "decoded_value": decoded})
+    component = replace(origin, component_kind="target_filter", source_field="TargetFilter",
+        semantic_role="action_selection", raw_value=json.dumps(raw), decoded_value=decoded, source=source)
+    contract = replace(contract, source_components=(*contract.source_components, component),
+        selection_filter=expression)
+    rules = _transport_rulebook(catalog, selected["explicit"], contract)
+    state = _selection_state()
+    system = ActionTargetSelectionSystem(rules)
+    before = state.snapshot().to_json()
+    query = system.query(state, "ally:actor", contract.action_id, contract.level)
+    assert query.resolved, query.to_json()
+    assert len(query.candidate_ids) == 1
+    assert system.query(state, "ally:actor", contract.action_id, contract.level) == query
+    assert state.snapshot().to_json() == before
+    accepted = system.accept(state, query, ())
+    command = ActionCommand("ally:actor", contract.action_id, contract.level)
+    impact = system.resolve_impact(state, command, accepted.context,
+        rules.action_event(contract.action_id, contract.level))
+    assert impact.ok and impact.rng_events
+    assert impact.resolution.selected == query.automatic_target_ids
+    assert state.snapshot().to_json() == before
+
+
+def test_dynamic_action_reaches_formal_target_graph_instead_of_blanket_rejection(selection_fixture):
+    catalog, selected = selection_fixture
+    contract = selected["dynamic"]
+    rules = _transport_rulebook(catalog, contract, selected["automatic"])
+    state = _selection_state()
+    system = ActionTargetSelectionSystem(rules)
+    query = system.query(state, "ally:actor", contract.action_id, contract.level)
+    assert query.resolved, query.to_json()
+    targets = query.candidate_ids[:1] if query.selection_mode == "explicit" else ()
+    accepted = system.accept(state, query, targets)
+    impact = system.resolve_impact(state, ActionCommand("ally:actor", contract.action_id,
+        contract.level, targets), accepted.context, rules.action_event(contract.action_id, contract.level))
+    assert impact.ok, impact.to_json()
+    # Future packet targets are unavailable until the formal damage producer runs.
+    assert impact.admitted_action_target_fact.unavailable_reason == "action_target_fact_dynamic_unavailable"
+
+
 @pytest.mark.parametrize("target_mode", ["single", "self_or_team", "blast", "aoe"])
 def test_resolve_impact_is_the_fact_producer_for_static_modes(
     selection_fixture, target_mode: str
@@ -163,6 +227,10 @@ def test_resolve_impact_is_the_fact_producer_for_static_modes(
     assert fact.target_mode == target_mode
     assert fact.canonical_action_event_id == event.action_event_id
     assert fact.target_ids == impact.resolution.impact_group
+    assert fact.skill_target_ids == impact.resolution.selected
+    assert fact.skill_sub_target_ids is not None
+    if target_mode == "blast":
+        assert set(fact.skill_sub_target_ids) == set(impact.resolution.impact_group) - set(fact.skill_target_ids)
     assert "admitted_action_target_fact" not in impact.to_json()
 
 
@@ -178,6 +246,21 @@ def test_target_map_uses_only_issued_invocation_bound_impact_fact(selection_fixt
     )
     assert result.resolved
     assert result.target_ids == impact.resolution.impact_group
+
+
+def test_skill_sub_targets_come_from_the_source_contract_not_the_hit_list(selection_fixture):
+    catalog, selected = selection_fixture
+    contract = next(row for row in catalog.contracts
+                    if row.action_id == 'avatar_skill:100902' and row.level == 1)
+    assert contract.impact_sub_target == 'all_teammate'
+    _, state, _, _, _, _, impact = _resolved_impact(
+        (catalog, {**selected, 'explicit': contract}), 'single')
+    fact = impact.admitted_action_target_fact
+    assert fact.skill_target_ids == ('enemy:actor',)
+    assert set(fact.skill_sub_target_ids) == {
+        identity for identity, unit in state.units.items()
+        if unit.side == 'enemy' and unit.hp > 0 and unit.lifecycle_status != 'removed'
+    }
 
 
 def test_target_map_blocks_missing_fact() -> None:
@@ -426,3 +509,86 @@ def test_target_map_raw_lowering_is_strict_and_round_trips() -> None:
         source=_source(),
     )
     assert invalid is not None and invalid.coverage_status == "blocked"
+
+
+def test_global_skill_listener_parameter_is_issued_actor_and_can_be_retargeted(monkeypatch):
+    from hsr.simulator_v8_clean_core.rules.evaluator import RuleEvaluator
+    from hsr.simulator_v8_clean_core.rules.expression_ir import CONDITION_EXPRESSION_NODE_SCHEMA
+    from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR, ConditionIR, StatusCallbackIR
+    from hsr.simulator_v8_clean_core.systems.action_event_contract import _issue_admitted_action_target_fact
+    from hsr.simulator_v8_clean_core.systems.status import StatusInstance
+    from hsr.simulator_v8_clean_core.systems import status_callbacks as callbacks
+
+    state = _state()
+    fact = _issue_admitted_action_target_fact(actor_id='target:b', action_id='fixture:skill', action_level=1,
+        selection_context_fingerprint='a' * 64, contract_fingerprint='b' * 64, impact_fingerprint='c' * 64,
+        canonical_action_event_id='fixture:action', target_mode='single', target_ids=('actor',))
+    fact, scope = _bind_fact(fact, window='after_skill_use')
+    event = GameEvent('action.window.after_skill_use', event_id=fact.event_id, source_id='target:b',
+        target_id='actor', window='after_skill_use', payload={'param_entity_id': 'actor', 'actor_id': 'actor'},
+        admitted_action_target_fact=fact, expected_action_window_scope=scope)
+    callback = StatusCallbackIR('callback', 'listener', 'OnListenAfterSkillUse', (), _source(), (0, 0),
+        'executable', scope_kind='global_listener')
+    detail = StatusInstance('listener:1', 'modifier:listener', 'listener', 'actor', 'source', 'actor',
+        trigger_ids_by_event={callback.event: (callback.callback_id,)}).to_json()
+    state = replace(state, units={**state.units, 'actor': replace(state.units['actor'],
+        statuses=(detail['status_id'],), flags={'status_details': [detail]})})
+    rules = RuleBook(CanonicalIR('listener-actor-check'))
+    system = callbacks.StatusCallbackSystem(rules)
+    seen = []
+    envelope = callbacks._status_callback_envelope
+    def capture(callback, detail, trigger):
+        seen.append(trigger)
+        return envelope(callback, detail, trigger)
+    monkeypatch.setattr(callbacks, '_status_callback_envelope', capture)
+    result = system._execute_formal_callback(state, callback, detail, event, None,
+        task_graph_continuation=None, nested_ability_hooks=None)
+    assert result.ok, result.errors
+    assert seen[0].target_id == 'actor' and seen[0].payload['param_entity_id'] == fact.actor_id
+    condition = ConditionIR('teammate', 'ByIsTeammate', {'TargetType': {'alias': 'ParamEntity'}}, _source(),
+        'executable', expression_schema_version=CONDITION_EXPRESSION_NODE_SCHEMA)
+    context = callbacks._condition_context(rules, state, detail, seen[0])
+    checked = RuleEvaluator().evaluate_condition_result(condition, context)
+    assert checked.ok and checked.result is False
+    retargeted = callbacks._retarget_event(seen[0], 'actor')
+    checked = RuleEvaluator().evaluate_condition_result(condition,
+        callbacks._condition_context(rules, state, detail, retargeted))
+    assert checked.ok and checked.result is True
+    rejected = system._execute_formal_callback(state, callback, detail,
+        replace(event, admitted_action_target_fact=None), None,
+        task_graph_continuation=None, nested_ability_hooks=None)
+    assert not rejected.ok and rejected.after_state == state and not rejected.mutations
+
+
+def test_skill_target_maps_use_separate_sealed_lists_including_bounce():
+    from hsr.simulator_v8_clean_core.systems.action_event_contract import _issue_admitted_action_target_fact
+
+    state = _state()
+    fields = dict(actor_id='actor', action_id='fixture:skill', action_level=1,
+        selection_context_fingerprint='a' * 64, contract_fingerprint='b' * 64, impact_fingerprint='c' * 64,
+        canonical_action_event_id='fixture:action', target_mode='bounce',
+        unavailable_reason='action_target_fact_bounce_unavailable')
+    fact = _issue_admitted_action_target_fact(**fields,
+        skill_target_ids=('target:a',), skill_sub_target_ids=('target:a', 'target:b'))
+    def resolve(unbound, kind):
+        bound, scope = _bind_fact(unbound)
+        return TargetSystem().resolve_target_expression(state,
+            _map_expression('RPG.GameCore.TargetFetchParamEntity', kind),
+            context=TargetEvaluationContext(caster_id='actor', parameter_entity_ids=('actor',),
+                admitted_action_target_fact=bound, expected_action_window_scope=scope))
+    assert resolve(fact, 'TargetMapSkillTarget').target_ids == ('target:a',)
+    assert resolve(fact, 'TargetMapSkillSubTarget').target_ids == ('target:a', 'target:b')
+    assert resolve(fact, 'TargetMapAttackTargetList').blocked_reason == 'action_target_fact_bounce_unavailable'
+    # Produced hit targets replace only attack-impact, not the skill's chosen
+    # target or the source-defined secondary candidate collection.
+    resolved = fact.with_resolved_targets(('target:b',))
+    assert resolved.skill_target_ids == ('target:a',) and resolved.skill_sub_target_ids == fact.skill_sub_target_ids
+    assert resolve(resolved, 'TargetMapSkillTarget').target_ids == ('target:a',)
+    missing = _issue_admitted_action_target_fact(**fields)
+    assert resolve(missing, 'TargetMapSkillSubTarget').blocked_reason == 'action_skill_target_fact_missing'
+    empty = _issue_admitted_action_target_fact(**fields, skill_target_ids=('target:a',), skill_sub_target_ids=())
+    result = resolve(empty, 'TargetMapSkillSubTarget')
+    assert result.resolved and result.target_ids == ()
+    bound, _ = _bind_fact(fact)
+    with pytest.raises(ValueError, match='claims'):
+        replace(bound, skill_target_ids=('target:b',))

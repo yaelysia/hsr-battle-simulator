@@ -23,6 +23,8 @@ from ..rules.ability_properties import ability_property_is_runtime_readable
 _DYNAMIC_RUNTIME_TARGET_ALIASES = frozenset(
     {
         "Caster",
+        "CasterServant",
+        "CasterSummoner",
         "CurrentActionTarget",
         "LevelEntity",
         "ModifierOwnerEntity",
@@ -158,7 +160,7 @@ def _dynamic_scope(value: object) -> tuple[str, str]:
         return "ability", "ability_action"
     if scope == "ContextModifier":
         return "status", "status_instance"
-    if scope in {"ContextCaster", "ContextOwner", "TargetEntity"}:
+    if scope in {"ContextCaster", "ContextOwner", "TargetEntity", "SummonerEntity"}:
         return "unit", "combat"
     return "contextual", "execution_context"
 
@@ -227,6 +229,8 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
     source_alias = parameters.get("source_target_alias")
     source_alias_supported = (
         not source_alias or source_alias in _DYNAMIC_RUNTIME_TARGET_ALIASES
+        or (operand_kind == "unit_property" and source_alias == "SnapshotPropertyEntity")
+        or (operand_kind == "character_count" and bool(parameters.get("source_target_expression_id")))
     )
     executable = operand_kind in {
         "dynamic_value",
@@ -235,6 +239,7 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
         "hp_ratio",
         "shield_value",
         "team_resource",
+        "character_count",
     } and _generic_operand_parameters_complete(operand_kind, parameters)
     executable = executable and source_alias_supported
     if opcode == "SetDynamicValueByPropertyClientOnly":
@@ -244,6 +249,14 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
     elif not source_alias_supported:
         blocked_reason = f"unsupported_dynamic_source_target_alias:{source_alias}"
         required_producer = "target_alias_resolution"
+    elif operand_kind == "character_count" and parameters.get("predicate_json") != "null":
+        executable = False
+        blocked_reason = "character_count_predicate_not_admitted"
+        required_producer = "target_predicate_lowering"
+    elif operand_kind == "character_count" and type(parameters.get("alive_only")) is not bool:
+        executable = False
+        blocked_reason = "character_count_alive_policy_missing"
+        required_producer = "source_lowering"
     elif operand_kind == "unit_property" and not ability_property_is_runtime_readable(
         parameters.get("property_name")
     ):
@@ -319,6 +332,7 @@ def _generic_operand_parameters_complete(
         "hp_ratio": ("source_target_alias",),
         "shield_value": ("source_target_alias",),
         "team_resource": ("resource_name",),
+        "character_count": ("source_target_expression_id",),
     }[operand_kind]
     return all(isinstance(parameters.get(key), str) and parameters.get(key) for key in required)
 
@@ -342,6 +356,9 @@ def _typed_operand_parameters(
         }
     if operand_kind == "unit_property":
         return {"source_target_alias": source_alias, "property_name": string("property_name")}
+    if operand_kind == "modifier_value":
+        return {"source_target_alias": source_alias, "modifier_name": string("modifier_name"),
+                "modifier_value_name": string("modifier_value_name")}
     if operand_kind == "status_count":
         return {"source_target_alias": source_alias, "count_mode": "debuff"}
     if operand_kind in {"hp_ratio", "shield_value", "break_base_damage", "formation_index"}:
@@ -352,6 +369,7 @@ def _typed_operand_parameters(
         alive_only = raw.get("alive_only")
         return {
             "source_target_alias": source_alias,
+            "source_target_expression_id": string("source_target_expression_id"),
             "alive_only": alive_only if isinstance(alive_only, bool) else None,
             "predicate_json": _canonical_source_json(raw.get("predicate")),
         }

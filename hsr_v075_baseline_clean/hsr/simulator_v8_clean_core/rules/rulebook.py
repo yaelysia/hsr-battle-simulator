@@ -1569,7 +1569,7 @@ class RuleBook:
             self,
             "_break_templates_by_element",
             {
-                str(template.element_type): template
+                (str(template.element_type), template.trigger_kind): template
                 for template in self.ir.break_templates
                 if template.element_type
             },
@@ -3030,6 +3030,46 @@ class RuleBook:
     ) -> tuple[CharacterBuildBindingIR, ...]:
         return self._character_build_bindings_by_card.get(card_id, ())
 
+    def character_build_startup_graph(
+        self, binding_ids: tuple[str, ...],
+    ) -> tuple[StandaloneAbilityGraphIR | None, str]:
+        """Resolve the executable entry of source-validated trace/eidolon bindings."""
+        if not binding_ids or len(set(binding_ids)) != len(binding_ids):
+            return None, "character_build_startup_binding_identity_invalid"
+        bindings = tuple(self.character_build_binding(key) for key in binding_ids)
+        if any(binding is None or binding.projection_kind != "dynamic_graph_ref"
+               or binding.dynamic_ref_kind != "direct_ability" for binding in bindings):
+            return None, "character_build_startup_direct_binding_missing"
+        first = bindings[0]
+        if any((binding.character_data_card_id, binding.ability_definition_id) !=
+               (first.character_data_card_id, first.ability_definition_id) for binding in bindings):
+            return None, "character_build_startup_binding_identity_mismatch"
+        definition = self.character_ability_definition(first.ability_definition_id)
+        if definition is None or any(binding.target_ref_id != definition.ability_name for binding in bindings):
+            return None, "character_build_startup_definition_mismatch"
+        graphs = tuple(graph for graph in self.standalone_ability_graphs_by_name(definition.ability_name)
+                       if graph.source_mode == "mainline_avatar"
+                       and graph.source.source_path == definition.source.source_path
+                       and graph.source.evidence.get("ability_index") == definition.source.evidence.get("ability_index"))
+        if len(graphs) != 1 or graphs[0].coverage_status != "executable" or graphs[0].blocked_reason:
+            return None, "character_build_startup_graph_not_resolved"
+        graph = graphs[0]
+        if not graph.phase_ids:
+            return None, "character_build_startup_phase_missing"
+        for phase_id in graph.phase_ids:
+            phase = self.ability_phase(phase_id)
+            tasks = self.ability_tasks_for_phase(phase_id)
+            if (phase is None or phase.binding_id != graph.standalone_ability_graph_id
+                    or phase.invocation_role not in {"build_startup", "standalone_root"}
+                    or not tasks or any(task.callback_kind != "OnStart" for task in tasks)):
+                return None, "character_build_startup_lifecycle_not_admitted"
+            resolved = self.query_formal_task_graph(
+                "ability_phase_callback", phase_id, "OnStart", (task.task_id for task in tasks),
+            )
+            if resolved.status != "resolved":
+                return None, resolved.blocked_reason or "character_build_startup_task_graph_missing"
+        return graph, ""
+
     def character_build_bindings_for_selection(
         self,
         selection_ref_id: str,
@@ -3294,10 +3334,12 @@ class RuleBook:
     def break_templates(self) -> tuple[BreakTemplateIR, ...]:
         return self.ir.break_templates
 
-    def break_template_for_element(self, element_type: str | None) -> BreakTemplateIR | None:
+    def break_template_for_element(
+        self, element_type: str | None, *, trigger_kind: str = "weakness_break",
+    ) -> BreakTemplateIR | None:
         if not element_type:
             return None
-        return self._break_templates_by_element.get(str(element_type))
+        return self._break_templates_by_element.get((str(element_type), trigger_kind))
 
     def break_damage_emission(self, emission_id: str) -> BreakDamageEmissionIR | None:
         return self._break_damage_emissions.get(emission_id)

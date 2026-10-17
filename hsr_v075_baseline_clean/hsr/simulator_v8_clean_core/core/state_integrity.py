@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .immutable_json import freeze_json, thaw_json
-from .model import BattleState, JSONValue, Mutation, UnitState
+from .model import BattleState, JSONValue, Mutation, PendingDefeatPlan, UnitState
 
 
 StateIntegrityStatus = Literal["passed", "failed", "not_run"]
@@ -335,6 +335,23 @@ def _lifecycle_final_state_issues(
         )
 
     lifecycle_path = _unit_path(unit_id, "lifecycle_status")
+    pending_present = "pending_defeat" in unit.flags
+    pending: PendingDefeatPlan | None = None
+    if pending_present:
+        try:
+            pending = PendingDefeatPlan.from_json(unit.flags["pending_defeat"])
+            if pending.unit_id != unit_id:
+                raise ValueError("pending unit identity mismatch")
+        except (ValueError, TypeError, OverflowError):
+            issues.append(_issue("lifecycle_pending_defeat_invalid", unit_id,
+                                 (_unit_flag_path(unit_id, "pending_defeat"),), mutation_ids))
+    if pending_present and unit.lifecycle_status != "limbo":
+        issues.append(_issue("non_limbo_unit_has_pending_defeat", unit_id,
+                             (_unit_flag_path(unit_id, "pending_defeat"), lifecycle_path), mutation_ids))
+    if unit.lifecycle_status == "limbo":
+        if pending is None or not hp_is_finite or unit.hp != 0 or defeat_present or removed_present:
+            issues.append(_issue("limbo_unit_state_invalid", unit_id,
+                (_unit_path(unit_id, "hp"), lifecycle_path, _unit_flag_path(unit_id, "pending_defeat")), mutation_ids))
     if unit.lifecycle_status == "active":
         if hp_is_finite and float(unit.hp) <= 0:
             issues.append(
@@ -446,6 +463,29 @@ def _lifecycle_transition_issues(
     hp_path = _unit_path(unit_id, "hp")
     defeat_record_path = _unit_flag_path(unit_id, "defeat_record")
     removed_record_path = _unit_flag_path(unit_id, "removed_record")
+    pending_path = _unit_flag_path(unit_id, "pending_defeat")
+    if transition in {("active", "limbo"), ("limbo", "active"), ("limbo", "defeated")}:
+        required = ((status_path, pending_path, defeat_record_path) if after.lifecycle_status == "defeated"
+                    else (hp_path, status_path, pending_path))
+        missing = tuple(path for path in required if not _path_was_touched(touched_paths, path))
+        if missing:
+            return (_issue("pending_defeat_transition_not_atomic", unit_id, required, mutation_ids,
+                           details={"missing_paths": [list(path) for path in missing]}),)
+        try:
+            plan_unit = after if after.lifecycle_status == "limbo" else before
+            plan = PendingDefeatPlan.from_json(plan_unit.flags.get("pending_defeat"))
+            if plan.unit_id != unit_id:
+                raise ValueError("pending identity mismatch")
+            if before.lifecycle_status == "active" and plan.hp_mutation.stable_id() not in mutation_ids:
+                raise ValueError("native lethal mutation missing")
+            if after.lifecycle_status == "defeated":
+                record = after.flags.get("defeat_record")
+                if (not isinstance(record, dict) or record.get("pending_defeat_id") != plan.pending_id
+                        or record.get("hp_mutation_id") != plan.hp_mutation.stable_id()):
+                    raise ValueError("final defeat cause mismatch")
+        except (ValueError, TypeError, OverflowError):
+            return (_issue("pending_defeat_transition_cause_invalid", unit_id, required, mutation_ids),)
+        return ()
     if transition == ("active", "defeated"):
         required = (hp_path, status_path, defeat_record_path)
         missing = tuple(
@@ -512,6 +552,7 @@ def _lifecycle_unit_id_for_path(path: tuple[str, ...]) -> str | None:
         return path[1]
     if len(path) == 4 and path[3] in {
         "defeat_record",
+        "pending_defeat",
         "removed_record",
         "lifecycle_status",
         "lifecycle_state",

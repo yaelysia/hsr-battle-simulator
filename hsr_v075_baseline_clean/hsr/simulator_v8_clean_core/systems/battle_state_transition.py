@@ -16,6 +16,7 @@ class BattleStateTransitionRequest:
     trigger_identity: str
     actor_id: str = ""
     source_id: str = ""
+    elation_override_points: float | None = None
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,15 @@ class BattleStateTransitionSystem:
                 f"{state.event_index}:{rule.transition_rule_id}"
             ),
         )
-        after_state = MutationReducer().apply(state, mutation)
+        mutations = (mutation,)
+        if rule.state_path == ("global_flags", "elation_time_active"):
+            from .elation import elation_moment_mutation
+
+            try:
+                mutations = (elation_moment_mutation(state, request, rule), mutation)
+            except (TypeError, ValueError) as exc:
+                return self._blocked(state, rule, str(exc))
+        after_state = MutationReducer().apply_all(state, mutations)
         events = tuple(
             event
             for event in events_for_mutation(
@@ -134,13 +143,18 @@ class BattleStateTransitionSystem:
             },
             trace=source_trace,
         ).to_json()
+        moment_records = tuple(SettlementRecord(
+            record_type="elation_moment", source=item.source, mutation_id=item.stable_id(),
+            process_only=False, payload={"elation_operation": item.metadata["elation_operation"]},
+            trace=source_trace,
+        ).to_json() for item in mutations if item is not mutation)
         return BattleStateTransitionResult(
             ok=True,
             after_state=after_state,
             transition_rule=rule,
-            mutations=(mutation,),
+            mutations=mutations,
             events=events,
-            records=(record,),
+            records=(*moment_records, record),
         )
 
     def _blocked(

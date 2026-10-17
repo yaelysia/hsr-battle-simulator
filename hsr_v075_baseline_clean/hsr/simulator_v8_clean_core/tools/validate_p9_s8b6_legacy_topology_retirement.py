@@ -40,7 +40,7 @@ ALLOWED_READERS = {
     ("systems/status_callbacks.py", "_execute_predicate_task"),
     ("systems/status_callbacks.py", "_execute_retarget_task"),
     ("systems/status_callbacks.py", "_execute_remodifier_query_task"),
-    ("scenarios/build_state.py", "_legacy_startup_root_tasks"),
+    ("systems/startup.py", "_legacy_startup_root_tasks"),
 }
 
 

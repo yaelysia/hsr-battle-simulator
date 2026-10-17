@@ -16,7 +16,7 @@ from ..rules.engine_rule_registry import (
 from .mutation_events import events_for_mutation
 
 
-NORMAL_SHIELD_FAMILIES = ("direct", "dot", "break", "super_break", "true_damage")
+NORMAL_SHIELD_FAMILIES = ("direct", "dot", "break", "super_break", "true_damage", "elation")
 SHIELD_OPCODE_POLICIES = {
     "Shield": "replace_same_source",
     "InitShield": "replace_same_source",

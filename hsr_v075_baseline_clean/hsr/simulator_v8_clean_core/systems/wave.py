@@ -554,6 +554,10 @@ class WaveSystem:
                     _wave_unit_removed_event(state, plan, unit_id, source_trace)
                     for unit_id in plan.remove_unit_ids
                 ),
+                *(
+                    _wave_unit_created_event(state, entry, unit)
+                    for entry, unit in zip(plan.spawn_entries, spawn_units, strict=True)
+                ),
                 _wave_started_event(state, definition, next_index, spawn_units, source_trace),
                 *(
                     _wave_monster_event(state, definition, entry, unit)
@@ -1047,6 +1051,22 @@ def _battle_completed_event(
             "stage_id": definition.stage_id,
             "wave_index": plan.current_wave_index,
             "source_trace": source_trace,
+        },
+    )
+
+
+def _wave_unit_created_event(
+    state: BattleState, entry: WaveMonsterEntryIR, unit: UnitState,
+) -> GameEvent:
+    return GameEvent(
+        "unit.created", source_id="wave_system", target_id=unit.unit_id,
+        event_id=f"event:{state.event_index}:wave:{entry.wave_index}:created:{entry.position}",
+        window="OnListenCharacterCreate", process_only=True,
+        payload={
+            "unit_id": unit.unit_id, "target_id": unit.unit_id, "param_entity_id": unit.unit_id,
+            "entity_id": entry.monster_entity_ref, "entity_type": "monster",
+            "callback_events": ["OnListenCharacterCreate"], "listener_scope": "global_listener",
+            "wave_entry_id": entry.entry_id, "source_trace": entry.source.to_json(),
         },
     )
 

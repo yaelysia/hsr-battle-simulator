@@ -159,6 +159,11 @@ def test_actual_presentation_tasks_reject_unknown_nested_gameplay():
     bad = deepcopy(found["MoveToTargetList"][0])
     bad["MovingRangeList"][0]["TargetType"]["TaskList"] = []
     assert _process_only_ability_task_source_blocked_reason(bad, "MoveToTargetList")
+    formation = deepcopy(found["SetSkillTargetFormationByPos"][0])
+    formation["TargetFormation"] = {"LocalDelta": {"X": 0, "Y": 0, "Z": 0}, "Yaw": 0}
+    assert not _process_only_ability_task_source_blocked_reason(formation, "SetSkillTargetFormationByPos")
+    formation["TargetFormation"]["LocalDelta"]["UnknownBehavior"] = True
+    assert _process_only_ability_task_source_blocked_reason(formation, "SetSkillTargetFormationByPos")
 
 
 def test_rank_raw_lowering_keeps_strict_selector_identity(selector_fixture):
@@ -186,6 +191,46 @@ def test_monster_aim_tasks_are_strict_presentation_shapes():
         assert ability_task_execution_mode(family) == "process_only"
         assert not _process_only_ability_task_source_blocked_reason(task, family)
         assert _process_only_ability_task_source_blocked_reason({**task, "TaskList": []}, family)
+
+
+def test_callback_free_monster_projectile_is_only_a_visual_wait():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    raw = json.loads((root / 'Config/ConfigAbility/Monster/Monster_W1_Soldier02_00_Ability.json').read_text())
+    phase = next(a for a in raw['AbilityList'] if a['Name'] == 'Monster_W1_CWSoldier_02_Skill02_Phase02')
+    projectile = next(t for t in phase['OnStart'] if t['$type'] == 'RPG.GameCore.FireProjectile')
+    stop = next(t for t in phase['OnStart'] if t['$type'] == 'RPG.GameCore.StopAim')
+    assert not _process_only_ability_task_source_blocked_reason(stop, 'StopAim')
+    assert not _process_only_ability_task_source_blocked_reason(projectile, 'FireProjectile')
+    for changed in (
+        {**projectile, 'OnProjectileHit': []}, {**projectile, 'WaitProjectileFinish': False},
+        {**projectile, 'Projectile': {**projectile['Projectile'], 'ColliderTemplate': 'unknown'}},
+        {**projectile, 'Projectile': {**projectile['Projectile'], 'UnknownBehavior': 1}},
+    ):
+        assert _process_only_ability_task_source_blocked_reason(changed, 'FireProjectile')
+
+
+def test_bleed_creation_reuses_property_reads_and_retires_only_visual_children():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_task_admission
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    raw = json.loads((root / 'Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json').read_text())
+    modifier = raw['ModifierMap']['MCommon_DOT_Tear']
+    tasks = next(c['CallbackConfig'] for c in modifier['_CallbackList'] if c['Event'] == 'OnCreate')
+    assert _status_callback_task_admission('OnCreate', 'SetDynamicValueByProperty', tasks[1],
+                                           source_modifier_name='MCommon_DOT_Tear') == ('executable', '')
+    assert _status_callback_task_admission('OnCreate', 'SetDynamicValueByProperty', tasks[2],
+                                           source_modifier_name='MCommon_DOT_Tear') == ('executable', '')
+    assert _status_callback_task_admission('OnCreate', 'AddBuffPerform', tasks[0])[1] == 'source_proven_presentation_only'
+    bad = deepcopy(tasks[0])
+    bad['TaskList'].append(tasks[1])
+    assert _status_callback_task_admission('OnCreate', 'AddBuffPerform', bad)[1] == 'presentation_task_has_gameplay_or_unknown_child'
+    bad = deepcopy(tasks[0])
+    bad['TargetType']['UnknownBehavior'] = True
+    assert _status_callback_task_admission('OnCreate', 'AddBuffPerform', bad)[1] == 'presentation_task_has_gameplay_or_unknown_child'
+    for field in ('root', 'ReadTargetType'):
+        bad = deepcopy(tasks[1])
+        (bad if field == 'root' else bad[field])['UnknownBehavior'] = True
+        assert _status_callback_task_admission('OnCreate', 'SetDynamicValueByProperty', bad)[1] == 'dynamic_property_source_shape_not_admitted'
 
 
 def test_selected_materialization_keeps_source_denominator_and_complete_guard(selector_fixture):
@@ -310,7 +355,9 @@ def test_serval_visual_mount_and_empty_animation_range_reject_nested_gameplay():
 
 def test_serval_passive_keeps_whole_retarget_and_shared_damage_source(selector_fixture):
     from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_task_admission
-    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _node_status, _status_task
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
+        _DefinitionIndexes, _formal_source, _node_status, _references, _status_task,
+    )
     from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
 
     _, _, _, lowerer = selector_fixture
@@ -340,9 +387,18 @@ def test_serval_passive_keeps_whole_retarget_and_shared_damage_source(selector_f
     control = next(c for c in lowerer._character_formal_task_source_context_cache.control_by_location.values()
                    if c.source.source_path == retarget.source.source_path
                    and c.source.evidence["json_path"] == retarget.source.evidence["json_path"])
-    assert _node_status(control, _status_task(retarget)) == (
+    formal = _status_task(retarget)
+    source = _formal_source(formal, {formal.source.source_path: control.source.evidence['content_sha256']})
+    references = _references(formal, control, 'test:node', source, _DefinitionIndexes(
+        {c.condition_id: (c,) for c in lowered.conditions},
+        {expression.target_expression_id: (expression,)}, {}, {},
+    ), {})
+    assert _node_status(control, formal, references) == (
         "target_scope", "materialized", ("task_graph_execution",), "",
     )
+    deferred = tuple(replace(ref, resolution_status='deferred', blocked_reason='target_not_admitted')
+                     for ref in references)
+    assert _node_status(control, formal, deferred)[0:2] == ('deferred', 'deferred')
     finish = next(t for t in tasks if t.opcode == "DamagePerformFinish")
     assert finish.blocked_reason == "source_proven_presentation_only"
     effect = next(e for e in lowered.effects if e.effect_id == finish.effect_id)
@@ -372,7 +428,9 @@ def test_local_after_attack_is_not_repeated_by_each_target_listener():
 
 
 def test_serval_ultimate_retarget_uses_formal_target_scope(selector_fixture):
-    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _ability_task, _node_status
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
+        _DefinitionIndexes, _ability_task, _formal_source, _node_status, _references,
+    )
     from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
 
     _, _, _, lowerer = selector_fixture
@@ -389,17 +447,23 @@ def test_serval_ultimate_retarget_uses_formal_target_scope(selector_fixture):
         assert expression.coverage_status == "executable" and expression.node.expression_kind == "Retarget"
         control = lowerer._character_formal_task_source_context_cache.control_by_location[
             (task.source.source_path, task.source.evidence["json_path"], "Retarget")]
-        assert _node_status(control, formal)[0:2] == ("target_scope", "materialized")
+        source = _formal_source(formal, {formal.source.source_path: control.source.evidence['content_sha256']})
+        references = _references(formal, control, 'test:node', source, _DefinitionIndexes(
+            {c.condition_id: (c,) for c in lowered.conditions},
+            {expression.target_expression_id: (expression,)}, {}, {},
+        ), {})
+        assert _node_status(control, formal, references)[0:2] == ("target_scope", "materialized")
     extension = next(e for e in lowered.effects if e.opcode == "SetModifierValueByBehaviorFlag")
     assert extension.coverage_status == "executable"
     assert extension.payload["standard"]["operation"] == "extend_modifier_lifetime"
 
 
-def test_single_projectile_keeps_hit_tasks_and_blocks_async_or_collision_shapes():
+@pytest.mark.parametrize('avatar', ['Natasha', 'Mar_7th'])
+def test_single_projectile_keeps_hit_tasks_and_blocks_async_or_collision_shapes(avatar):
     from hsr.simulator_v8_clean_core.tbgd.lowering import _effect_payload, _effect_coverage_status
 
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
-    raw = json.loads((root / "Config/ConfigAbility/Avatar/Avatar_Natasha_00_Ability.json").read_text())
+    raw = json.loads((root / f"Config/ConfigAbility/Avatar/Avatar_{avatar}_00_Ability.json").read_text())
     projectile = next(task for ability in raw["AbilityList"] for task in ability.get("OnStart", [])
                       if task.get("$type") == "RPG.GameCore.FireProjectile")
     payload = _effect_payload(projectile, "FireProjectile", "")
@@ -409,6 +473,7 @@ def test_single_projectile_keeps_hit_tasks_and_blocks_async_or_collision_shapes(
         {**projectile, "WaitProjectileFinish": False},
         {**projectile, "Projectile": {**projectile["Projectile"], "IgnoreTargetHitbox": False}},
         {**projectile, "OnProjectileMiss": []},
+        {**projectile, "Projectile": {**projectile["Projectile"], "FlySpeed": {"FixedValue": {"Value": 0}}}},
     ):
         assert _effect_coverage_status("FireProjectile", _effect_payload(changed, "FireProjectile", "")) == "blocked"
 
@@ -454,6 +519,7 @@ def test_turn_heal_uses_shared_effect_and_validated_presentation_admission():
 
 
 def test_death_barrier_verifies_real_damage_lifecycle_without_new_mutations():
+    from hsr.simulator_v8_clean_core.core.executor import CombatExecutor
     from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
     from hsr.simulator_v8_clean_core.rules.ir import EffectIR, IRSource
     from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSystem
@@ -479,7 +545,16 @@ def test_death_barrier_verifies_real_damage_lifecycle_without_new_mutations():
     hp_mutation = next(mutation for mutation in produced.mutations if mutation.path[-1] == "hp")
     assert hp_event.payload["mutation_id"] == hp_mutation.stable_id()
     assert sum(event.event_type == "hp.change" for event in produced.events) == 1
-    after = MutationReducer().apply_all(state, produced.mutations)
+    pending = MutationReducer().apply_all(state, produced.mutations)
+    assert pending.units["enemy"].hp == 0 and pending.units["enemy"].lifecycle_status == "limbo"
+    waiting = registry.execute(effect, EffectExecutionContext(pending, "actor", effect.effect_id))
+    assert waiting.unsupported and not waiting.mutations
+    settled = CombatExecutor(RuleBook(CanonicalIR("death-barrier-check"))).commit_eventful_transition(
+        state, mutations=produced.mutations, events=produced.events, records=produced.records,
+        producer_kind="damage", producer_id="test:death-barrier", actor_id="actor",
+    )
+    assert not settled.errors, settled.errors
+    after = settled.after_state
     assert after.units["enemy"].hp == 0 and after.units["enemy"].lifecycle_status == "defeated"
     passed = registry.execute(effect, EffectExecutionContext(after, "actor", effect.effect_id))
     assert not passed.unsupported and not passed.mutations and not passed.events and not passed.rng_events

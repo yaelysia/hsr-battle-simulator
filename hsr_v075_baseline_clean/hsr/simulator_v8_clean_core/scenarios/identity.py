@@ -12,7 +12,6 @@ from ..rules.rulebook import RuleBook
 ALLY_ENTITY_TYPES = {"avatar"}
 ENEMY_ENTITY_TYPES = {"monster", "monster_template"}
 SUMMON_ENTITY_TYPES = {"summon_unit"}
-ACTION_ENTITY_TYPES = {"avatar_skill", "monster_skill", "active_skill", "servant_skill"}
 
 
 class IdentityResolver:
@@ -184,6 +183,26 @@ class IdentityResolver:
                 traces.append(trace)
 
         setup = scenario.battle_setup
+        technique_keys: set[tuple[str, str]] = set()
+        for index, technique in enumerate(setup.techniques):
+            prefix = f"battle_setup.techniques[{index}]"
+            key = (technique.actor_id, technique.action_ref)
+            if key in technique_keys:
+                errors.append(f"{prefix}: duplicate activated technique")
+            technique_keys.add(key)
+            actor = units_by_id.get(technique.actor_id)
+            if actor is None or actor.build_mode != "assembled_character_build":
+                errors.append(f"{prefix}: actor must be an assembled character in the battle")
+                continue
+            level = formal_skill_levels_by_unit.get(technique.actor_id, {}).get(technique.action_ref)
+            if technique.action_ref not in formal_action_ids_by_unit.get(technique.actor_id, set()) or level is None:
+                errors.append(f"{prefix}: technique has no owned, admitted skill level")
+                continue
+            definition = self.rules.action_definition(technique.action_ref, level)
+            if definition is None or definition.attack_type != "Maze":
+                errors.append(f"{prefix}: action is not a technique")
+            else:
+                traces.append(definition.source.to_json())
         route_may_reference_setup_units = bool(setup.initial_summons)
         for index, step in enumerate(scenario.route):
             if step.actor_id not in unit_ids and not route_may_reference_setup_units:
@@ -191,15 +210,7 @@ class IdentityResolver:
             for target_id in step.target_ids:
                 if target_id not in unit_ids and not route_may_reference_setup_units:
                     errors.append(f"route[{index}]: unknown target_id {target_id!r}")
-            action = self.rules.entity(step.action_ref)
-            if action is None:
-                errors.append(f"route[{index}]: unknown action_ref {step.action_ref!r}")
-                continue
-            if action.entity_type not in ACTION_ENTITY_TYPES:
-                errors.append(
-                    f"route[{index}]: action_ref {step.action_ref!r} has type "
-                    f"{action.entity_type!r}, expected one of {sorted(ACTION_ENTITY_TYPES)}"
-                )
+            definition = self.rules.action_definition(step.action_ref, step.action_level)
             actor = units_by_id.get(step.actor_id)
             if actor is not None and actor.build_mode == "assembled_character_build":
                 owned_actions = formal_action_ids_by_unit.get(step.actor_id, set())
@@ -219,15 +230,11 @@ class IdentityResolver:
                         f"route[{index}]: action level {step.action_level} does not match "
                         f"assembled effective level {effective_levels[step.action_ref]}"
                     )
-            definition = self.rules.action_definition(step.action_ref, step.action_level)
             if definition is None:
                 errors.append(
                     f"route[{index}]: unknown action definition {step.action_ref!r} "
                     f"level {step.action_level}; known levels: {list(self.rules.action_levels(step.action_ref))}"
                 )
-            trace = self.rules.source_trace(step.action_ref)
-            if trace:
-                traces.append(trace)
             definition_trace = self.rules.action_definition_source_trace(step.action_ref, step.action_level)
             if definition_trace:
                 traces.append(definition_trace)

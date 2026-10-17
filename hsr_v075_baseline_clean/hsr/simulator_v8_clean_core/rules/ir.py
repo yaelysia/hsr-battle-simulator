@@ -169,12 +169,14 @@ CharacterAbilityProjectionKind = Literal[
 CharacterAbilityDefinitionKind = Literal[
     "character_main",
     "character_shared",
+    "servant",
     "presentation",
 ]
 CharacterActionSourceKind = Literal[
     "basic",
     "skill",
     "ultimate",
+    "elation",
     "passive",
     "maze",
 ]
@@ -322,10 +324,10 @@ _CHARACTER_ABILITY_PROJECTION_KINDS = frozenset(
     }
 )
 _CHARACTER_ABILITY_DEFINITION_KINDS = frozenset(
-    {"character_main", "character_shared", "presentation"}
+    {"character_main", "character_shared", "servant", "presentation"}
 )
 _CHARACTER_ACTION_SOURCE_KINDS = frozenset(
-    {"basic", "skill", "ultimate", "passive", "maze"}
+    {"basic", "skill", "ultimate", "elation", "passive", "maze"}
 )
 _CHARACTER_ABILITY_BINDING_KINDS = frozenset(
     {"entry", "phase", "passive", "standalone", "presentation"}
@@ -752,7 +754,7 @@ def _validate_projection_field_lineage(
 @dataclass(frozen=True)
 class CharacterAbilitySourceIR:
     source_id: str
-    source_kind: Literal["character_main", "character_shared"]
+    source_kind: Literal["character_main", "character_shared", "servant", "stage"]
     avatar_id: str
     base_type: str
     content_sha256: str
@@ -764,7 +766,7 @@ class CharacterAbilitySourceIR:
     def __post_init__(self) -> None:
         _require_string_enum(
             self.source_kind,
-            frozenset({"character_main", "character_shared"}),
+            frozenset({"character_main", "character_shared", "servant", "stage"}),
             "character ability source_kind",
         )
         if not isinstance(self.source_id, str) or not self.source_id:
@@ -790,7 +792,7 @@ class CharacterAbilitySourceIR:
             raise ValueError("character ability source byte size must be non-negative")
         if self.source_kind == "character_main" and not self.avatar_id:
             raise ValueError("character main ability source must identify its avatar")
-        if self.source_kind == "character_shared" and self.avatar_id:
+        if self.source_kind in {"character_shared", "servant", "stage"} and self.avatar_id:
             raise ValueError("character shared ability source cannot identify one avatar")
         if self.coverage_status not in {"lowered", "blocked"}:
             raise ValueError("invalid character ability source coverage")
@@ -935,10 +937,10 @@ class CharacterAbilityScopeRecordIR:
             or nominal_semantic not in _CHARACTER_ABILITY_SEMANTIC_KINDS
             or _semantic_scope(nominal_semantic) != self.nominal_scope
             or not isinstance(source_kind, str)
-            or source_kind not in {"character_main", "character_shared"}
+            or source_kind not in {"character_main", "character_shared", "servant", "stage"}
             or not isinstance(avatar_id, str)
             or (source_kind == "character_main" and not avatar_id)
-            or (source_kind == "character_shared" and bool(avatar_id))
+            or (source_kind in {"character_shared", "servant", "stage"} and bool(avatar_id))
         ):
             raise ValueError("character ability scope evidence is inconsistent")
         object.__setattr__(self, "raw_fields", frozen_raw_fields)
@@ -1190,7 +1192,7 @@ class CharacterAbilityDefinitionIR:
             _CHARACTER_ABILITY_DEFINITION_KINDS,
             "character ability definition_kind",
         )
-        if self.definition_kind == "character_shared":
+        if self.definition_kind in {"character_shared", "servant"}:
             if self.owner_avatar_id:
                 raise ValueError("shared ability definition cannot have one avatar owner")
         elif not self.owner_avatar_id:
@@ -1717,7 +1719,7 @@ class CharacterAbilityBindingGapIR:
 class CharacterAbilitySourceGraphIR:
     graph_id: str
     source_id: str
-    source_kind: Literal["character_main", "character_shared"]
+    source_kind: Literal["character_main", "character_shared", "servant"]
     owner_avatar_id: str
     definition_ids: tuple[str, ...]
     action_source_ids: tuple[str, ...]
@@ -1735,12 +1737,12 @@ class CharacterAbilitySourceGraphIR:
                 raise ValueError(f"character ability graph {field_name} is required")
         _require_string_enum(
             self.source_kind,
-            frozenset({"character_main", "character_shared"}),
+            frozenset({"character_main", "character_shared", "servant"}),
             "character ability graph source kind",
         )
         if not isinstance(self.owner_avatar_id, str):
             raise TypeError("character ability graph owner must be a string")
-        if self.source_kind == "character_shared":
+        if self.source_kind in {"character_shared", "servant"}:
             if self.owner_avatar_id or self.shared_graph_ids:
                 raise ValueError("shared ability graph cannot have an owner or shared refs")
         elif not self.owner_avatar_id:
@@ -1763,7 +1765,7 @@ class CharacterAbilitySourceGraphIR:
             object.__setattr__(self, field_name, values)
         if not self.definition_ids:
             raise ValueError("character ability graph must retain its definitions")
-        if self.source_kind == "character_shared":
+        if self.source_kind in {"character_shared", "servant"}:
             if (
                 self.selected_skill_ids
                 or self.non_gameplay_skill_source_ids
@@ -2021,8 +2023,13 @@ class CharacterAbilitySourceGraphCatalogIR:
                 "config_source_path",
                 "config_row_index",
                 "selected_version",
-            }:
+            } | ({"servant_id"} if source.source_kind == "servant" else set()):
                 raise ValueError("character ability S0 source evidence schema is invalid")
+            if source.source_kind == "servant" and (
+                not isinstance(evidence.get("servant_id"), str) or not evidence["servant_id"]
+                or source.source_id != f"character_ability_source:servant:{evidence['servant_id']}"
+            ):
+                raise ValueError("servant ability source identity is inconsistent")
             if (
                 evidence.get("avatar_id") != source.avatar_id
                 or evidence.get("base_type") != source.base_type
@@ -2116,8 +2123,8 @@ class CharacterAbilitySourceGraphCatalogIR:
                 membership[item_id] = membership.get(item_id, 0) + 1
             for definition_id in graph.definition_ids:
                 definition = definitions_by_id[definition_id]
-                if graph.source_kind == "character_shared":
-                    if definition.definition_kind != "character_shared":
+                if graph.source_kind in {"character_shared", "servant"}:
+                    if definition.definition_kind != graph.source_kind:
                         raise ValueError("shared graph contains an owned definition")
                 elif (
                     definition.definition_kind == "character_shared"
@@ -2593,7 +2600,7 @@ class CharacterDecodedSourceIR:
             or not isinstance(evidence.get("inherited_scope_record_id"), str)
             or not isinstance(evidence.get("nominal_semantic_kind"), str)
             or evidence.get("source_kind")
-            not in {"character_main", "character_shared"}
+            not in {"character_main", "character_shared", "servant"}
             or not isinstance(evidence.get("avatar_id"), str)
         ):
             raise ValueError("decoded character source evidence schema is invalid")
@@ -3655,15 +3662,20 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetFetchCurrentActionTarget": frozenset({"name", "unique_name"}),
     "TargetFetchParamEntity": frozenset({"name", "unique_name"}),
     "TargetFetchParamEntityList": frozenset({"name", "unique_name"}),
+    "TargetFetchTemplateEntityList": frozenset({"name", "unique_name"}),
     "TargetFetchTeamEntity": frozenset({"team_type"}),
     "TargetFetchBattleEventEntityList": frozenset(),
+    "TargetFetchBattleEventCaster": frozenset(),
     "TargetFetchTurnOwnerEntity": frozenset(),
+    "TargetFetchLevelEntity": frozenset(),
     "TargetFetchNone": frozenset(),
     "TargetFetchActualOwner": frozenset({"name", "unique_name"}),
     "TargetFetchPartner": frozenset({"name", "unique_name"}),
     "TargetFetchUniqueNameEntity": frozenset({"name", "unique_name"}),
     "TargetMapAdjoinEntity": frozenset({"side", "counting_option"}),
     "TargetMapAttackTargetList": frozenset(),
+    "TargetMapSkillTarget": frozenset(),
+    "TargetMapSkillSubTarget": frozenset(),
     "TargetMapSummoner": frozenset({"recursive"}),
     "TargetMapSummonedMinions": frozenset(),
     "TargetMapAllTeamMember": frozenset({"allow_unselectable"}),
@@ -3675,6 +3687,7 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetFetchAllUnselectable": frozenset({"candidate"}),
     "TargetFetchAllCustomUnselectable": frozenset({"candidate"}),
     "TargetMapCreator": frozenset(),
+    "TargetMapCreatedBattleEvent": frozenset(),
     "TargetMapAllTeamMemberFromFirstEntity": frozenset({"select_enemy_team"}),
     "TargetReverse": frozenset(),
     "TargetShuffle": frozenset(),
@@ -4262,7 +4275,9 @@ def _target_node_blocked_reason(node: TargetExpressionNodeIR) -> str:
             reason = _target_node_blocked_reason(child)
             if reason:
                 return reason
-    if node.predicate is not None:
+    # A pure filter does not evaluate its predicate when its resolved pool is
+    # empty. Keep the typed condition/source; admit it at the consumer per pool.
+    if node.predicate is not None and node.expression_kind != "TargetFilter":
         if node.predicate.coverage_status != "executable":
             return node.predicate.blocked_reason or "target_predicate_not_executable"
         for value in node.predicate.payload.values():
@@ -5854,8 +5869,11 @@ class CharacterTraceNodeIR:
     extra_effect_ids: tuple[str, ...] = ()
     simple_extra_effect_ids: tuple[str, ...] = ()
     build_bindings: tuple[CharacterBuildBindingIR, ...] = ()
+    activation_key: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.activation_key, str):
+            raise TypeError("character trace activation key must be a string")
         bindings = tuple(self.build_bindings)
         if any(type(binding) is not CharacterBuildBindingIR for binding in bindings):
             raise TypeError("character trace build bindings must be exact typed values")
@@ -5883,6 +5901,7 @@ class CharacterTraceNodeIR:
             "avatar_id": self.avatar_id,
             "trace_id": self.trace_id,
             "trace_kind": self.trace_kind,
+            "activation_key": self.activation_key,
             "level": self.level,
             "max_level": self.max_level,
             "default_unlocked": self.default_unlocked,
@@ -6324,6 +6343,11 @@ class BreakTemplateIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     status_numeric_bindings: tuple[dict[str, JSONValue], ...] = ()
+    trigger_kind: str = "weakness_break"
+
+    def __post_init__(self) -> None:
+        if self.trigger_kind not in {"weakness_break", "stance_count_down"}:
+            raise ValueError("break template trigger kind is not admitted")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6334,6 +6358,7 @@ class BreakTemplateIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "status_numeric_bindings": list(self.status_numeric_bindings),
+            "trigger_kind": self.trigger_kind,
         }
 
 
@@ -6607,6 +6632,17 @@ class StatusDamageEmissionIR:
     blocked_reason: str = ""
     break_amount_mode: str = ""
     base_includes_break_bonus: bool = False
+    attacker_target_expression_id: str = ""
+    property_source_target_expression_id: str = ""
+    element_source_target_expression_id: str = ""
+    damage_custom_name: str = ""
+
+    def __post_init__(self) -> None:
+        if any(not isinstance(value, str) for value in (
+            self.attacker_target_expression_id, self.property_source_target_expression_id,
+            self.element_source_target_expression_id, self.damage_custom_name,
+        )):
+            raise TypeError("status damage identity references must be strings")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6624,6 +6660,10 @@ class StatusDamageEmissionIR:
             "blocked_reason": self.blocked_reason,
             "break_amount_mode": self.break_amount_mode,
             "base_includes_break_bonus": self.base_includes_break_bonus,
+            "attacker_target_expression_id": self.attacker_target_expression_id,
+            "property_source_target_expression_id": self.property_source_target_expression_id,
+            "element_source_target_expression_id": self.element_source_target_expression_id,
+            "damage_custom_name": self.damage_custom_name,
         }
 
 
@@ -6677,6 +6717,16 @@ class QueueIntentIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    elation_point_override_expr: dict[str, JSONValue] | None = None
+    owner_alive_state: Literal["alive_only", "alive_or_limbo"] = "alive_only"
+    target_alive_state: Literal["alive_only", "alive_or_limbo"] = "alive_only"
+    can_run_on_unselectable_target: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("owner_alive_state", "target_alive_state"):
+            _require_string_enum(getattr(self, name), frozenset({"alive_only", "alive_or_limbo"}), name)
+        if type(self.can_run_on_unselectable_target) is not bool:
+            raise ValueError("queue unselectable-target permission must be bool")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6696,6 +6746,10 @@ class QueueIntentIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "elation_point_override_expr": self.elation_point_override_expr,
+            "owner_alive_state": self.owner_alive_state,
+            "target_alive_state": self.target_alive_state,
+            "can_run_on_unselectable_target": self.can_run_on_unselectable_target,
         }
 
 
@@ -6874,6 +6928,7 @@ class StandaloneAbilityGraphIR:
     blocked_reason: str = ""
     status_callback_ids: tuple[str, ...] = ()
     non_gameplay_callback_ids: tuple[str, ...] = ()
+    action_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6888,6 +6943,7 @@ class StandaloneAbilityGraphIR:
             "blocked_reason": self.blocked_reason,
             "status_callback_ids": list(self.status_callback_ids),
             "non_gameplay_callback_ids": list(self.non_gameplay_callback_ids),
+            "action_id": self.action_id,
         }
 
 
@@ -6962,6 +7018,7 @@ class AbilityPhaseIR:
         "action_root",
         "nested_only",
         "standalone_root",
+        "build_startup",
         "unbound_definition",
         "non_gameplay_noop",
         "external_legacy",
@@ -6972,6 +7029,7 @@ class AbilityPhaseIR:
             "action_root",
             "nested_only",
             "standalone_root",
+            "build_startup",
             "unbound_definition",
             "non_gameplay_noop",
             "external_legacy",
@@ -6983,6 +7041,7 @@ class AbilityPhaseIR:
             "action_root",
             "nested_only",
             "standalone_root",
+            "build_startup",
             "unbound_definition",
         } and not self.task_ids:
             raise ValueError("gameplay ability phase requires tasks")
@@ -7295,7 +7354,7 @@ def build_external_task_topology_dependency_ledger(
         callback = callbacks.get(task.callback_id)
         if callback is None:
             raise ValueError("external task topology status owner is missing")
-        if callback.source_mode == "mainline_avatar_ability":
+        if callback.source_mode in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}:
             continue
         domain = callback.source_mode
         if not domain:
@@ -7538,6 +7597,11 @@ class BattleStateTransitionIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     allow_missing_before: bool = False
+    participant_team: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.participant_team, str) or self.participant_team not in {"", "ally", "enemy"}:
+            raise ValueError("battle state transition participant team is invalid")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -7553,6 +7617,7 @@ class BattleStateTransitionIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "allow_missing_before": self.allow_missing_before,
+            "participant_team": self.participant_team,
         }
 
 
@@ -7677,6 +7742,17 @@ class WaveDefinitionIR:
     level_policy: dict[str, JSONValue] = field(default_factory=dict)
     coverage_status: CoverageStatus = "executable"
     blocked_reason: str = ""
+    stage_startup_phase_ids: tuple[str, ...] = ()
+    stage_environment_status: str = "blocked"
+    stage_environment_blocked_reason: str = "stage_environment_not_compiled"
+
+    def __post_init__(self) -> None:
+        if self.stage_environment_status not in {"blocked", "executable"}:
+            raise ValueError("invalid stage environment admission")
+        if (self.stage_environment_status == "blocked") != bool(self.stage_environment_blocked_reason):
+            raise ValueError("stage environment admission requires its exact blocked reason")
+        # Startup phases follow template installation order, not set order.
+        _require_unique_strings(self.stage_startup_phase_ids, "stage startup phase ids")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -7691,6 +7767,9 @@ class WaveDefinitionIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "stage_startup_phase_ids": list(self.stage_startup_phase_ids),
+            "stage_environment_status": self.stage_environment_status,
+            "stage_environment_blocked_reason": self.stage_environment_blocked_reason,
         }
 
 
@@ -7956,7 +8035,7 @@ class CanonicalIR:
             status_tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
             for task in self.status_callback_tasks:
                 status_tasks_by_callback.setdefault(task.callback_id, []).append(task)
-            formal_roles = {"action_root", "nested_only", "standalone_root"}
+            formal_roles = {"action_root", "nested_only", "standalone_root", "build_startup"}
             expected_ability_entries = {
                 key
                 for key, values in ability_tasks_by_entry.items()
@@ -7982,6 +8061,14 @@ class CanonicalIR:
                 if self.character_ability_source_graph_catalog is not None
                 else set()
             )
+            stage_scope_paths = {
+                phases[phase_id].source.source_path
+                for definition in self.wave_definitions
+                for phase_id in definition.stage_startup_phase_ids
+                if phase_id in phases
+            }
+            if status_scope_paths:
+                status_scope_paths.update(stage_scope_paths)
             expected_status_entries = {
                 (callback.callback_id, callback.event)
                 for callback in self.status_callbacks
@@ -7991,14 +8078,6 @@ class CanonicalIR:
                     or callback.source.source_path in status_scope_paths
                 )
             }
-            if any(
-                item.entry_kind == "ability_phase_callback"
-                and item.status != "materialized"
-                for item in task_graph_catalog.entry_materializations
-            ):
-                raise ValueError(
-                    "CanonicalIR formal ability catalog contains a blocked entry"
-                )
             formal_phase_ids = {
                 item.phase_id
                 for item in self.ability_phases
@@ -8007,7 +8086,7 @@ class CanonicalIR:
             formal_callback_ids = {
                 item.callback_id
                 for item in self.status_callbacks
-                if item.source_mode == "mainline_avatar_ability"
+                if item.source_mode in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}
             }
             if any(
                 any(

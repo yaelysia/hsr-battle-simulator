@@ -1,0 +1,114 @@
+{
+  "scenario_id": "mvp:arlan-e0-fleet-speed-vs-antimatter-minions",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "mvp:arlan:e0-fleet-speed",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:arlan:fleet-speed",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": null,
+          "relics": [
+            {
+              "instance_id": "mvp:arlan:relic:61014",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61014",
+                "stable_id": "relic_template::61014"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "5b0ba257b1deff237af5dec04d139ddf23a51e50372ef20703afd762a9d9412a"
+            },
+            {
+              "instance_id": "mvp:arlan:relic:63025",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 0,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:1",
+                "stable_id": "relic_main_affix::55:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "1a408064fbb09af25d5467c735f8f3d623e543dfe43b33c5d792603280f9c335"
+            },
+            {
+              "instance_id": "mvp:arlan:relic:63026",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 0,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:3",
+                "stable_id": "relic_main_affix::56:3"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "da95dd4faf8bc1282db7f1f185e3ba6c14f134e7902f95e2ddc1fe933337d38a"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "679dbb8bd13d4aa403b5f697bbd8732ffd2d87cb7059cfd8da1698d0f2d762fc"
+        },
+        "input_fingerprint": "0cc4363a9d0a18949a61829e899eefe26596c1e33dca55bf2a24285ea15162fd"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "200020050",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "MVP only: reuse the StageConfig wave for stage_ref 200020050; this is not a complete Mainline stage simulation.",
+      "unsupported_global_stage_ability": "StageAbility_Elation from StageCommonTemplate is outside this scenario's supported scope."
+    }
+  }
+}

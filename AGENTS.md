@@ -28,7 +28,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core
 L3 外部操作层：UI / 推演器 / CLI
 L2 内容装配层：角色卡 / 怪物卡 / 召唤物子卡 / 光锥 / 遗器 / 关卡
 L1 机制执行层：Combat Core / systems / reducer / RuleBook consumers
-L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
+L0 来源编译层：TBGD / 已采纳机制资料 -> 编译或注册 -> Canonical IR / 数据卡 IR / RuleBook
 横切审计层：source audit / settlement / replay / coverage / gap attribution
 ```
 
@@ -40,20 +40,29 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 
 详细边界以 `<core>/ARCHITECTURE_BOUNDARY_CONTRACT.md` 和 `<core>/FORBIDDEN.md` 为准。
 
-## 唯一事实来源
+## 正式规则来源
 
-正式规则来源链只有：
+2026-10-12 用户调整来源约束：TBGD 和可靠机制资料均可作为正式规则依据。
+经过长期验证、测试条件明确的攻略、数据网站和实测结论可以直接采用，不要求重新逆向或
+亲自重做其全部实验，也不以在 TBGD 找到同值、同名回调或原生内部协议为前提。
+
+正式规则接入方向：
 
 ```text
-turnbasedgamedata-main -> compiler/lowering -> Canonical IR / 数据卡 IR -> Combat Core
+TBGD / 已采纳机制资料 -> compiler/lowering 或规则注册
+                   -> Canonical IR / 数据卡 IR / RuleBook -> Combat Core
 ```
 
+- 采用资料时简记链接、结论及适用版本/条件；版本不明时如实记录，只核对影响当前实现的差异。
+  来源评估与验证成本按 `<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md` 执行，不另建审批流程。
 - raw TBGD 只能由 compiler、lowering、discovery 和审计工具读取。
 - `turnbasedgamedata-main` 是固定提交的 Git submodule。普通功能任务不得更新其指针；来源升级必须
   独立规划，并重建来源指纹、目录差异和受影响证据。
-- TextMap、名称、技能说明和游戏观测只用于展示、人工理解或验证，不能驱动 runtime 规则。
+- runtime 不直接解释网页、TextMap、技能说明或观测记录；已从可靠资料确定的公式、参数和
+  触发规则可以人工整理为正式类型化输入，不伪装成 TBGD 来源。
 - 旧 v7 和 `model_pack_v3_0` 只可对照，不是兼容目标，也不能成为 v8 runtime 依赖。
-- 内容无法从结构化来源确定时必须保留缺口，不能用旧实现、经验值或手工答案补齐。
+- TBGD 缺项不等于规则未知。资料仍不足或有影响当前行为的未决冲突时，只阻断实际依赖；
+  不用无依据的经验值或固定结算答案补齐。
 
 ## 战斗范围
 
@@ -75,7 +84,8 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR / 数据卡 IR -> Co
 - runtime 只能读取 Canonical IR、数据卡 IR、RuleBook 和已装配的正式输入。
 - 所有正式状态变化都通过类型化 mutation 和原子提交产生。
 - 每次正式动作必须保留 before/after、目标解析、事件、RNG、mutation、settlement 和 replay 所需事实。
-- 每个 mutation 必须反查到真实 IR 节点和 TBGD 来源；settlement 必须由执行路径原生生成。
+- 每个 mutation 必须反查到正式规则定义及其实际来源（TBGD 或已采纳机制资料）；settlement
+  必须由执行路径原生生成，不为研究规则伪造 raw 节点。
 - 瞬时战斗事实只能由对应领域的类型化 producer 提供，不能从日志、普通 payload 或相似字段重建。
 - 未知、缺来源、缺条件、缺目标、缺公式或缺上下文必须 fail-closed，且失败不改变状态。
 - `audit_only`、`discovered_only`、`blocked` 和 placeholder 不得产生 mutation。
@@ -125,7 +135,8 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR / 数据卡 IR -> Co
 
 - 先核对当前代码和数据事实，再制定或执行计划；不要依赖过期报告推断现状。
 - 修改前确认生产权威、正式调用者和影响边界，优先根因修复和最小完整纵切。
-- 关键信息无法从工作区确定且会改变规则或兼容方向时，暂停并询问用户。
+- 工作区缺规则时先复用可靠外部资料；符合上述条件的规则由工程侧采用，无需逐条询问用户。
+  只有无法消解且影响实现的规则争议、范围取舍或兼容方向才询问用户。
 - 新依赖、外部下载、扩大权限、创建或覆盖 uv 环境必须先获得用户同意。
 - 不为旧接口污染新内核；可能产生不兼容时先询问是否需要兼容。
 - 手工编辑使用 `apply_patch`；临时产物写 `/tmp`，不提交缓存和大体积输出。

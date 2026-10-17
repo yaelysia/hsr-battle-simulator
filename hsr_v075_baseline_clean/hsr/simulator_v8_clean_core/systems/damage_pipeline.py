@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, UnitState
+from ..rules.ir import FormulaIR
 from ..rules.engine_rule_registry import (
     EngineRuleRegistry,
     build_engine_rule_registry,
@@ -12,6 +13,8 @@ from ..rules.engine_rule_registry import (
 )
 from .damage_formula import damage_reduction_residuals, status_modifier_terms, toughness_state_multiplier
 from .unit_stats import effective_unit_stat
+from .elation import ElationDamageContext
+from .toughness_state import read_toughness_segments
 
 
 DAMAGE_STAGE_SCHEMA_VERSION = "p7_s12_damage_stage_pipeline_v1"
@@ -28,7 +31,8 @@ DAMAGE_STAGE_ORDER = (
 )
 
 DAMAGE_FAMILY_STAGE_MATRIX: dict[str, tuple[str, ...]] = {
-    "additional": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
+    "elation": ("critical", "elation_bonus", "punchline", "merrymake", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
+    "additional": ("critical", "damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
     "dot": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
     "break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
     "super_break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
@@ -128,6 +132,10 @@ class DamageStagePipeline:
         source_trace: dict[str, JSONValue],
         attack_type: str | None = None,
         base_includes_break_bonus: bool = False,
+        critical_bucket: DamageStageBucket | None = None,
+        elation_context: ElationDamageContext | None = None,
+        elation_rule: FormulaIR | None = None,
+        modifier_terms: tuple[dict[str, JSONValue], ...] = (),
     ) -> DamagePipelineResult:
         if family not in DAMAGE_FAMILY_STAGE_MATRIX:
             return DamagePipelineResult(
@@ -158,6 +166,20 @@ class DamageStagePipeline:
                 "damage_pipeline_actor_or_target_missing",
             )
         applicable = set(DAMAGE_FAMILY_STAGE_MATRIX[family])
+        if family == "elation":
+            reason = ("elation_damage_context_missing" if type(elation_context) is not ElationDamageContext
+                      else elation_context.blocked_reason(actor_id=attacker_id, state=state,
+                                                         modifier_terms=modifier_terms))
+            if reason:
+                raise ValueError(reason)
+            if (type(elation_rule) is not FormulaIR or elation_rule.kind != "elation_multiplier_rule"
+                    or elation_rule.coverage_status != "executable"):
+                raise ValueError("elation_multiplier_rule_not_admitted")
+        if "critical" in applicable and (
+            critical_bucket is None or critical_bucket.stage != "critical"
+            or not critical_bucket.applicable or not math.isfinite(critical_bucket.multiplier)
+        ):
+            raise ValueError("additional_damage_critical_resolution_required")
         if base_includes_break_bonus:
             if family != "break":
                 return DamagePipelineResult(
@@ -166,7 +188,7 @@ class DamageStagePipeline:
                 )
             applicable.discard("break_bonus")
         buckets = tuple(
-            self._bucket(
+            critical_bucket if stage == "critical" and "critical" in applicable else self._bucket(
                 stage,
                 applicable,
                 actor,
@@ -174,8 +196,13 @@ class DamageStagePipeline:
                 element_type,
                 family,
                 attack_type,
+                elation_context,
+                elation_rule,
+                modifier_terms,
             )
-            for stage in DAMAGE_STAGE_ORDER
+            for stage in (("base", "critical", "damage_bonus", "weakness", "elation_bonus", "punchline", "merrymake",
+                           "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state")
+                          if family == "elation" else DAMAGE_STAGE_ORDER)
         )
         final = max(0.0, float(producer_base_amount))
         for bucket in buckets:
@@ -201,14 +228,39 @@ class DamageStagePipeline:
         element_type: str | None,
         family: str,
         attack_type: str | None,
+        elation_context: ElationDamageContext | None = None,
+        elation_rule: FormulaIR | None = None,
+        modifier_terms: tuple[dict[str, JSONValue], ...] = (),
     ) -> DamageStageBucket:
         if stage not in applicable:
             return DamageStageBucket(
                 stage=stage,
                 applicable=False,
                 multiplier=1.0,
-                skipped_terms=(_skipped(stage, "family_not_applicable", family),),
+                skipped_terms=(_skipped(stage, "family_not_applicable", family), *(
+                    {**term, "applied": False, "skipped_reason": "family_not_applicable"}
+                    for term in modifier_terms if term.get("bucket") == stage
+                )),
             )
+        if stage in {"elation_bonus", "merrymake"}:
+            key = "elation_damage_added_ratio" if stage == "elation_bonus" else "elation_damage_extra_added_ratio"
+            value = _resource(actor, key)
+            status, terms, skipped = _status_terms(actor, source_type="actor.status", stage="damage_bonus", keys=(key,))
+            transient = _transient_terms(modifier_terms, stage, (key,))
+            transient_value = sum(float(term["value"]) for term in transient)
+            return DamageStageBucket(stage, True, max(0.0, 1.0 + value + status + transient_value),
+                applied_terms=(_applied(stage, key, value, "actor.resources"), *terms, *transient), skipped_terms=skipped)
+        if stage == "punchline":
+            assert elation_context is not None and elation_rule is not None
+            parameters = elation_rule.expression
+            numerator, offset = parameters.get("punchline_numerator"), parameters.get("punchline_offset")
+            if (type(numerator) not in (int, float) or not math.isfinite(numerator) or numerator < 0
+                    or type(offset) not in (int, float) or not math.isfinite(offset) or offset <= 0):
+                raise ValueError("elation_multiplier_rule_parameters_invalid")
+            points = elation_context.points
+            return DamageStageBucket(stage, True, 1.0 + numerator * (points / (points + offset)),
+                applied_terms=(_applied(stage, "punchline_points", points, "elation_damage_context"),),
+                metadata={"context": elation_context.to_json(), "formula_rule": elation_rule.to_json()})
         if stage == "damage_bonus":
             all_bonus = _resource(actor, "damage_added_ratio")
             element_key = f"{element_type}_damage_added_ratio" if element_type else ""
@@ -216,7 +268,7 @@ class DamageStagePipeline:
             specialized_keys: tuple[str, ...] = ()
             if family == "dot" or attack_type == "DOT":
                 specialized_keys = ("dot_damage_added_ratio",)
-            elif attack_type in {"Pursued", "ElationDamage"}:
+            elif attack_type == "ElationDamage":
                 specialized_keys = ("elation_damage_added_ratio",)
             status_keys = (
                 ("damage_added_ratio", element_key, *specialized_keys)
@@ -264,6 +316,8 @@ class DamageStagePipeline:
                 metadata={"status_bonus": status_bonus},
             )
         if stage == "defense":
+            transient = _transient_terms(modifier_terms, stage, ("defender_defence_added_ratio",))
+            transient_ratio = sum(float(term["value"]) for term in transient)
             reduction = _resource(target, "def_reduction")
             ignore = _resource(actor, "def_ignore")
             status_reduction, target_status_terms, target_status_skipped = _status_terms(
@@ -297,7 +351,7 @@ class DamageStagePipeline:
                 defense_stat.value
                 + target.defense
                 * (
-                    -reduction
+                    transient_ratio - reduction
                     - status_reduction
                     - ignore
                     - status_ignore
@@ -320,6 +374,7 @@ class DamageStagePipeline:
                     *target_attribute_flat_terms,
                     *target_status_terms,
                     *actor_status_terms,
+                    *transient,
                 ),
                 skipped_terms=(
                     *target_attribute_skipped,
@@ -346,6 +401,8 @@ class DamageStagePipeline:
             has_element = bool(element_key and element_key in target.resources)
             resistance = _resource(target, element_key) if has_element else _resource(target, "all_resistance")
             pen = (_resource(actor, pen_key) if pen_key else 0.0) + _resource(actor, "all_res_pen")
+            transient = _transient_terms(modifier_terms, stage, (pen_key, "all_res_pen"))
+            transient_pen = sum(float(term["value"]) for term in transient)
             status_resistance, status_terms, status_skipped = _status_terms(
                 target,
                 source_type="target.status",
@@ -361,7 +418,7 @@ class DamageStagePipeline:
             )
             multiplier, engine_rule = evaluate_resistance_multiplier(
                 resistance=resistance + status_resistance,
-                penetration=pen,
+                penetration=pen + transient_pen,
                 registry=self.engine_rules,
             )
             return DamageStageBucket(
@@ -372,8 +429,12 @@ class DamageStagePipeline:
                     _applied(stage, element_key if has_element else "all_resistance", resistance, "target.resources"),
                     _applied(stage, pen_key or "all_res_pen", pen, "actor.resources"),
                     *status_terms,
+                    *transient,
                 ),
-                skipped_terms=(skipped, *status_skipped),
+                skipped_terms=(skipped, *status_skipped, *(
+                    {**term, "applied": False, "skipped_reason": "different_element_penetration"}
+                    for term in modifier_terms if term.get("bucket") == stage and term.get("key") not in {pen_key, "all_res_pen"}
+                )),
                 metadata={
                     "status_resistance_delta": status_resistance,
                     "engine_rule": engine_rule.to_json(),
@@ -381,6 +442,8 @@ class DamageStagePipeline:
             )
         if stage == "damage_taken":
             value = _resource(target, "damage_taken_ratio")
+            transient = _transient_terms(modifier_terms, stage, ("damage_taken_ratio",))
+            transient_value = sum(float(term["value"]) for term in transient)
             status_value, status_terms, status_skipped = _status_terms(
                 target,
                 source_type="target.status",
@@ -390,23 +453,25 @@ class DamageStagePipeline:
             return DamageStageBucket(
                 stage,
                 True,
-                1.0 + value + status_value,
+                1.0 + value + status_value + transient_value,
                 applied_terms=(
                     _applied(stage, "damage_taken_ratio", value, "target.resources"),
                     *status_terms,
+                    *transient,
                 ),
                 skipped_terms=status_skipped,
                 metadata={"status_damage_taken": status_value},
             )
         if stage == "damage_reduction":
             value = _resource(target, "damage_reduction")
+            transient = _transient_terms(modifier_terms, stage, ("damage_reduction",))
             status_value, status_terms, status_skipped = _status_terms(
                 target,
                 source_type="target.status",
                 stage=stage,
                 keys=("damage_reduction",),
             )
-            residuals = damage_reduction_residuals(value, status_terms)
+            residuals = damage_reduction_residuals(value, status_terms, tuple(float(term["value"]) for term in transient))
             return DamageStageBucket(
                 stage,
                 True,
@@ -414,6 +479,7 @@ class DamageStagePipeline:
                 applied_terms=(
                     _applied(stage, "damage_reduction", value, "target.resources"),
                     *status_terms,
+                    *transient,
                 ),
                 skipped_terms=status_skipped,
                 metadata={
@@ -425,6 +491,7 @@ class DamageStagePipeline:
         if stage == "toughness_state":
             broken = bool(target.flags.get("broken", False))
             status_driven = target.flags.get("toughness_reduction_mode") == "status"
+            segments = read_toughness_segments(target)
             multiplier = toughness_state_multiplier(target)
             return DamageStageBucket(
                 stage,
@@ -433,8 +500,11 @@ class DamageStagePipeline:
                 applied_terms=(
                     _applied(stage, "current_toughness", target.toughness, "target.state"),
                     _applied(stage, "broken", 1.0 if broken else 0.0, "target.state"),
+                    _applied(stage, "remaining_toughness_segments", segments.remaining_segments,
+                             "target.flags.stance_segments_remaining" if segments.maximum_segments > 1 else "target.toughness"),
                 ),
-                metadata={"broken": broken, "reduction_from_status": status_driven},
+                metadata={"broken": broken, "reduction_from_status": status_driven,
+                          "toughness_segments": segments.to_json()},
             )
         if stage == "toughness_bonus":
             value = _resource(actor, "toughness_damage_added_ratio")
@@ -456,6 +526,12 @@ class DamageStagePipeline:
                 metadata={"status_toughness_bonus": status_value},
             )
         return DamageStageBucket(stage, False, 1.0, skipped_terms=(_skipped(stage, "stage_not_implemented", family),))
+
+
+def _transient_terms(terms: tuple[dict[str, JSONValue], ...], stage: str,
+                     keys: tuple[str, ...]) -> tuple[dict[str, JSONValue], ...]:
+    return tuple({**term, "stage": stage, "applied": True} for term in terms
+                 if term.get("bucket") == stage and term.get("key") in keys)
 
 
 def _resource(unit: UnitState, key: str) -> float:

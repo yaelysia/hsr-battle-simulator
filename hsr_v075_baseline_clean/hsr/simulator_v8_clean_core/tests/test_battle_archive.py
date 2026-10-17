@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hsr.simulator_v8_clean_core.battle_archive import (
     read_archive,
+    restore_session,
     verify_archive,
     write_archive,
 )
@@ -76,6 +77,20 @@ class BattleArchiveTest(unittest.TestCase):
                 "errors": ["canonical_ir_fingerprint_mismatch"],
             },
         )
+        with self.assertRaisesRegex(ValueError, "archive_restore_failed:canonical_ir_fingerprint_mismatch"):
+            restore_session(archive, RuleBook(CanonicalIR(version="archive-test")))
+
+    def test_fork_rejects_invalid_boundary_before_rebuild(self):
+        from hsr.simulator_v8_clean_core.battle_archive import fork_session
+        from hsr.simulator_v8_clean_core.session import BattleSession
+
+        session = BattleSession.__new__(BattleSession)
+        session.operations = [{"kind": "advance"}]
+        for invalid in (True, -1, 2, 0.0, "0", None):
+            with self.assertRaisesRegex(ValueError, "operation count"):
+                fork_session(session, invalid)
+        with self.assertRaises(TypeError):
+            fork_session(object(), 0)
 
     def test_cli_rejects_invalid_run_script_before_compile_or_archive_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -86,14 +101,15 @@ class BattleArchiveTest(unittest.TestCase):
             scenario.write_text("{}", encoding="utf-8")
             script.write_text('{"commands":[{}]}', encoding="utf-8")
             stderr = io.StringIO()
-            with redirect_stderr(stderr):
-                code = cli_main([
-                    "--data-root", str(root / "missing-data-root"),
-                    "run", str(scenario), "--commands", str(script), "--output", str(output),
-                ])
-            self.assertEqual(code, 2)
-            self.assertFalse(output.exists())
-            self.assertIn("actor_id", stderr.getvalue())
+            for mode in ('run', 'resume'):
+                with redirect_stderr(stderr):
+                    code = cli_main([
+                        "--data-root", str(root / "missing-data-root"),
+                        mode, str(scenario), "--commands", str(script), "--output", str(output),
+                    ])
+                self.assertEqual(code, 2)
+                self.assertFalse(output.exists())
+                self.assertIn("actor_id", stderr.getvalue())
 def test_compressed_archive_round_trip_and_no_overwrite(tmp_path):
     from hsr.simulator_v8_clean_core.battle_archive import read_archive, write_archive
     target = tmp_path / "battle.json.gz"

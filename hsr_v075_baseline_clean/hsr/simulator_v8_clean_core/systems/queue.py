@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+from ..core.model import (
+    ActionCommand, BattleState, GameEvent, JSONValue, Mutation, QueueActionStartFact, QueueActionTerminalFact, TargetResolution,
+    _QUEUE_ACTION_START_PRODUCER, _QUEUE_ACTION_TERMINAL_PRODUCER,
+)
 from ..core.settlement import SettlementRecord
 from ..rules.ir import QueueResolutionIR
 from .unit_relation import is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
+
+if TYPE_CHECKING:
+    from ..rules.rulebook import RuleBook
+    from .action_selection import ActionTargetSelectionContext
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,12 @@ class QueueEntry:
     cancel_policy: dict[str, JSONValue] | None = None
     status: str = "pending"
     drain_status: str = "not_attempted"
+    elation_override_points: float | None = None
+
+    def __post_init__(self) -> None:
+        value = self.elation_override_points
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+            raise ValueError("queue_elation_override_points_invalid")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -87,6 +101,7 @@ class QueueEntry:
             "resource_policy": self.resource_policy or {},
             "status": self.status,
             "drain_status": self.drain_status,
+            "elation_override_points": self.elation_override_points,
         }
 
 
@@ -609,6 +624,15 @@ class QueueSystem:
         queue_intent_id = str(entry.get("queue_intent_id") or "")
         if not queue_intent_id:
             return QueueDrainPlan(False, "blocked", queue_name, entry, "", "", "queue_entry_missing_intent_id")
+        abort_reason = _abort_behavior_blocked_reason(state, entry)
+        _, actor_reason = self.lifecycle.can_act(state, str(entry.get("actor_id") or ""))
+        if actor_reason in {"unit_defeated", "unit_removed", "unit_departed"}:
+            abort_reason = f"queue_action_actor_{actor_reason}"
+        if abort_reason:
+            return QueueDrainPlan(
+                False, "blocked", queue_name, entry, queue_intent_id, "", abort_reason,
+                {"queue_entry_source": entry.get("source_trace", {})}, drain_order=drain_order,
+            )
         source_status_reason = _source_status_blocked_reason(state, entry)
         if source_status_reason:
             return QueueDrainPlan(
@@ -1208,6 +1232,12 @@ class QueueSystem:
         reason = blocked_reason or plan.blocked_reason or "queue_entry_execution_blocked"
         current = tuple(state.queues.get(plan.queue_name, ()))
         source_trace = _terminal_source_trace(plan)
+        if not _is_gameplay_abort(state, entry, reason):
+            return QueueEntryTerminalPlan(
+                ok=False, disposition="blocked", queue_name=plan.queue_name,
+                entry_id=entry_id, blocked_reason=reason, retained=True,
+                source_trace=source_trace, before_length=len(current), after_length=len(current),
+            )
         cancel_policy = entry.get("cancel_policy") if isinstance(entry.get("cancel_policy"), dict) else {}
         wait_for_windows = _admitted_wait_windows(cancel_policy, source_trace)
         current_window = str(state.global_flags.get("current_window") or "")
@@ -1238,10 +1268,9 @@ class QueueSystem:
                 after_length=len(current),
                 replacement_target_ids=replacement_targets,
             )
-        disposition = "cancelled" if _is_invalid_entry_reason(reason) else "blocked_removed"
         return QueueEntryTerminalPlan(
             ok=True,
-            disposition=disposition,
+            disposition="cancelled",
             queue_name=plan.queue_name,
             entry_id=entry_id,
             blocked_reason=reason,
@@ -1271,7 +1300,7 @@ class QueueSystem:
             raise ValueError(f"queue terminal entry not found: {terminal.entry_id}")
         entry = current[index]
         assert isinstance(entry, dict)
-        if terminal.disposition in {"cancelled", "blocked_removed"}:
+        if terminal.disposition == "cancelled":
             priority_source = entry.get("priority_source") if isinstance(entry.get("priority_source"), dict) else {}
             mutation = self.dequeue_entry(
                 state,
@@ -1361,7 +1390,78 @@ class QueueSystem:
             payload=payload,
             trace=terminal.source_trace,
         ).to_json()
-        return QueueEntryTerminalResult(terminal, (mutation,), (event,), (record,))
+        abort_events = (
+            (self.action_terminal_event(state, mutation, cancelled=True),)
+            if terminal.disposition == "cancelled" and _is_gameplay_abort(state, entry, terminal.blocked_reason)
+            else ()
+        )
+        return QueueEntryTerminalResult(terminal, (mutation,), (event, *abort_events), (record,))
+
+    def action_start_event(
+        self, state: BattleState, mutation: Mutation, *,
+        accepted_command: ActionCommand | None = None,
+        accepted_selection_context: ActionTargetSelectionContext | None = None,
+        rules: RuleBook | None = None,
+    ) -> GameEvent:
+        entry = mutation.metadata.get("queue_entry")
+        if not isinstance(entry, dict):
+            raise ValueError("queue start requires its removed entry")
+        if accepted_command is not None:
+            from ..rules.rulebook import RuleBook
+            from .action_selection import ActionTargetSelectionSystem
+
+            if type(accepted_command) is not ActionCommand or type(rules) is not RuleBook:
+                raise ValueError("queue start requires a typed command and its RuleBook")
+            reason = ActionTargetSelectionSystem(rules).context_blocked_reason(
+                state, accepted_command, accepted_selection_context,
+            )
+            if reason:
+                raise ValueError(f"queue start selection not accepted:{reason}")
+            assert accepted_selection_context is not None
+            targets = accepted_selection_context.accepted.selected_target_ids
+        else:
+            if accepted_selection_context is not None:
+                raise ValueError("queue start selection requires its command")
+            targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
+            if targets is None:
+                raise ValueError("queue start accepted targets are invalid")
+        event_id = f"event:{state.event_index}:queue.action.before:{mutation.stable_id()}"
+        fact = QueueActionStartFact(
+            source_mutation=mutation, event_id=event_id, event_index=state.event_index,
+            actor_id=str(entry.get("actor_id") or ""), target_ids=targets,
+            _state=state, _producer_token=_QUEUE_ACTION_START_PRODUCER,
+            accepted_command=accepted_command,
+        )
+        return GameEvent(
+            "queue.action.before", source_id=fact.actor_id, event_id=event_id, window="queue",
+            process_only=True, queue_action_start_fact=fact,
+            payload={"queue_entry": entry, "queue_mutation_id": mutation.stable_id(),
+                     "actor_id": fact.actor_id, "target_ids": list(fact.target_ids)},
+        )
+
+    def action_terminal_event(
+        self, state: BattleState, mutation: Mutation, *, cancelled: bool = False,
+        completed_command: ActionCommand | None = None,
+        completed_target_resolution: TargetResolution | None = None,
+    ) -> GameEvent:
+        entry = mutation.metadata["queue_entry"]
+        assert isinstance(entry, dict)
+        event_type = "queue.action.abort" if cancelled else "queue.action.after"
+        event_id = f"event:{state.event_index}:{event_type}:{mutation.stable_id()}"
+        fact = QueueActionTerminalFact(
+            source_mutation=mutation, event_id=event_id, event_index=state.event_index,
+            event_type=event_type, actor_id=str(entry.get("actor_id") or ""),
+            _producer_token=_QUEUE_ACTION_TERMINAL_PRODUCER,
+            completed_command=completed_command,
+            completed_target_resolution=completed_target_resolution,
+        )
+        return GameEvent(
+            event_type, source_id=fact.actor_id, event_id=event_id, window="queue",
+            process_only=True, queue_action_terminal_fact=fact,
+            payload={"queue_entry": entry, "queue_mutation_id": mutation.stable_id(),
+                     "actor_id": fact.actor_id, "target_ids": list(fact.target_ids),
+                     "terminal_disposition": "cancelled" if cancelled else "completed"},
+        )
 
 
 def _first_nonempty_tuple(*values: Any) -> tuple[str, ...]:
@@ -1410,6 +1510,49 @@ def _source_status_blocked_reason(state: BattleState, entry: dict[str, JSONValue
     return "" if active else "queue_source_status_inactive"
 
 
+def _abort_behavior_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
+    policy = entry.get("cancel_policy") if isinstance(entry.get("cancel_policy"), dict) else {}
+    flags = policy.get("abort_behavior_flags", ())
+    if not isinstance(flags, (list, tuple)) or any(not isinstance(flag, str) or not flag for flag in flags):
+        return "queue_abort_behavior_flags_invalid"
+    actor = state.units.get(str(entry.get("actor_id") or ""))
+    if actor is None or not flags:
+        return ""
+    for detail in actor.flags.get("status_details", ()):
+        if (not isinstance(detail, dict)
+                or str(detail.get("lifecycle_state") or "active").startswith(("expired", "removed"))):
+            continue
+        matched = sorted(set(flags).intersection(detail.get("behavior_flags", ())))
+        if matched:
+            return f"queue_abort_behavior_flag:{matched[0]}"
+    return ""
+
+
+def _is_gameplay_abort(state: BattleState, entry: dict[str, JSONValue], reason: str) -> bool:
+    actor_id = str(entry.get("actor_id") or "")
+    targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
+    if (actor_id not in state.units or targets is None
+            or any(target not in state.units for target in targets)):
+        return False
+    if reason.startswith("queue_abort_behavior_flag:"):
+        return reason == _abort_behavior_blocked_reason(state, entry)
+    if reason == "queue_source_status_inactive":
+        return reason == _source_status_blocked_reason(state, entry)
+    if reason.startswith("queue_window_expired:"):
+        return reason == _expiration_blocked_reason(state, entry)
+    lifecycle = UnitLifecycleSystem()
+    _, actor_reason = lifecycle.can_act(state, actor_id)
+    if actor_reason in {"unit_defeated", "unit_removed", "unit_departed"}:
+        if reason == f"queue_action_actor_{actor_reason}":
+            return True
+    for target in targets:
+        _, target_reason = lifecycle.can_target(state, target)
+        if target_reason in {"unit_defeated", "unit_removed", "unit_departed"}:
+            if reason == f"queue_action_target_lifecycle_blocked:{target_reason}:{target}":
+                return True
+    return False
+
+
 def _expiration_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
     policy = entry.get("expiration_policy") if isinstance(entry.get("expiration_policy"), dict) else {}
     expires_at = policy.get("expires_at_event_index")
@@ -1456,21 +1599,6 @@ def _admitted_retarget_ids(
     if not target_ids or not all(lifecycle.can_target(state, target_id, allow_defeated=False)[0] for target_id in target_ids):
         return ()
     return target_ids
-
-
-def _is_invalid_entry_reason(reason: str) -> bool:
-    prefixes = (
-        "queue_action_actor_",
-        "queue_action_target_",
-        "queue_source_status_",
-        "queue_window_expired",
-        "queue_entry_",
-        "queue_priority_",
-        "queue_window_ir_",
-        "queue_window_family_",
-        "queue_expiration_policy_",
-    )
-    return reason.startswith(prefixes)
 
 
 def _units_by_relative_side(state: BattleState, actor_id: str, *, enemy: bool) -> tuple[str, ...]:

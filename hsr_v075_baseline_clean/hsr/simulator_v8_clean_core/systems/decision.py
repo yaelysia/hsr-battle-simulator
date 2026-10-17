@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue
 from ..rules.rulebook import RuleBook
@@ -227,7 +227,7 @@ class DecisionSystem:
             if revision in seen_revisions:
                 return DecisionAdvanceResult(
                     after_state=current,
-                    decision=decision,
+                    decision=replace(decision, blocked_reason="decision_advance_no_progress"),
                     transitions=tuple(transitions),
                     blocked_reason="decision_advance_no_progress",
                     metadata={"internal_step_count": len(transitions), "repeated_state_revision": revision},
@@ -236,7 +236,7 @@ class DecisionSystem:
             if step_index >= max_internal_steps:
                 return DecisionAdvanceResult(
                     after_state=current,
-                    decision=decision,
+                    decision=replace(decision, blocked_reason="decision_advance_step_limit"),
                     transitions=tuple(transitions),
                     blocked_reason="decision_advance_step_limit",
                     metadata={"internal_step_count": len(transitions), "max_internal_steps": max_internal_steps},
@@ -247,7 +247,7 @@ class DecisionSystem:
                 blocked_reason = str(step.transition.coverage.get("blocked_reason") or "decision_advance_blocked")
                 return DecisionAdvanceResult(
                     after_state=current,
-                    decision=self.current_decision(current),
+                    decision=replace(decision, blocked_reason=blocked_reason),
                     transitions=tuple(transitions),
                     blocked_reason=blocked_reason,
                     metadata={"internal_step_count": len(transitions)},

@@ -8,15 +8,58 @@ import pytest
 
 from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
 from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
-from hsr.simulator_v8_clean_core.session import BattleSession
+from hsr.simulator_v8_clean_core.session import BattleSession, command_from_json
 from hsr.simulator_v8_clean_core.systems.damage_formula import status_modifier_terms
 from hsr.simulator_v8_clean_core.systems.damage_formula import effective_unit_stat
-from hsr.simulator_v8_clean_core.systems.status import StatusSystem
 from hsr.simulator_v8_clean_core.systems.toughness import ToughnessPacket
 from hsr.simulator_v8_clean_core.systems.timeline import TimelineSystem
 from hsr.simulator_v8_clean_core.tbgd.battle_catalog import build_battle_rulebook
 
 pytestmark = pytest.mark.integration
+
+
+def test_ordinary_hit_breaks_once_and_removes_reduction_before_break_damage():
+    root = Path(__file__).resolve().parents[4]
+    scenario = json.loads((root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_vs_antimatter.json").read_text())
+    rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
+    session = BattleSession(rules, scenario)
+    assert session.advance().ready
+    target_id = next(uid for uid, unit in session.state.units.items() if unit.side == "enemy")
+    target = session.state.units[target_id]
+    # Boundary fixture: retain real startup/callbacks, but force a nonlethal
+    # matching depletion. The check covers our adopted behavior, not native internals.
+    session.state = replace(session.state, units={
+        **session.state.units,
+        target_id: replace(target, toughness=1, hp=10000, max_hp=10000,
+                           flags={**target.flags, "weaknesses": ["Thunder"]}),
+    })
+    before = session.state
+    result = session.submit(command_from_json({
+        "actor_id": "arlan", "action_id": "avatar_skill:100801", "action_level": 1,
+        "target_ids": [target_id],
+    }))
+    assert result.transition.outcome.successor_eligible, result.transition.outcome.reason_codes
+    transaction = result.transition.transaction
+    assert sum(event.event_type == "break.triggered" for event in transaction.events) == 1
+    unit = session.state.units[target_id]
+    assert unit.toughness == 0 and unit.flags["broken"] is True
+    assert "modifier:StanceBreakState" in unit.statuses
+    assert "modifier:MonsterAllDamageReduce" not in unit.statuses
+    breaks = [mutation for mutation in transaction.mutations
+              if mutation.path == ("units", target_id, "hp")
+              and mutation.metadata.get("damage_formula_family") == "break"]
+    assert len(breaks) == 1
+    pipeline = breaks[0].metadata["damage_pipeline"]
+    assert next(bucket for bucket in pipeline["stages"]
+                if bucket["stage"] == "damage_reduction")["multiplier"] == 1
+    # The source still owns the 25% delay; it must run only once.
+    timeline_rule, reason = rules.select_timeline_rule()
+    assert timeline_rule is not None, reason
+    full_av = TimelineSystem().full_action_value(effective_unit_stat(unit, "speed").value, timeline_rule)
+    delays = [mutation for mutation in transaction.mutations
+              if mutation.path == ("units", target_id, "action_value")]
+    assert sum(mutation.after - mutation.before for mutation in delays) == pytest.approx(0.25 * full_av)
+    assert before.units[target_id].toughness == 1
 
 
 def test_ordinary_break_recovery_restores_stance_and_common_reduction():
@@ -46,53 +89,20 @@ def test_ordinary_break_recovery_restores_stance_and_common_reduction():
     assert entered.ok, entered.errors
     state = entered.after_state
     for event in entered.events:
-        if event.event_type == "break.triggered":
-            continue  # TriggerBreak mapping is separately blocked; seed the installed state below.
+        if str(event.to_json()["event_id"]) in entered.dispatched_event_ids:
+            continue
         dispatch = session.decisions.scheduler.event_dispatcher.dispatch_event(state, event=event)
         assert not dispatch.errors, dispatch.errors
         state = dispatch.after_state
 
-    callback = rules.status_callbacks_for_modifier_event("Local_ListenStanceBreak", "OnBeingBreak")[0]
-    tasks = rules.status_callback_tasks_for_callback(callback.callback_id)
-    add_effect = rules.effect(next(task.effect_id for task in tasks if task.opcode == "AddModifier"))
-    remove_effect = rules.effect(next(task.effect_id for task in tasks if task.opcode == "RemoveModifier"))
-    assert add_effect is not None and remove_effect is not None
-    status = StatusSystem(rules)
-    installed = status.apply_add_modifier(
-        state, add_effect, caster_id=attacker_id, source_id=attacker_id,
-        owner_id=target_id, _resolved_target_ids=(target_id,),
-    )
-    assert installed.ok, installed.unsupported
-    state = MutationReducer().apply_all(state, installed.mutations)
     assert "modifier:StanceBreakState" in state.units[target_id].statuses
     assert state.units[target_id].flags["monster_stance_count"] == 1
-    on_create = rules.status_callbacks_for_modifier_event("StanceBreakState", "OnCreate")[0]
-    delay_task = next(task for task in rules.status_callback_tasks_for_callback(on_create.callback_id)
-                      if task.opcode == "ModifyActionDelay")
-    delay_emission = rules.action_delay_emissions_for_callback(on_create.callback_id)[0]
-    assert delay_emission.coverage_status == "executable"
-    detail = next(item for item in state.units[target_id].flags["status_details"]
-                  if item.get("modifier_name") == "StanceBreakState")
-    create_event = next(event for event in installed.events
-                        if event.event_type == "status.lifecycle"
-                        and event.payload.get("callback_event") == "OnCreate")
-    delayed = session.decisions.scheduler.event_dispatcher.status_callbacks._execute_formal_leaf_task(
-        state, on_create, delay_task, detail, create_event, None,
-    )
-    assert delayed.ok, delayed.errors
     timeline_rule, reason = rules.select_timeline_rule()
     assert timeline_rule is not None, reason
     full_av = TimelineSystem().full_action_value(
         effective_unit_stat(state.units[target_id], "speed").value, timeline_rule,
     )
-    assert abs(delayed.after_state.units[target_id].action_value
-               - state.units[target_id].action_value - 0.25 * full_av) < 1e-8
-    removed = status.apply_remove_modifier(
-        state, remove_effect, caster_id=attacker_id, source_id=attacker_id,
-        owner_id=target_id,
-    )
-    assert removed.ok, removed.unsupported
-    state = MutationReducer().apply_all(state, removed.mutations)
+    assert state.units[target_id].action_value - target.action_value == pytest.approx(0.25 * full_av)
     assert "modifier:MonsterAllDamageReduce" not in state.units[target_id].statuses
     assert status_modifier_terms(
         state.units[target_id], source_type="target.damage_reduction",

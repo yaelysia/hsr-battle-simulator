@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 
+from ..core.immutable_json import thaw_json
 from ..core.model import (
     BattleState,
+    GameEvent,
     JSONValue,
     Mutation,
+    PendingDefeatPlan,
     UnitLifecycleStatus,
     UnitState,
 )
@@ -19,6 +23,14 @@ from ..unit_presence import (
     unit_is_departed,
 )
 from ..core.unit_state_codec import unit_state_to_payload
+from .mutation_events import mutation_backed_event_id
+
+
+LIMBO_CALLBACKS = (
+    ("unit.before_dying", "OnBeforeDying", "before_dying"),
+    ("unit.being_limbo", "OnBeingLimbo", "limbo"),
+    ("unit.limbo_wait_heal", "OnLimboWaitHeal", "limbo_waiting"),
+)
 
 
 @dataclass(frozen=True)
@@ -65,7 +77,121 @@ class UnitLifecycleSystem:
 
     """Shared lifecycle gate for target, queue, timeline, damage and snapshots."""
 
-    VALID_STATUSES = {"active", "defeated", "removed"}
+    VALID_STATUSES = {"active", "limbo", "defeated", "removed"}
+
+    def pending_defeat(self, state: BattleState, unit_id: str) -> PendingDefeatPlan | None:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            raise ValueError("pending_defeat_unit_missing")
+        raw = unit.flags.get("pending_defeat")
+        if raw is None:
+            if unit.lifecycle_status == "limbo":
+                raise ValueError("limbo_unit_missing_pending_defeat")
+            return None
+        plan = PendingDefeatPlan.from_json(raw)
+        if (unit.lifecycle_status != "limbo" or unit.hp != 0 or plan.unit_id != unit_id
+                or plan.event_index > state.event_index):
+            raise ValueError("pending_defeat_state_mismatch")
+        return plan
+
+    def begin_limbo_mutations(self, state: BattleState, plan: PendingDefeatPlan) -> tuple[Mutation, ...]:
+        if type(plan) is not PendingDefeatPlan:
+            raise ValueError("pending_defeat_plan_required")
+        unit = state.units.get(plan.unit_id)
+        if (unit is None or unit.lifecycle_status != "active"
+                or unit.hp != plan.hp_mutation.before or plan.event_index != state.event_index
+                or "pending_defeat" in unit.flags or "defeat_record" in unit.flags):
+            raise ValueError("pending_defeat_begin_state_invalid")
+        metadata = {"pending_defeat_id": plan.pending_id,
+                    "hp_mutation_id": plan.hp_mutation.stable_id(), "source_frame": plan.source_frame,
+                    "source_trace": plan.source_trace, "lifecycle_operation": "unit_enter_limbo"}
+        return (
+            Mutation("set", ("units", unit.unit_id, "flags", "pending_defeat"), None, plan.to_json(),
+                     "retain the native lethal cause", "damage_system", before_exists=False, metadata=metadata),
+            self.limbo_status_mutation(plan),
+        )
+
+    def limbo_status_mutation(self, plan: PendingDefeatPlan) -> Mutation:
+        return Mutation("set", ("units", plan.unit_id, "lifecycle_status"), "active", "limbo",
+            "enter the rescue window before final defeat", "damage_system", metadata={
+                "pending_defeat_id": plan.pending_id, "hp_mutation_id": plan.hp_mutation.stable_id(),
+                "source_frame": plan.source_frame, "source_trace": plan.source_trace,
+                "lifecycle_operation": "unit_enter_limbo",
+            })
+
+    def limbo_events(self, plan: PendingDefeatPlan) -> tuple[GameEvent, ...]:
+        terminal = plan.terminal_event
+        if terminal is None:
+            raise ValueError("pending_defeat_terminal_event_missing")
+        lifecycle_id = self.limbo_status_mutation(plan).stable_id()
+        return tuple(GameEvent(
+            event_type=event_type, source_id=plan.kill_credit_owner_id, target_id=plan.unit_id,
+            event_id=mutation_backed_event_id(lifecycle_id, event_type), window=callback,
+            payload={**terminal.payload, "callback_events": [callback], "listener_scope": "owner_local",
+                     "death_transition_stage": stage, "lifecycle_mutation_id": lifecycle_id,
+                     "pending_defeat_id": plan.pending_id, "param_entity_id": plan.unit_id},
+            pending_defeat_plan=plan,
+        ) for event_type, callback, stage in LIMBO_CALLBACKS)
+
+    def finalize_pending_defeat_mutations(
+        self, state: BattleState, plan: PendingDefeatPlan,
+    ) -> tuple[Mutation, ...]:
+        if type(plan) is not PendingDefeatPlan:
+            raise ValueError("pending_defeat_plan_required")
+        current = self.pending_defeat(state, plan.unit_id)
+        if current is None or current != plan:
+            raise ValueError("pending_defeat_finalization_identity_mismatch")
+        unit = state.units[plan.unit_id]
+        record: dict[str, JSONValue] = {
+            "target_id": plan.unit_id, "defeated_unit_id": plan.unit_id,
+            "target_before_hp": plan.hp_mutation.before, "target_after_hp": plan.hp_mutation.after,
+            "hp_mutation_id": plan.hp_mutation.stable_id(), "pending_defeat_id": plan.pending_id,
+            "kill_credit_owner_id": plan.kill_credit_owner_id,
+            "source_frame": thaw_json(plan.source_frame), "source_trace": thaw_json(plan.source_trace),
+        }
+        metadata = {"pending_defeat_id": plan.pending_id,
+                    "hp_mutation_id": plan.hp_mutation.stable_id(), "source_frame": plan.source_frame,
+                    "source_trace": plan.source_trace, "defeat_record": record,
+                    "lifecycle_operation": "unit_defeat",
+                    "lifecycle_status_before": "limbo", "lifecycle_status_after": "defeated"}
+        defeated = Mutation("set", ("units", plan.unit_id, "lifecycle_status"), "limbo", "defeated",
+                            "finalize a lethal hit after the rescue window", "damage_system", metadata=metadata)
+        record_mutation = self.defeat_record_mutation(
+            state, plan.unit_id, reason="record final defeat after the rescue window", source="damage_system",
+            defeat_record={**record, "lifecycle_mutation_id": defeated.stable_id()},
+            source_trace=plan.source_trace,
+            metadata={**metadata, "lifecycle_mutation_id": defeated.stable_id()},
+        )
+        assert record_mutation is not None
+        return (defeated, record_mutation, Mutation(
+            "delete", ("units", plan.unit_id, "flags", "pending_defeat"), unit.flags["pending_defeat"], None,
+            "close the pending lethal cause", "damage_system", after_exists=False,
+            metadata={**metadata, "lifecycle_operation": "unit_pending_defeat_closed"},
+        ))
+
+    def rescue_from_limbo_mutations(
+        self, state: BattleState, plan: PendingDefeatPlan, hp_mutation: Mutation,
+    ) -> tuple[Mutation, ...]:
+        if type(plan) is not PendingDefeatPlan:
+            raise ValueError("pending_defeat_plan_required")
+        current = self.pending_defeat(state, plan.unit_id)
+        unit = state.units[plan.unit_id]
+        if (current is None or current != plan or type(hp_mutation) is not Mutation
+                or hp_mutation.op != "set" or hp_mutation.path != ("units", plan.unit_id, "hp")
+                or not hp_mutation.before_exists or not hp_mutation.after_exists
+                or type(hp_mutation.before) not in (int, float) or hp_mutation.before != unit.hp
+                or type(hp_mutation.after) not in (int, float) or not math.isfinite(hp_mutation.after)
+                or not 0 < hp_mutation.after <= unit.max_hp):
+            raise ValueError("limbo_rescue_requires_its_positive_hp_mutation")
+        metadata = {**hp_mutation.metadata, "pending_defeat_id": plan.pending_id,
+                    "lethal_hp_mutation_id": plan.hp_mutation.stable_id(),
+                    "rescue_hp_mutation_id": hp_mutation.stable_id(), "lifecycle_operation": "unit_limbo_rescued"}
+        return (hp_mutation,
+            Mutation("set", ("units", plan.unit_id, "lifecycle_status"), "limbo", "active",
+                     "restore an admitted pending unit", hp_mutation.source, metadata=metadata),
+            Mutation("delete", ("units", plan.unit_id, "flags", "pending_defeat"),
+                     unit.flags["pending_defeat"], None, "close a rescued lethal cause", hp_mutation.source,
+                     after_exists=False, metadata=metadata))
 
     def view(self, state: BattleState, unit_id: str) -> UnitLifecycleView:
         unit = state.units.get(unit_id)
@@ -110,6 +236,8 @@ class UnitLifecycleSystem:
             reason = "unit_removed"
         elif is_defeated:
             reason = "unit_defeated"
+        elif status == "limbo":
+            reason = "unit_limbo"
         elif departure_reason:
             reason = departure_reason
         elif is_departed:

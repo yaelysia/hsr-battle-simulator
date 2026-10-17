@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HSR Battle Simulator UI V10 Toughness Fixed</title>
+<style>
+  * { box-sizing: border-box; }
+  :root{
+    --bg:#0b0d12;
+    --surface:#151922;
+    --surface-2:#1a1f2a;
+    --surface-3:#202633;
+    --line:#303644;
+    --line-soft:#252b36;
+    --text:#eef0f4;
+    --muted:#8d96a7;
+    --soft:#c0c7d4;
+    --gold:#d9b861;
+    --gold-2:#eadca9;
+    --green:#6fc596;
+    --blue:#70a8c9;
+    --purple:#b99af7;
+    --red:#d67b7b;
+    --panel-radius:24px;
+    --card-radius:18px;
+    --small-radius:11px;
+  }
+  html, body { margin:0; width:100%; min-height:100%; background:var(--bg); }
+  body{
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    color:var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .screen{
+    position:relative;
+    width:1440px;
+    height:900px;
+    overflow:hidden;
+    padding:28px 30px;
+    background:
+      radial-gradient(circle at 18% 6%, rgba(217,184,97,.16), transparent 31%),
+      radial-gradient(circle at 84% 24%, rgba(112,168,201,.10), transparent 32%),
+      linear-gradient(135deg, #0c0e13 0%, #10131a 52%, #0b0d12 100%);
+  }
+  .screen:before{
+    content:"";
+    position:absolute; inset:0;
+    pointer-events:none;
+    opacity:.16;
+    background-image: linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(circle at 50% 38%, black, transparent 80%);
+  }
+  .topbar, .panel, .bottom-card { position:relative; z-index:1; }
+  .topbar{
+    height:58px;
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:20px;
+  }
+  .brand{ display:flex; align-items:center; gap:16px; }
+  .mark{
+    width:38px; height:38px; border-radius:12px;
+    background:linear-gradient(145deg, var(--gold), #ffe69b);
+    display:grid; place-items:center;
+    box-shadow:0 10px 30px rgba(217,184,97,.22);
+  }
+  .mark span{ width:13px; height:13px; border-radius:99px; background:#141821; display:block; }
+  h1{ margin:0; font-size:26px; line-height:1.05; letter-spacing:-.02em; font-weight:760; }
+  .subtitle{ margin-top:5px; color:var(--muted); font-size:12px; }
+  .top-actions{ display:flex; gap:12px; align-items:center; }
+  .pill{
+    height:38px; padding:0 18px; border-radius:999px;
+    background:rgba(28,34,46,.82); border:1px solid rgba(255,255,255,.06);
+    display:flex; align-items:center; justify-content:center;
+    color:#c9d0dc; font-size:12px; white-space:nowrap;
+  }
+  .pill.primary{ background:var(--gold); color:#16140f; font-weight:700; border:0; }
+  .main-grid{
+    position:relative; z-index:1;
+    display:grid;
+    grid-template-columns: 214px 1fr 320px;
+    gap:18px;
+    height:540px;
+  }
+  .panel{
+    background:rgba(19,23,32,.92);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:var(--panel-radius);
+    box-shadow:0 24px 80px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04);
+    overflow:hidden;
+  }
+  .timeline{ padding:22px 18px; }
+  .eyebrow{ font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:800; }
+  .section-title{ margin-top:8px; font-size:15px; font-weight:750; }
+  .rail{ margin-top:18px; position:relative; padding-left:22px; }
+  .rail:before{ content:""; position:absolute; left:7px; top:16px; bottom:14px; width:1px; background:linear-gradient(#667083, #343b4a); }
+  .event{
+    position:relative;
+    min-height:58px;
+    display:grid;
+    grid-template-columns: 1fr auto;
+    align-items:start;
+    gap:8px;
+    padding:8px 0 8px 0;
+  }
+  .event:before{
+    content:""; position:absolute; left:-22px; top:14px;
+    width:13px; height:13px; border-radius:50%;
+    background:#141922; border:1px solid #c9d1df;
+  }
+  .event.current{
+    margin-left:-8px; padding:12px 12px 12px 10px; border-radius:16px;
+    background:var(--gold-2); color:#171717; box-shadow:0 12px 30px rgba(0,0,0,.22);
+  }
+  .event.current:before{ left:-14px; top:18px; border:0; background:var(--gold); }
+  .event.insert:before{ border-color:var(--gold); background:var(--gold); box-shadow:0 0 0 4px rgba(217,184,97,.12); }
+  .event-name{ font-size:13px; font-weight:760; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .event-meta{ margin-top:4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .event.current .event-meta{ color:#62583e; }
+  .av{ font-size:13px; font-weight:780; align-self:center; }
+
+  .board{ padding:0; display:flex; flex-direction:column; }
+  .board-header{
+    height:58px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 22px; border-bottom:1px solid var(--line-soft);
+  }
+  .board-header h2{ margin:0; font-size:20px; letter-spacing:-.01em; }
+  .tabs{ display:flex; gap:8px; }
+  .tab{ height:32px; padding:0 14px; display:flex; align-items:center; border-radius:999px; background:var(--surface-3); color:var(--muted); font-size:12px; font-weight:650; }
+  .tab.active{ background:var(--gold-2); color:#171717; }
+  .board-body{ padding:22px; flex:1; display:flex; flex-direction:column; gap:26px; min-width:0; }
+  .row-title{ display:flex; align-items:center; gap:12px; color:var(--muted); font-weight:800; font-size:10px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:11px; }
+  .row-title:after{ content:""; height:1px; flex:1; background:var(--line); opacity:.9; }
+  .enemy-row, .party-row{ display:grid; grid-template-columns: repeat(4, 1fr); gap:14px; }
+  .unit-card{
+    position:relative; min-width:0;
+    border-radius:var(--card-radius);
+    background:linear-gradient(180deg, rgba(31,37,49,.96), rgba(22,27,37,.98));
+    border:1px solid rgba(255,255,255,.12);
+    padding:16px 14px 13px;
+    box-shadow:0 12px 28px rgba(0,0,0,.22);
+    overflow:hidden;
+  }
+  .unit-card.enemy{ height:146px; padding:15px 14px 12px; }
+  .unit-card.party{ height:170px; display:flex; flex-direction:column; }
+  .unit-card.target{
+    background:linear-gradient(180deg, #eadca9, #dbc98f);
+    color:#171717; border-color:transparent;
+  }
+  .unit-card.current{
+    background:linear-gradient(180deg, #eadca9, #dbc98f);
+    color:#171717; border-color:transparent;
+  }
+  .unit-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px; min-width:0; }
+  .unit-title{ min-width:0; }
+  .name{ font-size:14px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .desc{ margin-top:3px; font-size:10px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .target .desc,.current .desc{ color:#6d644b; }
+  .badge{ border-radius:999px; padding:4px 7px; background:rgba(255,255,255,.10); color:#d7deeb; font-size:10px; font-weight:800; white-space:nowrap; }
+  .target .badge,.current .badge{ background:rgba(23,23,23,.12); color:#4e4326; }
+  .weakness{ display:flex; gap:5px; margin:6px 0 8px; }
+  .dot{ width:18px; height:18px; border-radius:50%; display:grid; place-items:center; font-size:10px; font-weight:800; color:#111; }
+  .dot.p{ background:#9b88e8; } .dot.b{ background:#8dc4e8; } .dot.g{ background:#e7c967; } .dot.r{ background:#df7e7e; }
+  .stats{ display:flex; flex-direction:column; gap:7px; min-width:0; }
+  .unit-card.enemy .stats{ gap:8px; }
+  .stat-line{ min-width:0; overflow:hidden; }
+  .stat-head{ display:grid; grid-template-columns: 30px minmax(0,1fr); gap:8px; align-items:baseline; }
+  .stat-label{ font-size:10px; color:var(--muted); letter-spacing:.08em; }
+  .target .stat-label,.current .stat-label{ color:#6d644b; }
+  .stat-value{ font-size:12px; font-weight:760; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .track{ width:100%; max-width:100%; height:5px; border-radius:99px; background:rgba(255,255,255,.15); margin-top:4px; overflow:hidden; }
+  .target .track,.current .track{ background:rgba(20,20,20,.18); }
+  .fill{ height:100%; border-radius:inherit; display:block; max-width:100%; }
+  .fill.hp{ background:var(--green); }
+  .fill.tough{ background:var(--blue); }
+  .fill.en{ background:var(--purple); }
+  .tags{ display:flex; gap:6px; margin-top:8px; overflow:hidden; white-space:nowrap; }
+  .tag{ font-size:10px; color:#c5ccd7; background:rgba(255,255,255,.07); border-radius:999px; padding:3px 7px; }
+  .target .tag,.current .tag{ color:#4b4125; background:rgba(23,23,23,.10); }
+  .portrait-row{ display:flex; align-items:center; gap:10px; min-width:0; }
+  .avatar{ width:34px; height:34px; border-radius:12px; background:#2a3140; flex:0 0 auto; display:grid; place-items:center; color:var(--gold); font-weight:900; }
+  .current .avatar{ background:#171717; color:var(--gold); }
+  .party .stats{ margin-top:10px; }
+  .memoslot{
+    margin-top:auto;
+    height:36px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.12);
+    background:rgba(255,255,255,.04);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 10px; gap:8px;
+    overflow:hidden;
+  }
+  .current .memoslot{ border-color:rgba(23,23,23,.18); background:rgba(23,23,23,.08); }
+  .memoslot.active{ background:rgba(217,184,97,.13); border-color:rgba(217,184,97,.38); }
+  .current .memoslot.active{ background:rgba(255,255,255,.20); border-color:rgba(23,23,23,.22); }
+  .memo-name{ font-size:11px; font-weight:820; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .memo-meta{ font-size:10px; color:var(--muted); white-space:nowrap; }
+  .current .memo-meta{ color:#6d644b; }
+  .memo-empty{ color:#687181; font-size:11px; }
+  .current .memo-empty{ color:#786d4a; }
+
+  .dossier{ padding:28px 22px; display:flex; flex-direction:column; }
+  .dossier h2{ margin:18px 0 2px; font-size:27px; letter-spacing:-.02em; }
+  .dossier .sub{ color:var(--muted); font-size:12px; }
+  .notice{ margin-top:22px; padding:16px; border-radius:16px; background:var(--gold-2); color:#171717; }
+  .notice-title{ font-size:10px; font-weight:900; letter-spacing:.12em; color:#7a6525; text-transform:uppercase; }
+  .notice-body{ margin-top:9px; font-weight:760; font-size:13px; }
+  .data-list{ margin-top:20px; border-top:1px solid var(--line); }
+  .data-row{ min-height:38px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); gap:14px; }
+  .data-row span{ color:var(--muted); font-size:12px; }
+  .data-row strong{ font-size:13px; text-align:right; }
+  .dossier-actions{ margin-top:auto; display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .ghost-btn{ height:42px; border-radius:12px; border:0; background:#242b38; color:#e2e7ef; font-weight:740; }
+
+  .bottom-grid{ position:relative; z-index:1; margin-top:16px; height:206px; display:grid; grid-template-columns: 288px 520px 248px 1fr; gap:14px; }
+  .bottom-card{
+    background:rgba(19,23,32,.92); border:1px solid rgba(255,255,255,.08); border-radius:20px;
+    padding:18px; box-shadow:0 18px 54px rgba(0,0,0,.22); overflow:hidden;
+  }
+  .context-main{ display:flex; align-items:center; gap:16px; margin-top:18px; }
+  .big-icon{ width:54px; height:54px; border-radius:16px; background:var(--gold); display:grid; place-items:center; color:#171717; font-weight:900; font-size:20px; }
+  .actor{ font-size:26px; font-weight:850; letter-spacing:-.02em; }
+  .small-line{ font-size:11px; color:var(--muted); margin-top:4px; }
+  .sp-line{ margin-top:24px; display:flex; align-items:center; justify-content:space-between; }
+  .sp-dots{ display:flex; gap:6px; }
+  .sp-dots span{ width:10px; height:10px; border-radius:50%; background:#384150; }
+  .sp-dots span.on{ background:var(--gold); }
+  .actions-card{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .action-option{ border-radius:18px; border:1px solid rgba(255,255,255,.12); padding:18px; background:#1d2330; display:flex; flex-direction:column; justify-content:space-between; min-width:0; }
+  .action-option.primary{ background:var(--gold-2); color:#171717; border:0; }
+  .action-title{ font-size:25px; font-weight:850; letter-spacing:-.02em; }
+  .action-desc{ color:var(--muted); font-size:12px; margin-top:6px; line-height:1.45; }
+  .primary .action-desc{ color:#716747; }
+  .chips{ display:flex; gap:7px; flex-wrap:wrap; margin-top:22px; }
+  .chip{ border-radius:999px; background:#2b3240; padding:6px 9px; font-size:11px; color:#ccd3df; }
+  .primary .chip{ background:rgba(23,23,23,.10); color:#463d22; }
+  .insert-list{ display:flex; flex-direction:column; gap:10px; margin-top:14px; }
+  .insert-item{ height:40px; border-radius:12px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; background:#1f2633; border:1px solid rgba(255,255,255,.10); font-size:12px; }
+  .ready{ color:#f2d26f; font-weight:850; }
+  .preview{ display:flex; flex-direction:column; }
+  .preview .data-list{ margin-top:10px; }
+  .preview .data-row{ min-height:31px; }
+  .confirm{ margin-top:10px; display:flex; gap:10px; }
+  .confirm button{ flex:1; height:38px; border-radius:12px; border:0; font-weight:800; }
+  .confirm .detail{ background:#252c39; color:#e5e9f1; }
+  .confirm .go{ background:var(--gold); color:#171717; }
+  .footer-label{ position:absolute; z-index:1; left:50%; bottom:6px; transform:translateX(-50%); color:#596274; font-size:10px; letter-spacing:.08em; }
+</style>
+</head>
+<body>
+<div class="screen">
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark"><span></span></div>
+      <div>
+        <h1>战斗模拟器 · V10 修正版</h1>
+        <div class="subtitle">保留布局；敌方 HP / 韧性双条完整显示在卡片内部</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div class="pill">波次 2/3</div><div class="pill">轮次 06</div><div class="pill">速度 1.0×</div><div class="pill">手动模拟</div>
+      <div class="pill">撤销</div><div class="pill">重算</div><div class="pill primary">保存快照</div>
+    </div>
+  </header>
+
+  <main class="main-grid">
+    <aside class="panel timeline">
+      <div class="eyebrow">Event Queue</div>
+      <div class="section-title">行动推演</div>
+      <div class="rail">
+        <div class="event current"><div><div class="event-name">记忆主</div><div class="event-meta">角色回合 · 当前</div></div><div class="av">0</div></div>
+        <div class="event"><div><div class="event-name">虚数织者</div><div class="event-meta">敌方单位</div></div><div class="av">42</div></div>
+        <div class="event"><div><div class="event-name">迷迷 / 记忆主</div><div class="event-meta">忆灵行动</div></div><div class="av">58</div></div>
+        <div class="event"><div><div class="event-name">同谐位</div><div class="event-meta">角色回合</div></div><div class="av">71</div></div>
+        <div class="event insert"><div><div class="event-name">终结技插入</div><div class="event-meta">可选择事件</div></div><div class="av">—</div></div>
+        <div class="event"><div><div class="event-name">裂界守卫</div><div class="event-meta">敌方单位</div></div><div class="av">96</div></div>
+        <div class="event"><div><div class="event-name">生存位</div><div class="event-meta">角色回合</div></div><div class="av">119</div></div>
+      </div>
+    </aside>
+
+    <section class="panel board">
+      <div class="board-header">
+        <h2>单位棋盘</h2>
+        <div class="tabs"><div class="tab active">单位</div><div class="tab">目标过滤</div><div class="tab">状态摘要</div></div>
+      </div>
+      <div class="board-body">
+        <section>
+          <div class="row-title">Enemy Targets</div>
+          <div class="enemy-row">
+            <article class="unit-card enemy target">
+              <div class="unit-head"><div class="unit-title"><div class="name">虚数织者</div><div class="desc">当前目标 · 可击破</div></div><div class="badge">TARGET</div></div>
+              <div class="weakness"><span class="dot p">量</span><span class="dot b">冰</span><span class="dot g">虚</span></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">128,430 / 180,000</strong></div><div class="track"><span class="fill hp" style="width:71%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">韧性</span><strong class="stat-value">120 / 360</strong></div><div class="track"><span class="fill tough" style="width:33%"></span></div></div>
+              </div>
+            </article>
+            <article class="unit-card enemy">
+              <div class="unit-head"><div class="unit-title"><div class="name">裂界守卫</div><div class="desc">精英 · 护盾</div></div><div class="badge">AV 96</div></div>
+              <div class="weakness"><span class="dot p">量</span><span class="dot b">冰</span></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">92,800 / 120,000</strong></div><div class="track"><span class="fill hp" style="width:77%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">韧性</span><strong class="stat-value">270 / 300</strong></div><div class="track"><span class="fill tough" style="width:90%"></span></div></div>
+              </div>
+            </article>
+            <article class="unit-card enemy">
+              <div class="unit-head"><div class="unit-title"><div class="name">蚀梦小怪</div><div class="desc">召唤物</div></div><div class="badge">AV 118</div></div>
+              <div class="weakness"><span class="dot p">量</span><span class="dot b">冰</span></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">28,400 / 42,000</strong></div><div class="track"><span class="fill hp" style="width:68%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">韧性</span><strong class="stat-value">90 / 120</strong></div><div class="track"><span class="fill tough" style="width:75%"></span></div></div>
+              </div>
+            </article>
+            <article class="unit-card enemy">
+              <div class="unit-head"><div class="unit-title"><div class="name">蚀梦小怪</div><div class="desc">已唤醒</div></div><div class="badge">AV 128</div></div>
+              <div class="weakness"><span class="dot p">量</span><span class="dot b">冰</span></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">40,200 / 42,000</strong></div><div class="track"><span class="fill hp" style="width:96%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">韧性</span><strong class="stat-value">120 / 120</strong></div><div class="track"><span class="fill tough" style="width:100%"></span></div></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section>
+          <div class="row-title">Party Formation</div>
+          <div class="party-row">
+            <article class="unit-card party">
+              <div class="unit-head"><div class="portrait-row"><div class="avatar">D</div><div class="unit-title"><div class="name">输出</div><div class="desc">终结技候选</div></div></div><div class="badge">ULT Ready</div></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">3,812 / 4,120</strong></div><div class="track"><span class="fill hp" style="width:93%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">能量</span><strong class="stat-value">130 / 130</strong></div><div class="track"><span class="fill en" style="width:100%"></span></div></div>
+              </div>
+              <div class="memoslot"><span class="memo-empty">忆灵槽</span><span class="memo-meta">—</span></div>
+            </article>
+            <article class="unit-card party current">
+              <div class="unit-head"><div class="portrait-row"><div class="avatar">M</div><div class="unit-title"><div class="name">记忆主</div><div class="desc">当前行动 · 目标：虚数织者</div></div></div><div class="badge">当前</div></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">2,842 / 3,520</strong></div><div class="track"><span class="fill hp" style="width:81%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">能量</span><strong class="stat-value">68 / 120</strong></div><div class="track"><span class="fill en" style="width:57%"></span></div></div>
+              </div>
+              <div class="memoslot active"><span class="memo-name">迷迷</span><span class="memo-meta">HP 1,820 · AV 58</span></div>
+            </article>
+            <article class="unit-card party">
+              <div class="unit-head"><div class="portrait-row"><div class="avatar">H</div><div class="unit-title"><div class="name">同谐</div><div class="desc">辅助</div></div></div><div class="badge">ULT Ready</div></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">3,006 / 3,680</strong></div><div class="track"><span class="fill hp" style="width:82%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">能量</span><strong class="stat-value">140 / 140</strong></div><div class="track"><span class="fill en" style="width:100%"></span></div></div>
+              </div>
+              <div class="memoslot"><span class="memo-empty">忆灵槽</span><span class="memo-meta">—</span></div>
+            </article>
+            <article class="unit-card party">
+              <div class="unit-head"><div class="portrait-row"><div class="avatar">S</div><div class="unit-title"><div class="name">生存</div><div class="desc">护盾 / 治疗</div></div></div><div class="badge">护盾中</div></div>
+              <div class="stats">
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">HP</span><strong class="stat-value">4,621 / 5,060</strong></div><div class="track"><span class="fill hp" style="width:91%"></span></div></div>
+                <div class="stat-line"><div class="stat-head"><span class="stat-label">能量</span><strong class="stat-value">84 / 130</strong></div><div class="track"><span class="fill en" style="width:65%"></span></div></div>
+              </div>
+              <div class="memoslot"><span class="memo-empty">忆灵槽</span><span class="memo-meta">—</span></div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <aside class="panel dossier">
+      <div class="eyebrow">Object Dossier</div>
+      <h2>虚数织者</h2>
+      <div class="sub">当前选中对象 · 敌方目标</div>
+      <div class="notice"><div class="notice-title">Target Focus</div><div class="notice-body">当前目标 · 可击破</div><div class="sub" style="color:#7c704d;margin-top:6px;">战技命中后韧性降低 60。</div></div>
+      <div class="data-list">
+        <div class="data-row"><span>HP</span><strong>128,430 / 180,000</strong></div>
+        <div class="data-row"><span>韧性</span><strong>120 / 360</strong></div>
+        <div class="data-row"><span>弱点</span><strong>量子 / 冰 / 虚数</strong></div>
+        <div class="data-row"><span>状态</span><strong>易伤 · 禁锢</strong></div>
+        <div class="data-row"><span>预计伤害</span><strong>23,400</strong></div>
+        <div class="data-row"><span>韧性变化</span><strong>120 → 60</strong></div>
+      </div>
+      <div class="dossier-actions"><button class="ghost-btn">完整属性</button><button class="ghost-btn">Buff 明细</button></div>
+    </aside>
+  </main>
+
+  <section class="bottom-grid">
+    <div class="bottom-card">
+      <div class="eyebrow">当前行动上下文</div>
+      <div class="context-main"><div class="big-icon">M</div><div><div class="actor">记忆主</div><div class="small-line">角色回合 · 目标：虚数织者</div></div></div>
+      <div class="sp-line"><div class="small-line">技能点</div><div class="sp-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div><strong>3 / 5</strong></div>
+    </div>
+    <div class="bottom-card actions-card">
+      <div class="action-option"><div><div class="action-title">普攻</div><div class="action-desc">单体攻击，恢复技能点。</div></div><div class="chips"><span class="chip">伤害 8,200</span><span class="chip">削韧 30</span><span class="chip">SP +1</span></div></div>
+      <div class="action-option primary"><div><div class="action-title">战技</div><div class="action-desc">影响忆灵状态，推荐用于当前目标。</div></div><div class="chips"><span class="chip">伤害 23,400</span><span class="chip">削韧 60</span><span class="chip">SP -1</span></div></div>
+    </div>
+    <div class="bottom-card">
+      <div class="eyebrow">可插入 / 事件</div>
+      <div class="insert-list">
+        <div class="insert-item"><span>输出位 · 终结技</span><span class="ready">Ready</span></div>
+        <div class="insert-item"><span>同谐位 · 终结技</span><span class="ready">Ready</span></div>
+        <div class="insert-item"><span>迷迷 · 记忆行动</span><span>AV 58</span></div>
+      </div>
+    </div>
+    <div class="bottom-card preview">
+      <div class="eyebrow">预估摘要</div>
+      <div class="data-list">
+        <div class="data-row"><span>伤害</span><strong>23,400</strong></div>
+        <div class="data-row"><span>韧性变化</span><strong>120 → 60</strong></div>
+        <div class="data-row"><span>结果</span><strong>无法立即击破</strong></div>
+      </div>
+      <div class="confirm"><button class="detail">查看详情</button><button class="go">确认行动</button></div>
+    </div>
+  </section>
+  <div class="footer-label">BATTLE SIMULATOR · V10 TOUGHNESS BAR FIX</div>
+</div>
+</body>
+</html>

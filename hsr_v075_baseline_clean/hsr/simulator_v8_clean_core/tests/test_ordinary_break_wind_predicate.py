@@ -44,7 +44,7 @@ def test_real_wind_break_predicate_selects_sourced_modifier_branch(rank, selecte
     card = MonsterDataCardIR(
         "card:rank-check", "monster:rank-check", "rank-check", "rank-check", rank,
         "", "", (), (), {}, (), (), {}, {}, IRSource("rank-check", "Monster", rank),
-        coverage_status="executable",
+        coverage_status="lowered",
     )
     scores = lowering._monster_rank_scores()
     target_definitions = lowering._strict_target_language_definitions()

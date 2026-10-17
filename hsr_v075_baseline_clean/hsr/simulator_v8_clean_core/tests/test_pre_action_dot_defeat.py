@@ -42,8 +42,8 @@ def test_pre_action_dot_defeat_commits_and_next_actor_can_act():
     assert entered.ok, entered.errors
     state = entered.after_state
     for event in entered.events:
-        if event.event_type == "break.triggered":
-            continue  # Native TriggerBreak mapping remains unresolved.
+        if str(event.to_json()["event_id"]) in entered.dispatched_event_ids:
+            continue
         dispatch = scheduler.event_dispatcher.dispatch_event(state, event=event)
         assert not dispatch.errors, dispatch.errors
         state = dispatch.after_state

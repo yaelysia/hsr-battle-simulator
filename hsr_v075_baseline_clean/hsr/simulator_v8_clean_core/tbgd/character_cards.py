@@ -143,6 +143,24 @@ SKILL_TEXT_DAMAGE_BINDING_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def list_character_choices(tbgd_root: Path) -> list[dict[str, str]]:
+    """Source discovery for configuration; this does not admit battle mechanisms."""
+    text_map = _load_text_map(tbgd_root)
+    choices = []
+    for path, _, row in _avatar_rows(tbgd_root, max_records_per_table=None):
+        identity = str(row["AvatarID"])
+        name_hash = str((row.get("AvatarName") or {}).get("Hash", ""))
+        choices.append({
+            "entity_ref": f"avatar:{identity}", "character_card_id": f"character_data_card:avatar:{identity}",
+            "name": text_map.get(name_hash, identity), "path_type": str(row.get("AvatarBaseType") or ""),
+            "element": str(row.get("DamageType") or ""), "coverage_status": "discovered_only",
+            "source_path": path,
+        })
+    if len({item["entity_ref"] for item in choices}) != len(choices):
+        raise ValueError("character choices contain ambiguous source identities")
+    return choices
+
+
 def build_character_card_ir(
     tbgd_root: Path,
     *,
@@ -1053,6 +1071,7 @@ def _build_selector_ledger(
         if record.materialization_role == "selected"
         and record.effective_scope == "build_resolution"
         and record.family in {"BySkillPointActivated", "ByRankActivated"}
+        and record.source.evidence.get("source_kind") != "servant"
     )
     selector_scope_ids = frozenset(record.record_id for record in selector_records)
     projections_by_scope: dict[str, list[Any]] = {}
@@ -1060,6 +1079,7 @@ def _build_selector_ledger(
         if (
             projection.projection_scope == "build_resolution"
             and projection.projection_kind == "build_selector"
+            and projection.scope_record_id in selector_scope_ids
         ):
             projections_by_scope.setdefault(
                 projection.scope_record_id,
@@ -1542,6 +1562,7 @@ def _finalize_selection_bindings(
         "eidolon_extra_effect_has_no_structured_effect_source",
         "trace_node_has_no_structured_effect_source",
         "eidolon_runtime_effect_not_admitted_v0_265",
+        "eidolon_slot_has_no_runtime_effect_source",
     }
     filtered = [
         binding
@@ -2121,6 +2142,7 @@ def _trace_nodes_and_slots(
                 )
             trace_nodes.append(
                 CharacterTraceNodeIR(
+                    activation_key=row.get("PointTriggerKey") or "",
                     trace_node_id=trace_node_id,
                     character_data_card_id=card_id,
                     avatar_id=avatar_id,

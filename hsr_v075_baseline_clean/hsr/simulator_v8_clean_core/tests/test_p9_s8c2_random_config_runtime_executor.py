@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from simulator_v8_clean_core.core.model import BattleState, GameEvent, RNGEvent, TargetResolution
+from simulator_v8_clean_core.core.model import BattleState, GameEvent, Mutation, RNGEvent, TargetResolution, UnitState
 from simulator_v8_clean_core.ir_types import IRSource
 from simulator_v8_clean_core.rules.ir import AbilityTaskIR, CanonicalIR, StatusCallbackIR, StatusCallbackTaskIR
 from simulator_v8_clean_core.rules.rulebook import RuleBook
@@ -39,8 +39,9 @@ from simulator_v8_clean_core.systems.task_graph import (
     TaskGraphLeafResult,
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
+    resolve_task_graph_weighted_selection,
 )
-from simulator_v8_clean_core.systems.ability import AbilityTaskSystem, _FormalAbilityInvocation
+from simulator_v8_clean_core.systems.ability import AbilityTaskSystem, _FormalAbilityInvocation, _task_graph_execution_path
 from simulator_v8_clean_core.systems.effect import EffectRegistry
 from simulator_v8_clean_core.systems.status import StatusSystem
 from simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
@@ -49,6 +50,43 @@ from simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSyste
 _DIGEST = "1" * 64
 _STATE = BattleState()
 _CONTEXT = TaskGraphExecutionContext("p9-s8c2-test")
+
+
+def test_parallel_roots_share_state_in_time_order_and_rollback_together():
+    graphs = []
+    for actor in ('a', 'b'):
+        graph = _random_graph(owner_id=actor)
+        leaves = tuple(sorted((node for node in graph.nodes if node.node_kind == 'leaf'), key=lambda node: node.formal_task_id))
+        graphs.append(replace(graph, nodes=leaves, root_node_ids=tuple(node.graph_node_id for node in leaves),
+                              numeric_definitions=(), weighted_selections=()))
+    state = BattleState(units={'target': UnitState('target', 'enemy', 'test:target', hp=100, max_hp=100)})
+    order = []
+
+    def leaf(request, current):
+        order.append((request.context_values['actor_id'], request.formal_task_id))
+        hp = current.units['target'].hp
+        return TaskGraphLeafResult('resolved', mutations=(Mutation(
+            'set', ('units', 'target', 'hp'), hp, float(hp - 1), 'parallel check', 'test:parallel',
+        ),))
+
+    entries = tuple((graph, TaskGraphExecutionContext(actor, {'actor_id': actor}),
+                     TaskGraphExecutionHooks(leaf=leaf), times)
+                    for graph, actor, times in zip(graphs, ('a', 'b'), ((0, 1, 2), (0, 0.5, 3))))
+    result = TaskGraphExecutor().execute_interleaved(state, entries)
+    assert result.ok and result.after_state.units['target'].hp == 94
+    assert order == [('a', 'leaf:0'), ('b', 'leaf:0'), ('b', 'leaf:1'),
+                     ('a', 'leaf:1'), ('a', 'leaf:2'), ('b', 'leaf:2')]
+    assert state.units['target'].hp == 100
+
+    def fail(request, current):
+        if request.formal_task_id == 'leaf:2':
+            return TaskGraphLeafResult('blocked', outcome_kind='', blocked_reason='test:late_failure')
+        return leaf(request, current)
+
+    failed = TaskGraphExecutor().execute_interleaved(state, (
+        entries[0], (entries[1][0], entries[1][1], TaskGraphExecutionHooks(leaf=fail), entries[1][3]),
+    ))
+    assert not failed.ok and failed.after_state == state and not failed.mutations and not failed.rng_events
 
 
 def _source(json_path: str, family: str, *, raw_id: str = "fixture") -> IRSource:
@@ -94,10 +132,10 @@ def _random_graph(
     *,
     entry_kind: str = "ability_phase_callback",
     owner_id: str = "p9-s8c2-owner",
+    source_catalog_id: str = "p9-s8c2-random-catalog",
 ) -> TaskGraphIR:
     callback_kind = "test"
     entry_id = task_graph_entry_id(entry_kind, owner_id, callback_kind)
-    source_catalog_id = "p9-s8c2-random-catalog"
     source_fingerprint = "2" * 64
     graph_id = task_graph_id(source_catalog_id, entry_id, source_fingerprint)
 
@@ -210,6 +248,29 @@ def _random_graph(
     )
 
 
+def test_unrelated_catalog_changes_do_not_change_rng_or_execution_paths() -> None:
+    samples = []
+    for catalog_id in ("catalog:original", "catalog:additional-content"):
+        graph = _random_graph(source_catalog_id=catalog_id)
+        paths = []
+
+        def leaf(request, _state):
+            paths.append((request.formal_task_id, _task_graph_execution_path(request)))
+            return TaskGraphLeafResult("resolved")
+
+        def weighted(request, selection, state):
+            return resolve_task_graph_weighted_selection(request, selection, state, (1.0, 2.0, 3.0))
+
+        result = TaskGraphExecutor().execute(_STATE, graph, _CONTEXT,
+            TaskGraphExecutionHooks(leaf=leaf, weighted_selection=weighted))
+        assert result.ok, result.errors
+        samples.append((paths, result.rng_events[0]))
+    assert samples[0][0] == samples[1][0]
+    assert samples[0][1].result['roll'] == samples[1][1].result['roll']
+    assert samples[0][1].result['choice_key'] == samples[1][1].result['choice_key']
+    assert samples[0][1].result['available_rng_outcomes'] != samples[1][1].result['available_rng_outcomes']
+
+
 def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
     for entry_kind in ("ability_phase_callback", "status_callback"):
         owner_id = "phase" if entry_kind == "ability_phase_callback" else "callback"
@@ -258,7 +319,7 @@ def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
             system = StatusCallbackSystem(graph_rules)
             hooks = system._formal_status_hooks(
                 callback, {"owner_id": "actor", "instance_id": "status"}, None, None, None,
-                [],
+                [], [], set(),
             )
         selected: list[str] = []
         hooks = replace(hooks, leaf=lambda request, _state: (
@@ -279,7 +340,7 @@ def test_formal_weighted_consumers_select_branch_and_record_rng() -> None:
                 system._formal_status_hooks(
                     callback, {"owner_id": "actor", "instance_id": "status"},
                     GameEvent("test", payload=payload), None, None,
-                    [],
+                    [], [], set(),
                 ),
                 leaf=hooks.leaf,
             )
@@ -502,9 +563,8 @@ def test_weighted_selection_identity_and_projection_path_are_stable() -> None:
     )
     selection = graph.weighted_selections[0]
     choice = selection.choices[1]
-    assert f"selection:{selection.selection_id}" in leaf_projection.path
-    assert f"choice:{choice.choice_id}" in leaf_projection.path
-    assert f"branch:{choice.branch_id}:{choice.ordinal}" in leaf_projection.path
+    assert f"choice:{choice.ordinal}" in leaf_projection.path
+    assert f"branch:weighted_choice:{choice.ordinal}" in leaf_projection.path
 
 
 def test_stale_choice_blocks_without_formal_channel_leakage() -> None:

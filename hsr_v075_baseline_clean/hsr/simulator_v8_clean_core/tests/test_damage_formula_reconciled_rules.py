@@ -12,6 +12,7 @@ from hsr.simulator_v8_clean_core.core.model import BattleState, UnitState, UnitS
 from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR, IRSource
 from hsr.simulator_v8_clean_core.systems.damage_formula import DamageFormulaInput, DirectDamageFormula
 from hsr.simulator_v8_clean_core.systems.damage_pipeline import DamageStagePipeline
+from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSystem
 
 
 def _modifier(instance_id, bucket, key, value):
@@ -23,6 +24,37 @@ def _modifier(instance_id, bucket, key, value):
 
 
 class DamageFormulaReconciledRulesTest(unittest.TestCase):
+    def test_additional_damage_rolls_shared_crit_without_dot_or_elation_bonus(self):
+        actor = UnitState('actor', 'ally', 'synthetic:actor', level=80,
+                          resources={'critical_chance': 1.0, 'critical_damage': 0.5},
+                          flags={'status_details': [
+                              _modifier('generic', 'damage_bonus', 'damage_added_ratio', 0.2),
+                              _modifier('elation', 'damage_bonus', 'elation_damage_added_ratio', 10),
+                          ]})
+        target = UnitState('target', 'enemy', 'synthetic:target', hp=10000, max_hp=10000)
+        state = BattleState(units={'actor': actor, 'target': target})
+        packet = DamagePacket('actor', 'target', 'Pursued', 'additional', amount=100,
+                              amount_stage='family_base', status_damage_emission_id='test:additional',
+                              source_task_id='test:task', status_instance_id='test:instance')
+        critical = DamageSystem().apply_packet(state, packet)
+        self.assertTrue(critical.ok, critical.errors)
+        damage = next(row['payload'] for row in critical.records if row['record_type'] == 'additional_damage')
+        self.assertTrue(damage['crit_resolution']['is_crit'])
+        self.assertEqual(len(critical.rng_events), 1)
+        bonus = next(row for row in damage['damage_pipeline']['stages'] if row['stage'] == 'damage_bonus')
+        self.assertAlmostEqual(bonus['multiplier'], 1.2)
+        state = replace(state, units={**state.units, 'actor': replace(actor, resources={'critical_chance': 0.0})})
+        noncritical = DamageSystem().apply_packet(state, packet)
+        base = next(row['payload'] for row in noncritical.records if row['record_type'] == 'additional_damage')
+        self.assertAlmostEqual(damage['final_damage'], base['final_damage'] * 1.5)
+        dot = DamageSystem().apply_packet(state, replace(packet, attack_type='DOT', damage_formula_family='dot'))
+        self.assertTrue(dot.ok, dot.errors)
+        self.assertFalse(dot.rng_events)
+        self.assertFalse(any(row.applicable for row in DamageStagePipeline().calculate(
+            state, family='dot', attacker_id='actor', target_id='target', producer_base_amount=100,
+            element_type=None, source_trace={},
+        ).stage_buckets if row.stage == 'critical'))
+
     def setUp(self):
         self.actor = UnitState("actor", "ally", "synthetic:actor", level=80, attack=1000)
         self.target = UnitState("target", "enemy", "synthetic:target", defense=200)

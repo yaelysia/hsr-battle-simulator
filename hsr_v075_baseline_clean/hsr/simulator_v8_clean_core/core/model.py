@@ -12,6 +12,7 @@ from .transition_outcome import TransitionOutcome, unclassified_transition_outco
 
 if TYPE_CHECKING:
     from ..systems.shield import ShieldExhaustionFact
+    from ..systems.status import StatusLifecyclePlan
     from ..systems.action_event_contract import (
         AdmittedActionTargetFact,
         ActionWindowExpectedScope,
@@ -20,9 +21,9 @@ if TYPE_CHECKING:
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 UnitSide = Literal["ally", "enemy", "summon"]
-UnitLifecycleStatus = Literal["active", "defeated", "removed"]
+UnitLifecycleStatus = Literal["active", "limbo", "defeated", "removed"]
 MutationOp = Literal["set", "delete", "spawn"]
-UNIT_LIFECYCLE_STATUSES = frozenset({"active", "defeated", "removed"})
+UNIT_LIFECYCLE_STATUSES = frozenset({"active", "limbo", "defeated", "removed"})
 LEGACY_UNIT_LIFECYCLE_FLAG_KEYS = frozenset(
     {"lifecycle_status", "lifecycle_state"}
 )
@@ -175,7 +176,7 @@ class UnitState:
             or self.lifecycle_status not in UNIT_LIFECYCLE_STATUSES
         ):
             raise ValueError(
-                "unit lifecycle_status must be active, defeated, or removed"
+                "unit lifecycle_status must be active, limbo, defeated, or removed"
             )
         if not isinstance(self.statuses, (list, tuple)) or not all(
             isinstance(status, str) for status in self.statuses
@@ -268,6 +269,7 @@ class UnitState:
         lifecycle = {
             "status": lifecycle_status,
             "active": lifecycle_status == "active",
+            "limbo": lifecycle_status == "limbo",
             "defeated": lifecycle_status == "defeated",
             "removed": lifecycle_status == "removed",
             "defeat_record": self.flags.get("defeat_record", {}),
@@ -583,6 +585,287 @@ class ActionCommand:
         object.__setattr__(self, "metadata", metadata)
 
 
+_BREAK_NOTIFICATION_PRODUCER = object()
+_QUEUE_ACTION_TERMINAL_PRODUCER = object()
+_QUEUE_ACTION_START_PRODUCER = object()
+_STANCE_COUNT_DOWN_PRODUCER = object()
+_STATUS_IMMUNITY_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class QueueActionTerminalFact:
+    """Actor and selected targets of one completed or cancelled queue entry."""
+
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_index: int
+    event_type: str
+    actor_id: str
+    target_ids: tuple[str, ...] = field(init=False)
+    _producer_token: object = field(repr=False, compare=False)
+    completed_command: ActionCommand | None = field(default=None, repr=False)
+    completed_target_resolution: TargetResolution | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        entry = mutation.metadata.get("queue_entry")
+        command = self.completed_command
+        resolution = self.completed_target_resolution
+        if command is not None and type(command) is not ActionCommand:
+            raise ValueError("queue completion requires a typed action command")
+        if command is not None:
+            if (type(resolution) is not TargetResolution
+                    or resolution.source != "action_target_selection_system"
+                    or resolution.requested != command.target_ids
+                    or not resolution.selected or not resolution.impact_group
+                    or not set(resolution.selected).issubset(resolution.impact_group)):
+                raise ValueError("queue completion requires the accepted action impact resolution")
+            target_ids = resolution.impact_group
+        else:
+            if resolution is not None:
+                raise ValueError("queue action target resolution requires a completed command")
+            target_ids = self.accepted_entry_target_ids(entry) if isinstance(entry, dict) else None
+        if target_ids is None:
+            raise ValueError("queue terminal accepted targets are invalid")
+        object.__setattr__(self, "target_ids", target_ids)
+        if (
+            self._producer_token is not _QUEUE_ACTION_TERMINAL_PRODUCER
+            or mutation.source != "queue_system"
+            or mutation.op != "set"
+            or len(mutation.path) != 2 or mutation.path[0] != "queues"
+            or not isinstance(entry, dict)
+            or entry.get("actor_id") != self.actor_id
+            or (command is not None and (
+                command.actor_id != self.actor_id
+                or command.source != "queue" or self.event_type != "queue.action.after"
+            ))
+            or not self.actor_id or not self.event_id
+            or self.event_type not in {"queue.action.after", "queue.action.abort"}
+            or not isinstance(self.target_ids, tuple)
+            or any(not isinstance(target, str) or not target for target in self.target_ids)
+            or len(self.target_ids) != len(set(self.target_ids))
+            or not isinstance(mutation.before, (list, tuple)) or entry not in mutation.before
+            or not isinstance(mutation.after, (list, tuple)) or entry in mutation.after
+        ):
+            raise ValueError("queue terminal fact requires a QueueSystem removal")
+
+    @staticmethod
+    def accepted_entry_target_ids(entry: dict[str, JSONValue]) -> tuple[str, ...] | None:
+        """Read the accepted queue input, including automatic manual-action targets."""
+        targets = entry.get("target_ids", ())
+        resolution = entry.get("target_resolution")
+        if isinstance(resolution, dict) and "selected_target_ids" in resolution:
+            if (resolution.get("ok") is not True
+                    or resolution.get("actor_id") != entry.get("actor_id")
+                    or resolution.get("submitted_target_ids") != targets):
+                return None
+            targets = resolution["selected_target_ids"]
+        if (not isinstance(targets, (list, tuple))
+                or any(not isinstance(target, str) or not target for target in targets)
+                or len(targets) != len(set(targets))):
+            return None
+        return tuple(targets)
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        entry = self.source_mutation.metadata["queue_entry"]
+        return (
+            event.event_type == self.event_type and event.event_id == self.event_id
+            and event.source_id == self.actor_id and state.event_index == self.event_index
+            and self.actor_id in state.units
+            and all(target_id in state.units for target_id in self.target_ids)
+            and entry not in state.queues.get(self.source_mutation.path[1], ())
+        )
+
+
+@dataclass(frozen=True)
+class QueueActionStartFact:
+    """Accepted primary selections immediately before one dequeued body starts."""
+
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_index: int
+    actor_id: str
+    target_ids: tuple[str, ...]
+    _state: BattleState = field(repr=False, compare=False)
+    _producer_token: object = field(repr=False, compare=False)
+    accepted_command: ActionCommand | None = field(default=None, repr=False)
+    queue_kind: str = field(init=False)
+    window_family: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        if (self._producer_token is not _QUEUE_ACTION_START_PRODUCER
+                or type(self._state) is not BattleState or type(mutation) is not Mutation):
+            raise ValueError("queue start fact requires its QueueSystem producer")
+        entry = mutation.metadata.get("queue_entry")
+        command = self.accepted_command
+        if (
+            mutation.source != "queue_system" or mutation.op != "set"
+            or len(mutation.path) != 2 or mutation.path[0] != "queues"
+            or not isinstance(entry, dict) or entry.get("queue_name") != mutation.path[1]
+            or entry.get("actor_id") != self.actor_id
+            or not isinstance(self.actor_id, str) or not self.actor_id
+            or not isinstance(self.event_id, str) or not self.event_id
+            or self.event_index != self._state.event_index
+            or not isinstance(self.target_ids, tuple)
+            or any(not isinstance(target, str) or not target for target in self.target_ids)
+            or len(self.target_ids) != len(set(self.target_ids))
+            or not isinstance(mutation.before, (list, tuple)) or entry not in mutation.before
+            or not isinstance(mutation.after, (list, tuple)) or entry in mutation.after
+            or entry in self._state.queues.get(mutation.path[1], ())
+            or self.actor_id not in self._state.units
+            or any(target not in self._state.units for target in self.target_ids)
+            or (command is not None and (type(command) is not ActionCommand
+                or command.source != "queue" or command.actor_id != self.actor_id))
+            or (command is None and self.target_ids != QueueActionTerminalFact.accepted_entry_target_ids(entry))
+            or not isinstance(entry.get("queue_kind"), str) or not entry["queue_kind"]
+            or not isinstance(entry.get("window_family"), str) or not entry["window_family"]
+        ):
+            raise ValueError("queue start fact requires a removed entry and accepted selections")
+        object.__setattr__(self, "queue_kind", entry["queue_kind"])
+        object.__setattr__(self, "window_family", entry["window_family"])
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        return (
+            state is self._state and state.event_index == self.event_index
+            and event.event_type == "queue.action.before" and event.event_id == self.event_id
+            and event.source_id == self.actor_id and event.target_id is None and event.window == "queue"
+            and self.source_mutation.metadata["queue_entry"] not in state.queues.get(self.source_mutation.path[1], ())
+        )
+
+
+@dataclass(frozen=True)
+class BreakNotificationFact:
+    """One ordinary break notification, owned by its committed source mutation."""
+
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_index: int
+    target_id: str
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _BREAK_NOTIFICATION_PRODUCER:
+            raise ValueError("break notification fact requires BreakSystem producer")
+        if (
+            self.source_mutation.source != "break_system"
+            or self.source_mutation.path != ("units", self.target_id, "flags", "break_source")
+            or self.source_mutation.op != "set"
+            or not isinstance(self.source_mutation.after, dict)
+            or not self.event_id
+        ):
+            raise ValueError("break notification fact requires a break source mutation")
+
+    def matches(self, state: BattleState, target_id: str) -> bool:
+        target = state.units.get(target_id)
+        return (
+            target_id == self.target_id
+            and state.event_index == self.event_index
+            and target is not None
+            and target.toughness <= 0
+            and target.flags.get("broken") is True
+            and target.flags.get("break_source") == self.source_mutation.after
+        )
+
+
+@dataclass(frozen=True)
+class StanceCountDownFact:
+    """One committed intermediate toughness-layer depletion."""
+
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_index: int
+    target_id: str
+    attacker_id: str
+    element_type: str
+    template_id: str
+    _state: BattleState = field(repr=False, compare=False)
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        if (self._producer_token is not _STANCE_COUNT_DOWN_PRODUCER
+                or type(mutation) is not Mutation or type(self._state) is not BattleState):
+            raise ValueError("stance count down fact requires its BreakSystem producer")
+        target = self._state.units.get(self.target_id)
+        if (
+            not all(isinstance(value, str) and value for value in
+                    (self.event_id, self.target_id, self.attacker_id, self.template_id))
+            or self.element_type not in {"Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary"}
+            or self.event_index != self._state.event_index
+            or mutation.source != "break_system" or mutation.op != "set"
+            or mutation.path != ("units", self.target_id, "flags", "stance_segments_remaining")
+            or type(mutation.before) is not int or mutation.before <= 1
+            or type(mutation.after) is not int or mutation.after != mutation.before - 1
+            or mutation.after < 1
+            or target is None or self.attacker_id not in self._state.units
+            or target.flags.get("stance_segments_remaining") != mutation.after
+            or mutation.metadata.get("attacker_id") != self.attacker_id
+            or mutation.metadata.get("target_id") != self.target_id
+            or mutation.metadata.get("element_type") != self.element_type
+            or mutation.metadata.get("break_template_id") != self.template_id
+        ):
+            raise ValueError("stance count down fact requires its committed layer decrement")
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        target = state.units.get(self.target_id)
+        return (
+            state.event_index == self.event_index
+            and event.event_type == "toughness.segment_depleted" and event.event_id == self.event_id
+            and event.source_id == self.attacker_id and event.target_id == self.target_id
+            and event.window == "toughness_segment"
+            and self.attacker_id in state.units and target is not None
+            and type(target.flags.get("stance_segments_remaining")) is int
+            and target.flags["stance_segments_remaining"] == self.source_mutation.after
+        )
+
+
+@dataclass(frozen=True)
+class StatusImmunityFact:
+    """One rejected debuff and the exact installed protection that rejected it."""
+
+    effect_id: str
+    target_id: str
+    caster_id: str
+    incoming_modifier_name: str
+    incoming_behavior_flags: tuple[str, ...]
+    protection_instance_id: str
+    protection_modifier_name: str
+    event_id: str
+    _state: BattleState = field(repr=False, compare=False)
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _STATUS_IMMUNITY_PRODUCER:
+            raise ValueError("status immunity fact requires StatusSystem producer")
+        if type(self._state) is not BattleState or any(not isinstance(value, str) or not value for value in (
+            self.effect_id, self.target_id, self.caster_id, self.incoming_modifier_name,
+            self.protection_instance_id, self.protection_modifier_name, self.event_id,
+        )):
+            raise ValueError("status immunity fact requires its state and complete identities")
+        if not isinstance(self.incoming_behavior_flags, tuple) or any(
+            not isinstance(value, str) or not value for value in self.incoming_behavior_flags
+        ):
+            raise TypeError("status immunity behavior flags must be a tuple of non-empty strings")
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        if (state is not self._state or event.event_type != "status.immunity"
+                or event.source_id != self.caster_id or event.target_id != self.target_id
+                or event.event_id != self.event_id):
+            return False
+        target = state.units.get(self.target_id)
+        details = target.flags.get("status_details") if target is not None else None
+        if not isinstance(details, (list, tuple)):
+            return False
+        matches = [detail for detail in details if isinstance(detail, Mapping)
+                   and detail.get("instance_id") == self.protection_instance_id]
+        return (len(matches) == 1 and matches[0].get("owner_id") == self.target_id
+                and matches[0].get("modifier_name") == self.protection_modifier_name
+                and matches[0].get("lifecycle_state") == "active"
+                and isinstance(matches[0].get("status_id"), str)
+                and bool(matches[0]["status_id"]) and matches[0]["status_id"] in target.statuses)
+
+
 @dataclass(frozen=True)
 class GameEvent:
     event_type: str
@@ -606,6 +889,29 @@ class GameEvent:
         default=None,
         repr=False,
         compare=False,
+    )
+    break_notification_fact: BreakNotificationFact | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    queue_action_terminal_fact: QueueActionTerminalFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    status_lifecycle_plan: StatusLifecyclePlan | None = field(
+        default=None, repr=False, compare=False,
+    )
+    status_immunity_fact: StatusImmunityFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    queue_action_start_fact: QueueActionStartFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    stance_count_down_fact: StanceCountDownFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    pending_defeat_plan: PendingDefeatPlan | None = field(
+        default=None, repr=False, compare=False,
     )
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -795,6 +1101,91 @@ class Mutation:
             "source": self.source,
             "metadata": thaw_json(self.metadata) if detach else self.metadata,
         }
+
+
+@dataclass(frozen=True)
+class PendingDefeatPlan:
+    """Persisted lethal cause, produced from the actual HP mutation and source frame.
+
+    This is lifecycle state, never reconstructed from a displayed event or audit log.
+    ``source_frame`` and ``source_trace`` preserve provenance; only the explicit
+    owner identity is used by the eventual kill-credit consumer.
+    """
+
+    unit_id: str
+    event_index: int
+    hp_mutation: Mutation
+    kill_credit_owner_id: str
+    source_frame: dict[str, JSONValue]
+    source_trace: dict[str, JSONValue]
+    terminal_event: GameEvent | None = None
+
+    def __post_init__(self) -> None:
+        hp = self.hp_mutation
+        if (not isinstance(self.unit_id, str) or not self.unit_id
+                or type(self.event_index) is not int or self.event_index < 0
+                or not isinstance(self.kill_credit_owner_id, str) or not self.kill_credit_owner_id
+                or type(hp) is not Mutation or hp.source != "damage_system" or hp.op != "set"
+                or hp.path != ("units", self.unit_id, "hp")
+                or not hp.before_exists or not hp.after_exists
+                or type(hp.before) not in (int, float) or not math.isfinite(hp.before) or hp.before <= 0
+                or type(hp.after) not in (int, float) or hp.after != 0):
+            raise ValueError("pending_defeat_requires_a_native_lethal_hp_mutation")
+        for key in ("source_frame", "source_trace"):
+            value = freeze_json(getattr(self, key))
+            if not isinstance(value, dict) or not value:
+                raise ValueError("pending_defeat_source_missing:" + key)
+            object.__setattr__(self, key, value)
+        if self.source_frame.get("owner_id") != self.kill_credit_owner_id:
+            raise ValueError("pending_defeat_source_owner_mismatch")
+        if (hp.metadata.get("source_frame") != self.source_frame
+                or hp.metadata.get("source_trace") != self.source_trace):
+            raise ValueError("pending_defeat_native_source_mismatch")
+        if self.terminal_event is not None:
+            event = self.terminal_event
+            if (type(event) is not GameEvent or event.event_type != "unit.defeated"
+                    or event.source_id != self.kill_credit_owner_id or event.target_id != self.unit_id
+                    or event.window != "unit.defeated"
+                    or event.payload.get("target_id") != self.unit_id
+                    or event.payload.get("defeated_unit_id") != self.unit_id
+                    or event.payload.get("kill_credit_owner_id") != self.kill_credit_owner_id
+                    or event.payload.get("source_frame") != self.source_frame
+                    or event.payload.get("source_trace") != self.source_trace
+                    or event.payload.get("target_before_hp") != hp.before
+                    or event.payload.get("target_after_hp") != hp.after):
+                raise ValueError("pending_defeat_terminal_event_mismatch")
+            # Retain the producer's complete context, including skill/hit identity.
+            # A later finalizer must not rebuild it from a displayed event or log.
+            object.__setattr__(self, "terminal_event", GameEvent(**freeze_json(event.to_json())))
+
+    @property
+    def pending_id(self) -> str:
+        return f"pending_defeat:{self.event_index}:{self.hp_mutation.stable_id()}"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {"unit_id": self.unit_id, "event_index": self.event_index,
+                "hp_mutation": self.hp_mutation.to_json(),
+                "kill_credit_owner_id": self.kill_credit_owner_id,
+                "source_frame": thaw_json(self.source_frame), "source_trace": thaw_json(self.source_trace),
+                "terminal_event": self.terminal_event.to_json() if self.terminal_event is not None else None}
+
+    @classmethod
+    def from_json(cls, value: object) -> PendingDefeatPlan:
+        raw = thaw_json(value)
+        fields = {"unit_id", "event_index", "hp_mutation", "kill_credit_owner_id", "source_frame", "source_trace", "terminal_event"}
+        if not isinstance(raw, dict) or set(raw) != fields or not isinstance(raw["hp_mutation"], dict):
+            raise ValueError("pending_defeat_payload_invalid")
+        hp = dict(raw["hp_mutation"])
+        claimed_id = hp.pop("mutation_id", None)
+        try:
+            mutation = Mutation(**hp)
+            if mutation.stable_id() != claimed_id:
+                raise ValueError("pending_defeat_hp_identity_mismatch")
+            return cls(raw["unit_id"], raw["event_index"], mutation, raw["kill_credit_owner_id"],
+                       raw["source_frame"], raw["source_trace"],
+                       GameEvent(**raw["terminal_event"]) if raw["terminal_event"] is not None else None)
+        except (TypeError, KeyError) as exc:
+            raise ValueError("pending_defeat_payload_invalid") from exc
 
 
 @dataclass(frozen=True)

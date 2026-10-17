@@ -101,6 +101,7 @@ class SummonTransitionResult:
     events: tuple[GameEvent, ...]
     records: tuple[dict[str, JSONValue], ...]
     rng_events: tuple[RNGEvent, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
 
 class SummonSystem:
@@ -556,6 +557,8 @@ class SummonSystem:
         self,
         state: BattleState,
         plan: SummonTransitionPlan,
+        *,
+        initial_values: dict[str, JSONValue] | None = None,
     ) -> SummonTransitionResult:
         if not plan.ok:
             return SummonTransitionResult(plan, (), (), (_plan_record(plan, (), process_only=True),))
@@ -747,6 +750,7 @@ class SummonSystem:
             mutations,
             events,
             _plan_records(plan, mutations, process_only=False),
+            initial_values=initial_values,
         )
 
     def plan_remove(
@@ -849,6 +853,8 @@ class SummonSystem:
         mutations: tuple[Mutation, ...],
         events: tuple[GameEvent, ...],
         records: tuple[dict[str, JSONValue], ...],
+        *,
+        initial_values: dict[str, JSONValue] | None = None,
     ) -> SummonTransitionResult:
         reduction = MutationReducer().apply_all_result(state, mutations)
         if not reduction.ok:
@@ -865,9 +871,32 @@ class SummonSystem:
                 (),
                 (_plan_record(blocked, (), process_only=True),),
             )
-        halo_result = StatusSystem(self.rules).reconcile_halo_relations(
-            reduction.after_state,
-        )
+        candidate = reduction.after_state
+        rng_events: tuple[RNGEvent, ...] = ()
+        dispatched_event_ids: frozenset[str] = frozenset()
+        if plan.operation in {"spawn_summoned_monster", "servant_spawn"}:
+            # Local import: startup uses ability execution, which also owns summons.
+            from .startup import apply_monster_startup, apply_servant_startup
+
+            startup = (apply_monster_startup(candidate, self.rules, plan.unit_ids)
+                       if plan.operation == "spawn_summoned_monster" else
+                       apply_servant_startup(candidate, self.rules, plan.unit_ids, initial_values))
+            if startup.blocked:
+                reasons = (str(item.get("reason") or item.get("blocked_reason") or "monster_startup_blocked")
+                           for item in startup.blocked)
+                blocked = self._blocked(
+                    plan.operation, ("summon_monster_startup_blocked:" if plan.operation == "spawn_summoned_monster"
+                                     else "servant_startup_blocked:") + ";".join(dict.fromkeys(reasons)),
+                    owner_id=plan.owner_id, intent_id=plan.intent_id, source_trace=plan.source_trace,
+                )
+                return SummonTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            candidate = startup.state
+            mutations = (*mutations, *startup.mutations)
+            events = (*startup.events, *events)
+            records = (*records, *startup.records)
+            rng_events = startup.rng_events
+            dispatched_event_ids = startup.dispatched_event_ids
+        halo_result = StatusSystem(self.rules).reconcile_halo_relations(candidate)
         if not halo_result.ok:
             blocked = self._blocked(
                 plan.operation,
@@ -891,7 +920,8 @@ class SummonSystem:
             (*mutations, *halo_result.mutations),
             (*halo_result.events, *events),
             (*records, *halo_result.records),
-            halo_result.rng_events,
+            (*rng_events, *halo_result.rng_events),
+            dispatched_event_ids,
         )
 
     def plan_owner_cleanup(self, state: BattleState, owner_id: str) -> SummonTransitionPlan:
@@ -1659,19 +1689,7 @@ def _plan_record(
         payload=payload,
         trace=plan.source_trace,
     ).to_json()
-    return {
-        **record,
-        # Backward-compatible observability fields retained for existing reports.
-        "record_type": "summon_transition",
-        "process_only": process_only,
-        "operation": plan.operation,
-        "ok": plan.ok,
-        "blocked_reason": plan.blocked_reason,
-        "unit_ids": list(plan.unit_ids),
-        "mutation_ids": [item.stable_id() for item in mutations],
-        "source_trace": plan.source_trace,
-        "plan": plan.to_json(),
-    }
+    return record
 
 
 def _plan_records(

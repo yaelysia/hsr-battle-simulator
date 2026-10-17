@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import cast
+from typing import Callable, cast
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
+from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, RNGEvent, StanceCountDownFact, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -17,6 +17,7 @@ from ..rules.evaluator import (
     RuleEvaluator,
 )
 from ..rules.expression_ir import numeric_dynamic_hashes, numeric_fixed, numeric_missing
+from ..rules.condition_state import TransientConditionOperandProvider, TransientConditionOperandRequest, TransientConditionOperandResolution
 from ..rules.engine_rule_registry import (
     EngineRuleRegistry,
     engine_numeric_binding_source,
@@ -42,9 +43,10 @@ from ..unit_eligibility import (
     runtime_units_are_opposing_combat_teams,
     runtime_units_share_combat_team,
 )
-from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
+from .damage import DamageModifierContribution, DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .action_event_contract import ActionWindowExpectedScope
 from .dot_formula import DotFormula, DotFormulaInput
+from .elation import resolve_elation_damage_context
 from .dynamic_values import (
     binding_source_from_status_detail,
     binding_source_from_store,
@@ -71,7 +73,7 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
-from .status import StatusSystem
+from .status import StatusSystem, _map_stack_property, status_control_gate_for_actor
 from .target import TargetExpressionResult, TargetSystem
 from .task_graph import (
     TaskGraphBranchResult,
@@ -86,12 +88,17 @@ from .task_graph import (
     TaskGraphLeafResult,
     TaskGraphNodeProjection,
     TaskGraphSettlementRecord,
+    TaskGraphStatusScope,
     TaskGraphTargetResult,
     TaskGraphWeightedSelectionResult,
+    TaskGraphTemplateBindingsResult,
+    evaluate_task_graph_template_bindings,
+    with_template_binding_sources,
     resolve_task_graph_weighted_selection,
 )
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .timeline import TimelineSystem
+from .toughness_state import read_toughness_segments
 from .unit_stats import effective_unit_stat
 
 
@@ -107,18 +114,148 @@ class StatusCallbackExecutionResult:
     node_results: tuple[ExecutionNodeResult, ...] = ()
     task_graph_projections: tuple[TaskGraphNodeProjection, ...] = ()
     heal_ratio_delta: float = 0.0
+    damage_modifiers: tuple[DamageModifierContribution, ...] = ()
+    created_unit_ids: tuple[str, ...] = ()
+    dispatched_event_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        dispatched = frozenset(self.dispatched_event_ids)
+        if any(type(event_id) is not str or not event_id for event_id in dispatched):
+            raise ValueError("status callback dispatched event identities are invalid")
+        if not self.ok and dispatched:
+            raise ValueError("blocked status callback leaks dispatched events")
+        object.__setattr__(self, "dispatched_event_ids", dispatched)
+        created = tuple(self.created_unit_ids)
+        if any(type(unit_id) is not str or not unit_id for unit_id in created) or len(set(created)) != len(created):
+            raise ValueError("status callback created unit identities are invalid")
+        if not self.ok and created:
+            raise ValueError("blocked status callback leaks created units")
+        object.__setattr__(self, "created_unit_ids", created)
         if type(self.heal_ratio_delta) not in (int, float) or not math.isfinite(self.heal_ratio_delta):
             raise ValueError("status callback heal ratio must be finite")
         if not self.ok and self.heal_ratio_delta != 0:
             raise ValueError("blocked status callback leaks a heal ratio")
+        if any(type(item) is not DamageModifierContribution for item in self.damage_modifiers):
+            raise TypeError("status callback damage modifiers must be typed")
+        if not self.ok and self.damage_modifiers:
+            raise ValueError("blocked status callback leaks damage modifiers")
+        object.__setattr__(self, "damage_modifiers", tuple(self.damage_modifiers))
         projections = tuple(self.task_graph_projections)
         if any(type(item) is not TaskGraphNodeProjection for item in projections):
             raise TypeError("status callback task graph projections are invalid")
         if not self.ok and projections:
             raise ValueError("blocked status callback leaks task graph projections")
         object.__setattr__(self, "task_graph_projections", projections)
+
+
+def status_detail_for_task_graph_scope(
+    state: BattleState, scope: TaskGraphStatusScope,
+) -> dict[str, JSONValue] | None:
+    unit = state.units.get(scope.owner_id)
+    details = unit.flags.get("status_details", ()) if unit is not None else ()
+    if not isinstance(details, (list, tuple)):
+        return None
+    matches = tuple(item for item in details
+        if isinstance(item, dict) and item.get("instance_id") == scope.instance_id)
+    if len(matches) != 1:
+        return None
+    detail = matches[0]
+    if (detail.get("owner_id") != scope.owner_id or detail.get("lifecycle_state") != "active"
+            or not detail.get("status_id") or detail["status_id"] not in unit.statuses):
+        return None
+    return detail
+
+
+@dataclass(frozen=True)
+class TaskGraphStatusConditionProvider:
+    state: BattleState
+    scope: TaskGraphStatusScope
+    invocation_id: str
+    window: str
+    fallback: TransientConditionOperandProvider | None = None
+
+    def resolve_transient(self, request: TransientConditionOperandRequest) -> TransientConditionOperandResolution:
+        if request.fact_kind != "status_callback.modifier_value" and self.fallback is not None:
+            return self.fallback.resolve_transient(request)
+        reason = "remodifier_condition_request_not_admitted"
+        detail = status_detail_for_task_graph_scope(self.state, self.scope)
+        if (request.fact_kind == "status_callback.modifier_value"
+                and request.invocation_id == self.invocation_id and request.window == self.window
+                and not request.subject_ids and set(request.parameters or {}) == {"value_type"}):
+            key = {"Layer": "stacks", "LifeTime": "remaining_duration"}.get(request.parameters["value_type"])
+            value = detail.get(key) if detail is not None and key is not None else None
+            admission = detail.get("duration_admission") if detail is not None else None
+            if (detail is not None and key == "remaining_duration" and value is None and detail.get("duration") is None
+                    and isinstance(admission, dict) and admission.get("admission_status") == "not_applicable"
+                    and admission.get("blocked_reason") == "lifetime_missing"):
+                return TransientConditionOperandResolution.resolved("string", "permanent",
+                    fact_kind=request.fact_kind, invocation_id=self.invocation_id, window=self.window,
+                    source_identity=f"status:{self.scope.owner_id}:{self.scope.instance_id}:permanent")
+            if type(value) in (int, float) and math.isfinite(value):
+                return TransientConditionOperandResolution.resolved("number", value,
+                    fact_kind=request.fact_kind, invocation_id=self.invocation_id, window=self.window,
+                    source_identity=f"status:{self.scope.owner_id}:{self.scope.instance_id}:{key}")
+            reason = "remodifier_condition_status_value_unavailable"
+        return TransientConditionOperandResolution.blocked(reason,
+            fact_kind=request.fact_kind, invocation_id=request.invocation_id)
+
+
+def resolve_remodifier_status_scopes(
+    state: BattleState, payload: Mapping[str, JSONValue], target_ids: tuple[str, ...],
+    *, caster_id: str | None = None, maximum: int | None = None,
+    predicate: Callable[[TaskGraphStatusScope], TaskGraphConditionResult] | None = None,
+) -> TaskGraphTargetResult:
+    """Select live ParamModifier identities; callback ownership stays unchanged."""
+    if payload.get("PredicateFilter"):
+        return TaskGraphTargetResult("blocked", blocked_reason="remodifier_filter_not_admitted")
+    status_type = payload.get("StatusTypeMask")
+    if status_type is not None and status_type != "Buff":
+        return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_type_mask_not_admitted")
+    if payload.get("predicate_filter_required") and predicate is None:
+        return TaskGraphTargetResult("blocked", blocked_reason="remodifier_predicate_consumer_missing")
+    name = payload.get("ModifierName")
+    flags = payload.get("BehaviorFlagFilter", ())
+    if (name is not None and (not isinstance(name, str) or not name)
+            or not isinstance(flags, (list, tuple))
+            or any(not isinstance(flag, str) or not flag for flag in flags)
+            or not name and not flags and not status_type):
+        return TaskGraphTargetResult("blocked", blocked_reason="remodifier_filter_invalid")
+    scopes: list[TaskGraphStatusScope] = []
+    rng_events: list[RNGEvent] = []
+    for target_id in target_ids:
+        unit = state.units.get(target_id)
+        details = unit.flags.get("status_details", ()) if unit is not None else None
+        if not isinstance(details, (list, tuple)):
+            return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_details_invalid")
+        for item in sorted((item for item in details if isinstance(item, dict)),
+                           key=lambda item: str(item.get("instance_id") or "")):
+            if item.get("lifecycle_state") in {"removed", "expired", "inactive"}:
+                continue
+            if (name and item.get("modifier_name") != name
+                    or caster_id is not None and item.get("caster_id") != caster_id
+                    or not set(flags).issubset(item.get("behavior_flags", ()))):
+                continue
+            if status_type:
+                if item.get("status_type") not in {"Buff", "Debuff", "Other"}:
+                    return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_type_unknown")
+                if item["status_type"] != status_type:
+                    continue
+            identity = item.get("instance_id")
+            if not isinstance(identity, str) or not identity:
+                return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_identity_invalid")
+            scope = TaskGraphStatusScope(target_id, identity)
+            if status_detail_for_task_graph_scope(state, scope) is None:
+                return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_instance_not_active")
+            if predicate is not None:
+                result = predicate(scope)
+                if result.status != "resolved" or type(result.value) is not bool:
+                    return TaskGraphTargetResult("blocked",
+                        blocked_reason=result.blocked_reason or "remodifier_predicate_not_resolved")
+                rng_events.extend(result.rng_events)
+                if not result.value:
+                    continue
+            scopes.append(scope)
+    return TaskGraphTargetResult("resolved", status_scopes=tuple(scopes[:maximum]), rng_events=tuple(rng_events))
 
 
 def _task_graph_transport_reason(
@@ -151,6 +288,8 @@ def _blocked_task_graph_hook_result(name: str, reason: str) -> object:
         return TaskGraphGraphResult("blocked", blocked_reason=reason)
     if name == "weighted_selection":
         return TaskGraphWeightedSelectionResult("blocked", blocked_reason=reason)
+    if name == "template_bindings":
+        return TaskGraphTemplateBindingsResult("blocked", blocked_reason=reason)
     raise ValueError("unknown task graph hook channel")
 
 
@@ -265,6 +404,49 @@ class StatusCallbackSystem:
         )
         if scope_reason:
             return _selected_callback_blocked(state, callback_id, scope_reason)
+        return self._execute_event_formal_root(state, callback_id=callback_id, unit_id=unit_id,
+            modifier_name=modifier_name, event=event, trigger_event=trigger_event,
+            damage_window_ledger=damage_window_ledger, detail_override=detail_override,
+            nested_ability_provider=nested_ability_provider, expected_window_scope=expected_window_scope)
+
+    def execute_registered_event_formal_root(
+        self, state: BattleState, *, callback_id: str, unit_id: str, modifier_name: str,
+        event: str, trigger_event: GameEvent, nested_ability_provider: object,
+        damage_window_ledger: DamageWindowLedger | None = None,
+        detail_override: dict[str, JSONValue] | None = None,
+    ) -> StatusCallbackExecutionResult:
+        from .ability import StatusNestedAbilityHookProvider
+
+        if type(nested_ability_provider) is not StatusNestedAbilityHookProvider:
+            return _selected_callback_blocked(state, callback_id, "registered_event_nested_provider_type_invalid")
+        if type(trigger_event) is not GameEvent or trigger_event.event_type.startswith("action.window."):
+            return _selected_callback_blocked(state, callback_id, "registered_event_formal_root_event_invalid")
+        family = self.rules.status_event_family(event)
+        if (family is None or family.coverage_status != "executable"
+                or family.admission_status != "executable"
+                or family.blocked_reason or family.blocking_dependency
+                or trigger_event.event_type not in family.runtime_event_sources):
+            return _selected_callback_blocked(state, callback_id, "registered_event_formal_root_source_not_admitted")
+        detail = detail_override or find_status_detail(state, unit_id, modifier_name=modifier_name)
+        identity = detail.get("instance_id") if detail is not None else None
+        current = (status_detail_for_task_graph_scope(state, TaskGraphStatusScope(unit_id, identity))
+                   if isinstance(identity, str) and identity else None)
+        if current is None:
+            return _selected_callback_blocked(state, callback_id, "registered_event_status_instance_not_active")
+        return self._execute_event_formal_root(state, callback_id=callback_id, unit_id=unit_id,
+            modifier_name=modifier_name, event=event, trigger_event=trigger_event,
+            damage_window_ledger=damage_window_ledger, detail_override=current,
+            nested_ability_provider=nested_ability_provider, expected_window_scope=None)
+
+    def _execute_event_formal_root(
+        self, state: BattleState, *, callback_id: str, unit_id: str, modifier_name: str,
+        event: str, trigger_event: GameEvent, nested_ability_provider: object,
+        damage_window_ledger: DamageWindowLedger | None,
+        detail_override: dict[str, JSONValue] | None,
+        expected_window_scope: ActionWindowExpectedScope | None,
+    ) -> StatusCallbackExecutionResult:
+        from .ability import StatusNestedAbilityContext
+
         trigger_event_id = trigger_event.event_id or str(
             trigger_event.to_json().get("event_id") or ""
         )
@@ -279,7 +461,7 @@ class StatusCallbackSystem:
             callback is None
             or callback.modifier_name != modifier_name
             or callback.event != event
-            or callback.source_mode != "mainline_avatar_ability"
+            or callback.source_mode not in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}
         ):
             return _selected_callback_blocked(
                 state,
@@ -354,11 +536,17 @@ class StatusCallbackSystem:
                 graph_result.blocked_reason
                 or "formal_status_callback_task_graph_identity_mismatch",
             )
-        target_resolution, target_reason = _status_action_window_target_resolution(
-            state,
-            trigger_event,
-            detail,
-        )
+        if expected_window_scope is not None:
+            target_resolution, target_reason = _status_action_window_target_resolution(state, trigger_event, detail)
+        else:
+            queue_fact = trigger_event.queue_action_terminal_fact or trigger_event.queue_action_start_fact
+            targets = (queue_fact.target_ids
+                if queue_fact is not None else
+                (trigger_event.target_id,) if trigger_event.target_id in state.units else ())
+            target_resolution = TargetResolution(requested=targets, selectable=targets, legal=targets,
+                primary=next(iter(targets), None), impact_group=targets, selected=targets,
+                reason="registered_status_event", source="status_callback_system")
+            target_reason = ""
         if target_resolution is None:
             return _selected_callback_blocked(state, callback_id, target_reason)
         context = StatusNestedAbilityContext(
@@ -369,7 +557,8 @@ class StatusCallbackSystem:
             root_graph_id=graph.graph_id,
             trigger_event_id=trigger_event_id,
             target_resolution=target_resolution,
-            admitted_action_target_fact=trigger_event.admitted_action_target_fact,
+            admitted_action_target_fact=(trigger_event.admitted_action_target_fact
+                if expected_window_scope is not None else None),
             expected_action_window_scope=expected_window_scope,
         )
         try:
@@ -599,6 +788,8 @@ class StatusCallbackSystem:
         task_graph_projections: list[TaskGraphNodeProjection] = []
         staged_damage_ledger = _stage_damage_window_ledger(damage_window_ledger)
         heal_ratio_delta = 0.0
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         for callback in callbacks:
             result = self._execute_callback(
                 current_state,
@@ -611,6 +802,8 @@ class StatusCallbackSystem:
             )
             current_state = result.after_state
             heal_ratio_delta += result.heal_ratio_delta
+            damage_modifiers.extend(result.damage_modifiers)
+            dispatched_event_ids.update(result.dispatched_event_ids)
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
@@ -656,6 +849,8 @@ class StatusCallbackSystem:
             node_results=tuple(node_results),
             task_graph_projections=tuple(task_graph_projections),
             heal_ratio_delta=heal_ratio_delta,
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_callback(
@@ -677,7 +872,7 @@ class StatusCallbackSystem:
                 errors=(reason,),
             )
 
-        formal = callback.source_mode == "mainline_avatar_ability"
+        formal = callback.source_mode in {"mainline_avatar_ability", "mainline_servant_ability", "mainline_stage_ability"}
         if formal:
             return self._execute_formal_callback(
                 state,
@@ -757,6 +952,18 @@ class StatusCallbackSystem:
         tasks = tuple(
             self.rules.status_callback_tasks_for_callback(callback.callback_id)
         )
+        if callback.event == "OnListenAfterSkillUse" and callback.scope_kind == "global_listener":
+            fact = trigger_event.admitted_action_target_fact if trigger_event is not None else None
+            scope = trigger_event.expected_action_window_scope if trigger_event is not None else None
+            reason = (fact.invocation_blocked_reason(expected_scope=scope) if fact is not None
+                      else "status_listener_skill_user_context_missing")
+            if reason:
+                return _selected_callback_blocked(state, callback.callback_id, reason)
+            # The listener's ParamEntity is the skill user. The triggering
+            # event still targets its victim; explicit Retarget inside this
+            # callback may subsequently replace the parameter as usual.
+            trigger_event = replace(trigger_event,
+                payload={**trigger_event.payload, "param_entity_id": fact.actor_id})
         callback_record, callback_event = _status_callback_envelope(
             callback,
             detail,
@@ -835,6 +1042,8 @@ class StatusCallbackSystem:
             else TaskGraphExecutionContext(invocation_id, context_values)
         )
         heal_ratios: list[float] = []
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         execution = self.task_graph_executor.execute(
             state,
             graph,
@@ -846,6 +1055,8 @@ class StatusCallbackSystem:
                 damage_window_ledger,
                 nested_ability_hooks,
                 heal_ratios,
+                damage_modifiers,
+                dispatched_event_ids,
             ),
         )
         if not execution.ok:
@@ -880,6 +1091,8 @@ class StatusCallbackSystem:
             node_results=execution.outcome.node_results,
             task_graph_projections=execution.node_projections,
             heal_ratio_delta=sum(heal_ratios),
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _formal_status_hooks(
@@ -890,7 +1103,50 @@ class StatusCallbackSystem:
         damage_window_ledger: DamageWindowLedger | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
         heal_ratios: list[float],
+        damage_modifiers: list[DamageModifierContribution],
+        dispatched_event_ids: set[str],
     ) -> TaskGraphExecutionHooks:
+        def template_bindings(request, parameters, state):
+            task, node, reason = self._formal_status_task_for_request(request, callback)
+            if task is None or node is None or node.template_parameters != parameters:
+                return TaskGraphTemplateBindingsResult("blocked", blocked_reason=reason or "template_parameter_node_mismatch")
+            template_id = task.task_payload.get("committed_break_template_id")
+            if template_id is not None:
+                fact = trigger_event.stance_count_down_fact if trigger_event is not None else None
+                template = self.rules.break_template(template_id) if isinstance(template_id, str) else None
+                emissions = self.rules.break_damage_emissions_for_template(template_id) if template is not None else ()
+                refs = tuple(item for item in node.references if item.reference_kind == "template")
+                if (
+                    type(fact) is not StanceCountDownFact or trigger_event is None
+                    or not fact.matches(state, trigger_event)
+                    or callback.event != "OnTriggerStanceCountDown" or task.event != callback.event
+                    or str(detail.get("owner_id") or "") != fact.attacker_id
+                    or request.target_ids not in ((), (fact.target_id,))
+                    or node.node_kind != "template_call" or task.opcode != "IncludeTaskListTemplate"
+                    or len(refs) != 1 or refs[0].resolution_status != "resolved"
+                    or template is None or template.template_id != fact.template_id
+                    or template.trigger_kind != "stance_count_down" or template.element_type != fact.element_type
+                    or template.coverage_status != "executable" or not emissions
+                    or any(item.coverage_status != "executable" or item.template_id != template.template_id
+                           or item.damage_formula_family != "break"
+                           for item in emissions)
+                ):
+                    return TaskGraphTemplateBindingsResult("blocked", blocked_reason="committed_break_template_fact_missing_or_mismatched")
+                return TaskGraphTemplateBindingsResult("resolved", body_consumption_record=TaskGraphSettlementRecord(
+                    "break_template_already_applied", "status_callback_system", process_only=True,
+                    payload={"callback_id": callback.callback_id, "task_id": task.task_id,
+                             "template_id": template.template_id, "target_id": fact.target_id,
+                             "attacker_id": fact.attacker_id, "notification_event_id": fact.event_id,
+                             "source_mutation_id": fact.source_mutation.stable_id()},
+                    trace={"status_task_source": task.source.to_json(), "template_source": template.source.to_json()},
+                ))
+            if not parameters:
+                return TaskGraphTemplateBindingsResult("resolved")
+            context = _condition_context(self.rules, state, detail, trigger_event,
+                template_binding_sources=request.template_binding_sources)
+            return evaluate_task_graph_template_bindings(request, parameters, state,
+                binding_sources=context.binding_sources)
+
         status_hooks = TaskGraphExecutionHooks(
             leaf=lambda request, state: self._execute_formal_status_leaf(
                 request,
@@ -900,6 +1156,8 @@ class StatusCallbackSystem:
                 trigger_event,
                 damage_window_ledger,
                 heal_ratios,
+                damage_modifiers,
+                dispatched_event_ids,
             ),
             condition=lambda request, state: self._evaluate_formal_status_condition(
                 request, state, callback, detail, trigger_event
@@ -919,6 +1177,7 @@ class StatusCallbackSystem:
             weighted_selection=lambda request, selection, state: self._resolve_formal_status_weighted_selection(
                 request, selection, state, callback, detail, trigger_event,
             ),
+            template_bindings=template_bindings,
         )
 
         def route(name: str, request: TaskGraphHookRequest, *args: object) -> object:
@@ -966,6 +1225,8 @@ class StatusCallbackSystem:
                 TaskGraphWeightedSelectionResult,
                 route("weighted_selection", request, selection, state),
             ),
+            template_bindings=lambda request, parameters, state: cast(
+                TaskGraphTemplateBindingsResult, route("template_bindings", request, parameters, state)),
         )
 
     def _resolve_formal_status_nested_graph(
@@ -1108,6 +1369,8 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
         heal_ratios: list[float],
+        damage_modifiers: list[DamageModifierContribution],
+        dispatched_event_ids: set[str],
     ) -> TaskGraphLeafResult:
         task, node, reason = self._formal_status_task_for_request(request, callback)
         if task is None or node is None:
@@ -1120,7 +1383,7 @@ class StatusCallbackSystem:
             "RandomConfig",
             "Remodifier",
             "TriggerAbility",
-        }:
+        } and task.blocked_reason != "source_proven_presentation_only":
             return TaskGraphLeafResult(
                 "blocked",
                 outcome_kind="",
@@ -1131,6 +1394,7 @@ class StatusCallbackSystem:
         events: list[GameEvent] = []
         rng_events: list[RNGEvent] = []
         records: list[TaskGraphSettlementRecord] = []
+        created_unit_ids: list[str] = []
         for scoped_event in _formal_status_scoped_events(request, trigger_event):
             result = self._execute_formal_leaf_task(
                 current,
@@ -1139,6 +1403,10 @@ class StatusCallbackSystem:
                 detail,
                 scoped_event,
                 damage_window_ledger,
+                status_scope=request.status_scope,
+                template_target_ids=request.template_target_ids,
+                template_binding_sources=request.template_binding_sources,
+                task_graph_continuation=TaskGraphContinuation.from_hook_request(request),
             )
             if not result.ok:
                 return TaskGraphLeafResult(
@@ -1173,16 +1441,23 @@ class StatusCallbackSystem:
                 )
             current = result.after_state
             heal_ratios.append(result.heal_ratio_delta)
+            damage_modifiers.extend(result.damage_modifiers)
+            dispatched_event_ids.update(result.dispatched_event_ids)
             mutations.extend(result.mutations)
             events.extend(result.events)
             rng_events.extend(result.rng_events)
             records.extend(converted)
+            created_unit_ids.extend(result.created_unit_ids)
+        if task.opcode == "CreateServant" and len(created_unit_ids) != 1:
+            return TaskGraphLeafResult("blocked", outcome_kind="", blocked_reason="servant_create_target_fact_missing")
         return TaskGraphLeafResult(
             "resolved",
             tuple(mutations),
             tuple(events),
             tuple(rng_events),
             tuple(records),
+            outcome_kind="servant_created" if task.opcode == "CreateServant" else "success",
+            continuation_target_ids=tuple(created_unit_ids) if task.opcode == "CreateServant" else None,
         )
 
     def _evaluate_formal_status_condition(
@@ -1225,6 +1500,13 @@ class StatusCallbackSystem:
             scoped_event,
             selected_target_ids=request.target_ids,
             rng_identity_scope=(request.invocation_id, request.graph_node_id, *request.frame_ids, request.iteration_index),
+            transient_condition_provider=(TaskGraphStatusConditionProvider(
+                state, request.status_scope, request.invocation_id, request.graph_node_id)
+                if request.status_scope is not None else None),
+            template_target_ids=request.template_target_ids,
+            template_binding_sources=request.template_binding_sources,
+            immunity_trigger_event=(trigger_event if trigger_event is not None
+                                    and trigger_event.event_type == "status.immunity" else None),
         )
         if not result.ok or result.result is None:
             return TaskGraphConditionResult(
@@ -1280,6 +1562,7 @@ class StatusCallbackSystem:
             task,
             self.rules.engine_rule_registry(),
             self.rules,
+            template_binding_sources=request.template_binding_sources,
         )
         if (
             not evaluation.ok
@@ -1307,11 +1590,6 @@ class StatusCallbackSystem:
         task, _node, reason = self._formal_status_task_for_request(request, callback)
         if task is None:
             return TaskGraphTargetResult("blocked", blocked_reason=reason)
-        if task.opcode == "Remodifier":
-            return TaskGraphTargetResult(
-                "blocked",
-                blocked_reason="status_callback_remodifier_deferred_to_s10",
-            )
         scoped_event = _formal_status_scope_event(request, trigger_event)
         resolution = self._resolve_retarget_targets(
             state,
@@ -1330,6 +1608,35 @@ class StatusCallbackSystem:
                     or "status_callback_target_resolution_failed"
                 ),
             )
+        if task.opcode == "Remodifier":
+            caster_alias = str(task.task_payload.get("CasterFilter") or "")
+            caster_id = (_resolve_callback_target_id(state, detail, caster_alias, scoped_event)
+                         if caster_alias else None)
+            if caster_alias and caster_id not in state.units:
+                return TaskGraphTargetResult("blocked", blocked_reason="remodifier_caster_filter_unresolved")
+            maximum = None
+            if "MaxNumber" in task.task_payload:
+                value = _evaluate_callback_numeric(task.task_payload["MaxNumber"], state, detail,
+                    task, self.rules.engine_rule_registry(), self.rules,
+                    template_binding_sources=request.template_binding_sources)
+                if (not value.ok or value.value is None or value.value < 0
+                        or not float(value.value).is_integer()):
+                    return TaskGraphTargetResult("blocked",
+                        blocked_reason=value.blocked_reason or "remodifier_max_number_invalid")
+                maximum = int(value.value)
+            predicate = None
+            if task.task_payload.get("predicate_filter_required"):
+                if not task.condition_id or task.task_payload.get("predicate_condition_id") != task.condition_id:
+                    return TaskGraphTargetResult("blocked", blocked_reason="remodifier_predicate_reference_mismatched")
+                def predicate(scope):
+                    return self._evaluate_formal_status_condition(
+                        replace(request, status_scope=scope,
+                            invocation_id=f"{request.invocation_id}:filter:{scope.owner_id}:{scope.instance_id}"),
+                        state, callback, detail, trigger_event,
+                    )
+            result = resolve_remodifier_status_scopes(state, task.task_payload,
+                resolution.target_ids, caster_id=caster_id, maximum=maximum, predicate=predicate)
+            return replace(result, rng_events=(*resolution.rng_events, *result.rng_events)) if result.status == "resolved" else result
         return TaskGraphTargetResult(
             "resolved", target_ids=resolution.target_ids, rng_events=resolution.rng_events,
         )
@@ -1355,6 +1662,7 @@ class StatusCallbackSystem:
             evaluation = _evaluate_callback_numeric(
                 definition.expression, state, detail, task,
                 self.rules.engine_rule_registry(), self.rules,
+                template_binding_sources=request.template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None or not math.isfinite(evaluation.value):
                 return TaskGraphWeightedSelectionResult(
@@ -1378,6 +1686,8 @@ class StatusCallbackSystem:
 
         current_state = state
         heal_ratio_delta = 0.0
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         mutations: list[Mutation] = []
         callback_record, callback_event = _status_callback_envelope(callback, detail, trigger_event)
         records: list[dict[str, JSONValue]] = [callback_record]
@@ -1395,6 +1705,8 @@ class StatusCallbackSystem:
             result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
             current_state = result.after_state
             heal_ratio_delta += result.heal_ratio_delta
+            damage_modifiers.extend(result.damage_modifiers)
+            dispatched_event_ids.update(result.dispatched_event_ids)
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
@@ -1430,6 +1742,8 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             heal_ratio_delta=heal_ratio_delta,
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_task(
@@ -1506,6 +1820,13 @@ class StatusCallbackSystem:
         source = unit.flags.get("break_source") if unit is not None else None
         template_id = source.get("break_template_id") if isinstance(source, dict) else None
         template = self.rules.break_template(template_id) if isinstance(template_id, str) else None
+        card_id = unit.flags.get("monster_data_card_id") if unit is not None else None
+        card = self.rules.monster_data_card(card_id) if isinstance(card_id, str) else None
+        template_config = card.raw_parameter_blocks.get("template_config") if card is not None else None
+        try:
+            segments = read_toughness_segments(unit) if unit is not None else None
+        except ValueError:
+            segments = None
         admitted = (
             callback.event == "OnDestroy"
             and trigger_event is not None
@@ -1517,15 +1838,18 @@ class StatusCallbackSystem:
             and "Break" in detail.get("behavior_flags", ())
             and unit is not None and unit.side == "enemy"
             and unit.lifecycle_status == "active" and unit.hp > 0
-            and type(unit.flags.get("monster_stance_count")) is int
-            and unit.flags.get("monster_stance_count") == 1
+            and segments is not None and segments.maximum_segments > 0
+            and isinstance(template_config, dict)
+            and type(template_config.get("stance_count")) is int
+            and template_config.get("stance_count") == segments.maximum_segments
+            and (segments.maximum_segments == 1 or segments.remaining_segments == 0)
             and unit.flags.get("broken") is True
             and isinstance(source, dict)
             and template is not None and template.coverage_status == "executable"
             and unit.max_toughness > 0
         )
         if not admitted:
-            reason = "ordinary_single_stance_recovery_source_not_admitted"
+            reason = "ordinary_stance_recovery_source_not_admitted"
             return StatusCallbackExecutionResult(
                 ok=False, after_state=state, errors=(reason,),
                 records=(_task_blocked_record(callback, task, detail, reason),),
@@ -1537,11 +1861,12 @@ class StatusCallbackSystem:
                     ok=False, after_state=state, errors=(reason,),
                     records=(_task_blocked_record(callback, task, detail, reason),),
                 )
-            return StatusCallbackExecutionResult(
-                ok=True, after_state=state,
-                records=(_task_blocked_record(callback, task, detail, "", ok=True),),
-            )
-        if unit.toughness != 0:
+            if segments.maximum_segments == 1:
+                return StatusCallbackExecutionResult(
+                    ok=True, after_state=state,
+                    records=(_task_blocked_record(callback, task, detail, "", ok=True),),
+                )
+        elif task.opcode != "ResetStance" or unit.toughness != 0:
             reason = "ordinary_stance_reset_requires_depleted_toughness"
             return StatusCallbackExecutionResult(
                 ok=False, after_state=state, errors=(reason,),
@@ -1554,9 +1879,12 @@ class StatusCallbackSystem:
             "monster_data_card_id": unit.flags.get("monster_data_card_id"),
         }
         mutation = Mutation(
-            op="set", path=("units", owner_id, "toughness"),
-            before=unit.toughness, after=unit.max_toughness,
-            reason="reset ordinary single stance before next action",
+            op="set",
+            path=(("units", owner_id, "flags", "stance_segments_remaining")
+                  if task.opcode == "SetStanceCount" else ("units", owner_id, "toughness")),
+            before=segments.remaining_segments if task.opcode == "SetStanceCount" else unit.toughness,
+            after=segments.maximum_segments if task.opcode == "SetStanceCount" else unit.max_toughness,
+            reason="restore ordinary toughness before next action",
             source="status_callback_system",
             metadata={
                 "ordinary_reset_stance": True,
@@ -1564,7 +1892,7 @@ class StatusCallbackSystem:
                 "task_id": task.task_id,
                 "target_id": owner_id,
                 "max_toughness": unit.max_toughness,
-                "monster_stance_count": 1,
+                "monster_stance_count": segments.maximum_segments,
                 "source_trace": trace,
             },
         )
@@ -1579,7 +1907,8 @@ class StatusCallbackSystem:
             ok=True, after_state=reduction.after_state,
             mutations=(mutation,),
             records=(SettlementRecord(
-                record_type="ordinary_stance_reset", source="status_callback_system",
+                record_type=("ordinary_stance_count_reset" if task.opcode == "SetStanceCount"
+                             else "ordinary_stance_reset"), source="status_callback_system",
                 mutation_id=mutation.stable_id(),
                 payload={"target_id": owner_id, "callback_id": callback.callback_id, "task_id": task.task_id},
                 trace=trace,
@@ -1594,7 +1923,47 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
+        *,
+        status_scope: TaskGraphStatusScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
+        task_graph_continuation: TaskGraphContinuation | None = None,
     ) -> StatusCallbackExecutionResult:
+        if task.opcode == "TriggerBreak":
+            fact = trigger_event.break_notification_fact if trigger_event is not None else None
+            owner_id = str(detail.get("owner_id") or "")
+            caster_id = str(detail.get("caster_id") or "")
+            if (
+                task.coverage_status != "executable" or task.blocked_reason
+                or task.event != "OnCreate" or callback.event != "OnCreate"
+                or task.task_payload.get("TargetType") != "Caster"
+                or trigger_event is None or trigger_event.event_type != "status.lifecycle"
+                or type(fact) is not BreakNotificationFact
+                or owner_id != caster_id or trigger_event.target_id != owner_id
+                or not fact.matches(state, caster_id)
+            ):
+                reason = "break_trigger_notification_context_missing_or_mismatched"
+                return StatusCallbackExecutionResult(
+                    ok=False, after_state=state, errors=(reason,),
+                    records=(_task_blocked_record(callback, task, detail, reason),),
+                )
+            # The enclosing ordinary-break producer already owns this target's
+            # notification. Re-emitting it from OnCreate would notify twice.
+            return StatusCallbackExecutionResult(
+                ok=True, after_state=state,
+                records=(SettlementRecord(
+                    record_type="break_notification", source="status_callback_system",
+                    process_only=True,
+                    payload={
+                        "callback_id": callback.callback_id, "task_id": task.task_id,
+                        "target_id": owner_id, "notification_event_id": fact.event_id,
+                        "notification_owner": "break_system",
+                        "source_mutation_id": fact.source_mutation.stable_id(),
+                    },
+                    trace={"status_callback_source": callback.source.to_json(),
+                           "status_task_source": task.source.to_json()},
+                ).to_json(),),
+            )
         if task.blocked_reason in {"equipment_task_family_non_gameplay", "source_proven_presentation_only"}:
             return StatusCallbackExecutionResult(
                 ok=True,
@@ -1618,6 +1987,7 @@ class StatusCallbackSystem:
                 task,
                 detail,
                 trigger_event,
+                template_binding_sources=template_binding_sources,
             )
         if task.opcode == "SetResilience":
             return self._execute_shield_resilience_sync_task(
@@ -1626,6 +1996,49 @@ class StatusCallbackSystem:
                 task,
                 detail,
             )
+        if task.opcode == "AttachSkillTypeDisable":
+            unit = state.units.get(str(detail.get("owner_id") or ""))
+            active = [item for item in unit.flags.get("status_details", ())
+                      if isinstance(item, dict) and item.get("instance_id") == detail.get("instance_id")] if unit else []
+            contract = task.task_payload.get("skill_disable_contract", {})
+            types = contract.get("skill_types") if isinstance(contract, dict) else None
+            admitted = (
+                task.coverage_status == "executable" and not task.blocked_reason
+                and task.event == callback.event == "OnStack"
+                and task.callback_id == callback.callback_id
+                and task.modifier_name == callback.modifier_name == detail.get("modifier_name")
+                and isinstance(contract, dict)
+                and set(contract) == {"operation", "target_alias", "skill_types", "source_shape_admitted"}
+                and contract.get("operation") == "attach_status_skill_type_disable"
+                and contract.get("source_shape_admitted") is True
+                and (contract.get("target_alias") == "ModifierOwnerEntity" or (
+                    contract.get("target_alias") == "Caster" and detail.get("caster_id") == detail.get("owner_id")))
+                and isinstance(types, list) and bool(types)
+                and all(isinstance(item, str) and item in {"Normal", "Skill", "Ultra"} for item in types)
+                and len(active) == 1 and active[0].get("lifecycle_state") == "active"
+                and active[0].get("status_id") in unit.statuses
+                and all(detail.get(key) and active[0].get(key) == detail[key]
+                        for key in ("owner_id", "caster_id", "source_id", "status_id", "modifier_name"))
+            )
+            if not admitted:
+                reason = "attached_skill_disable_status_instance_not_admitted"
+                return StatusCallbackExecutionResult(False, state, errors=(reason,),
+                    records=(_task_blocked_record(callback, task, detail, reason),))
+            before = unit.flags["status_details"]
+            after = [{**item, "disabled_skill_types": sorted(set(item.get("disabled_skill_types", ())) | set(types))}
+                     if item.get("instance_id") == detail["instance_id"] else item for item in before]
+            mutation = None if after == before else Mutation(
+                "set", ("units", unit.unit_id, "flags", "status_details"), before, after,
+                "attach skill restrictions to their source status lifetime", "status_callback_system",
+                metadata={"source_trace": task.source.to_json(), "status_instance_id": detail["instance_id"]},
+            )
+            after_state = self.reducer.apply_all(state, (mutation,)) if mutation is not None else state
+            return StatusCallbackExecutionResult(True, after_state, mutations=(mutation,) if mutation is not None else (), records=(SettlementRecord(
+                record_type="status_skill_type_disable", source="status_callback_system",
+                mutation_id=mutation.stable_id() if mutation is not None else None, process_only=mutation is None,
+                payload={"status_instance_id": detail["instance_id"], "skill_types": types},
+                trace={"status_callback_source": callback.source.to_json(), "status_task_source": task.source.to_json()},
+            ).to_json(),))
         if task.opcode == "StackStatusResistance":
             installed = tuple(
                 item for item in detail.get("modifiers", ())
@@ -1644,23 +2057,75 @@ class StatusCallbackSystem:
                     records=(_task_blocked_record(callback, task, detail, reason),),
                 )
         if task.opcode == "StackProperty":
+            detail = _current_status_detail(state, detail)
             alias = task.task_payload.get("TargetType")
             installed = tuple(
                 item for item in detail.get("modifiers", ())
                 if isinstance(item, dict)
                 and item.get("property") == task.task_payload.get("Property")
-                and isinstance(item.get("raw_path"), str) and item["raw_path"]
-                and task.task_path.endswith("." + item["raw_path"])
+                and (item.get("producer_task_id") == task.task_id or (
+                    isinstance(item.get("raw_path"), str) and item["raw_path"]
+                    and task.task_path.endswith("." + item["raw_path"])))
             )
             holder_target = alias == "ModifierOwnerEntity" or (
                 alias == "Caster" and detail.get("caster_id") == detail.get("owner_id")
             )
             if (task.coverage_status != "executable" or task.blocked_reason
-                    or task.event != "OnStack" or not holder_target or len(installed) != 1):
+                    or task.event != "OnStack" or not holder_target or len(installed) > 1):
                 reason = "stack_property_installation_not_admitted"
                 return StatusCallbackExecutionResult(
                     ok=False, after_state=state, errors=(reason,),
                     records=(_task_blocked_record(callback, task, detail, reason),),
+                )
+            value = _evaluate_callback_numeric(
+                task.task_payload.get("PropertyValue"), state, detail, task,
+                self.rules.engine_rule_registry(), self.rules,
+                template_binding_sources=template_binding_sources,
+            )
+            if not value.ok or value.value is None:
+                reason = value.blocked_reason or "stack_property_value_unresolved"
+                return StatusCallbackExecutionResult(
+                    ok=False, after_state=state, errors=(reason,),
+                    records=(_task_blocked_record(callback, task, detail, reason),),
+                )
+            mapped = _map_stack_property(str(task.task_payload.get("Property") or ""))
+            if not installed and mapped is None:
+                reason = "stack_property_name_not_admitted"
+                return StatusCallbackExecutionResult(False, state, errors=(reason,),
+                    records=(_task_blocked_record(callback, task, detail, reason),))
+            if not installed or installed[0].get("value") != value.value:
+                owner_id = str(detail["owner_id"])
+                unit = state.units[owner_id]
+                before = list(unit.flags["status_details"])
+                modifiers = [{**item, "value": value.value} if item == installed[0] else item
+                             for item in detail.get("modifiers", ())] if installed else [
+                    *detail.get("modifiers", ()),
+                    {"bucket": mapped[0], "key": mapped[1], "scope": mapped[2],
+                     "value": value.value, "property": task.task_payload["Property"],
+                     "producer_task_id": task.task_id, "raw_path": task.task_path,
+                     "applied_reason": "status_stack_property"},
+                ]
+                after = [{**item, "modifiers": modifiers} if item.get("instance_id") == detail["instance_id"] else item
+                         for item in before]
+                mutation = Mutation(
+                    "set", ("units", owner_id, "flags", "status_details"), before, after,
+                    "evaluate status property at its source task", "status_callback_system",
+                    metadata={"callback_id": callback.callback_id, "task_id": task.task_id,
+                              "status_instance_id": detail["instance_id"], "source_trace": task.source.to_json(),
+                              "numeric_evaluation": value.to_json()},
+                )
+                reduction = self.reducer.apply_all_result(state, (mutation,))
+                if not reduction.ok:
+                    return StatusCallbackExecutionResult(ok=False, after_state=state,
+                        errors=("stack_property_mutation_conflict",), records=())
+                return StatusCallbackExecutionResult(
+                    ok=True, after_state=reduction.after_state, mutations=(mutation,),
+                    records=(SettlementRecord(
+                        "status_stack_property", "status_callback_system", mutation_id=mutation.stable_id(),
+                        payload={"status_instance_id": detail["instance_id"], "property": task.task_payload["Property"],
+                                 "before": installed[0].get("value") if installed else None, "after": value.value,
+                                 "numeric_evaluation": value.to_json()}, trace=task.source.to_json(),
+                    ).to_json(),),
                 )
         if task.opcode in {"StackProperty", "StackStatusResistance"}:
             return StatusCallbackExecutionResult(
@@ -1684,6 +2149,7 @@ class StatusCallbackSystem:
                 callback,
                 task,
                 detail,
+                template_binding_sources=template_binding_sources,
             )
         if task.opcode == "ModifyDamageData":
             return self._execute_damage_modifier_task(
@@ -1691,6 +2157,7 @@ class StatusCallbackSystem:
                 callback,
                 task,
                 detail,
+                template_binding_sources=template_binding_sources,
             )
         delay_emissions = [
             emission
@@ -1745,13 +2212,18 @@ class StatusCallbackSystem:
                 trigger_event,
                 tuple(damage_emissions),
                 damage_window_ledger,
+                template_binding_sources=template_binding_sources,
             )
         if delay_emissions:
-            return self._execute_delay_emissions(state, callback, task, detail, trigger_event, tuple(delay_emissions))
+            return self._execute_delay_emissions(state, callback, task, detail, trigger_event, tuple(delay_emissions),
+                template_binding_sources=template_binding_sources)
         if queue_intents:
             return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
         if task.effect_id:
-            return self._execute_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger)
+            return self._execute_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger,
+                status_scope=status_scope, template_target_ids=template_target_ids,
+                template_binding_sources=template_binding_sources,
+                task_graph_continuation=task_graph_continuation)
         reason = "status_callback_task_has_no_executable_runtime_effect"
         return StatusCallbackExecutionResult(
             ok=False,
@@ -1833,6 +2305,8 @@ class StatusCallbackSystem:
             events: list[GameEvent] = []
             rng_events: list[RNGEvent] = []
             heal_ratio_delta = 0.0
+            damage_modifiers: list[DamageModifierContribution] = []
+            dispatched_event_ids: set[str] = set()
             for loop_index in range(loop_count):
                 scoped_event = _callback_scoped_event(
                     trigger_event,
@@ -1864,6 +2338,8 @@ class StatusCallbackSystem:
                     )
                 current_state = result.after_state
                 heal_ratio_delta += result.heal_ratio_delta
+                damage_modifiers.extend(result.damage_modifiers)
+                dispatched_event_ids.update(result.dispatched_event_ids)
                 mutations.extend(result.mutations)
                 records.extend(result.records)
                 events.extend(result.events)
@@ -1876,6 +2352,8 @@ class StatusCallbackSystem:
                 events=tuple(events),
                 rng_events=tuple(rng_events),
                 heal_ratio_delta=heal_ratio_delta,
+                damage_modifiers=tuple(damage_modifiers),
+                dispatched_event_ids=frozenset(dispatched_event_ids),
             )
         return self._execute_random_config_task(
             state,
@@ -2010,6 +2488,8 @@ class StatusCallbackSystem:
     ) -> StatusCallbackExecutionResult:
         current_state = state
         heal_ratio_delta = 0.0
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = [
             _task_blocked_record(
@@ -2045,6 +2525,8 @@ class StatusCallbackSystem:
                 return StatusCallbackExecutionResult(False, state, records=(_task_blocked_record(callback, parent_task, detail, f"container_atomic_rollback:{reason}"),), errors=(reason,))
             current_state = result.after_state
             heal_ratio_delta += result.heal_ratio_delta
+            damage_modifiers.extend(result.damage_modifiers)
+            dispatched_event_ids.update(result.dispatched_event_ids)
             mutations.extend(result.mutations)
             records.extend(result.records)
             events.extend(result.events)
@@ -2057,6 +2539,8 @@ class StatusCallbackSystem:
             events=tuple(events),
             rng_events=tuple(rng_events),
             heal_ratio_delta=heal_ratio_delta,
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_predicate_task(
@@ -2098,6 +2582,8 @@ class StatusCallbackSystem:
         selected_child_ids = task.success_task_ids if result.result else task.failed_task_ids
         current_state = state
         heal_ratio_delta = 0.0
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = [
             _task_blocked_record(
@@ -2147,6 +2633,8 @@ class StatusCallbackSystem:
             )
             current_state = child_result.after_state
             heal_ratio_delta += child_result.heal_ratio_delta
+            damage_modifiers.extend(child_result.damage_modifiers)
+            dispatched_event_ids.update(child_result.dispatched_event_ids)
             mutations.extend(child_result.mutations)
             rng_events.extend(child_result.rng_events)
             records.extend(child_result.records)
@@ -2177,6 +2665,8 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             heal_ratio_delta=heal_ratio_delta,
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _evaluate_callback_condition(
@@ -2190,6 +2680,10 @@ class StatusCallbackSystem:
         *,
         selected_target_ids: tuple[str, ...] = (),
         rng_identity_scope: tuple[object, ...] = (),
+        transient_condition_provider: TaskGraphStatusConditionProvider | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
+        immunity_trigger_event: GameEvent | None = None,
     ) -> tuple[ConditionEvaluationResult, tuple[RNGEvent, ...], GameEvent | None]:
         chance_nodes = _condition_random_chance_nodes(condition)
         if not chance_nodes:
@@ -2204,6 +2698,10 @@ class StatusCallbackSystem:
                         condition=condition,
                         targets=self.targets,
                         selected_target_ids=selected_target_ids,
+                        transient_condition_provider=transient_condition_provider,
+                        template_target_ids=template_target_ids,
+                        template_binding_sources=template_binding_sources,
+                        immunity_trigger_event=immunity_trigger_event,
                     ),
                 ),
                 (),
@@ -2228,6 +2726,7 @@ class StatusCallbackSystem:
             task,
             self.rules.engine_rule_registry(),
             self.rules,
+            template_binding_sources=template_binding_sources,
         )
         if not evaluation.ok or evaluation.value is None or not 0.0 <= evaluation.value <= 1.0:
             blocked = ConditionEvaluationResult(
@@ -2330,6 +2829,10 @@ class StatusCallbackSystem:
                 condition=condition,
                 targets=self.targets,
                 selected_target_ids=selected_target_ids,
+                transient_condition_provider=transient_condition_provider,
+                template_target_ids=template_target_ids,
+                template_binding_sources=template_binding_sources,
+                immunity_trigger_event=immunity_trigger_event,
             ),
         )
         return (
@@ -2409,11 +2912,14 @@ class StatusCallbackSystem:
             context=TargetEvaluationContext(
                 caster_id=caster_id,
                 effect_owner_id=owner_id,
+                template_entity_ids=graph_request.template_target_ids if graph_request is not None else None,
                 parameter_entity_ids=scoped_ids,
                 selected_target_ids=scoped_ids,
                 current_target_id=(scoped_ids[0] if scoped_ids else None),
                 event_source_id=(
-                    trigger_event.source_id if trigger_event is not None else None
+                    trigger_event.source_id
+                    if trigger_event is not None and trigger_event.source_id in state.units
+                    else None
                 ),
                 event_target_id=(
                     trigger_event.target_id if trigger_event is not None else None
@@ -2437,7 +2943,7 @@ class StatusCallbackSystem:
                 ),
             ),
             condition_event_payload=event_payload,
-            binding_sources=tuple(
+            binding_sources=with_template_binding_sources(tuple(
                 status_binding_sources(
                     state,
                     tuple(
@@ -2446,7 +2952,7 @@ class StatusCallbackSystem:
                         if unit_id
                     ),
                 )
-            ),
+            ), graph_request.template_binding_sources if graph_request is not None else ()),
         )
 
     def _execute_retarget_task(
@@ -2507,6 +3013,8 @@ class StatusCallbackSystem:
         events: list[GameEvent] = []
         rng_events: list[RNGEvent] = list(resolution.rng_events)
         heal_ratio_delta = 0.0
+        damage_modifiers: list[DamageModifierContribution] = []
+        dispatched_event_ids: set[str] = set()
         for target_index, candidate_id in enumerate(resolution.target_ids):
             retarget_event = _callback_scoped_event(
                 _retarget_event(trigger_event, candidate_id),
@@ -2540,6 +3048,8 @@ class StatusCallbackSystem:
                 )
             current_state = child_result.after_state
             heal_ratio_delta += child_result.heal_ratio_delta
+            damage_modifiers.extend(child_result.damage_modifiers)
+            dispatched_event_ids.update(child_result.dispatched_event_ids)
             mutations.extend(child_result.mutations)
             rng_events.extend(child_result.rng_events)
             records.extend(child_result.records)
@@ -2564,6 +3074,8 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             heal_ratio_delta=heal_ratio_delta,
+            damage_modifiers=tuple(damage_modifiers),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_effect_task(
@@ -2574,6 +3086,11 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
+        *,
+        status_scope: TaskGraphStatusScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
+        task_graph_continuation: TaskGraphContinuation | None = None,
     ) -> StatusCallbackExecutionResult:
         if task.coverage_status != "executable":
             reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
@@ -2592,7 +3109,9 @@ class StatusCallbackSystem:
                 records=(_task_blocked_record(callback, task, detail, reason),),
                 errors=(reason,),
             )
-        list_result = self._execute_list_target_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger, effect)
+        list_result = self._execute_list_target_effect_task(state, callback, task, detail, trigger_event,
+            damage_window_ledger, effect, status_scope=status_scope, template_target_ids=template_target_ids,
+            template_binding_sources=template_binding_sources)
         if list_result is not None:
             return list_result
         coverage = self.effect_registry.coverage(effect)
@@ -2600,7 +3119,8 @@ class StatusCallbackSystem:
             reason = f"effect_not_executable:{coverage}"
             result = self.effect_registry.execute(
                 effect,
-                _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
+                _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger, status_scope, template_target_ids,
+                    template_binding_sources),
             )
             return StatusCallbackExecutionResult(
                 ok=False,
@@ -2609,10 +3129,15 @@ class StatusCallbackSystem:
                 records=(*result.records, _task_blocked_record(callback, task, detail, reason)),
                 errors=(reason, *result.unsupported),
             )
-        result = self.effect_registry.execute(
-            effect,
-            _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger),
-        )
+        context = _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger,
+                                  status_scope, template_target_ids, template_binding_sources)
+        if task_graph_continuation is not None:
+            context = replace(context, task_graph_continuation=task_graph_continuation,
+                application_instance_id=(
+                    f"status_task:{task_graph_continuation.parent_invocation_id}:"
+                    f"{task_graph_continuation.parent_execution_path}:{task.task_id}"
+                ))
+        result = self.effect_registry.execute(effect, context)
         after_state = self.reducer.apply_all(state, result.mutations)
         records = (
             *result.records,
@@ -2634,6 +3159,8 @@ class StatusCallbackSystem:
             records=records,
             events=result.events,
             errors=result.unsupported,
+            created_unit_ids=result.created_unit_ids,
+            dispatched_event_ids=result.dispatched_event_ids if not result.unsupported else frozenset(),
         )
 
     def _execute_current_skill_delay_cost_task(
@@ -2643,6 +3170,8 @@ class StatusCallbackSystem:
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         modify_function = task.task_payload.get("ModifyFunction")
         if (task.coverage_status != "executable" or not isinstance(modify_function, str)
@@ -2682,6 +3211,7 @@ class StatusCallbackSystem:
             task,
             self.rules.engine_rule_registry(),
             self.rules,
+            template_binding_sources=template_binding_sources,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = evaluation.blocked_reason or "current_skill_delay_cost_value_unresolved"
@@ -2691,27 +3221,6 @@ class StatusCallbackSystem:
                 records=(_task_blocked_record(callback, task, detail, reason),),
                 errors=(reason,),
             )
-        registry_key = "turn_action_delay_cost_modifiers"
-        raw_before = state.global_flags.get(registry_key)
-        if raw_before is not None and not isinstance(raw_before, dict):
-            reason = "turn_action_delay_cost_registry_invalid"
-            return StatusCallbackExecutionResult(
-                ok=False,
-                after_state=state,
-                records=(_task_blocked_record(callback, task, detail, reason),),
-                errors=(reason,),
-            )
-        before = dict(raw_before) if isinstance(raw_before, dict) else {}
-        indices = [entry.get("operation_index") for entry in before.values() if isinstance(entry, dict)]
-        if (len(indices) != len(before)
-                or any(type(index) is not int or index < 0 for index in indices)
-                or len(set(indices)) != len(indices)):
-            reason = "turn_action_delay_cost_operation_order_invalid"
-            return StatusCallbackExecutionResult(
-                ok=False, after_state=state,
-                records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,),
-            )
-        operation_index = max(indices, default=-1) + 1
         identity = ":".join(
             (
                 owner_id,
@@ -2720,53 +3229,25 @@ class StatusCallbackSystem:
                 str(trigger_event.event_id or "") if trigger_event is not None else "",
             )
         )
-        if identity in before:
-            reason = "turn_action_delay_cost_duplicate_identity"
-            return StatusCallbackExecutionResult(
-                ok=False,
-                after_state=state,
-                records=(_task_blocked_record(callback, task, detail, reason),),
-                errors=(reason,),
-            )
         source_trace = {
             "status_callback_source": callback.source.to_json(),
             "status_task_source": task.source.to_json(),
             "status_instance_source": _json_dict(detail.get("source_trace")),
             "trigger_event": trigger_event.to_json() if trigger_event is not None else {},
         }
-        after = {
-            **before,
-            identity: {
-                "actor_id": actor_id,
-                "modify_function": modify_function,
-                "operation_index": operation_index,
-                "normalized_value": float(evaluation.value),
-                "callback_id": callback.callback_id,
-                "task_id": task.task_id,
-                "status_instance_id": str(detail.get("instance_id") or ""),
-                "source_trace": source_trace,
-            },
-        }
-        mutation = Mutation(
-            op="set",
-            path=("global_flags", registry_key),
-            before=raw_before,
-            after=after,
-            reason="register current skill normalized action delay cost",
-            source="status_callback_system",
-            before_exists=registry_key in state.global_flags,
-            metadata={
-                "task_id": task.task_id,
-                "callback_id": callback.callback_id,
-                "actor_id": actor_id,
-                "identity": identity,
-                "modify_function": modify_function,
-                "operation_index": operation_index,
-                "normalized_value": float(evaluation.value),
-                "numeric_evaluation": evaluation.to_json(),
-                "source_trace": source_trace,
-            },
-        )
+        try:
+            mutation = self.timeline.register_current_skill_delay_cost(
+                state, actor_id=actor_id, identity=identity, modify_function=modify_function,
+                normalized_value=evaluation.value, source="status_callback_system",
+                metadata={"task_id": task.task_id, "callback_id": callback.callback_id,
+                    "status_instance_id": str(detail.get("instance_id") or ""),
+                    "numeric_evaluation": evaluation.to_json(), "source_trace": source_trace},
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            return StatusCallbackExecutionResult(ok=False, after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,))
+        operation_index = mutation.metadata["operation_index"]
         after_state = self.reducer.apply_all(state, (mutation,))
         record = SettlementRecord(
             record_type="turn_action_delay_cost_registered",
@@ -2958,8 +3439,43 @@ class StatusCallbackSystem:
             )
         )
         reset_requested = task.task_payload.get("DoReset") is True
+        deferred_init_task_ids: list[str] = []
+        if callback.event == "OnCreate" and not reset_requested and not matching:
+            active_details = tuple(
+                item for item in unit.flags.get("status_details", ())
+                if isinstance(item, dict) and item.get("instance_id") == status_instance_id
+            )
+            if (len(active_details) != 1 or "Shield" not in active_details[0].get("behavior_flags", ())
+                    or any(not detail.get(key) or active_details[0].get(key) != detail[key]
+                           for key in ("owner_id", "modifier_name", "status_id", "caster_id", "source_id"))):
+                reason = "shield_resilience_active_status_identity_mismatch"
+                return StatusCallbackExecutionResult(
+                    False, state, records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,),
+                )
+            admitted_ids = _trigger_ids_for_event(active_details[0], "OnStack")
+            for stack_callback in self.rules.status_callbacks_for_modifier_event(modifier_name, "OnStack"):
+                if (admitted_ids is None or stack_callback.callback_id not in admitted_ids
+                        or stack_callback.coverage_status != "executable"
+                        or stack_callback.admission_status != "executable"):
+                    continue
+                for producer in self.rules.status_callback_tasks_for_callback(stack_callback.callback_id):
+                    if producer.opcode != "InitShield" or producer.parent_task_id or producer.coverage_status != "executable":
+                        continue
+                    effect = self.rules.effect(producer.effect_id)
+                    if (effect is not None and effect.owner_modifier_name == modifier_name
+                            and self.effect_registry.coverage(effect) == "executable"
+                            and effect.payload.get("standard", {}).get("target_alias") == "ModifierOwnerEntity"):
+                        deferred_init_task_ids.append(producer.task_id)
+            # Status add already emits OnCreate then OnStack in one transaction.
+            # The latter owns shield creation; this task must not create a second pool.
+            # ponytail: conditional/multiple shield producers need a broader contract.
+            if len(deferred_init_task_ids) != 1:
+                reason = "shield_resilience_on_stack_producer_not_unique"
+                return StatusCallbackExecutionResult(
+                    False, state, records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,),
+                )
         if (reset_requested and matching) or (
-            not reset_requested and not matching
+            not reset_requested and not matching and not deferred_init_task_ids
         ):
             reason = (
                 "shield_resilience_removed_instance_still_present"
@@ -2991,7 +3507,8 @@ class StatusCallbackSystem:
                 "matching_shield_instance_ids": [
                     str(item.get("instance_id") or "") for item in matching
                 ],
-                "authoritative_state": "shield_instances",
+                "authoritative_state": "status_instance_then_on_stack_shield" if deferred_init_task_ids else "shield_instances",
+                "deferred_init_task_ids": deferred_init_task_ids,
             },
             trace=source_trace,
         ).to_json()
@@ -3010,6 +3527,10 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         damage_window_ledger: DamageWindowLedger | None,
         effect,
+        *,
+        status_scope: TaskGraphStatusScope | None = None,
+        template_target_ids: tuple[str, ...] | None = None,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult | None:
         standard = effect.payload.get("standard") if isinstance(effect.payload, dict) else None
         if not isinstance(standard, dict):
@@ -3060,6 +3581,9 @@ class StatusCallbackSystem:
                 detail,
                 trigger_event,
                 damage_window_ledger,
+                status_scope,
+                template_target_ids,
+                template_binding_sources,
             )
             resolution = self.targets.resolve_target_expression(
                 state,
@@ -3067,10 +3591,12 @@ class StatusCallbackSystem:
                 context=TargetEvaluationContext(
                     caster_id=context.caster_id,
                     effect_owner_id=context.owner_id,
+                    template_entity_ids=context.template_target_ids,
                     parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
                     selected_target_ids=((context.current_action_target_id,) if context.current_action_target_id else ()),
                     current_target_id=context.current_action_target_id,
-                    event_source_id=(trigger_event.source_id if trigger_event is not None else None),
+                    event_source_id=(trigger_event.source_id if trigger_event is not None
+                                     and trigger_event.source_id in state.units else None),
                     event_target_id=(trigger_event.target_id if trigger_event is not None else None),
                     turn_owner_id=committed_turn_owner_id(state),
                     action_event_id=(trigger_event.event_id if trigger_event is not None else None),
@@ -3165,7 +3691,8 @@ class StatusCallbackSystem:
         for target_id in target_ids:
             patched_standard = {**standard, "target_alias": "ParamEntity"}
             patched_effect = replace(effect, payload={**effect.payload, "standard": patched_standard})
-            context = _effect_context(self.rules, current_state, task, detail, trigger_event, damage_window_ledger)
+            context = _effect_context(self.rules, current_state, task, detail, trigger_event, damage_window_ledger, status_scope, template_target_ids,
+                template_binding_sources)
             context = replace(context, param_entity_id=target_id, current_action_target_id=target_id)
             result = self.effect_registry.execute(patched_effect, context)
             if result.unsupported:
@@ -3221,6 +3748,8 @@ class StatusCallbackSystem:
         callback: StatusCallbackIR,
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         if task.coverage_status != "executable":
             reason = task.blocked_reason or "modify_heal_data_not_executable"
@@ -3250,6 +3779,7 @@ class StatusCallbackSystem:
             task,
             self.rules.engine_rule_registry(),
             self.rules,
+            template_binding_sources=template_binding_sources,
         )
         if not evaluation.ok or evaluation.value is None:
             reason = (
@@ -3293,16 +3823,10 @@ class StatusCallbackSystem:
         callback: StatusCallbackIR,
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
-        """Admit the task only through its exact DamageModifierIR consumer.
-
-        ``ModifyDamageData`` does not mutate BattleState.  The direct-damage
-        formula collects its lowered terms later in the same damage window.
-        Treating it as a generic EffectIR loses that contract and used to
-        fail with ``status_callback_effect_missing`` despite a valid lowered
-        modifier.  This record is process-only; it cannot apply a second copy
-        of the modifier terms.
-        """
+        """Evaluate the selected leaf once and return its transient damage facts."""
 
         modifiers = tuple(
             modifier
@@ -3347,6 +3871,23 @@ class StatusCallbackSystem:
             )
 
         modifier = modifiers[0]
+        contributions: list[DamageModifierContribution] = []
+        evaluations: list[dict[str, JSONValue]] = []
+        for index, term in enumerate(modifier.modifier_terms):
+            evaluation = _evaluate_callback_numeric(
+                term.get("numeric_expr"), state, detail, task,
+                self.rules.engine_rule_registry(), self.rules,
+                template_binding_sources=template_binding_sources,
+            )
+            if not evaluation.ok or evaluation.value is None:
+                reason = evaluation.blocked_reason or "damage_modifier_numeric_blocked"
+                return StatusCallbackExecutionResult(
+                    ok=False, after_state=state,
+                    records=(_task_blocked_record(callback, task, detail, reason),),
+                    errors=(reason,),
+                )
+            contributions.append(DamageModifierContribution(modifier, index, float(evaluation.value)))
+            evaluations.append(evaluation.to_json())
         record = SettlementRecord(
             record_type="damage_modifier_task",
             source="status_callback_system",
@@ -3357,7 +3898,9 @@ class StatusCallbackSystem:
                 "task_id": task.task_id,
                 "modifier_name": callback.modifier_name,
                 "damage_modifier_id": modifier.damage_modifier_id,
-                "consumer": "direct_damage_modifier_ledger",
+                "consumer": "damage_packet_modifier_contributions",
+                "evaluations": evaluations,
+                "terms": [item.formula_term() for item in contributions],
                 "term_count": len(modifier.modifier_terms),
             },
             trace={
@@ -3373,6 +3916,7 @@ class StatusCallbackSystem:
             ok=True,
             after_state=state,
             records=(record,),
+            damage_modifiers=tuple(contributions),
         )
 
     def _dispatch_pre_heal(
@@ -3449,6 +3993,7 @@ class StatusCallbackSystem:
         events: list[GameEvent] = [trigger_event]
         rng_events: list[RNGEvent] = []
         heal_ratio = 0.0
+        dispatched_event_ids: set[str] = {trigger_event.event_id}
         for holder_id, callback_event, scope, parameter_id in (
             (actor.unit_id, "OnBeforeDealHeal", "actor_local", target_id),
             (target_id, "OnBeforeBeingHeal", "being_hit_target_local", actor.unit_id),
@@ -3498,6 +4043,7 @@ class StatusCallbackSystem:
                 events.extend(result.events)
                 rng_events.extend(result.rng_events)
                 heal_ratio += result.heal_ratio_delta
+                dispatched_event_ids.update(result.dispatched_event_ids)
         return PreHealDispatchResult(
             ok=True,
             after_state=current_state,
@@ -3506,7 +4052,7 @@ class StatusCallbackSystem:
             mutations=tuple(mutations),
             rng_events=tuple(rng_events),
             records=tuple(records),
-            dispatched_event_ids=frozenset({trigger_event.event_id}),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_damage_emissions(
@@ -3518,19 +4064,23 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         emissions: tuple[StatusDamageEmissionIR, ...],
         damage_window_ledger: DamageWindowLedger | None,
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         current_state = state
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
         events: list[GameEvent] = []
         errors: list[str] = []
+        rng_events: list[RNGEvent] = []
+        dispatched_event_ids: set[str] = set()
         for emission in emissions:
             if emission.coverage_status != "executable":
                 reason = emission.blocked_reason or f"status_damage_not_executable:{emission.coverage_status}"
                 records.append(_status_damage_blocked_record(callback, task, detail, emission, reason))
                 errors.append(reason)
                 continue
-            if emission.damage_formula_family == "additional":
+            if emission.damage_formula_family in {"additional", "elation"}:
                 result = self._execute_additional_damage_emission(
                     current_state,
                     callback,
@@ -3539,12 +4089,15 @@ class StatusCallbackSystem:
                     trigger_event,
                     emission,
                     damage_window_ledger,
+                    template_binding_sources=template_binding_sources,
                 )
                 current_state = result.after_state
                 mutations.extend(result.mutations)
                 records.extend(result.records)
                 events.extend(result.events)
                 errors.extend(result.errors)
+                rng_events.extend(result.rng_events)
+                dispatched_event_ids.update(result.dispatched_event_ids)
                 continue
             if emission.damage_formula_family == "dot":
                 result = self._execute_dot_damage_emission(
@@ -3555,14 +4108,16 @@ class StatusCallbackSystem:
                     trigger_event,
                     emission,
                     damage_window_ledger,
+                    template_binding_sources=template_binding_sources,
                 )
                 current_state = result.after_state
                 mutations.extend(result.mutations)
                 records.extend(result.records)
                 events.extend(result.events)
                 errors.extend(result.errors)
+                dispatched_event_ids.update(result.dispatched_event_ids)
                 continue
-            evaluation = self._evaluate_status_damage_amount(current_state, detail, emission)
+            evaluation = self._evaluate_status_damage_amount(current_state, detail, emission, template_binding_sources=template_binding_sources)
             if not evaluation.ok or evaluation.value is None:
                 reason = evaluation.blocked_reason or "status_damage_numeric_evaluation_failed"
                 records.append(_status_damage_blocked_record(callback, task, detail, emission, reason, evaluation=evaluation))
@@ -3712,9 +4267,11 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
+            dispatched_event_ids=frozenset(dispatched_event_ids) if not errors else frozenset(),
         )
 
     def _execute_additional_damage_emission(
@@ -3726,6 +4283,8 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         emission: StatusDamageEmissionIR,
         damage_window_ledger: DamageWindowLedger | None,
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         caster_id = str(detail.get("caster_id") or detail.get("owner_id") or "")
         actor = state.units.get(caster_id)
@@ -3745,45 +4304,71 @@ class StatusCallbackSystem:
                 ),
                 errors=(reason,),
             )
+        context = _effect_context(self.rules, state, task, detail, trigger_event,
+            damage_window_ledger, template_binding_sources=template_binding_sources)
+        target_context = TargetEvaluationContext(
+            caster_id=context.caster_id, effect_owner_id=context.owner_id,
+            parameter_entity_ids=(context.param_entity_id,) if context.param_entity_id else (),
+            selected_target_ids=(context.current_action_target_id,) if context.current_action_target_id else (),
+            current_target_id=context.current_action_target_id,
+            event_source_id=trigger_event.source_id if trigger_event is not None and trigger_event.source_id in state.units else None,
+            event_target_id=trigger_event.target_id if trigger_event is not None else None,
+            turn_owner_id=committed_turn_owner_id(state),
+            action_event_id=trigger_event.event_id if trigger_event is not None and trigger_event.event_id and trigger_event.window else None,
+            action_window=trigger_event.window if trigger_event is not None and trigger_event.event_id and trigger_event.window else None,
+            admitted_action_target_fact=trigger_event.admitted_action_target_fact if trigger_event is not None else None,
+            expected_action_window_scope=trigger_event.expected_action_window_scope if trigger_event is not None else None,
+        )
+        identities = {"attacker": caster_id, "property_source": caster_id, "element_source": caster_id}
+        identity_resolutions: dict[str, JSONValue] = {}
+        for role, expression_id in (
+            ("attacker", emission.attacker_target_expression_id),
+            ("property_source", emission.property_source_target_expression_id),
+            ("element_source", emission.element_source_target_expression_id),
+        ):
+            if not expression_id:
+                continue
+            identity_expression = self.rules.target_expression(expression_id)
+            resolution = (self.targets.resolve_target_expression(state, identity_expression,
+                context=target_context, target_resolution=context.target_resolution,
+                condition_event_payload=context.event_payload, dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources) if identity_expression is not None else None)
+            if resolution is None or not resolution.resolved or len(resolution.target_ids) != 1 or resolution.rng_events:
+                reason = (f"status_damage_{role}_target_blocked:{resolution.blocked_reason}"
+                    if resolution is not None and resolution.blocked_reason
+                    else f"status_damage_{role}_target_not_unique_or_deterministic")
+                return StatusCallbackExecutionResult(ok=False, after_state=state,
+                    records=(_status_damage_blocked_record(callback, task, detail, emission, reason),), errors=(reason,))
+            identities[role] = resolution.target_ids[0]
+            identity_resolutions[role] = resolution.to_json()
+        # ponytail: split attacker/property sources need a proven property-by-property
+        # contract; the common same-unit override already covers this source shape.
+        if identities["attacker"] != identities["property_source"]:
+            reason = "status_damage_split_property_source_not_admitted"
+            return StatusCallbackExecutionResult(ok=False, after_state=state,
+                records=(_status_damage_blocked_record(callback, task, detail, emission, reason),), errors=(reason,))
+        attacker_id = identities["attacker"]
+        actor = state.units.get(attacker_id)
+        element_source = state.units.get(identities["element_source"])
+        if actor is None or element_source is None:
+            reason = "status_damage_identity_unit_missing"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, errors=(reason,))
+        element_type = emission.element_type or str(element_source.flags.get("damage_type") or "") or None
+        if emission.element_source_target_expression_id and element_type not in {
+            "Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary",
+        }:
+            reason = "status_damage_element_source_not_admitted"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, errors=(reason,))
         expression = (
             self.rules.target_expression(task.target_expression_id)
             if task.target_expression_id
             else None
         )
         if expression is not None:
-            context = _effect_context(
-                self.rules,
-                state,
-                task,
-                detail,
-                trigger_event,
-                damage_window_ledger,
-            )
             resolution = self.targets.resolve_target_expression(
                 state,
                 expression,
-                context=TargetEvaluationContext(
-                    caster_id=context.caster_id,
-                    effect_owner_id=context.owner_id,
-                    parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
-                    selected_target_ids=((context.current_action_target_id,) if context.current_action_target_id else ()),
-                    current_target_id=context.current_action_target_id,
-                    event_source_id=(trigger_event.source_id if trigger_event is not None else None),
-                    event_target_id=(trigger_event.target_id if trigger_event is not None else None),
-                    turn_owner_id=committed_turn_owner_id(state),
-                    action_event_id=(trigger_event.event_id if trigger_event is not None else None),
-                    action_window=(trigger_event.window if trigger_event is not None else None),
-                    admitted_action_target_fact=(
-                        trigger_event.admitted_action_target_fact
-                        if trigger_event is not None
-                        else None
-                    ),
-                    expected_action_window_scope=(
-                        trigger_event.expected_action_window_scope
-                        if trigger_event is not None
-                        else None
-                    ),
-                ),
+                context=target_context,
                 target_resolution=context.target_resolution,
                 condition_event_payload=context.event_payload,
                 dynamic_values=context.dynamic_values,
@@ -3839,6 +4424,21 @@ class StatusCallbackSystem:
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
         events: list[GameEvent] = []
+        dispatched_event_ids: set[str] = set()
+        if identity_resolutions:
+            records.append(SettlementRecord("status_damage_identity", "status_callback_system", process_only=True,
+                payload={"status_damage_emission_id": emission.status_damage_emission_id,
+                         "parameter_caster_id": caster_id, "roles": identities,
+                         "target_resolutions": identity_resolutions},
+                trace={"status_damage_source": emission.source.to_json()}).to_json())
+        from .event_dispatch import EventDispatchSystem, MAX_CALLBACK_EMITTED_EVENT_DEPTH
+
+        dispatcher = EventDispatchSystem(self.rules, self.effect_registry,
+            reducer=self.reducer, damage=self.damage, status_callbacks=self)
+        parent_depth = (trigger_event.payload.get("mutation_event_depth", 0) if trigger_event is not None else 0)
+        if type(parent_depth) is not int or parent_depth < 0 or parent_depth >= MAX_CALLBACK_EMITTED_EVENT_DEPTH:
+            reason = "status_damage_window_depth_exceeded"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, errors=(reason,))
         for target_id in target_ids:
             if target_id not in current_state.units:
                 reason = f"additional_damage_target_missing:{target_id}"
@@ -3862,6 +4462,7 @@ class StatusCallbackSystem:
                 detail,
                 emission,
                 target_id=target_id,
+                template_binding_sources=template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None:
                 reason = (
@@ -3893,29 +4494,29 @@ class StatusCallbackSystem:
             source_id = f"status_damage:{emission.status_damage_emission_id}"
             sequence_id = (
                 f"status_damage:{str(detail.get('instance_id') or '')}:"
-                f"{emission.status_damage_emission_id}"
+                f"{emission.status_damage_emission_id}:{trigger_event.event_id if trigger_event else state.event_index}"
             )
+            elation_context = None
             packet = DamagePacket(
-                attacker_id=caster_id,
+                attacker_id=attacker_id,
                 target_id=target_id,
                 attack_type=emission.attack_type,
-                damage_formula_family="additional",
-                amount=float(evaluation.value),
-                amount_stage="family_base",
-                element_type=(
-                    emission.element_type
-                    or str(actor.flags.get("damage_type") or "")
-                    or None
-                ),
+                damage_formula_family=emission.damage_formula_family,
+                amount=None if emission.damage_formula_family == "elation" else float(evaluation.value),
+                amount_stage="unspecified" if emission.damage_formula_family == "elation" else "family_base",
+                scaling_ratio=float(evaluation.value) if emission.damage_formula_family == "elation" else None,
+                scaling_basis={"kind": "elation_level_base"} if emission.damage_formula_family == "elation" else {},
+                elation_context=elation_context,
+                element_type=element_type,
                 status_damage_emission_id=emission.status_damage_emission_id,
                 status_callback_id=callback.callback_id,
                 status_instance_id=str(detail.get("instance_id") or ""),
                 modifier_name=callback.modifier_name,
                 source_task_id=task.task_id,
                 source_frame=DamageSourceFrame(
-                    owner_id=caster_id,
+                    owner_id=attacker_id,
                     source_id=source_id,
-                    source_kind="status_additional_damage",
+                    source_kind=f"status_{emission.damage_formula_family}_damage",
                     sequence_id=sequence_id,
                     target_id=target_id,
                     can_continue_after_lethal=False,
@@ -3923,22 +4524,51 @@ class StatusCallbackSystem:
                 ),
                 source_trace=trace,
                 metadata={
-                    "damage_formula_family": "additional",
-                    "record_type": "additional_damage",
+                    "damage_formula_family": emission.damage_formula_family,
+                    "record_type": f"{emission.damage_formula_family}_damage",
+                    "trigger_event_id": trigger_event.event_id if trigger_event is not None else "",
                     "status_damage_emission_id": emission.status_damage_emission_id,
                     "status_callback_id": callback.callback_id,
                     "status_instance_id": str(detail.get("instance_id") or ""),
                     "modifier_name": callback.modifier_name,
                     "source_task_id": task.task_id,
-                    "damage_source_owner_id": caster_id,
+                    "damage_source_owner_id": attacker_id,
                     "damage_source_id": source_id,
-                    "damage_source_kind": "status_additional_damage",
+                    "damage_source_kind": f"status_{emission.damage_formula_family}_damage",
                     "damage_sequence_id": sequence_id,
                     "can_continue_after_lethal": False,
                     "numeric_evaluation": evaluation.to_json(),
                     "source_trace": trace,
                 },
             )
+            hit_modifiers: list[DamageModifierContribution] = []
+            for window in ("damage.hit_sequence.before", "damage.before_hit"):
+                prepared = dispatcher.dispatch_event(current_state,
+                    event=_status_damage_window_event(current_state, packet, window,
+                        emission.damage_custom_name, parent_depth + 1),
+                    damage_window_ledger=damage_window_ledger)
+                if prepared.errors:
+                    reason = "status_damage_pre_hit_blocked:" + prepared.errors[0]
+                    return StatusCallbackExecutionResult(ok=False, after_state=state,
+                        records=(_status_damage_blocked_record(callback, task, detail, emission, reason),), errors=(reason,))
+                current_state = prepared.after_state
+                mutations.extend(prepared.mutations)
+                records.extend(prepared.records)
+                events.extend(prepared.events)
+                rng_events.extend(prepared.rng_events)
+                dispatched_event_ids.update(prepared.dispatched_event_ids)
+                hit_modifiers.extend(prepared.damage_modifiers)
+            packet = replace(packet, modifier_contributions=tuple(hit_modifiers))
+            if emission.damage_formula_family == "elation":
+                try:
+                    elation_context = resolve_elation_damage_context(current_state, attacker_id,
+                        point_source=str(emission.scaling_expr.get("elation_point_source") or ""),
+                        modifier_contributions=packet.modifier_contributions)
+                    packet = replace(packet, elation_context=elation_context)
+                except ValueError as exc:
+                    reason = f"elation_context_blocked:{exc}"
+                    return StatusCallbackExecutionResult(ok=False, after_state=state,
+                        records=(_status_damage_blocked_record(callback, task, detail, emission, reason),), errors=(reason,))
             damage_result = self.damage.apply_packet(
                 current_state,
                 packet,
@@ -3965,6 +4595,19 @@ class StatusCallbackSystem:
             records.extend(damage_result.records)
             events.extend(damage_result.events)
             rng_events.extend(damage_result.rng_events)
+            completed = dispatcher.dispatch_event(current_state,
+                event=_status_damage_window_event(current_state, packet, "damage.hit_sequence.after",
+                    emission.damage_custom_name, parent_depth + 1), damage_window_ledger=damage_window_ledger)
+            if completed.errors:
+                reason = "status_damage_after_hit_blocked:" + completed.errors[0]
+                return StatusCallbackExecutionResult(ok=False, after_state=state,
+                    records=(_status_damage_blocked_record(callback, task, detail, emission, reason),), errors=(reason,))
+            current_state = completed.after_state
+            mutations.extend(completed.mutations)
+            records.extend(completed.records)
+            events.extend(completed.events)
+            rng_events.extend(completed.rng_events)
+            dispatched_event_ids.update(completed.dispatched_event_ids)
         return StatusCallbackExecutionResult(
             ok=True,
             after_state=current_state,
@@ -3972,6 +4615,7 @@ class StatusCallbackSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
+            dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
     def _execute_dot_damage_emission(
@@ -3983,6 +4627,8 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         emission: StatusDamageEmissionIR,
         damage_window_ledger: DamageWindowLedger | None,
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         target_id = str(detail.get("owner_id") or "")
         caster_id = str(detail.get("caster_id") or "")
@@ -4099,6 +4745,8 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         emissions: tuple[ActionDelayEmissionIR, ...],
+        *,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
         current_state = state
         mutations: list[Mutation] = []
@@ -4157,16 +4805,10 @@ class StatusCallbackSystem:
                 records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
                 errors.append(reason)
                 continue
-            evaluation = RuleEvaluator().evaluate_numeric(
-                emission.delay_expr,
-                NumericEvaluationContext(
-                    binding_sources=(_status_delay_binding_source(detail, emission),),
-                    source_trace={
-                        "action_delay_source": emission.source.to_json(),
-                        "status_callback_source": callback.source.to_json(),
-                        "status_instance_source": _json_dict(detail.get("source_trace")),
-                    },
-                ),
+            evaluation = _evaluate_callback_numeric(
+                emission.delay_expr, current_state, detail, task,
+                self.rules.engine_rule_registry(), self.rules,
+                template_binding_sources=template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None:
                 reason = evaluation.blocked_reason or "action_delay_numeric_evaluation_failed"
@@ -4230,7 +4872,6 @@ class StatusCallbackSystem:
                     break
                 current_state = self.reducer.apply_all(current_state, adjustment.mutations)
                 mutations.extend(adjustment.mutations)
-                events.extend(adjustment.events)
                 records.extend(adjustment.records)
                 mutation = adjustment.mutations[0] if adjustment.mutations else None
                 if mutation is not None:
@@ -4267,13 +4908,15 @@ class StatusCallbackSystem:
                         },
                     ).to_json()
                 )
+        if errors:
+            return StatusCallbackExecutionResult(
+                ok=False, after_state=state,
+                records=tuple(record for record in records if record.get("process_only") is True),
+                errors=tuple(errors),
+            )
         return StatusCallbackExecutionResult(
-            ok=not errors,
-            after_state=current_state,
-            mutations=tuple(mutations),
-            events=tuple(events),
-            records=tuple(records),
-            errors=tuple(errors),
+            ok=True, after_state=current_state, mutations=tuple(mutations),
+            events=tuple(events), records=tuple(records),
         )
 
     def _evaluate_status_damage_amount(
@@ -4283,6 +4926,7 @@ class StatusCallbackSystem:
         emission: StatusDamageEmissionIR,
         *,
         target_id: str | None = None,
+        template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> NumericEvaluationResult:
         caster_id = str(detail.get("caster_id") or "")
         target_id = target_id or str(detail.get("owner_id") or "")
@@ -4298,7 +4942,7 @@ class StatusCallbackSystem:
                 blocked_reason="actor_or_target_missing",
             )
         if emission.damage_formula_family == "break" and emission.break_amount_mode == "value":
-            context = _condition_context(self.rules, state, detail, None)
+            context = _condition_context(self.rules, state, detail, None, template_binding_sources=template_binding_sources)
             return RuleEvaluator().evaluate_numeric(
                 emission.scaling_expr,
                 NumericEvaluationContext(
@@ -4309,7 +4953,7 @@ class StatusCallbackSystem:
                     },
                 ),
             )
-        if emission.damage_formula_family in {"additional", "true_damage"}:
+        if emission.damage_formula_family in {"additional", "true_damage", "elation"}:
             modifier_owner_id = str(detail.get("owner_id") or "")
             source_unit_ids = tuple(
                 dict.fromkeys(
@@ -4337,6 +4981,8 @@ class StatusCallbackSystem:
             )
             expression = emission.scaling_expr
             additional_mode = ""
+            if emission.damage_formula_family == "elation":
+                expression = expression.get("elation_percentage")
             if emission.damage_formula_family == "additional":
                 percentage = expression.get("damage_percentage")
                 value = expression.get("damage_value")
@@ -4403,7 +5049,7 @@ class StatusCallbackSystem:
                 source_trace=emission.source.to_json(),
                 blocked_reason="break_base_damage_missing_or_not_executable",
             )
-        context = _condition_context(self.rules, state, detail, None)
+        context = _condition_context(self.rules, state, detail, None, template_binding_sources=template_binding_sources)
         evaluated = RuleEvaluator().evaluate_numeric(
             emission.scaling_expr,
             NumericEvaluationContext(
@@ -4493,6 +5139,24 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
+            elation_override_points = None
+            override_evaluation = None
+            if intent.elation_point_override_expr is not None:
+                context = _condition_context(self.rules, current_state, detail, trigger_event)
+                override_evaluation = self.evaluator.evaluate_numeric(
+                    intent.elation_point_override_expr,
+                    NumericEvaluationContext(binding_sources=context.binding_sources,
+                                             source_trace=intent.source.to_json()),
+                )
+                value = override_evaluation.value
+                if (not override_evaluation.ok or type(value) not in (int, float)
+                        or not math.isfinite(value) or value < 0 and value != -1):
+                    reason = "queue_elation_override_blocked:" + (
+                        override_evaluation.blocked_reason or "finite_points_or_no_override_sentinel_required")
+                    records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                    errors.append(reason)
+                    continue
+                elation_override_points = None if value == -1 else float(value)
             lifecycle_policy_id = ""
             extra_action_policy_id = ""
             if isinstance(window.window_policy, dict):
@@ -4536,6 +5200,7 @@ class StatusCallbackSystem:
                     "blocked_reason": "queue_expiration_policy_source_missing",
                 },
                 cancel_policy={
+                    "abort_behavior_flags": intent.abort_policy.get("AbortBehaviorFlags", []),
                     "actor_removed": "blocked_process_only",
                     "actor_defeated": "blocked_process_only",
                     "target_invalid": "blocked_process_only",
@@ -4543,6 +5208,7 @@ class StatusCallbackSystem:
                 },
                 status="pending",
                 drain_status="not_admitted",
+                elation_override_points=elation_override_points,
             )
             mutation = self.queue.enqueue(
                 current_state,
@@ -4563,6 +5229,7 @@ class StatusCallbackSystem:
                     "priority_key": entry.priority_key,
                     "priority_value": entry.priority_value,
                     "priority_value_resolution": priority_resolution,
+                    "elation_override_evaluation": override_evaluation.to_json() if override_evaluation else None,
                     "admission_result": "executable",
                     "target_resolution": target_resolution.to_json(),
                     "source_trace": source_trace,
@@ -5013,101 +5680,6 @@ def _hp_ratio(state: BattleState, unit_id: str) -> float:
     return float(unit.hp / unit.max_hp) if unit.max_hp > 0 else float("inf")
 
 
-def _status_delay_binding_source(
-    detail: dict[str, JSONValue],
-    emission: ActionDelayEmissionIR,
-) -> dict[str, JSONValue]:
-    hashes = numeric_dynamic_hashes(emission.delay_expr)
-    if len(hashes) != 1:
-        return {
-            "source_type": "status_instance",
-            "entries": {},
-            "by_hash": {},
-            "by_name": {},
-        }
-    status_entry = _single_status_dynamic_entry(detail, str(hashes[0]))
-    if status_entry is not None:
-        return status_entry
-    return {
-        "source_type": "status_instance",
-        "entries": {},
-        "by_hash": {},
-        "by_name": {},
-    }
-
-
-def _single_status_dynamic_entry(detail: dict[str, JSONValue], hash_key: str) -> dict[str, JSONValue] | None:
-    dynamic_values = detail.get("dynamic_values")
-    if not isinstance(dynamic_values, dict):
-        return None
-    by_hash = dynamic_values.get("__by_hash")
-    if isinstance(by_hash, dict) and isinstance(by_hash.get(hash_key), (int, float)):
-        return _single_entry_source(
-            source_type="status_instance",
-            entry_key=f"status_hash:{hash_key}",
-            hash_key=hash_key,
-            name=None,
-            owner_id=str(detail.get("owner_id") or ""),
-            value=float(by_hash[hash_key]),
-            source_trace=_json_dict(detail.get("source_trace")),
-            status_id=str(detail.get("status_id") or ""),
-            status_instance_id=str(detail.get("instance_id") or ""),
-        )
-    candidates = [
-        (str(key), float(value))
-        for key, value in dynamic_values.items()
-        if not str(key).startswith("__") and isinstance(value, (int, float))
-    ]
-    if len(candidates) != 1:
-        return None
-    name, value = candidates[0]
-    return _single_entry_source(
-        source_type="status_instance",
-        entry_key=f"status_dynamic:{name}:{hash_key}",
-        hash_key=hash_key,
-        name=name,
-        owner_id=str(detail.get("owner_id") or ""),
-        value=value,
-        source_trace={
-            **_json_dict(detail.get("source_trace")),
-            "binding_reason": "single_remaining_status_dynamic_value",
-            "source_dynamic_name": name,
-        },
-        status_id=str(detail.get("status_id") or ""),
-        status_instance_id=str(detail.get("instance_id") or ""),
-    )
-
-
-def _single_entry_source(
-    *,
-    source_type: str,
-    entry_key: str,
-    hash_key: str,
-    name: str | None,
-    owner_id: str,
-    value: float,
-    source_trace: dict[str, JSONValue],
-    status_id: str = "",
-    status_instance_id: str = "",
-) -> dict[str, JSONValue]:
-    entry = {
-        "scope": source_type,
-        "owner_id": owner_id,
-        "status_id": status_id,
-        "status_instance_id": status_instance_id,
-        "name": name,
-        "hash": hash_key,
-        "value": value,
-        "source_trace": source_trace,
-    }
-    return {
-        "source_type": source_type,
-        "entries": {entry_key: entry},
-        "by_hash": {hash_key: [entry_key]},
-        "by_name": {name: [entry_key]} if name else {},
-    }
-
-
 def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> dict[str, JSONValue]:
     direct = evaluation.source_trace.get("break_base_damage_source")
     if isinstance(direct, dict) and isinstance(direct.get("level"), int):
@@ -5174,6 +5746,9 @@ def _resolve_callback_target_id(
         "AbilityTargetEntity",
         "DamageDefenderEntity",
     }:
+        if event is not None and (event.queue_action_terminal_fact or event.queue_action_start_fact) is not None:
+            fact = event.queue_action_terminal_fact or event.queue_action_start_fact
+            return fact.actor_id if alias == "ParamEntity" else next(iter(fact.target_ids), "")
         payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
         return _first_payload_str(payload, ("param_entity_id", "current_hit_target_id", "damage_defender_id", "primary_target_id", "target_id")) or (
             str(event.target_id or "") if event is not None else ""
@@ -5567,6 +6142,8 @@ def _evaluate_callback_numeric(
     task: StatusCallbackTaskIR,
     engine_rules: EngineRuleRegistry,
     rules: RuleBook,
+    *,
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
 ) -> NumericEvaluationResult:
     source_trace = {
         "status_task_source": task.source.to_json(),
@@ -5589,7 +6166,7 @@ def _evaluate_callback_numeric(
             source_trace,
             engine_reason,
         )
-    context = _condition_context(rules, state, detail, None)
+    context = _condition_context(rules, state, detail, None, template_binding_sources=template_binding_sources)
     return resolve_runtime_numeric_expression(
         cast(JSONValue, expression),
         binding_sources=(
@@ -5609,6 +6186,10 @@ def _condition_context(
     condition: ConditionIR | None = None,
     targets: TargetSystem | None = None,
     selected_target_ids: tuple[str, ...] = (),
+    transient_condition_provider: TaskGraphStatusConditionProvider | None = None,
+    template_target_ids: tuple[str, ...] | None = None,
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
+    immunity_trigger_event: GameEvent | None = None,
 ) -> EvaluationContext:
     detail = _current_status_detail(state, detail)
     payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
@@ -5632,6 +6213,11 @@ def _condition_context(
     scoped_target_ids = selected_target_ids or (
         (target_id,) if target_id else ()
     )
+    queue_fact = (event.queue_action_terminal_fact or event.queue_action_start_fact) if event is not None else None
+    if queue_fact is not None:
+        param_entity_id = queue_fact.actor_id
+        scoped_target_ids = selected_target_ids or queue_fact.target_ids
+        target_id = next(iter(scoped_target_ids), "")
     if selected_target_ids:
         payload["retarget_target_ids"] = list(selected_target_ids)
     current_status_binding_source = binding_source_from_status_detail(
@@ -5666,21 +6252,44 @@ def _condition_context(
         current_hashes,
         current_names,
     )
+    if condition is not None and condition.payload.get("ContextScope") == "ContextCaster":
+        caster_source = binding_source_from_store(
+            store_from_state(state), visible_scope={"target_id": caster_id},
+        )
+        caster_hashes, caster_names = _binding_source_keys(caster_source)
+        caster_keys = {*caster_hashes, *caster_names}
+        # ContextCaster reads the current unit slot. Status-local initialization
+        # only supplies the declared initial value until that slot has a writer.
+        callback_binding_sources = (
+            caster_source,
+            *({**source,
+               "by_hash": {key: entries for key, entries in source.get("by_hash", {}).items()
+                           if key not in caster_keys},
+               "by_name": {key: entries for key, entries in source.get("by_name", {}).items()
+                           if key not in caster_keys},
+               } for source in callback_binding_sources
+              if source.get("source_type") != "dynamic_value_store"),
+        )
+    callback_binding_sources = with_template_binding_sources(callback_binding_sources, template_binding_sources)
     if condition is not None and targets is not None:
-        return targets.condition_evaluation_context(
+        context = targets.condition_evaluation_context(
             state,
             condition,
             context=TargetEvaluationContext(
                 caster_id=caster_id,
                 effect_owner_id=owner_id or None,
+                template_entity_ids=template_target_ids,
                 parameter_entity_ids=(
                     (param_entity_id,)
-                    if event is not None and event.window == "OnBeforeBeingHeal"
+                    if queue_fact is not None or "param_entity_id" in payload
                     else scoped_target_ids
                 ),
+                parameter_entity_list_ids=(queue_fact.target_ids if queue_fact is not None else scoped_target_ids),
                 selected_target_ids=scoped_target_ids,
                 current_target_id=target_id or None,
-                event_source_id=(event.source_id if event is not None else None),
+                # Event emitters (setup, timeline, etc.) need not be units.
+                event_source_id=(event.source_id if event is not None
+                                 and event.source_id in state.units else None),
                 event_target_id=(event.target_id if event is not None else None),
                 turn_owner_id=committed_turn_owner_id(state),
                 action_event_id=(event.event_id if event is not None else None),
@@ -5695,7 +6304,9 @@ def _condition_context(
             condition_event_payload=payload,
             binding_sources=callback_binding_sources,
             status_detail=detail,
+            transient_condition_provider=transient_condition_provider,
         )
+        return replace(context, trigger_event=immunity_trigger_event or event)
     return EvaluationContext(
         state=state,
         actor_id=caster_id,
@@ -5714,6 +6325,7 @@ def _condition_context(
         committed_condition_provider=(
             targets.condition_facts if targets is not None else None
         ),
+        trigger_event=immunity_trigger_event or event,
     )
 
 
@@ -5724,6 +6336,9 @@ def _effect_context(
     detail: dict[str, JSONValue],
     event: GameEvent | None,
     damage_window_ledger: DamageWindowLedger | None = None,
+    status_scope: TaskGraphStatusScope | None = None,
+    template_target_ids: tuple[str, ...] | None = None,
+    template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
 ) -> EffectExecutionContext:
     detail = _current_status_detail(state, detail)
     payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
@@ -5760,6 +6375,10 @@ def _effect_context(
         str(event.target_id or "") if event is not None else ""
     )
     param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id
+    queue_fact = (event.queue_action_terminal_fact or event.queue_action_start_fact) if event is not None else None
+    if queue_fact is not None:
+        param_entity_id = queue_fact.actor_id
+        target_id = next(iter(queue_fact.target_ids), "")
     current_status_instance_id = str(detail.get("instance_id") or "")
     current_status_binding_source = binding_source_from_status_detail(
         detail,
@@ -5780,6 +6399,12 @@ def _effect_context(
     )
     return EffectExecutionContext(
         state=state,
+        application_instance_id=(
+            f"status_event:{event.event_id}:{current_status_instance_id}:{task.task_id}"
+            if event is not None and event.event_id else ""
+        ),
+        param_status_scope=status_scope,
+        template_target_ids=template_target_ids,
         caster_id=caster_id,
         # The callback task remains part of the audit trace, but it is not the
         # semantic owner of a child status.  All callbacks emitted by the same
@@ -5796,8 +6421,13 @@ def _effect_context(
         current_action_target_id=target_id or None,
         event_payload=payload,
         dynamic_values=None,
-        binding_sources=callback_binding_sources,
+        binding_sources=with_template_binding_sources(callback_binding_sources, template_binding_sources),
         include_ambient_status_bindings=False,
+        status_lifecycle_plan=(
+            event.status_lifecycle_plan
+            if event is not None and event.event_type == "status.lifecycle"
+            and event.window == "OnDestroy" else None
+        ),
         shadowed_status_instance_ids=(
             (current_status_instance_id,) if current_status_instance_id else ()
         ),
@@ -5881,7 +6511,7 @@ def _callback_binding_sources(
             excluded_status_instance_ids=(current_status_instance_id,),
             excluded_hashes=shadowed_hashes,
             excluded_names=shadowed_names,
-            excluded_scopes=("character_skill_param",),
+            excluded_scopes=("character_skill_param", "character_rank_param"),
         ),
     )
 
@@ -5919,14 +6549,28 @@ def _current_status_detail(
     current_details = unit.flags.get("status_details", ())
     if not isinstance(current_details, (list, tuple)):
         return detail
-    return next(
+    current = next(
         (
             item
             for item in current_details
             if isinstance(item, dict) and item.get("instance_id") == instance_id
         ),
-        detail,
+        None,
     )
+    if current is not None:
+        return current
+    # A destroyed instance no longer contributes properties, but its callback
+    # can still read the local variables it just wrote to the scoped store.
+    values = dict(detail.get("dynamic_values") or {})
+    by_name = dict(values.get("__by_name") or {})
+    by_hash = dict(values.get("__by_hash") or {})
+    for entry in store_from_state(state)["entries"].values():
+        if entry.get("scope_kind") != "status" or entry.get("status_instance_id") != instance_id:
+            continue
+        for key, index in ((entry.get("name"), by_name), (entry.get("hash"), by_hash)):
+            if key:
+                values[key] = index[key] = entry["value"]
+    return {**detail, "dynamic_values": {**values, "__by_name": by_name, "__by_hash": by_hash}}
 
 
 def _definition_dynamic_hash_aliases(
@@ -6252,6 +6896,7 @@ def _formal_status_scope_event(
     request: TaskGraphHookRequest,
     trigger_event: GameEvent | None,
 ) -> GameEvent | None:
+    trigger_event = _formal_status_parameter_event(request, trigger_event)
     if not request.target_ids:
         return trigger_event
     event = _retarget_event(trigger_event, request.target_ids[0])
@@ -6269,6 +6914,7 @@ def _formal_status_scoped_events(
     request: TaskGraphHookRequest,
     trigger_event: GameEvent | None,
 ) -> tuple[GameEvent | None, ...]:
+    trigger_event = _formal_status_parameter_event(request, trigger_event)
     if not request.target_ids:
         return (trigger_event,)
     iteration = request.iteration_index if request.iteration_index is not None else "root"
@@ -6282,6 +6928,16 @@ def _formal_status_scoped_events(
     )
 
 
+def _formal_status_parameter_event(
+    request: TaskGraphHookRequest, trigger_event: GameEvent | None,
+) -> GameEvent | None:
+    if request.status_scope is None:
+        return trigger_event
+    return _callback_scoped_event(trigger_event,
+        callback_scope=f"{request.graph_node_id}:modifier:{request.status_scope.owner_id}:{request.status_scope.instance_id}",
+        decision_index=0)
+
+
 def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:
     mapping = detail.get("trigger_ids_by_event")
     if not isinstance(mapping, dict):
@@ -6290,6 +6946,26 @@ def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[st
     if not isinstance(value, list):
         return ()
     return tuple(str(item) for item in value if isinstance(item, str) and item)
+
+
+def _status_damage_window_event(
+    state: BattleState, packet: DamagePacket, event_type: str, custom_name: str, depth: int,
+) -> GameEvent:
+    """Produce a hit window from the formal packet, without creating an attack."""
+    frame = packet.source_frame
+    if type(frame) is not DamageSourceFrame:
+        raise ValueError("status_damage_window_source_frame_missing")
+    return GameEvent(event_type, source_id=packet.attacker_id, target_id=packet.target_id,
+        event_id=f"event:{state.event_index}:{event_type}:{frame.sequence_id}:{packet.target_id}",
+        window=event_type, process_only=True, payload={
+            "actor_id": packet.attacker_id, "attacker_id": packet.attacker_id,
+            "damage_attacker_id": packet.attacker_id, "param_entity_id": packet.target_id,
+            "target_id": packet.target_id, "current_hit_target_id": packet.target_id,
+            "primary_target_id": packet.target_id, "selected_target_ids": [packet.target_id],
+            "attack_type": packet.attack_type, "damage_formula_family": packet.damage_formula_family,
+            "damage_custom_name": custom_name, "damage_sequence_source_task_id": packet.source_task_id,
+            "source_trace": packet.source_trace, "mutation_event_depth": depth,
+        })
 
 
 def _stage_damage_window_ledger(

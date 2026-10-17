@@ -1075,16 +1075,7 @@ def _resolve_inline_expression(
         for index, child in enumerate(children):
             child_kind = _inline_expression_kind(child)
             child_path = f"{path}.{expression_kind}[{index}]"
-            if child_kind == "TargetFilter" and index > 0 and not selected:
-                child_result = _inline_result(
-                    child_path,
-                    "TargetFilter",
-                    "",
-                    (),
-                    "",
-                    [{"operation": "filter_empty_input", "selected_targets": []}],
-                )
-            elif child_kind == "TargetFilter":
+            if child_kind == "TargetFilter":
                 child_result = _resolve_filter_expression(
                     state,
                     child,
@@ -1435,7 +1426,10 @@ def _resolve_filter_expression(
             return _inline_result(path, "TargetFilter", "", (), source_result.blocked_reason, steps, source_result.rng_events)
         candidate_targets = source_result.target_ids
     if not candidate_targets:
-        return _inline_result(path, "TargetFilter", "", (), "", steps)
+        return _inline_result(path, "TargetFilter", "", (), "",
+            [*steps, {"operation": "filter_empty_input", "selected_targets": [],
+                      "predicate_skipped": "empty_candidate_pool"}],
+            source_result.rng_events if explicit_target is not None else ())
     condition = raw.predicate
     if condition is None:
         return _inline_result(path, "TargetFilter", "", (), "target_filter_predicate_missing", steps)
@@ -1714,9 +1708,12 @@ def _is_transform_expression_kind(kind: str) -> bool:
     return kind in {
         "TargetMapAdjoinEntity",
         "TargetMapAttackTargetList",
+        "TargetMapSkillTarget",
+        "TargetMapSkillSubTarget",
         "TargetMapAllTeamMember",
         "TargetMapEnemyTeamEntity",
         "TargetMapCreator",
+        "TargetMapCreatedBattleEvent",
         "TargetMapAllTeamMemberFromFirstEntity",
         "TargetMapSummoner",
         "TargetMapSummonedMinions",
@@ -1752,6 +1749,13 @@ def _resolve_fetch_expression(
         return _inline_result(path, expression_kind, "", (), "target_fetch_payload_missing")
     if expression_kind == "TargetFetchCaster":
         return _resolve_context_relation(state, expression_kind, "context.caster", path, relation_runtime)
+    if expression_kind == "TargetFetchLevelEntity":
+        targets = tuple(sorted(unit_id for unit_id, unit in state.units.items()
+                               if unit.flags.get("system_entity_kind") == "level"))
+        reason = "" if len(targets) == 1 else (
+            "target_level_entity_missing" if not targets else "target_level_entity_ambiguous"
+        )
+        return _inline_result(path, expression_kind, "", targets if not reason else (), reason)
     if expression_kind in {"TargetFetchModifierOwner", "TargetFetchOwner"}:
         return _resolve_context_relation(state, expression_kind, "context.owner", path, relation_runtime)
     if expression_kind in {"TargetFetchAbilityTarget", "TargetFetchCurrentActionTarget"}:
@@ -1759,7 +1763,27 @@ def _resolve_fetch_expression(
         return _resolve_context_relation(state, expression_kind, relation, path, relation_runtime)
     if expression_kind == "TargetFetchParamEntity":
         return _resolve_context_relation(state, expression_kind, "context.parameter", path, relation_runtime)
+    if expression_kind == "TargetFetchTemplateEntityList":
+        targets = relation_runtime.context.template_entity_ids
+        if targets is None:
+            return _inline_result(path, expression_kind, "", (), "target_template_parameters_missing")
+        if not targets:
+            return _inline_result(path, expression_kind, "", (), "")
+        return _resolve_context_relation(
+            state, expression_kind, "context.parameter", path,
+            replace(relation_runtime, context=replace(relation_runtime.context, parameter_entity_ids=targets)),
+        )
     if expression_kind == "TargetFetchParamEntityList":
+        if relation_runtime.context.parameter_entity_list_ids is not None:
+            if not relation_runtime.context.parameter_entity_list_ids:
+                return _inline_result(path, expression_kind, "", (), "")
+            return _resolve_context_relation(
+                state, expression_kind, "context.parameter", path,
+                replace(relation_runtime, context=replace(
+                    relation_runtime.context,
+                    parameter_entity_ids=relation_runtime.context.parameter_entity_list_ids,
+                )),
+            )
         return _resolve_context_relation(state, expression_kind, "context.parameter", path, relation_runtime)
     if expression_kind == "TargetFetchActualOwner":
         if not previous_targets:
@@ -1784,6 +1808,14 @@ def _resolve_fetch_expression(
             relation_runtime.context,
             subject_ids=(relation_runtime.context.caster_id,),
             options={"include_limbo": relation_runtime.include_limbo},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetFetchBattleEventCaster":
+        caster = state.units.get(caster_id)
+        if caster is None or caster.flags.get("entity_type") != "battle_event":
+            return _inline_result(path, expression_kind, "", (), "battle_event_caster_requires_event")
+        result = relation_runtime.relations.resolve(
+            state, "entity.creator", relation_runtime.context, subject_ids=(caster_id,),
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetFetchBattleEventEntityList":
@@ -1906,6 +1938,8 @@ def _resolve_transform_expression(
         "TargetTake",
         "TargetIndex",
         "TargetMapAttackTargetList",
+        "TargetMapSkillTarget",
+        "TargetMapSkillSubTarget",
     }:
         return _inline_result(path, expression_kind, "", (), "")
     if expression_kind == "TargetReverse":
@@ -1940,27 +1974,36 @@ def _resolve_transform_expression(
                 return _inline_result(path, expression_kind, "", (), result.blocked_reason)
             selected = _dedupe((*selected, *result.target_ids))
         return _inline_result(path, expression_kind, "", selected, "")
-    if expression_kind == "TargetMapAttackTargetList":
+    if expression_kind in {"TargetMapAttackTargetList", "TargetMapSkillTarget", "TargetMapSkillSubTarget"}:
         fact = relation_runtime.context.admitted_action_target_fact
         expected_scope = relation_runtime.context.expected_action_window_scope
         if type(fact) is not AdmittedActionTargetFact:
             return _inline_result(path, expression_kind, "", (), "action_target_fact_missing")
-        reason = fact.blocked_reason(
+        reason = fact.invocation_blocked_reason(
             expected_scope=(
                 expected_scope
                 if type(expected_scope) is ActionWindowExpectedScope
                 else None
             ),
         )
+        if expression_kind == "TargetMapAttackTargetList":
+            reason = reason or fact.unavailable_reason
         if reason:
             return _inline_result(path, expression_kind, "", (), reason)
         if not candidate_targets:
             return _inline_result(path, expression_kind, "", (), "")
         if candidate_targets != (fact.actor_id,):
             return _inline_result(path, expression_kind, "", (), "action_target_fact_subject_mismatch")
-        if any(target_id not in state.units for target_id in fact.target_ids):
+        if expression_kind == "TargetMapAttackTargetList":
+            targets = fact.target_ids
+        else:
+            targets = (fact.skill_target_ids if expression_kind == "TargetMapSkillTarget"
+                       else fact.skill_sub_target_ids)
+            if targets is None:
+                return _inline_result(path, expression_kind, "", (), "action_skill_target_fact_missing")
+        if any(target_id not in state.units for target_id in targets):
             return _inline_result(path, expression_kind, "", (), "action_target_fact_target_unknown")
-        return _inline_result(path, expression_kind, "", fact.target_ids, "")
+        return _inline_result(path, expression_kind, "", targets, "")
     if expression_kind == "TargetMapAllTeamMember":
         result = relation_runtime.relations.resolve(
             state,
@@ -2034,7 +2077,7 @@ def _resolve_transform_expression(
             if (target_id in unselectable_ids) is not raw.inverse)
         return _inline_result(path, expression_kind, "", selected, "")
     if expression_kind == "TargetFilterEntityType":
-        relation = {"BattleEvent": "entity.battle_event", "Servant": "entity.servant"}.get(raw.entity_type_mask)
+        relation = {"BattleEvent": "entity.battle_event", "Servant": "entity.servant"}.get(raw.query_entity_type_mask)
         if relation is None:
             return _inline_result(path, expression_kind, "", (), "target_entity_type_filter_invalid")
         typed = relation_runtime.relations.resolve(
@@ -2053,6 +2096,11 @@ def _resolve_transform_expression(
             relation_runtime.context,
             subject_ids=candidate_targets,
             options={"recursive": raw.recursive_summoner},
+        )
+        return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "TargetMapCreatedBattleEvent":
+        result = relation_runtime.relations.resolve(
+            state, "entity.created_battle_events", relation_runtime.context, subject_ids=candidate_targets,
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetMapSummonedMinions":
@@ -2148,7 +2196,8 @@ def _resolve_target_alias_resolution(
                 return _inline_result(path, "TargetAlias", alias, (), f"target_operation_definition_missing:{operation_name}", steps)
             if definition.coverage_status != "executable" or definition.node is None:
                 return _inline_result(path, "TargetAlias", alias, (), definition.blocked_reason or f"target_operation_definition_blocked:{operation_name}", steps)
-            operation_context = replace(relation_runtime.context, parameter_entity_ids=current)
+            operation_context = replace(relation_runtime.context,
+                parameter_entity_ids=current, parameter_entity_list_ids=current)
             result = _resolve_inline_expression(
                 state,
                 definition.node,
@@ -2259,6 +2308,7 @@ def _resolve_target_alias_resolution(
             operation_context = replace(
                 relation_runtime.context,
                 parameter_entity_ids=current,
+                parameter_entity_list_ids=current,
             )
             result = _resolve_inline_expression(
                 state,

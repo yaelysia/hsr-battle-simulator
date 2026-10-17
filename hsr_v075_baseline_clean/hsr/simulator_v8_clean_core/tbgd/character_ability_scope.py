@@ -32,10 +32,10 @@ AVATAR_CONFIG_TABLES = (
     "ExcelOutput/AvatarConfigLD.json",
 )
 AVATAR_ENHANCED_CONFIG_TABLE = "ExcelOutput/AvatarConfigEnhanced.json"
+SERVANT_CONFIG_TABLE = "ExcelOutput/AvatarServantConfig.json"
 SHARED_CHARACTER_ABILITY_SOURCE = (
     "Config/ConfigAbility/Avatar/Avatar_Common_Ability.json"
 )
-DEFERRED_CHARACTER_BASE_TYPES = frozenset({"Memory", "Elation"})
 
 
 def _names(value: str) -> frozenset[str]:
@@ -451,12 +451,15 @@ class _SourceCandidate:
     config_source_path: str
     config_row_index: int
     selected_version: str
-    source_kind: Literal["character_main", "character_shared"] = "character_main"
+    source_kind: Literal["character_main", "character_shared", "servant", "stage"] = "character_main"
+    servant_id: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_kind, str) or self.source_kind not in {
             "character_main",
             "character_shared",
+            "servant",
+            "stage",
         }:
             raise ValueError("invalid character ability candidate source kind")
         if not isinstance(self.avatar_id, str):
@@ -473,8 +476,10 @@ class _SourceCandidate:
             raise ValueError("character ability candidate metadata is incomplete")
         if self.source_kind == "character_main" and not self.avatar_id:
             raise ValueError("character ability candidate avatar identity is missing")
-        if self.source_kind == "character_shared" and self.avatar_id:
+        if self.source_kind in {"character_shared", "stage"} and self.avatar_id:
             raise ValueError("shared character ability candidate has an avatar")
+        if (self.source_kind == "servant") != bool(self.servant_id) or (self.source_kind == "servant" and self.avatar_id):
+            raise ValueError("servant source candidate identity is inconsistent")
         if (
             not isinstance(self.config_row_index, int)
             or isinstance(self.config_row_index, bool)
@@ -491,29 +496,47 @@ class _SourceCandidate:
             self.config_source_path,
             str(self.config_row_index),
             self.selected_version,
+            self.servant_id,
         )
 
 
 @dataclass(frozen=True)
 class _CharacterAbilityInventoryManifest:
     inventory_bytes: Mapping[str, bytes]
+    stage_candidates: tuple[_SourceCandidate, ...] = ()
     candidates: tuple[_SourceCandidate, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         inventory = _freeze_bytes_mapping(self.inventory_bytes, "inventory_bytes")
-        if set(inventory) != {
+        expected = {
             *AVATAR_CONFIG_TABLES,
             AVATAR_ENHANCED_CONFIG_TABLE,
-        }:
+            SERVANT_CONFIG_TABLE,
+        }
+        stage_candidates = tuple(self.stage_candidates)
+        if stage_candidates:
+            expected.add("ExcelOutput/StageConfig.json")
+        if set(inventory) != expected:
             raise ValueError("character ability inventory source set is incomplete")
         rows = {
             path: _load_json_rows_bytes(inventory[path], path)
-            for path in (*AVATAR_CONFIG_TABLES, AVATAR_ENHANCED_CONFIG_TABLE)
+            for path in (*AVATAR_CONFIG_TABLES, AVATAR_ENHANCED_CONFIG_TABLE, SERVANT_CONFIG_TABLE)
         }
-        candidates = _discover_source_candidates_from_rows(rows)
+        if stage_candidates:
+            stage_rows = _load_json_rows_bytes(inventory["ExcelOutput/StageConfig.json"], "ExcelOutput/StageConfig.json")
+            for candidate in stage_candidates:
+                if (type(candidate) is not _SourceCandidate or candidate.source_kind != "stage"
+                        or candidate.config_source_path != "ExcelOutput/StageConfig.json"
+                        or candidate.config_row_index >= len(stage_rows)
+                        or not isinstance(stage_rows[candidate.config_row_index], dict)
+                        or not stage_rows[candidate.config_row_index].get("StageID")
+                        or not candidate.relative_path.startswith(("Config/ConfigAbility/Level/", "Config/ConfigAbility/BattleEvent/"))):
+                    raise ValueError("stage ability source candidate is not table-bound")
+        candidates = tuple(sorted((*_discover_source_candidates_from_rows(rows), *stage_candidates), key=lambda item: item.relative_path))
         if any(type(candidate) is not _SourceCandidate for candidate in candidates):
             raise TypeError("character ability inventory contains an invalid candidate")
         object.__setattr__(self, "inventory_bytes", inventory)
+        object.__setattr__(self, "stage_candidates", stage_candidates)
         object.__setattr__(self, "candidates", candidates)
 
 
@@ -609,8 +632,8 @@ class CharacterAbilityRawSnapshot:
             raise TypeError("character ability snapshot counters must be an object")
         counters = cast(Mapping[str, Any], freeze_json(dict(self.build_counters)))
         expected_counts = {
-            "inventory_source_read_count": len(AVATAR_CONFIG_TABLES) + 1,
-            "inventory_source_parse_count": len(AVATAR_CONFIG_TABLES) + 1,
+            "inventory_source_read_count": len(inventory),
+            "inventory_source_parse_count": len(inventory),
             "ability_source_read_count": len(selected_paths),
             "ability_source_parse_count": len(selected_paths),
         }
@@ -1592,7 +1615,7 @@ def build_character_ability_raw_snapshot(
 ) -> CharacterAbilityRawSnapshot:
     root = tbgd_root.resolve()
     inventory_bytes: dict[str, bytes] = {}
-    for relative_path in (*AVATAR_CONFIG_TABLES, AVATAR_ENHANCED_CONFIG_TABLE):
+    for relative_path in (*AVATAR_CONFIG_TABLES, AVATAR_ENHANCED_CONFIG_TABLE, SERVANT_CONFIG_TABLE):
         raw_bytes = _read_required_bytes(
             root / relative_path,
             f"character source inventory table missing:{relative_path}",
@@ -1655,6 +1678,41 @@ def build_character_ability_raw_snapshot(
             "ability_source_parse_count": len(source_bytes),
             "source_filter_applied_before_ability_read": source_filter is not None,
         },
+    )
+
+
+def extend_runtime_ability_snapshot(
+    tbgd_root: Path,
+    snapshot: CharacterAbilityRawSnapshot,
+    stage_source_rows: Mapping[str, int],
+) -> CharacterAbilityRawSnapshot:
+    """Add explicitly stage-selected sources to the formal task authority.
+
+    Character ownership catalogs retain their original snapshot. Runtime task
+    graphs share one complete source authority, including selected level rules.
+    """
+    if type(snapshot) is not CharacterAbilityRawSnapshot:
+        raise TypeError("runtime task sources require the exact source snapshot")
+    if not stage_source_rows:
+        return snapshot
+    inventory = dict(snapshot.inventory_bytes)
+    inventory["ExcelOutput/StageConfig.json"] = (tbgd_root / "ExcelOutput/StageConfig.json").read_bytes()
+    candidates = tuple(_SourceCandidate(
+        "", "stage", path, "ExcelOutput/StageConfig.json", row, "stage", "stage",
+    ) for path, row in sorted(stage_source_rows.items()))
+    manifest = _CharacterAbilityInventoryManifest(inventory, candidates)
+    source_bytes = dict(snapshot.source_bytes)
+    source_bytes.update({item.relative_path: (tbgd_root / item.relative_path).read_bytes() for item in candidates})
+    by_path = {item.relative_path: item for item in manifest.candidates}
+    sources = tuple(_source_ir(by_path[path], value) for path, value in sorted(source_bytes.items()))
+    source_filter = tuple(sorted(source_bytes)) if snapshot.fingerprint_kind == "partial" else ()
+    return CharacterAbilityRawSnapshot(
+        manifest, source_bytes, sources,
+        _compute_source_fingerprint(inventory, manifest.candidates, source_bytes, snapshot.fingerprint_kind, source_filter),
+        snapshot.fingerprint_kind, source_filter,
+        {**dict(snapshot.build_counters), "stage_source_count": len(candidates),
+         "inventory_source_read_count": len(inventory), "inventory_source_parse_count": len(inventory),
+         "ability_source_read_count": len(source_bytes), "ability_source_parse_count": len(source_bytes)},
     )
 
 
@@ -1809,8 +1867,6 @@ def _discover_source_candidates_from_rows(
         base_type = base_row["AvatarBaseType"]
         if not isinstance(base_type, str) or not base_type:
             raise ValueError(f"avatar base type is invalid:{avatar_id}")
-        if base_type in DEFERRED_CHARACTER_BASE_TYPES:
-            continue
         enhanced = enhanced_rows.get(avatar_id)
         selected_row = enhanced[1] if enhanced is not None else base_row
         character_path = selected_row.get("JsonPath")
@@ -1841,6 +1897,17 @@ def _discover_source_candidates_from_rows(
             source_kind="character_shared",
         )
     )
+    for row_index, row in enumerate(inventory_rows[SERVANT_CONFIG_TABLE]):
+        servant_id, config_path = row.get("ServantID"), row.get("Config")
+        if type(servant_id) is not int or servant_id <= 0 or not isinstance(config_path, str) or not config_path:
+            raise ValueError("servant source inventory identity is invalid")
+        name = PurePosixPath(config_path).name.replace("_Config.json", "_Ability.json")
+        candidates.append(_SourceCandidate(
+            avatar_id="", servant_id=str(servant_id), base_type="Servant",
+            relative_path=f"Config/ConfigAbility/Servant/{name}",
+            config_source_path=SERVANT_CONFIG_TABLE, config_row_index=row_index,
+            selected_version="base", source_kind="servant",
+        ))
     paths = [candidate.relative_path for candidate in candidates]
     if len(paths) != len(set(paths)):
         duplicates = sorted(
@@ -1854,6 +1921,10 @@ def _discover_source_candidates_from_rows(
 
 
 def _candidate_source_id(candidate: _SourceCandidate) -> str:
+    if candidate.source_kind == "stage":
+        return f"runtime_ability_source:stage:{candidate.relative_path}"
+    if candidate.source_kind == "servant":
+        return f"character_ability_source:servant:{candidate.servant_id}"
     return (
         "character_ability_source:shared"
         if candidate.source_kind == "character_shared"
@@ -1863,6 +1934,7 @@ def _candidate_source_id(candidate: _SourceCandidate) -> str:
 
 def _candidate_source_evidence(candidate: _SourceCandidate) -> dict[str, JSONValue]:
     return {
+        **({"servant_id": candidate.servant_id} if candidate.source_kind == "servant" else {}),
         "avatar_id": candidate.avatar_id,
         "base_type": candidate.base_type,
         "config_source_path": candidate.config_source_path,

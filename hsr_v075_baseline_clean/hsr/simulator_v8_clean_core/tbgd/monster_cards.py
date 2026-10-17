@@ -176,12 +176,36 @@ def _escaped_token(value: Any, tokens: set[str], excluded: tuple[dict[str, Any],
     return str(value) in tokens
 
 
+def _monster_scope_with_summons(
+    rows: dict[str, _RowRecord], selected: frozenset[str],
+) -> frozenset[str]:
+    """Load declared dependencies; this does not admit or select a spawn."""
+    included, pending = set(selected), sorted(selected)
+    while pending:
+        monster_id = pending.pop()
+        record = rows.get(monster_id)
+        if record is None:
+            continue  # Keep unresolved IDs; never substitute another monster.
+        references = record.row.get("SummonIDList", [])
+        if not isinstance(references, list) or any(type(value) is not int for value in references):
+            raise ValueError(f"monster_summon_dependency_shape_invalid:{record.relative_path}:{monster_id}")
+        for reference in references:
+            dependency = str(reference)
+            if dependency not in included:
+                included.add(dependency)
+                pending.append(dependency)
+    return frozenset(included)
+
+
 def build_monster_card_ir(
     tbgd_root: Path,
     *,
     max_records_per_table: int | None,
     monster_ids: frozenset[str] | None = None,
+    include_summon_dependencies: bool = False,
 ) -> MonsterCardBuildResult:
+    if type(include_summon_dependencies) is not bool:
+        raise TypeError("include_summon_dependencies must be bool")
     monster_rows: dict[str, _RowRecord] = {}
     for relative_path in MONSTER_ROW_PATHS:
         monster_rows.update(
@@ -192,6 +216,8 @@ def build_monster_card_ir(
                 max_records_per_table=max_records_per_table,
             )
         )
+    if monster_ids is not None and include_summon_dependencies:
+        monster_ids = _monster_scope_with_summons(monster_rows, monster_ids)
     template_rows: dict[str, _RowRecord] = {}
     for relative_path in MONSTER_TEMPLATE_PATHS:
         template_rows.update(
@@ -280,12 +306,6 @@ def _monster_card(
         blocked_reasons.append("monster_skill_list_missing")
     if any(slot.get("coverage_status") == "blocked" for slot in skill_slots):
         blocked_reasons.append("monster_skill_definition_missing")
-    if not action_sequence:
-        blocked_reasons.append("monster_ai_sequence_missing")
-    if sequence_status and sequence_status not in blocked_reasons:
-        blocked_reasons.append(sequence_status)
-    if ai_policy.get("admission_status") != "executable":
-        blocked_reasons.append(str(ai_policy.get("blocked_reason") or "monster_ai_policy_not_admitted"))
 
     return MonsterDataCardIR(
         card_id=f"monster_data_card:monster:{monster_id}",
@@ -310,6 +330,7 @@ def _monster_card(
             evidence={
                 "row_index": monster_record.row_index,
                 "template_id": template_id,
+                "ai_sequence_blocked_reason": sequence_status,
                 "template_source": _source_trace(template_record) if template_record else {},
                 "raw_paths": {
                     "template_id": "MonsterTemplateID",
@@ -524,6 +545,7 @@ def _passive_slots_for_monster(
         elif not blocked_reason and len(paths) > 1:
             blocked_reason = "monster_passive_ability_ambiguous"
         callback_sources: list[dict[str, Any]] = []
+        declaration_only = False
         if len(paths) == 1:
             document = _read_json_dict(tbgd_root, paths[0])
             definitions = tuple((position, value) for position, value in enumerate(
@@ -533,6 +555,10 @@ def _passive_slots_for_monster(
                 blocked_reason = blocked_reason or "monster_passive_ability_definition_missing_or_ambiguous"
             else:
                 position, definition = definitions[0]
+                declaration_only = (
+                    not blocked_reason and set(definition) == {"Name", "TargetInfo"}
+                    and definition["TargetInfo"] == {"TargetType": "Caster"}
+                )
                 for callback, tasks in definition.items():
                     if not callback.startswith("On"):
                         continue
@@ -541,7 +567,7 @@ def _passive_slots_for_monster(
                     callback_sources.append({"source_path": paths[0], "ability_name": ability_name,
                                              "raw_path": f"AbilityList[{position}].{callback}",
                                              "callback_kind": callback})
-                if not callback_sources:
+                if not callback_sources and not declaration_only:
                     blocked_reason = blocked_reason or "monster_passive_root_callback_missing"
         callbacks = tuple(item["callback_kind"] for item in callback_sources)
         first_source = source_edges[0]
@@ -554,6 +580,10 @@ def _passive_slots_for_monster(
                 "raw_path": first_source["raw_path"],
                 "source_edges": source_edges,
                 "root_callback_sources": callback_sources,
+                **({"empty_definition_source": {
+                    "source_path": paths[0], "raw_path": f"AbilityList[{position}]",
+                    "fields": ["Name", "TargetInfo"], "reason": "no tasks, modifiers or inheritance",
+                }} if declaration_only else {}),
                 "ability_name": ability_name,
                 "ability_file_paths": list(paths),
                 "ability_resolution_status": "unique" if len(paths) == 1 else "blocked",
@@ -567,8 +597,8 @@ def _passive_slots_for_monster(
                 data_card_id=card_id,
                 data_card_kind="monster",
                 owner_entity_ref=owner_entity_ref,
-                mechanism_kind="monster_ability_list_passive",
-                runtime_system="startup_status_system",
+                mechanism_kind="empty_ability_declaration" if declaration_only else "monster_ability_list_passive",
+                runtime_system="none" if declaration_only else "startup_status_system",
                 linked_ir_ids={
                     "monster_id": monster_id,
                     "ability_name": ability_name,
@@ -592,8 +622,8 @@ def _passive_slots_for_monster(
                     "root_callback_sources": callback_sources,
                 },
                 source=source,
-                coverage_status="blocked" if blocked_reason else "lowered",
-                blocked_reason=blocked_reason,
+                coverage_status="skipped_with_reason" if declaration_only else "blocked" if blocked_reason else "lowered",
+                blocked_reason="source_declares_no_ability_behavior" if declaration_only else blocked_reason,
             )
         )
     return slots
@@ -966,8 +996,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
         "runtime_execution_admitted": False,
         "manual_route_action_execution_admitted": "depends_on_action_ir",
         "enemy_ai_runtime_execution_admitted": False,
-        "candidate_constraint_admitted": admission_status == "executable",
-        "candidate_constraint_kind": "forced_sequence" if admission_status == "executable" else "none",
+        "candidate_constraint_admitted": False,
+        "candidate_constraint_kind": "none",
         "selection_controller": "external",
     }
 
@@ -1030,7 +1060,8 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "missing_display_text_blocks_execution": False,
         },
         "ai_policy": {
-            "first_admitted_policy": "UseSequencedSkill with TBGD AISkillSequence",
+            "selection_controller": "external",
+            "candidate_constraint_admitted_from_ai": False,
             "complex_ai_execution_allowed": False,
             "target_selection_is_not_admitted": True,
             "runtime_execution_admitted": False,

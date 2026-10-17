@@ -686,6 +686,20 @@ def _fixture_effect_reference(
     )
 
 
+@pytest.mark.parametrize("snapshot_id", ["snapshot:fixture", '快照\\"\n'])
+def test_catalog_streamed_fingerprint_matches_the_complete_json(snapshot_id):
+    import json
+    from hashlib import sha256
+
+    catalog = replace(_formal_fixture((_fixture_effect_reference(),)).task_graph_catalog,
+                      snapshot_id=snapshot_id)
+    payload = catalog.to_json()
+    actual = payload.pop("catalog_id")
+    expected = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    assert actual == f"task_graph_catalog:{expected.hexdigest()}"
+    assert TaskGraphCatalogIR.from_json(catalog.to_json()).catalog_id == actual
+
+
 @pytest.mark.parametrize(
     ("references", "coverage"),
     (

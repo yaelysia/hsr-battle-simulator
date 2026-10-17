@@ -5,7 +5,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.model import BattleState, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
@@ -13,7 +13,12 @@ from ..immutable_json import freeze_json, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import resolve_runtime_numeric_expression
+from .unit_lifecycle import UnitLifecycleSystem
 from .unit_stats import ability_property_value
+from .task_graph import TaskGraphStatusScope
+
+if TYPE_CHECKING:
+    from .status import StatusLifecyclePlan
 
 
 DYNAMIC_VALUE_PLAN_SCHEMA = "hsr.dynamic_value_plan.v1"
@@ -51,6 +56,9 @@ class DynamicValueExecutionRequest:
     status_id: str = ""
     status_source_id: str = ""
     binding_sources: tuple[Mapping[str, Any], ...] = ()
+    status_lifecycle_plan: StatusLifecyclePlan | None = None
+    param_status_scope: TaskGraphStatusScope | None = None
+    template_target_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("caster_id", "source_id", "effect_id", "opcode"):
@@ -81,6 +89,14 @@ class DynamicValueExecutionRequest:
         if not all(isinstance(source, dict) for source in sources):
             raise TypeError("dynamic value binding sources must be objects")
         object.__setattr__(self, "binding_sources", sources)
+        if self.param_status_scope is not None and type(self.param_status_scope) is not TaskGraphStatusScope:
+            raise TypeError("dynamic value parameter status scope is invalid")
+        if self.template_target_ids is not None and (
+            not isinstance(self.template_target_ids, tuple)
+            or any(not isinstance(value, str) or not value for value in self.template_target_ids)
+            or len(self.template_target_ids) != len(set(self.template_target_ids))
+        ):
+            raise ValueError("dynamic value template target identities are invalid")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -100,6 +116,11 @@ class DynamicValueExecutionRequest:
             "status_id": self.status_id,
             "status_source_id": self.status_source_id,
             "binding_sources": [thaw_json(source) for source in self.binding_sources],
+            "status_lifecycle_plan": self.status_lifecycle_plan.to_json() if self.status_lifecycle_plan else None,
+            "param_status_scope": ({"owner_id": self.param_status_scope.owner_id,
+                                    "instance_id": self.param_status_scope.instance_id}
+                                   if self.param_status_scope else None),
+            "template_target_ids": list(self.template_target_ids) if self.template_target_ids is not None else None,
         }
 
 
@@ -343,6 +364,8 @@ def plan_dynamic_value_operation(
     state: BattleState,
     operation: DynamicValueOperationIR,
     request: DynamicValueExecutionRequest,
+    *,
+    rules: RuleBook | None = None,
 ) -> DynamicValuePlan:
     try:
         before_fingerprint = dynamic_value_state_fingerprint(state)
@@ -368,7 +391,7 @@ def plan_dynamic_value_operation(
             before_fingerprint,
             f"dynamic_value_store_invalid:{exc}",
         )
-    target_id = _resolve_request_alias(operation.target_alias, request)
+    target_id = _resolve_request_alias(state, operation.target_alias, request)
     if not target_id:
         return _blocked_plan(
             operation,
@@ -438,6 +461,7 @@ def plan_dynamic_value_operation(
         operation.operand,
         request,
         resolved_scope,
+        rules=rules,
     )
     if operand_reason or operand_value is None:
         return _blocked_plan(
@@ -471,6 +495,7 @@ def plan_dynamic_value_operation(
             bound,
             request,
             resolved_scope,
+            rules=rules,
         )
         if bound_reason or bound_value is None:
             return _blocked_plan(
@@ -600,6 +625,8 @@ def plan_dynamic_value_operation(
 def execute_dynamic_value_plan(
     state: BattleState,
     plan: DynamicValuePlan,
+    *,
+    rules: RuleBook | None = None,
 ) -> DynamicValueExecutionResult:
     if type(plan) is not DynamicValuePlan:
         raise TypeError("dynamic value execution requires an exact plan")
@@ -626,7 +653,7 @@ def execute_dynamic_value_plan(
             blocked_reason="dynamic_value_plan_request_missing",
         )
     try:
-        expected = plan_dynamic_value_operation(state, plan.operation, plan.request)
+        expected = plan_dynamic_value_operation(state, plan.operation, plan.request, rules=rules)
         matches = expected.ok and expected.to_json() == plan.to_json()
     except (TypeError, ValueError):
         matches = False
@@ -829,9 +856,29 @@ def _blocked_plan(
 
 
 def _resolve_request_alias(
+    state: BattleState,
     alias: object,
     request: DynamicValueExecutionRequest,
 ) -> str:
+    if alias in {"CasterServant", "CasterSummoner"}:
+        from .unit_relation import EntityRelationResolver, TargetEvaluationContext
+
+        resolver = EntityRelationResolver()
+        context = TargetEvaluationContext(caster_id=request.caster_id,
+                                          template_entity_ids=request.template_target_ids)
+        result = resolver.resolve(
+            state, "summon.owned" if alias == "CasterServant" else "summon.summoner",
+            context, subject_ids=(request.caster_id,),
+        )
+        if not result.resolved:
+            return ""
+        target_ids = result.target_ids
+        if alias == "CasterServant":
+            servants = resolver.resolve(state, "entity.servant", context)
+            if not servants.resolved:
+                return ""
+            target_ids = tuple(unit_id for unit_id in target_ids if unit_id in servants.target_ids)
+        return target_ids[0] if len(target_ids) == 1 else ""
     return {
         "Caster": request.caster_id,
         "ModifierOwnerEntity": request.owner_id or request.caster_id,
@@ -885,6 +932,9 @@ def _resolved_scope(
             target_id,
             request.status_instance_id,
         )
+        if not matches:
+            removed = _removed_status_detail(request, target_id)
+            matches = (removed,) if removed is not None else ()
         if len(matches) != 1:
             return {}, (
                 "dynamic_status_instance_missing"
@@ -904,6 +954,24 @@ def _resolved_scope(
             return {}, "dynamic_event_identity_missing"
         scope["event_id"] = request.event_id
     return scope, ""
+
+
+def _removed_status_detail(
+    request: DynamicValueExecutionRequest, target_id: str,
+) -> dict[str, JSONValue] | None:
+    # Only the status lifecycle producer may retain a removed instance for its
+    # destruction callback. A payload or an old status binding is insufficient.
+    from .status import StatusLifecyclePlan
+
+    plan = request.status_lifecycle_plan
+    if (type(plan) is not StatusLifecyclePlan
+            or plan.operation not in {"remove", "expire", "dispel", "stack_reduce_remove"}
+            or plan.target_id != target_id or plan.status_id != request.status_id
+            or not isinstance(plan.existing_detail, dict)
+            or plan.existing_detail.get("instance_id") != request.status_instance_id
+            or _status_scope_identity_reason(plan.existing_detail, target_id=target_id, request=request)):
+        return None
+    return plan.existing_detail
 
 
 def _validate_resolved_scope(
@@ -1115,10 +1183,17 @@ def _resolve_operand(
     operand: NumericOperandIR,
     request: DynamicValueExecutionRequest,
     resolved_scope: Mapping[str, Any],
+    *,
+    rules: RuleBook | None = None,
 ) -> tuple[float | None, dict[str, JSONValue], str]:
     if operand.coverage_status != "executable":
         return None, {}, f"numeric_operand_blocked:{operand.blocked_reason}"
-    sources = _operand_binding_sources(store, request, resolved_scope)
+    # An active ability evaluates its operands in the executing caster's scope;
+    # TargetType selects the write destination, not a second ability context.
+    read_scope = ({**resolved_scope, "target_id": request.caster_id,
+                   "ability_instance_id": request.ability_instance_id}
+                  if request.ability_instance_id and not request.status_instance_id else resolved_scope)
+    sources = _operand_binding_sources(store, request, read_scope)
     evaluation: dict[str, JSONValue]
     value: float | None = None
     reason = ""
@@ -1138,6 +1213,7 @@ def _resolve_operand(
             operand,
             request,
             resolved_scope,
+            rules=rules,
         )
         evaluation = {
             "ok": not reason and value is not None,
@@ -1183,22 +1259,32 @@ def _operand_binding_sources(
         for source in request.binding_sources
         if source.get("source_type") != "dynamic_value_store"
     )
+    status_instances = {
+        source["status_instance_id"] for source in sources
+        if source.get("source_type") == "status_instance" and source.get("status_instance_id")
+    }
     entries = store.get("entries")
     visible = {
         key: entry
         for key, entry in (entries.items() if isinstance(entries, dict) else ())
         if isinstance(entry, dict) and _entry_visible(entry, resolved_scope)
+        # Status writes update both the instance and this store. The explicit
+        # instance binding already represents that same value, not a competitor.
+        and not (entry.get("scope_kind") == "status"
+                 and entry.get("status_instance_id") in status_instances)
     }
     indexed = _reindex({"entries": visible})
-    return (
-        *sources,
+    from .task_graph import with_template_binding_sources
+
+    return with_template_binding_sources((
+        *(source for source in sources if source.get("source_type") != "task_template_parameter"),
         {
             "source_type": "dynamic_value_store",
             "entries": indexed["entries"],
             "by_hash": indexed["by_hash"],
             "by_name": indexed["by_name"],
         },
-    )
+    ), tuple(source for source in sources if source.get("source_type") == "task_template_parameter"))
 
 
 def _entry_visible(
@@ -1229,10 +1315,72 @@ def _resolve_source_operand(
     operand: NumericOperandIR,
     request: DynamicValueExecutionRequest,
     resolved_scope: Mapping[str, Any],
+    *,
+    rules: RuleBook | None = None,
 ) -> tuple[float | None, dict[str, JSONValue], str]:
     parameters = operand.parameters
     source_alias = parameters.get("source_target_alias")
-    source_id = _resolve_request_alias(source_alias, request) if source_alias else ""
+    source_id = _resolve_request_alias(state, source_alias, request) if source_alias else ""
+    param_detail = None
+    if request.param_status_scope is not None:
+        scope = request.param_status_scope
+        details = _status_details_by_instance(state, scope.owner_id, scope.instance_id)
+        owner = state.units.get(scope.owner_id)
+        if (len(details) != 1 or owner is None or details[0].get("owner_id") != scope.owner_id
+                or details[0].get("lifecycle_state") != "active"
+                or details[0].get("status_id") not in owner.statuses):
+            return None, {}, "parameter_modifier_instance_not_active"
+        param_detail = details[0]
+    if operand.operand_kind == "character_count":
+        from .target import TargetSystem
+        from .unit_relation import TargetEvaluationContext
+
+        if parameters.get("predicate_json") not in {"", "null"}:
+            return None, {}, "character_count_predicate_not_admitted"
+        if type(parameters.get("alive_only")) is not bool:
+            return None, {}, "character_count_alive_policy_missing"
+        if rules is None:
+            return None, {}, "character_count_target_rules_missing"
+        expression_id = str(parameters.get("source_target_expression_id") or "")
+        expression, reason = rules.target_expression_resolution(expression_id)
+        if expression is None:
+            return None, {}, f"character_count_{reason}"
+        resolved = TargetSystem(rules).resolve_target_expression(state, expression,
+            context=TargetEvaluationContext(request.caster_id,
+                effect_owner_id=request.owner_id or request.caster_id,
+                parameter_entity_ids=(request.param_entity_id,) if request.param_entity_id else (),
+                current_target_id=request.current_action_target_id or None,
+                template_entity_ids=request.template_target_ids),
+            binding_sources=tuple(dict(source) for source in request.binding_sources))
+        if resolved.blocked:
+            return None, resolved.to_json(), resolved.blocked_reason
+        if resolved.rng_events:
+            return None, {}, "character_count_random_target_not_admitted"
+        if any(target_id not in state.units for target_id in resolved.target_ids):
+            return None, {}, "character_count_target_unit_missing"
+        lifecycle = UnitLifecycleSystem()
+        counted = tuple(target_id for target_id in resolved.target_ids
+            if (view := lifecycle.view(state, target_id)).is_present
+            and (parameters.get("alive_only") is not True or view.is_active and view.hp > 0))
+        return float(len(counted)), {"source_type": "character_count", "target_resolution": resolved.to_json(),
+                                    "counted_target_ids": list(counted)}, ""
+    if source_alias == "SnapshotPropertyEntity":
+        # TargetAliasConfig: Caster -> TargetFetchAliveSourceEntity. The status
+        # callback samples the living source again, including subsequent buffs.
+        # See https://www.reddit.com/r/HonkaiStarRail/comments/148tfhn/some_dot_tests/
+        if operand.operand_kind != "unit_property" or resolved_scope.get("scope_kind") != "status":
+            return None, {}, "snapshot_property_status_context_missing"
+        details = _status_details_by_instance(
+            state, str(resolved_scope.get("target_id") or ""), request.status_instance_id,
+        )
+        if len(details) != 1 or details[0].get("caster_id") != request.caster_id:
+            return None, {}, "snapshot_property_status_caster_mismatch"
+        lifecycle = UnitLifecycleSystem().view(state, request.caster_id)
+        # ponytail: absent/dead-source snapshot retention needs its own evidence;
+        # never substitute the target or a value cached at application time.
+        if not lifecycle.is_present or not lifecycle.is_active or lifecycle.hp <= 0:
+            return None, {}, "snapshot_property_alive_source_unavailable"
+        source_id = request.caster_id
     if operand.operand_kind == "dynamic_value":
         source_key = str(parameters.get("source_key") or "")
         source_hash = str(parameters.get("source_hash") or "")
@@ -1246,6 +1394,10 @@ def _resolve_source_operand(
             matches: list[tuple[str, Mapping[str, Any], object]] = []
             for detail in details:
                 if str(detail.get("modifier_name") or "") != source_modifier:
+                    continue
+                if (param_detail is not None and param_detail.get("modifier_name") == source_modifier
+                        and request.param_status_scope.owner_id == source_id
+                        and detail.get("instance_id") != request.param_status_scope.instance_id):
                     continue
                 dynamic_values = detail.get("dynamic_values")
                 if not isinstance(dynamic_values, Mapping):
@@ -1349,6 +1501,9 @@ def _resolve_source_operand(
                 for detail in details
                 if str(detail.get("modifier_name") or "")
                 == str(parameters.get("modifier_name") or "")
+                and (param_detail is None or param_detail.get("modifier_name") != parameters.get("modifier_name")
+                     or request.param_status_scope.owner_id != source_id
+                     or detail.get("instance_id") == request.param_status_scope.instance_id)
             ]
             if len(matches) != 1:
                 return None, {"candidate_count": len(matches)}, (
@@ -1504,7 +1659,13 @@ def _status_dynamic_value_mutation(
         dynamic_values["__by_hash"] = by_hash
         after_details.append({**detail, "dynamic_values": dynamic_values})
     if not found:
+        if _removed_status_detail(request, target_id) is not None:
+            return None, ""  # The scoped store carries the write; do not resurrect the status.
         return None, "dynamic_status_instance_missing"
+    if before_details == after_details:
+        # The operation store still records this invocation; an unchanged
+        # status projection must not emit the same mutation on every hit.
+        return None, ""
     return Mutation(
         op="set",
         path=("units", target_id, "flags", "status_details"),
@@ -1657,6 +1818,84 @@ def status_binding_sources(state: BattleState, unit_ids: tuple[str, ...]) -> tup
     return tuple(sources)
 
 
+def monster_skill_param_binding_sources(
+    rules: RuleBook, state: BattleState, unit_id: str, action_id: str, level: int | None,
+) -> tuple[dict[str, JSONValue], ...]:
+    unit = state.units.get(unit_id)
+    card = rules.monster_data_card_for_entity(unit.template_id) if unit else None
+    definition = rules.action_definition(action_id, level) if level is not None else None
+    if card is None or definition is None or unit.flags.get("monster_data_card_id") != card.card_id:
+        return ()
+    entries: dict[str, JSONValue] = {}
+    hashes: set[str] = set()
+    for index in range(len(definition.param_list)):
+        candidates = tuple(binding for binding in rules.skill_formula_bindings_for_action_param(
+            action_id, level, index, "direct_damage",
+        ) if binding.data_card_kind == "monster" and binding.data_card_id == card.card_id
+            and binding.owner_entity_ref == unit.template_id and binding.coverage_status == "executable")
+        if len(candidates) != 1:
+            continue
+        binding = candidates[0]
+        raw_hash = binding.scaling_basis_expr.get("dynamic_hash")
+        value = binding.param_value.get("Value") if isinstance(binding.param_value, dict) else binding.param_value
+        if (type(raw_hash) not in (str, int) or not str(raw_hash)
+                or type(value) not in (int, float) or not math.isfinite(value)):
+            continue
+        if str(raw_hash) in hashes:
+            return ()
+        hashes.add(str(raw_hash))
+        entry = {"scope": "monster_skill_param", "owner_id": unit_id, "hash": str(raw_hash),
+                 "name": None, "value": float(value),
+                 "source_trace": {"skill_formula_binding_id": binding.binding_id,
+                                  "binding_source": binding.source.to_json()}}
+        entries[_entry_key(entry)] = entry
+    return ({"source_type": "monster_skill_param", "unit_id": unit_id, **_reindex({"entries": entries})},) if entries else ()
+
+
+def character_declared_dynamic_binding_source(
+    rules: RuleBook, state: BattleState, unit_id: str,
+    *, ability_instance_id: str = "", excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    unit = state.units.get(unit_id)
+    card = rules.character_data_card_for_entity(unit.template_id) if unit else None
+    if card is None:
+        return None
+    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
+    configured = bindings.get("by_hash") if isinstance(bindings, dict) else None
+    if not isinstance(configured, dict):
+        return None
+    stored = tuple(entry for entry in store_from_state(state).get("entries", {}).values()
+                   if isinstance(entry, dict) and _entry_visible(entry, {
+                       "target_id": unit_id, "ability_instance_id": ability_instance_id,
+                   }))
+    status_values = tuple(entry for source in status_binding_sources(state, (unit_id,))
+                          for entry in source.get("entries", {}).values())
+    entries = {}
+    for key, binding in configured.items():
+        if str(key) in excluded_hashes:
+            continue
+        info = binding.get("read_info") if isinstance(binding, dict) else None
+        if (not isinstance(info, dict) or set(info) != {"Type", "Index"}
+                or info.get("Type") != "None" or type(info.get("Index")) is not int or info["Index"] < 0
+                or not isinstance(binding.get("source_path"), str) or not binding["source_path"]):
+            continue
+        candidates = tuple(entry for entry in stored if str(entry.get("hash")) == str(key))
+        if not candidates:
+            candidates = tuple(entry for entry in status_values if str(entry.get("hash")) == str(key))
+        values = {float(entry["value"]) for entry in candidates if _finite_number(entry.get("value"))}
+        # ponytail: conflicting committed writers need explicit scope resolution;
+        # never choose a writer by incidental record or dictionary order.
+        if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
+            continue
+        entry = {"scope": "unit", "owner_id": unit_id, "hash": str(key), "name": None, "value": next(iter(values), 0.0),
+                 "source_trace": {"character_data_card": card.source.to_json(), "binding": binding,
+                                  "value_basis": "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero",
+                                  "producer_sources": [item.get("source_trace", {}) for item in candidates]}}
+        entries[_entry_key(entry)] = entry
+    return {"source_type": "character_declared_dynamic_values", "unit_id": unit_id,
+            **_reindex({"entries": entries})} if entries else None
+
+
 def character_skill_param_binding_sources(
     rules: RuleBook,
     state: BattleState,
@@ -1687,7 +1926,115 @@ def character_skill_param_binding_sources(
         )
         if source is not None:
             sources.append(source)
+        rank_source = _character_rank_param_binding_source(rules, state, unit_id, excluded_hashes)
+        if rank_source is not None:
+            sources.append(rank_source)
     return tuple(sources)
+
+
+def _character_rank_param_binding_source(
+    rules: RuleBook, state: BattleState, unit_id: str, excluded_hashes: tuple[str, ...],
+) -> dict[str, JSONValue] | None:
+    unit = state.units[unit_id]
+    if (unit.flags.get("build_mode") != "assembled_character_build"
+            or unit.flags.get("character_build_battle_admission_status") != "admitted"):
+        return None
+    card = rules.character_data_card(str(unit.flags.get("character_data_card_id") or ""))
+    selected = unit.flags.get("selected_eidolon_slot_ids")
+    if (card is None or card.entity_ref != unit.template_id
+            or not isinstance(selected, (list, tuple))):
+        return None
+    configured = rules.character_dynamic_value_bindings_for_card(card.card_id).get("by_hash", {})
+    if not isinstance(configured, dict):
+        return None
+    entries: dict[str, JSONValue] = {}
+    seen_hashes: set[str] = set()
+    ambiguous_hashes: set[str] = set()
+    for slot in rules.character_eidolon_slots_for_card(card.card_id):
+        if slot.eidolon_slot_id not in selected or slot.coverage_status != "executable" or slot.blocked_reason:
+            continue
+        bindings = slot.semantics.get("dynamic_value_bindings", {})
+        by_hash = bindings.get("by_hash", {}) if isinstance(bindings, dict) else {}
+        params = slot.semantics.get("param_values", ())
+        if not isinstance(by_hash, dict) or not isinstance(params, (list, tuple)):
+            continue
+        for raw_hash, binding in by_hash.items():
+            declaration = configured.get(raw_hash)
+            if not isinstance(binding, dict) or not isinstance(declaration, dict) or str(raw_hash) in excluded_hashes:
+                continue
+            info = declaration.get("read_info")
+            index = binding.get("param_index")
+            if (not isinstance(info, dict) or info.get("Type") != "SkillRank"
+                    or info != binding.get("read_info") or binding.get("rank") != slot.rank
+                    or type(index) is not int or index != info.get("Index") or not 0 <= index < len(params)
+                    or type(params[index]) not in (int, float) or not math.isfinite(params[index])):
+                continue
+            hash_key = str(raw_hash)
+            if hash_key in seen_hashes:
+                ambiguous_hashes.add(hash_key)
+            seen_hashes.add(hash_key)
+            entry = {
+                "scope": "character_rank_param", "owner_id": unit_id,
+                "hash": hash_key, "name": None, "value": float(params[index]),
+                "source_trace": {
+                    "character_data_card_id": card.card_id, "eidolon_slot_id": slot.eidolon_slot_id,
+                    "eidolon_slot_source": slot.source.to_json(), "dynamic_value_binding": binding,
+                    "selection_source": "character_build_assembly",
+                },
+            }
+            entries[_entry_key(entry)] = entry
+    indexed = _reindex({"entries": {key: value for key, value in entries.items()
+                                   if value["hash"] not in ambiguous_hashes}})
+    if not indexed["entries"]:
+        return None
+    return {"source_type": "character_rank_param_slot", "unit_id": unit_id,
+            "character_data_card_id": card.card_id, **indexed}
+
+
+def servant_skill_param_binding_source(
+    rules: RuleBook, state: BattleState, unit_id: str, *,
+    excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    from .summon import _formal_owned_combatant_build
+
+    unit = state.units[unit_id]
+    definition = rules.servant_definition(str(unit.flags.get("servant_definition_id") or ""))
+    owner = state.units.get(str(unit.flags.get("owner_id") or ""))
+    if definition is None or owner is None or definition.servant_ref != unit.template_id:
+        return None
+    build, reason = _formal_owned_combatant_build(owner, definition)
+    if reason or build is None or unit.flags.get("owned_combatant_build_result") != build.to_json():
+        return None
+    slots = definition.action_set.get("skill_index_map", {})
+    configured = definition.action_set.get("dynamic_value_bindings", {}).get("by_hash", {})
+    entries: dict[str, JSONValue] = {}
+    for raw_hash, binding in configured.items():
+        info = binding.get("read_info")
+        if not isinstance(info, dict) or info.get("Type") != "SkillParam" or str(raw_hash) in excluded_hashes:
+            continue
+        index = info.get("Index")
+        matches = tuple(entry for entry in slots.values()
+                        if entry.get("role_source", {}).get("skill_trigger_key") == info.get("TriggerKey"))
+        if len(matches) != 1 or type(index) is not int or index < 0:
+            continue
+        levels = tuple(level for level in build.effective_skill_levels if level.action_id == matches[0].get("action_ref"))
+        if len(levels) != 1:
+            continue
+        level = levels[0]
+        action = rules.action_definition(level.action_id, level.effective_level)
+        if action is None or action.coverage_status != "executable" or index >= len(action.param_list):
+            continue
+        value = action.param_list[index]
+        value = value.get("Value") if isinstance(value, dict) else value
+        if not _finite_number(value):
+            continue
+        entry = {"scope": "servant_skill_param", "owner_id": unit_id, "hash": str(raw_hash),
+                 "name": None, "value": float(value),
+                 "source_trace": {"servant_definition": definition.source.to_json(),
+                                  "skill_definition": action.source.to_json(),
+                                  "owned_build_fingerprint": build.result_fingerprint, "binding": binding}}
+        entries[_entry_key(entry)] = entry
+    return {"source_type": "servant_skill_param", "unit_id": unit_id, **_reindex({"entries": entries})} if entries else None
 
 
 def character_skill_param_binding_source(
@@ -1713,7 +2060,7 @@ def character_skill_param_binding_source(
     else:
         card = rules.character_data_card_for_entity(unit.template_id)
     if card is None:
-        return None
+        return servant_skill_param_binding_source(rules, state, unit_id, excluded_hashes=excluded_hashes)
     config_bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
     if not isinstance(config_bindings, dict):
         return None
@@ -1815,7 +2162,7 @@ def character_skill_param_declared_keys(
     state: BattleState,
     unit_id: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return canonical SkillParam keys even when their runtime slot is unavailable."""
+    """Reserve canonical skill/rank keys even when a selected slot is unavailable."""
 
     unit = state.units.get(unit_id)
     if unit is None:
@@ -1833,7 +2180,7 @@ def character_skill_param_declared_keys(
             for raw_hash, binding in by_hash.items()
             if isinstance(binding, dict)
             and isinstance(binding.get("read_info"), dict)
-            and binding["read_info"].get("Type") == "SkillParam"
+            and binding["read_info"].get("Type") in {"SkillParam", "SkillRank"}
         )
     )
     return hashes, ()

@@ -12,6 +12,7 @@ from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
 from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
 from hsr.simulator_v8_clean_core.rules.engine_rule_registry import build_engine_rule_registry
 from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
 from hsr.simulator_v8_clean_core.systems.action_selection import ActionTargetSelectionSystem
 from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSourceFrame, DamageSystem
 
@@ -41,15 +42,28 @@ def _primitive_case():
             owner_id="owner", source_id="source", source_kind="unit", sequence_id="test:sequence",
             target_id="target",
         ),
+        source_trace={"kind": "validation_fixture", "scope": "kill_energy"},
     )
     return state, packet
+
+
+def _settle_packet(state, packet, system=None):
+    executor = CombatExecutor(RuleBook(CanonicalIR("validation")))
+    system = system or DamageSystem()
+    executor.event_dispatcher.damage = system
+    produced = system.apply_packet(state, packet)
+    return executor.commit_eventful_transition(
+        state, mutations=produced.mutations, events=produced.events, records=produced.records,
+        rng_events=produced.rng_events, producer_kind="damage", producer_id="validation:lethal",
+        actor_id=packet.attacker_id, producer_ok=produced.ok, blocked_reason=",".join(produced.errors),
+    )
 
 
 def test_shared_producer_attributes_once_to_living_owner_with_err():
     state, packet = _primitive_case()
     system = DamageSystem()
-    result = system.apply_packet(state, packet)
-    assert result.ok, result.errors
+    result = _settle_packet(state, packet, system)
+    assert not result.errors, result.errors
     energy = [mutation for mutation in result.mutations if mutation.path[-1] == "energy"]
     assert len(energy) == 1 and energy[0].path == ("units", "owner", "energy")
     assert (energy[0].before, energy[0].after) == (20, 32.5)
@@ -57,12 +71,18 @@ def test_shared_producer_attributes_once_to_living_owner_with_err():
     assert sum(event.event_type == "unit.defeated" for event in result.events) == 1
     assert sum(event.event_type == "energy.change" for event in result.events) == 1
     after = MutationReducer().apply_all(state, result.mutations)
-    repeated = system.apply_packet(after, packet)
-    assert repeated.ok and not repeated.mutations
+    assert after == result.after_state and after.units["target"].lifecycle_status == "defeated"
+    assert "pending_defeat" not in after.units["target"].flags
+    stages = [event for event in result.events if event.event_type.startswith("unit.")]
+    assert [event.event_type for event in stages] == [
+        "unit.before_dying", "unit.being_limbo", "unit.limbo_wait_heal", "unit.defeated"]
+    assert all(event.event_id and event.payload["lifecycle_mutation_id"] for event in stages)
+    repeated = _settle_packet(after, packet, system)
+    assert not repeated.errors and not repeated.mutations
     dead_owner = replace(state, units={**state.units, "owner": replace(state.units["owner"], hp=0,
                                                                        lifecycle_status="defeated")})
-    result = system.apply_packet(dead_owner, packet)
-    assert result.ok and not any(m.path[-1] == "energy" for m in result.mutations)
+    result = _settle_packet(dead_owner, packet, system)
+    assert not result.errors and not any(m.path[-1] == "energy" for m in result.mutations)
 
 
 def test_missing_kill_rule_rejects_entire_lethal_damage():
@@ -70,9 +90,42 @@ def test_missing_kill_rule_rejects_entire_lethal_damage():
     registry = build_engine_rule_registry()
     registry = replace(registry, resource_rules=tuple(rule for rule in registry.resource_rules
                                                       if rule.rule_kind != "kill_energy_gain"))
-    result = DamageSystem(engine_rules=registry).apply_packet(state, packet)
-    assert not result.ok and not result.mutations and not result.rng_events
+    result = _settle_packet(state, packet, DamageSystem(engine_rules=registry))
+    assert result.errors and not result.mutations and not result.rng_events
+    assert result.after_state == state
     assert "resource_engine_rule_missing:kill_energy_gain" in result.errors
+
+
+def test_missing_lethal_source_is_a_typed_atomic_rejection():
+    state, packet = _primitive_case()
+    result = DamageSystem().apply_packet(state, replace(packet, source_trace={}))
+    assert not result.ok and not result.mutations and not result.events and not result.rng_events
+    assert result.errors == ("pending_defeat_source_missing:source_trace",)
+
+
+def test_limbo_receiver_and_native_cause_are_enforced():
+    from hsr.simulator_v8_clean_core.systems.event_dispatch import _scope_matches
+    from hsr.simulator_v8_clean_core.systems.unit_lifecycle import UnitLifecycleSystem
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_scope_kind
+
+    state, packet = _primitive_case()
+    produced = DamageSystem().apply_packet(state, packet)
+    pending = MutationReducer().apply_all(state, produced.mutations)
+    plan = UnitLifecycleSystem().pending_defeat(pending, "target")
+    assert type(plan).from_json(plan.to_json()) == plan
+    event = UnitLifecycleSystem().limbo_events(plan)[-1]
+    scope = _status_callback_scope_kind("OnLimboWaitHeal")
+    for explicit in (False, True):
+        assert _scope_matches(event, scope, {"owner_id": "target"}, explicit=explicit)[0]
+        assert not _scope_matches(event, scope, {"owner_id": "owner"}, explicit=explicit)[0]
+    executor = CombatExecutor(RuleBook(CanonicalIR("validation")))
+    for forged in (replace(event, pending_defeat_plan=None),
+                   replace(event, payload={**event.payload, "lifecycle_mutation_id": "wrong"})):
+        rejected = executor.event_dispatcher.dispatch_event(pending, event=forged)
+        assert rejected.errors and not rejected.mutations and rejected.after_state == pending
+    completed = _settle_packet(state, packet)
+    stale = executor.event_dispatcher.dispatch_event(completed.after_state, event=event)
+    assert stale.errors and not stale.mutations and stale.after_state == completed.after_state
 
 
 def test_packet_metadata_reserved_field_rejects_without_losing_evidence():
@@ -191,4 +244,5 @@ def test_real_admitted_action_missing_kill_rule_has_zero_commit(arlan_case):
     after, transition = _execute(rejected, state)
     assert not transition.outcome.successor_eligible and not transition.transaction.mutations
     assert after.snapshot().to_json() == before
-    assert "resource_engine_rule_missing:kill_energy_gain" in transition.outcome.reason_codes
+    assert transition.outcome.reason_codes == (
+        "ability_task_damage_event_blocked:resource_engine_rule_missing:kill_energy_gain",)

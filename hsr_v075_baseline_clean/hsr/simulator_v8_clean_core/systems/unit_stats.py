@@ -67,6 +67,8 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
     "energy_regeneration_rate": ("resource", "energy_regeneration_rate"),
     "break_damage_added_ratio": ("break_bonus", "break_damage_added_ratio"),
     "elation_damage_added_ratio": ("damage_bonus", "elation_damage_added_ratio"),
+    "elation_damage_extra_added_ratio": ("damage_bonus", "elation_damage_extra_added_ratio"),
+    "elation_echo_point": ("resource", "elation_echo_point"),
 }
 
 
@@ -111,14 +113,20 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
             if stat_pool is not None
             else _direct_base_stat(unit, stat)
         )
+        # Event birth panels are initialized from their first source modifier;
+        # the runtime base producer remains that modifier, so do not add the
+        # same value again from the normalized panel's pool.
+        if stat in unit.flags.get("status_produced_base_stats", ()):
+            base_value = 0.0
         static_ratio = (
             stat_pool.static_percentage if stat_pool is not None else 0.0
         )
         static_flat = stat_pool.static_flat if stat_pool is not None else 0.0
         ratio_delta, ratio_terms = _status_modifier_total(unit, bucket, (ratio_key,))
         flat_delta, flat_terms = _status_modifier_total(unit, bucket, (flat_key,))
+        base_delta, base_terms = _status_modifier_total(unit, bucket, (f"{stat}_base_delta",))
         value = (
-            base_value * (1.0 + static_ratio + ratio_delta)
+            (base_value + base_delta) * (1.0 + static_ratio + ratio_delta)
             + static_flat
             + flat_delta
         )
@@ -130,7 +138,7 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
             static_flat=static_flat,
             flat_delta=flat_delta,
             value=value,
-            source_terms=(*ratio_terms, *flat_terms),
+            source_terms=(*base_terms, *ratio_terms, *flat_terms),
         )
 
     resource_config = _RESOURCE_STAT_MODIFIERS.get(stat)
@@ -207,6 +215,8 @@ def effective_status_resistance(
 
 
 def ability_property_value(unit: UnitState, property_name: object) -> float | None:
+    if property_name == "BaseHP":
+        return effective_unit_stat(unit, "max_hp").base_value
     if property_name == "Shield":
         return sum(
             float(item.get("remaining", 0.0))

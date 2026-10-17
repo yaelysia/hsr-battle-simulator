@@ -23,6 +23,7 @@ DAMAGE_RESISTANCE_RULE_APPLICABILITY = "direct and admitted non-direct damage re
 SHIELD_PRIORITY_RULE_APPLICABILITY = "all source-distinguished shield instances"
 NORMAL_DAMAGE_ROUTE_FAMILIES = (
     "direct",
+    "elation",
     "additional",
     "dot",
     "break",

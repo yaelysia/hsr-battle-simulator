@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .discovery import DiscoveryReport
+from .character_ability_scope import character_ability_semantic_kind
 from ..rules.ir import CanonicalIR
 
 
@@ -66,6 +67,7 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "CharacterPlayVO",
         "LookAt",
         "DamagePerformFinish",
+        "DebugLog",
         "GlobalMainIntensityEffect",
         "GlobalTimeSlow",
         "MoveToTargetPosition",
@@ -74,10 +76,12 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "RadialBlurEffect",
         "SetEntityVisible",
         "SetNoShadowCaster",
+        "SetCameraRootFollow",
         "SetTeamFormation",
         "SetTeamRootOffset",
         "SetSkillTargetFormationByPos",
         "ShowBattleUI",
+        "ShowBossInfoBar",
         "HideLevelStage",
         "StartAim",
         "StopAim",
@@ -101,6 +105,7 @@ def ability_task_execution_mode(opcode: str) -> str:
     return (
         "process_only"
         if opcode in PROCESS_ONLY_ABILITY_TASK_OPCODES
+        or bool(opcode) and character_ability_semantic_kind(opcode) == "presentation_only"
         else "runtime_effect"
     )
 
@@ -296,10 +301,12 @@ def _formula_status(ir: CanonicalIR) -> dict[str, dict[str, Any]]:
         "elation_damage": _damage_formula_status(
             ir,
             family="elation",
-            status="blocked",
+            status=("executable" if all(any(formula.kind == kind and formula.coverage_status == "executable"
+                                          for formula in ir.formulas)
+                                      for kind in ("elation_level_base", "elation_multiplier_rule")) else "blocked"),
             reason=(
-                "ElationDamage is discovered as a 4.0 mainline damage family, "
-                "but the complete damage formula is not executable in v0_208"
+                "Shared Elation formula consumes admitted level data, dedicated ratios and typed per-hit points; "
+                "content with missing windows or special overrides remains blocked at its own admission"
             ),
         ),
         "true_damage": _damage_formula_status(
@@ -320,10 +327,11 @@ def _formula_status(ir: CanonicalIR) -> dict[str, dict[str, Any]]:
 def _damage_formula_status(ir: CanonicalIR, family: str, status: str, reason: str) -> dict[str, Any]:
     formulas = [formula for formula in ir.formulas if formula.expression.get("damage_formula_family") == family]
     properties = sorted({str(formula.expression.get("property")) for formula in formulas if formula.expression.get("property")})
-    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable")
+    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable"
+                     or (formula.kind == "elation_multiplier_rule" and formula.coverage_status == "executable"))
     fidelity_status = "discovered_only"
     if formulas:
-        fidelity_status = "blocked" if status == "blocked" else "lowered"
+        fidelity_status = status if status in {"blocked", "executable"} else "lowered"
     return {
         "status": status,
         "fidelity_status": fidelity_status,

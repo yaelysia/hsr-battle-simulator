@@ -35,6 +35,24 @@ def test_timeline_choice_template_can_be_submitted_without_client_repair():
     assert result.after_state.global_flags["turn_owner_id"] == choice.actor_id
 
 
+def test_advance_returns_scheduler_failure_on_the_public_decision(monkeypatch):
+    rules = RuleBook(CanonicalIR(
+        version="decision-failure", timeline_rules=build_engine_rule_registry().timeline_rules,
+    ))
+    state = BattleState(units={"actor": UnitState(
+        "actor", "ally", "validation:decision", max_hp=100, hp=100, action_value=10,
+    )})
+    system = DecisionSystem(rules)
+    pending = system.current_decision(state)
+    failure = system.scheduler.reject_decision_submission(state, "fixture_callback_missing", {})
+    monkeypatch.setattr(system.scheduler, "step", lambda current: failure)
+    advanced = system.advance_to_decision(state)
+    assert advanced.blocked_reason == advanced.decision.blocked_reason == "fixture_callback_missing"
+    assert advanced.after_state is state
+    assert replace(advanced.decision, blocked_reason=pending.blocked_reason) == pending
+    assert advanced.transitions == (failure.transition,)
+
+
 def test_partial_passive_startup_cannot_be_marked_executable():
     source = IRSource("synthetic:passive", "validation", "passive")
     slot = PassiveMechanismSlotIR(

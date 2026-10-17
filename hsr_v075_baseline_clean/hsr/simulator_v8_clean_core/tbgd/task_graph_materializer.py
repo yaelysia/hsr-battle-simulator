@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 from ..immutable_json import thaw_json
+from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..ir_types import IRSource
 from ..rules.control_flow_contract import (
     CharacterControlFlowContractCatalog,
@@ -35,6 +36,7 @@ from ..rules.task_graph import (
     TaskGraphIR,
     TaskGraphNodeIR,
     TaskGraphNumericDefinitionIR,
+    TaskGraphTemplateParameterIR,
     TaskGraphSourceDispositionIR,
     TaskGraphWeightedChoiceIR,
     TaskGraphWeightedSelectionIR,
@@ -100,6 +102,8 @@ _NODE_KIND_BY_ROLE = {
     "template_include": "template_call",
     "template_parameter_fetch": "template_parameter",
     "ability_trigger": "ability_call",
+    "parallel_abilities": "leaf",
+    "parallel_time_barrier": "leaf",
     "action_abort_continuation": "sequence",
     "condition_delegate": "leaf",
     "effect_continuation": "sequence",
@@ -126,6 +130,7 @@ class _FormalTask:
     execution_mode: str
     coverage_status: str
     source: IRSource
+    consumed_template_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,8 +172,8 @@ def build_complete_task_graph_catalog(
     if type(source_catalog) is not CharacterControlFlowContractCatalog:
         raise TypeError("task graph source catalog requires the exact S8A catalog")
     _validate_source_snapshot(source_catalog, source_snapshot, require_complete=True)
-    if source_catalog.issues:
-        raise ValueError("complete task graph catalog cannot admit unresolved source issues")
+    # Source issues remain in the control-flow catalog and blocked dispositions;
+    # they must not prevent unrelated content from compiling.
     dispositions: list[TaskGraphSourceDispositionIR] = []
     for node in source_catalog.nodes:
         domains = tuple(sorted({
@@ -223,7 +228,7 @@ def build_complete_task_graph_catalog(
 
 
 _FORMAL_ABILITY_INVOCATION_ROLES = frozenset(
-    {"action_root", "nested_only", "standalone_root"}
+    {"action_root", "nested_only", "standalone_root", "build_startup"}
 )
 
 
@@ -313,7 +318,8 @@ def _materialize_ability_entries(
     )
     if not phases:
         raise ValueError("formal ability task graph phase selection is empty")
-    if len({item.phase_id for item in phases}) != len(phases):
+    phase_ids = {item.phase_id for item in phases}
+    if len(phase_ids) != len(phases):
         raise ValueError("formal ability task graph phases contain duplicate identities")
     tasks_by_id = {item.task_id: item for item in canonical.ability_tasks}
     if len(tasks_by_id) != len(canonical.ability_tasks):
@@ -351,17 +357,13 @@ def _materialize_ability_entries(
                 tuple(item.task_id for item in callback_tasks),
                 tuple(_ability_task(item) for item in callback_tasks),
             )
-            if entry.status != "materialized" or graph is None:
-                raise ValueError(
-                    "formal ability catalog entry is not materializable:"
-                    f"{entry.entry_id}:{entry.blocked_reason or 'graph_missing'}"
-                )
             entries.append(entry)
-            graphs.append(graph)
+            if graph is not None:
+                graphs.append(graph)
     formal_task_ids = {
         item.task_id
         for item in canonical.ability_tasks
-        if item.phase_id in {phase.phase_id for phase in phases}
+        if item.phase_id in phase_ids
     }
     if selected_task_ids != formal_task_ids:
         raise ValueError("formal ability task graph phase denominator is incomplete")
@@ -459,6 +461,11 @@ def _validate_status_callback_denominator(
                             tasks = item.get(branch)
                             if isinstance(tasks, Sequence) and not isinstance(tasks, str) and tasks:
                                 expected.add((source_path, f"{base}.{branch}"))
+            point_callbacks = value.get("OnElationPointChange")
+            if point_callbacks is not None:
+                point_rows = point_callbacks if isinstance(point_callbacks, (list, tuple)) else (point_callbacks,)
+                for index, _ in enumerate(point_rows):
+                    expected.add((source_path, f"{path}.OnElationPointChange[{index}]"))
             for key, child in value.items():
                 visit(child, f"{path}.{key}", source_path)
         elif isinstance(value, Sequence) and not isinstance(value, str):
@@ -531,7 +538,7 @@ def materialize_selected_character_task_graphs(
     if type(canonical) is not CanonicalIR:
         raise TypeError("selected character materialization requires exact CanonicalIR")
     source_paths = selected_source_paths
-    if (type(source_paths) is not frozenset or not source_paths
+    if (type(source_paths) is not frozenset
             or not all(isinstance(path, str) and path for path in source_paths)
             or not source_paths.issubset(source_snapshot.documents)):
         raise ValueError("selected character snapshot source closure missing")
@@ -545,24 +552,31 @@ def materialize_selected_character_task_graphs(
         raise ValueError("selected character status task owner missing")
     context = _prepare_materialization(source_catalog, canonical, source_snapshot)
     complete = context.base
-    slices = []
+    entries = []
+    graphs = []
 
-    def append_slice(entry_kind, owner_id, callback_kind, ordered, tasks):
+    def append_entry(entry_kind, owner_id, callback_kind, ordered, tasks):
         entry, graph = _materialize_entry(context, entry_kind, owner_id, callback_kind, ordered, tasks)
-        graphs = (graph,) if graph is not None else ()
-        dispositions = _materialization_dispositions(complete.source_dispositions, (entry,), graphs)
-        slices.append(_catalog(source_catalog, "formal_slice", dispositions, (entry,), graphs))
+        entries.append(entry)
+        if graph is not None:
+            graphs.append(graph)
 
     if len({phase.phase_id for phase in canonical.ability_phases}) != len(canonical.ability_phases):
         raise ValueError("selected character phase identities duplicated")
     if len({task.task_id for task in canonical.ability_tasks}) != len(canonical.ability_tasks):
         raise ValueError("selected character task identities duplicated")
+    tasks_by_phase = defaultdict(list)
+    for task in canonical.ability_tasks:
+        tasks_by_phase[task.phase_id].append(task)
+    tasks_by_callback = defaultdict(list)
+    for task in canonical.status_callback_tasks:
+        tasks_by_callback[task.callback_id].append(task)
     for phase in canonical.ability_phases:
         if phase.invocation_role not in _FORMAL_ABILITY_INVOCATION_ROLES:
             continue
         if phase.source.source_path not in source_paths:
             raise ValueError("selected character formal phase outside selected source closure")
-        phase_tasks = tuple(task for task in canonical.ability_tasks if task.phase_id == phase.phase_id)
+        phase_tasks = tuple(tasks_by_phase[phase.phase_id])
         if (not phase_tasks or len(phase.task_ids) != len(phase_tasks)
                 or set(phase.task_ids) != {task.task_id for task in phase_tasks}):
             raise ValueError("selected character ability phase task ledger incomplete")
@@ -572,17 +586,21 @@ def materialize_selected_character_task_graphs(
             tasks = tuple(task for task in phase_tasks if task.callback_kind == callback_kind)
             selected = {task.task_id for task in tasks}
             ordered = tuple(task_id for task_id in phase.task_ids if task_id in selected)
-            append_slice("ability_phase_callback", phase.phase_id, callback_kind, ordered,
+            append_entry("ability_phase_callback", phase.phase_id, callback_kind, ordered,
                          tuple(_ability_task(task) for task in tasks))
     for callback in callbacks:
-        tasks = tuple(task for task in canonical.status_callback_tasks if task.callback_id == callback.callback_id)
+        tasks = tuple(tasks_by_callback[callback.callback_id])
         if not tasks:
             if callback.task_ids:
                 raise ValueError("selected character taskless callback has root identities")
             continue
-        append_slice("status_callback", callback.callback_id, callback.event,
+        append_entry("status_callback", callback.callback_id, callback.event,
                      _ordered_status_task_ids(callback, tasks), tuple(_status_task(task) for task in tasks))
-    return merge_task_graph_slices(complete, slices)
+    if not entries:
+        return complete
+    dispositions = _materialization_dispositions(complete.source_dispositions, tuple(entries), tuple(graphs))
+    return _catalog(source_catalog, "formal_slice" if len(entries) == 1 else "formal_catalog",
+                    dispositions, tuple(entries), tuple(graphs))
 
 
 def materialize_ability_phase_task_graph(
@@ -817,9 +835,11 @@ def _status_task(task: StatusCallbackTaskIR) -> _FormalTask:
             if task.linked_standalone_graph_id
             else ""
         ),
-        "process_only" if task.opcode == "DamagePerformFinish" and task.blocked_reason == "source_proven_presentation_only" else "runtime_effect",
-        "audit_only" if task.opcode == "DamagePerformFinish" and task.blocked_reason == "source_proven_presentation_only" else task.coverage_status,
+        "process_only" if task.blocked_reason == "source_proven_presentation_only" else "runtime_effect",
+        "audit_only" if task.blocked_reason == "source_proven_presentation_only" else task.coverage_status,
         task.source,
+        (str(task.task_payload.get("committed_break_template_id") or "")
+         if task.opcode == "IncludeTaskListTemplate" and task.event == "OnTriggerStanceCountDown" else ""),
     )
 
 
@@ -1114,7 +1134,26 @@ def _build_graph(
                 "task_graph_execution",
                 control.termination.source,
             ))
-        node_kind, status, owner_domains, reason = _node_status(control, task)
+        node_kind, status, owner_domains, reason = _node_status(control, task, references)
+        template_parameters = ()
+        if node_kind == "template_call" and control is not None:
+            template_refs = refs_by_node.get(control.node_id, ())
+            if len(template_refs) != 1:
+                raise _Blocked("template_parameter_reference_not_unique")
+            template = template_by_id.get(template_refs[0].resolved_template_id)
+            if template is None:
+                raise _Blocked("template_parameter_definition_missing")
+            if task.consumed_template_id:
+                raw = _raw_source_value(source_snapshot, sources[task.task_id].source_path,
+                                        str(sources[task.task_id].evidence["json_path"]))
+                values = raw.get("DynamicValues", {}) if isinstance(raw, Mapping) else None
+                if (not isinstance(values, Mapping) or raw.get("DynamicStrings")
+                        or set(values) - {"DitherRangeX", "DitherRangeY", "UIMessageHeight"}):
+                    raise _Blocked("consumed_template_parameters_not_admitted")
+                # L0 closed this include against the domain-applied template.
+                # Its remaining supplied values feed only excluded presentation.
+            else:
+                template_parameters = _materialize_template_parameters(source_snapshot, sources[task.task_id], template)
         if (
             control is not None
             and control.family == task.family == "RandomConfig"
@@ -1153,6 +1192,7 @@ def _build_graph(
             owner_domains,
             sources[task.task_id],
             reason,
+            template_parameters,
         ))
     has_obligation = any(item.materialization_status == "deferred" for item in nodes) or any(
         ref.resolution_status != "resolved" for node in nodes for ref in node.references
@@ -1418,6 +1458,38 @@ def _materialize_weighted_selection(
     )
 
 
+def _materialize_template_parameters(
+    snapshot: CharacterAbilityRawSnapshot,
+    source: IRSource,
+    template: ControlFlowTemplateDefinitionIR,
+) -> tuple[TaskGraphTemplateParameterIR, ...]:
+    raw = _raw_source_value(snapshot, source.source_path, str(source.evidence["json_path"]))
+    if not isinstance(raw, Mapping):
+        raise _Blocked("template_parameter_call_source_invalid")
+    if raw.get("DynamicStrings"):
+        raise _Blocked("template_dynamic_string_parameters_not_admitted")
+    values = raw.get("DynamicValues", {})
+    if not isinstance(values, Mapping):
+        raise _Blocked("template_dynamic_values_invalid")
+    declared = {item.key: item for item in template.parameters if item.parameter_kind == "dynamic_float"}
+    result = []
+    for name, value in sorted(values.items()):
+        if not isinstance(name, str) or not name:
+            raise _Blocked("template_dynamic_parameter_name_invalid")
+        destination_hash = str(tbgd_dynamic_key_hash(name))
+        declaration = declared.get(destination_hash)
+        if declaration is None or declaration.read_type != "None" or declaration.index != 0:
+            raise _Blocked(f"template_dynamic_parameter_not_declared:{name}")
+        expression = lower_numeric_expression(value)
+        if expression.get("supported") is not True:
+            raise _Blocked(f"template_dynamic_parameter_expression_not_admitted:{name}")
+        parameter_source = IRSource(source.source_path, source.raw_type, source.raw_id,
+            {**dict(source.evidence), "json_path": f"{source.evidence['json_path']}.DynamicValues[{json.dumps(name, ensure_ascii=True)}]",
+             "parameter_declaration_source": declaration.source.to_json()})
+        result.append(TaskGraphTemplateParameterIR(name, declaration.key, expression, parameter_source))
+    return tuple(result)
+
+
 def _raw_source_value(
     source_snapshot: CharacterAbilityRawSnapshot,
     source_path: str,
@@ -1565,8 +1637,13 @@ def _is_process_only_settlement_barrier_shape(
         and control.control_role == "settlement_barrier"
         and control.coverage_status != "blocked"
         and not control.blocked_reason
-        and not control.peer_field_names
-        and not control.field_responsibilities
+        and ((not control.peer_field_names and not control.field_responsibilities)
+             or (control.family == "DamagePerformFinish"
+                 and control.peer_field_names == ("SkipDeathSettlement",)
+                 and len(control.field_responsibilities) == 1
+                 and control.field_responsibilities[0].field_name == "SkipDeathSettlement"
+                 and control.field_responsibilities[0].responsibility == "downstream_gameplay"
+                 and control.field_responsibilities[0].owner_stage == "p9_s11"))
         and not control.branches
         and not control.template_reference_ids
         and control.termination.termination_kind == "not_applicable"
@@ -1610,9 +1687,14 @@ def _process_only_settlement_barrier_effect(
         or contract.get("opcode") != task.opcode
         or contract.get("source_shape_status") != "admitted"
         or bool(contract.get("blocked_reason"))
-        or source_fields != ["$type"]
+        or source_fields not in (["$type"], ["$type", "SkipDeathSettlement"])
         or not isinstance(source_field_types, Mapping)
-        or dict(source_field_types) != {"$type": "str"}
+        or dict(source_field_types) != {"$type": "str", **(
+            {"SkipDeathSettlement": "bool"} if "SkipDeathSettlement" in source_fields else {}
+        )}
+        or ("SkipDeathSettlement" in source_fields and (
+            task.opcode != "DamagePerformFinish" or effect.payload.get("SkipDeathSettlement") is not True
+        ))
     ):
         raise _Blocked(
             "task_graph_process_only_settlement_barrier_effect_contract_invalid"
@@ -1661,6 +1743,17 @@ def _references(
     indexes: _DefinitionIndexes,
     template_refs: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]],
 ) -> tuple[TaskGraphDefinitionReferenceIR, ...]:
+    if (task.opcode == "Remodifier" and control is not None
+            and any(field.field_name == "PredicateFilter" for field in control.field_responsibilities)):
+        conditions = indexes.conditions.get(task.condition_id, ())
+        if not task.condition_id:
+            raise _Blocked("task_graph_remodifier_predicate_definition_missing")
+        if len(conditions) == 1 and (
+            conditions[0].source.source_path != task.source.source_path
+            or conditions[0].source.evidence.get("json_path")
+            != str(task.source.evidence.get("json_path") or "") + ".PredicateFilter"
+        ):
+            raise _Blocked("task_graph_remodifier_predicate_source_mismatch")
     definitions: tuple[
         tuple[str, str, Mapping[str, tuple[Any, ...]], str], ...
     ] = (
@@ -1792,6 +1885,7 @@ def _is_single_projectile_impact_shape(
 def _node_status(
     control: CharacterControlFlowNodeIR | None,
     task: _FormalTask,
+    references: Sequence[TaskGraphDefinitionReferenceIR] = (),
 ) -> tuple[str, str, tuple[str, ...], str]:
     if control is None:
         if task.family in {"WaitAnimState", "WaitTimelineFinish", "WaitSecond"} and task.execution_mode == "process_only":
@@ -1805,14 +1899,37 @@ def _node_status(
         return "leaf", "materialized", ("task_graph_execution",), ""
     if _is_death_settlement_barrier_shape(control, task):
         return "leaf", "materialized", ("task_graph_execution",), ""
+    if (
+        control.family == task.opcode == task.family == "CreateServant"
+        and control.control_role == "servant_creation_continuation"
+        and control.coverage_status != "blocked" and not control.blocked_reason
+        and task.execution_mode == "runtime_effect" and task.coverage_status == "executable"
+        and task.effect_id and not task.condition_id and not task.target_expression_id
+        and not task.ability_definition_id and not control.template_reference_ids
+        and len(control.branches) == 1 and control.branches[0].branch_kind == "servant_created"
+        and control.termination.termination_kind == control.termination.status == "not_applicable"
+        and control.downstream_stages == ("p9_s8b",)
+        and len(references) == 1 and references[0].reference_kind == "effect"
+        and references[0].definition_id == task.effect_id and references[0].resolution_status == "resolved"
+    ):
+        return "sequence", "materialized", ("task_graph_execution",), ""
     if control.family == task.opcode == task.family == "Retarget" and task.execution_mode == "process_only" and task.coverage_status == "audit_only":
         return "leaf", "materialized", ("task_graph_execution",), ""
-    if (control.family == task.opcode == task.family == "Retarget"
+    if (control.family == task.opcode == task.family and task.family in {"Retarget", "GLOABNLLLEL"}
             and control.control_role == "target_scope" and control.coverage_status != "blocked"
             and not control.blocked_reason and task.coverage_status == "executable"
             and task.target_expression_id
+            and any(ref.reference_kind == "target" and ref.resolution_status == "resolved"
+                    for ref in references)
             and {_owner_domain(stage) for stage in control.downstream_stages}
             == {"task_graph_execution", "hit_random_sequence"}):
+        return "target_scope", "materialized", ("task_graph_execution",), ""
+    if (control.family == task.opcode == task.family == "Remodifier"
+            and control.control_role == "status_scope" and control.coverage_status != "blocked"
+            and not control.blocked_reason and task.coverage_status == "executable"
+            and task.target_expression_id
+            and any(ref.reference_kind == "target" and ref.resolution_status == "resolved"
+                    for ref in references)):
         return "target_scope", "materialized", ("task_graph_execution",), ""
     open_domains = tuple(sorted({
         _owner_domain(stage)
@@ -2030,7 +2147,18 @@ def _materialization_dispositions(
             )
         )
         retire_runtime_retarget = (
-            item.source_kind == "control_node" and item.family == "Retarget"
+            item.source_kind == "control_node" and item.family in {"Retarget", "GLOABNLLLEL"}
+            and bool(linked_nodes) and all(
+                node.source_family == node.opcode == item.family and node.node_kind == "target_scope"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and any(ref.reference_kind == "target" and ref.resolution_status == "resolved"
+                        for ref in node.references)
+                for node in linked_nodes
+            )
+        )
+        retire_runtime_remodifier = (
+            item.source_kind == "control_node" and item.family == "Remodifier"
             and bool(linked_nodes) and all(
                 node.source_family == node.opcode == item.family and node.node_kind == "target_scope"
                 and node.materialization_status == "materialized"
@@ -2086,6 +2214,7 @@ def _materialization_dispositions(
             and not (retire_death_barrier and domain == "unit_lifecycle")
             and not (retire_presentation_retarget and domain == "hit_random_sequence")
             and not (retire_runtime_retarget and domain == "hit_random_sequence")
+            and not (retire_runtime_remodifier and domain == "status_lifecycle")
             and not (retire_single_projectile and domain == "hit_random_sequence")
         )
         result.append(replace(

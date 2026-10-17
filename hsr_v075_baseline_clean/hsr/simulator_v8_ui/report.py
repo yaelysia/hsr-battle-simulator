@@ -225,16 +225,6 @@ def build_action_prompt(
             "targets": [],
             "decision": decision,
         }
-    if len(actor_ids) != 1:
-        return {
-            "available": False,
-            "current_unit_id": "",
-            "current_unit_name": "",
-            "reason": "当前决策包含多个行动者，UI 路线输入暂未接通",
-            "slots": [],
-            "targets": [],
-            "decision": decision,
-        }
     slots = [
         _decision_choice_prompt_slot(choice, scenario_data, units_by_id)
         for choice in choices
@@ -732,7 +722,7 @@ def _battlefield_unit_card(
         or unit_id,
         "side": unit_data.get("side") or scenario_unit.get("side"),
         "entity_ref": entity_ref,
-        "position": unit_data.get("position") or scenario_unit.get("position"),
+        "position": unit_data.get("position") if unit_data.get("position") is not None else scenario_unit.get("position"),
         "level": unit_data.get("level") or scenario_unit.get("level"),
         "hp": hp,
         "max_hp": max_hp,
@@ -766,6 +756,7 @@ def _decision_choice_prompt_slot(
         "enemy_fixed_sequence": "敌方动作",
         "queue_action": "队列动作",
         "ultimate_window": "终结技",
+        "manual_ultimate_request": "请求终结技",
         "timeline_actor": "行动者选择",
     }
     return {

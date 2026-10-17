@@ -187,21 +187,30 @@ class CharacterInitialResourceValue:
 
 @dataclass(frozen=True)
 class CharacterInitialConditionInput:
-    hp_mode: Literal["full"]
+    hp_mode: Literal["full", "ratio", "absolute"]
     initial_energy: str | None
     initial_resource_values: tuple[CharacterInitialResourceValue, ...] = ()
+    hp_value: str | None = None
 
     def __post_init__(self) -> None:
-        if self.hp_mode != "full":
-            raise ValueError("S2 formal character initial hp_mode must be full")
+        if self.hp_mode not in {"full", "ratio", "absolute"}:
+            raise ValueError("initial hp_mode must be full, ratio or absolute")
+        if self.hp_mode == "full":
+            if self.hp_value is not None:
+                raise ValueError("full initial HP must not specify hp_value")
+        else:
+            object.__setattr__(self, "hp_value", canonical_decimal(self.hp_value, "hp_value"))
+            hp = Decimal(self.hp_value)
+            if hp <= 0 or self.hp_mode == "ratio" and hp > 1:
+                raise ValueError("initial HP must be positive; its ratio cannot exceed one")
         if self.initial_energy is not None:
             object.__setattr__(
                 self,
                 "initial_energy",
                 canonical_decimal(self.initial_energy, "initial_energy"),
             )
-        if self.initial_energy not in {None, "0"}:
-            raise ValueError("S2 formal character initial energy must be explicitly zero")
+            if Decimal(self.initial_energy) < 0:
+                raise ValueError("initial energy cannot be negative")
         if not isinstance(self.initial_resource_values, (list, tuple)) or not all(
             isinstance(item, CharacterInitialResourceValue)
             for item in self.initial_resource_values
@@ -224,6 +233,7 @@ class CharacterInitialConditionInput:
         return {
             "hp_mode": self.hp_mode,
             "initial_energy": self.initial_energy,
+            **({"hp_value": self.hp_value} if self.hp_value is not None else {}),
             "initial_resource_values": [
                 item.to_json() for item in self.initial_resource_values
             ],
@@ -234,14 +244,15 @@ class CharacterInitialConditionInput:
         row = _closed_mapping(
             value,
             "initial_condition",
-            {"hp_mode", "initial_energy", "initial_resource_values"},
+            {"hp_mode", "hp_value", "initial_energy", "initial_resource_values"},
         )
         raw_values = row.get("initial_resource_values", ())
         if not isinstance(raw_values, (list, tuple)):
             raise TypeError("initial_resource_values must be a JSON array")
         raw_energy = row.get("initial_energy")
         return cls(
-            hp_mode=cast(Literal["full"], require_text(row.get("hp_mode"), "hp_mode")),
+            hp_mode=cast(Literal["full", "ratio", "absolute"], require_text(row.get("hp_mode"), "hp_mode")),
+            hp_value=require_text(row["hp_value"], "hp_value") if row.get("hp_value") is not None else None,
             initial_energy=(
                 require_text(raw_energy, "initial_energy")
                 if raw_energy is not None

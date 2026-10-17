@@ -1,0 +1,111 @@
+{
+  "scenario_id": "mvp:arlan-serval-natasha-e0-lv80-two-waves",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "multiwave:arlan",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "empty",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "9aa8f0345f608fb28d7b2cdb314b78ba969bf08bd8723426389e7ea760546416"
+        },
+        "input_fingerprint": "f4abd7eda49d56cc26ef79bbb05edd65105c602026fc838df35d1af8718c7eb6"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "serval",
+      "side": "ally",
+      "entity_ref": "avatar:1103",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "multiwave:serval",
+        "character_card_id": "character_data_card:avatar:1103",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "empty",
+          "character_card_id": "character_data_card:avatar:1103",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "a7e429fde84336cbfa68f6acd15a5fff2b0267acdd0aa0f878e0f91b94cd43da"
+        },
+        "input_fingerprint": "4a25f75847cf454b231a843bd86098c63a37736715472b3da01ca436f9a179fc"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 2,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "multiwave:natasha",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "empty",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "e53bdd03455e1fd978a7674266ad057c7885d19421d2a25a582950bdb4da10e0"
+        },
+        "input_fingerprint": "b425ec5b7e0bbee46c213c58256720e2d9c6203fd585db386782a4e0133c65df"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "201010110",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "StageConfig 201010110 waves only. Verified opening-clear route; gunner bleed snapshot remains blocked. Melee attacks have a separate natural-turn example. Full stage environment is not included."
+    }
+  }
+}

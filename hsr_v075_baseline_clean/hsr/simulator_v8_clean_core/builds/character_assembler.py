@@ -216,7 +216,7 @@ def assemble_character_build(
     if dynamic_errors:
         return _blocked(build, *dynamic_errors)
     dynamic_graph_refs = _admit_bound_character_dynamic_roots(
-        rules, card, tuple(skill_levels), dynamic_graph_refs,
+        rules, card, tuple(skill_levels), dynamic_graph_refs, selector_specializations,
     )
     diagnostics.extend(
         CharacterMechanismDiagnostic(
@@ -236,6 +236,7 @@ def assemble_character_build(
         build,
         selected_nodes,
         selected_bindings,
+        tuple(skill_levels),
     )
     diagnostics.extend(owned_diagnostics)
     try:
@@ -284,6 +285,7 @@ def _admit_bound_character_dynamic_roots(
     card: CharacterDataCardIR,
     skill_levels: tuple[CharacterSkillLevelResolution, ...],
     roots: tuple[CharacterDynamicGraphRef, ...],
+    specializations: tuple[CharacterSelectorSpecialization, ...],
 ) -> tuple[CharacterDynamicGraphRef, ...]:
     catalog = rules.ir.character_ability_source_graph_catalog
     if catalog is None:
@@ -291,8 +293,53 @@ def _admit_bound_character_dynamic_roots(
     levels = {item.action_id: item.effective_level for item in skill_levels}
     actions = {item.action_source_id: item for item in catalog.action_sources}
     admitted: set[str] = set()
+    blockers: dict[str, str] = {}
     for root in roots:
-        if root.root_kind != "ability_definition" or root.build_binding_ids:
+        if root.build_binding_ids:
+            graph, reason = rules.character_build_startup_graph(root.build_binding_ids)
+            if graph is not None:
+                admitted.add(root.dynamic_graph_ref_id)
+            else:
+                blockers[root.dynamic_graph_ref_id] = reason
+            continue
+        if root.root_kind == "source_graph":
+            # Global modifier branches already execute in their attached status
+            # graph; admitting their build selectors must not execute them again.
+            selected = tuple(item for item in specializations
+                             if item.parent_dynamic_graph_ref_id == root.dynamic_graph_ref_id
+                             and item.selected_subtree_path)
+            resolved = bool(selected)
+            for item in selected:
+                relation = rules.character_build_selector_relation(item.selector_relation_id)
+                if (relation is None or relation.source_graph_id != root.source_graph_id
+                        or relation.character_data_card_id != card.card_id
+                        or relation.location_kind != "source_root"):
+                    resolved = False
+                    break
+                tasks = tuple(task for task in rules.ir.status_callback_tasks
+                              if task.source.source_path == relation.selector_source.source_path
+                              and task.source.evidence.get("json_path") == relation.branch_root_path
+                              and task.condition_id)
+                if len(tasks) != 1:
+                    resolved = False
+                    break
+                callback = rules.status_callback(tasks[0].callback_id)
+                if callback is None or callback.coverage_status != "executable" or callback.blocked_reason:
+                    resolved = False
+                    break
+                graph = rules.query_formal_task_graph(
+                    "status_callback", callback.callback_id, callback.event,
+                    (task.task_id for task in rules.status_callback_tasks_for_callback(callback.callback_id)),
+                )
+                if graph.status != "resolved" or callback.task_ids != graph.value.root_formal_task_ids:
+                    resolved = False
+                    break
+            if resolved:
+                admitted.add(root.dynamic_graph_ref_id)
+            else:
+                blockers[root.dynamic_graph_ref_id] = "character_selector_status_callback_graph_not_admitted"
+            continue
+        if root.root_kind != "ability_definition":
             continue
         for relation in catalog.bindings:
             action = actions.get(relation.action_source_id)
@@ -318,7 +365,8 @@ def _admit_bound_character_dynamic_roots(
                 (task.task_id for task in tasks if task.callback_kind == callback),
             ).status == "resolved" for callback in callbacks):
                 admitted.add(root.dynamic_graph_ref_id)
-    return tuple(replace(root, blocked_reason="") if root.dynamic_graph_ref_id in admitted else root
+    return tuple(replace(root, blocked_reason="" if root.dynamic_graph_ref_id in admitted
+                         else blockers.get(root.dynamic_graph_ref_id, root.blocked_reason))
                  for root in roots)
 
 
@@ -788,7 +836,7 @@ def validate_character_build_admission(
         if owned.battle_admission_status != "admitted":
             errors.append(f"owned_combatant_build_not_admitted:{owned.owned_build_id}")
         expected_stat_bindings, stat_binding_errors = _owned_combatant_stat_bindings(
-            definition
+            rules, definition, (*result.effective_skill_levels, *owned.effective_skill_levels),
         )
         normalized_stat_bindings = tuple(
             sorted(expected_stat_bindings, key=lambda item: item.property_type)
@@ -1257,6 +1305,7 @@ def _assemble_owned_combatants(
     build: CharacterBuildInput,
     selected_nodes: tuple[CharacterTraceNodeIR, ...],
     selected_bindings: tuple[CharacterBuildBindingIR, ...],
+    owner_skill_levels: tuple[CharacterSkillLevelResolution, ...],
 ) -> tuple[
     tuple[OwnedCombatantBuildAssemblyResult, ...],
     tuple[CharacterMechanismDiagnostic, ...],
@@ -1305,6 +1354,7 @@ def _assemble_owned_combatants(
             build,
             selected_bindings,
             definition,
+            owner_skill_levels,
         )
         for definition in sorted(
             definitions_by_id.values(),
@@ -1320,6 +1370,7 @@ def _assemble_owned_combatant_definition(
     build: CharacterBuildInput,
     selected_bindings: tuple[CharacterBuildBindingIR, ...],
     definition: ServantDefinitionIR,
+    owner_skill_levels: tuple[CharacterSkillLevelResolution, ...],
 ) -> OwnedCombatantBuildAssemblyResult:
     reasons: list[str] = []
     relation = definition.owner_relation_for(card.entity_ref)
@@ -1334,8 +1385,6 @@ def _assemble_owned_combatant_definition(
             or f"owned_combatant_definition_not_executable:{definition.coverage_status}"
         )
 
-    stat_bindings, stat_reasons = _owned_combatant_stat_bindings(definition)
-    reasons.extend(stat_reasons)
     skill_levels, action_bindings, skill_reasons = _owned_combatant_skill_levels(
         rules,
         card,
@@ -1343,6 +1392,10 @@ def _assemble_owned_combatant_definition(
         definition,
     )
     reasons.extend(skill_reasons)
+    stat_bindings, stat_reasons = _owned_combatant_stat_bindings(
+        rules, definition, (*owner_skill_levels, *skill_levels),
+    )
+    reasons.extend(stat_reasons)
     lifecycle_sources, lifecycle_source_reasons = _ir_sources_from_json_rows(
         definition.lifecycle_source.get("source_trace")
         if isinstance(definition.lifecycle_source, Mapping)
@@ -1403,7 +1456,9 @@ def _assemble_owned_combatant_definition(
 
 
 def _owned_combatant_stat_bindings(
+    rules: RuleBook,
     definition: ServantDefinitionIR,
+    skill_levels: tuple[CharacterSkillLevelResolution, ...],
 ) -> tuple[tuple[OwnedCombatantStatBinding, ...], tuple[str, ...]]:
     components = definition.stat_source.get("components")
     if not isinstance(components, Mapping):
@@ -1428,17 +1483,36 @@ def _owned_combatant_stat_bindings(
         ):
             reasons.append(f"owned_combatant_stat_component_blocked:{property_type}")
             continue
+        values = []
+        component_sources = []
         try:
-            offset = canonical_decimal(str(base_component.get("value")), base_key)
-            scale = canonical_decimal(str(inherit_component.get("value")), inherit_key)
-        except (TypeError, ValueError):
-            reasons.append(f"owned_combatant_stat_value_invalid:{property_type}")
+            for key, component in ((base_key, base_component), (inherit_key, inherit_component)):
+                if component.get("source_kind") == "param_ref":
+                    levels = [item for item in skill_levels if item.skill_id == component.get("skill_id")]
+                    if len(levels) != 1:
+                        raise ValueError("owned_combatant_stat_skill_level_not_unique")
+                    level = levels[0]
+                    action = rules.action_definition(level.action_id, level.effective_level)
+                    index = component.get("param_index")
+                    if (action is None or action.definition_id != level.action_definition_id
+                            or action.coverage_status != "executable" or type(index) is not int
+                            or index < 0 or index >= len(action.param_list)):
+                        raise ValueError("owned_combatant_stat_skill_parameter_missing")
+                    value = action.param_list[index]
+                    value = value.get("Value") if isinstance(value, Mapping) else value
+                    values.append(canonical_decimal(str(value), key))
+                    component_sources.extend(source.to_json() for source in (
+                        definition.source, action.source, *(item.source for item in level.sources),
+                    ))
+                else:
+                    values.append(canonical_decimal(str(component.get("value")), key))
+                    component_sources.extend(component.get("source_trace") or ())
+            offset, scale = values
+        except (TypeError, ValueError) as exc:
+            reasons.append(f"owned_combatant_stat_value_invalid:{property_type}:{exc}")
             continue
         sources, source_reasons = _ir_sources_from_json_rows(
-            [
-                *(base_component.get("source_trace") or ()),
-                *(inherit_component.get("source_trace") or ()),
-            ],
+            component_sources,
             f"owned_combatant_stat_source:{property_type}",
         )
         reasons.extend(source_reasons)

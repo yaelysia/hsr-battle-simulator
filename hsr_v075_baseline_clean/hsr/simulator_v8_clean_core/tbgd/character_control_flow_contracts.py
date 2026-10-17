@@ -48,6 +48,7 @@ _HYBRID_BRANCH_FIELDS: dict[str, tuple[str, ...]] = {
     "AddWeakByTeamAttackType": ("OnNoNewWeak",),
     "CharacterChangeModel": ("OnSuccess",),
     "CreateBattleEvent": ("OnBattleEventCreate",),
+    "CreateServant": ("OnServantCreate",),
     "GLOABNLLLEL": ("TaskList",),
     "Remodifier": ("TaskList",),
     "Retarget": ("TaskList", "FailedTaskList"),
@@ -113,6 +114,12 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     "CreateBattleEvent": {
         **_rules("downstream_gameplay", "p9_s9", "AllowDuplicate", "EventID", "IsDynamicPreload", "PropertyFromTarget", "SpecifyCaster", "Team"),
         **_rules("child_graph", "p9_s8b", "OnBattleEventCreate"),
+    },
+    "CreateServant": {
+        **_rules("numeric_contract", "p9_s4", "ServantID"),
+        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
+        **_rules("presentation_excluded", "excluded", "IsDynamicPreload"),
+        **_rules("child_graph", "p9_s8b", "OnServantCreate"),
     },
     "FireMultiProjectiles": {
         **_rules("target_contract", "p9_s5b", "CasterTargetType", "TargetType"),
@@ -221,6 +228,8 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("target_contract", "p9_s5b", "AbilityInherentTargetType", "TargetType"),
     },
     "TriggerParallelTaskListTemplate": _rules("control_structure", "p9_s8c", "Templates"),
+    "TriggerParallelAbility": _rules("ability_source_contract", "p9_s8b", "ParallelAbilityList"),
+    "WaitParallelTimeStamp": _rules("numeric_contract", "p9_s4", "WaitTime"),
     "TriggerSkipDeadHandler": {},
     "TaskTemplateFetchParamSequence": _rules("control_structure", "p9_s8b", "ParamName"),
     "TurnInsertAction": {
@@ -265,6 +274,7 @@ _ROLE_BY_FAMILY = {
     "ConditionLoopExecuteTaskListWithInterval": "conditional_loop",
     "DamagePerformFinish": "settlement_barrier",
     "CreateBattleEvent": "event_creation_continuation",
+    "CreateServant": "servant_creation_continuation",
     "FireMultiProjectiles": "projectile_sequence",
     "FireProjectile": "projectile_sequence",
     "FireWaveProjectile": "projectile_sequence",
@@ -291,6 +301,8 @@ _ROLE_BY_FAMILY = {
     "SwitchCaseByDynamicValue": "switch_branch",
     "TriggerAbility": "ability_trigger",
     "TriggerParallelTaskListTemplate": "parallel_templates",
+    "TriggerParallelAbility": "parallel_abilities",
+    "WaitParallelTimeStamp": "parallel_time_barrier",
     "TriggerSkipDeadHandler": "death_barrier",
     "TaskTemplateFetchParamSequence": "template_parameter_fetch",
     "TurnInsertAction": "action_abort_continuation",
@@ -313,6 +325,7 @@ _ROLE_OWNER = {
     "ordered_target_scope": "p9_s8b",
     "action_abort_continuation": "p9_s8b",
     "event_creation_continuation": "p9_s8b",
+    "servant_creation_continuation": "p9_s8b",
     "template_parameter_fetch": "p9_s8b",
     "conditional_loop": "p9_s8b",
     "counted_loop": "p9_s8b",
@@ -321,6 +334,8 @@ _ROLE_OWNER = {
     "predicate_branch": "p9_s8b",
     "switch_branch": "p9_s8b",
     "ability_trigger": "p9_s8b",
+    "parallel_abilities": "p9_s8b",
+    "parallel_time_barrier": "p9_s8b",
     "condition_barrier": "p9_s8c",
     "delayed_sequence": "p9_s8c",
     "custom_sync_barrier": "p9_s8c",
@@ -369,6 +384,9 @@ class _TemplateProblem:
     json_path: str
     content_sha256: str
     detail: str
+    name: str = ""
+    scope_kind: str = ""
+    namespace_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -645,6 +663,8 @@ def _branch_specs(
         task_list("effect_success", "OnSuccess")
     elif family == "CreateBattleEvent":
         task_list("event_created", "OnBattleEventCreate")
+    elif family == "CreateServant":
+        task_list("servant_created", "OnServantCreate")
     elif family in {"Retarget", "GLOABNLLLEL"}:
         task_list("target_scope", "TaskList")
         task_list("target_scope_failed", "FailedTaskList")
@@ -867,7 +887,7 @@ def _discover_local_templates(
                         continue
                     unknown_fields = set(raw) - {"Name", "TaskList", "DynamicStrings", "DynamicValues"}
                     if unknown_fields:
-                        problems.append(_TemplateProblem("template_field_unclassified", source_path, template_path, hashes[source_path], ",".join(sorted(unknown_fields))))
+                        problems.append(_TemplateProblem("template_field_unclassified", source_path, template_path, hashes[source_path], ",".join(sorted(unknown_fields)), raw.get("Name") if isinstance(raw.get("Name"), str) else "", scope_kind, path))
                         continue
                     name = raw.get("Name")
                     tasks = raw.get("TaskList")
@@ -875,11 +895,11 @@ def _discover_local_templates(
                         problems.append(_TemplateProblem("template_definition_invalid", source_path, f"{template_path}.Name", hashes[source_path], "name_invalid"))
                         continue
                     if not isinstance(tasks, list) or any(not isinstance(item, Mapping) for item in tasks):
-                        problems.append(_TemplateProblem("template_definition_invalid", source_path, f"{template_path}.TaskList", hashes[source_path], "task_list_invalid"))
+                        problems.append(_TemplateProblem("template_definition_invalid", source_path, f"{template_path}.TaskList", hashes[source_path], "task_list_invalid", name, scope_kind, path))
                         continue
                     parameters, parameter_error = _template_parameters(raw, template_path)
                     if parameter_error:
-                        problems.append(_TemplateProblem("template_parameter_invalid", source_path, template_path, hashes[source_path], parameter_error))
+                        problems.append(_TemplateProblem("template_parameter_invalid", source_path, template_path, hashes[source_path], parameter_error, name, scope_kind, path))
                         continue
                     drafts.append(
                         _TemplateDraft(
@@ -941,7 +961,7 @@ def _discover_shared_templates(
                 continue
             unknown_fields = set(raw) - {"Name", "TaskList", "DynamicStrings", "DynamicValues"}
             if unknown_fields:
-                problems.append(_TemplateProblem("template_field_unclassified", relative, template_path, content_sha256, ",".join(sorted(unknown_fields))))
+                problems.append(_TemplateProblem("template_field_unclassified", relative, template_path, content_sha256, ",".join(sorted(unknown_fields)), raw.get("Name") if isinstance(raw.get("Name"), str) else "", "shared_global", "$"))
                 continue
             name = raw.get("Name")
             tasks = raw.get("TaskList")
@@ -949,11 +969,11 @@ def _discover_shared_templates(
                 problems.append(_TemplateProblem("template_definition_invalid", relative, f"{template_path}.Name", content_sha256, "name_invalid"))
                 continue
             if not isinstance(tasks, list) or any(not isinstance(item, Mapping) for item in tasks):
-                problems.append(_TemplateProblem("template_definition_invalid", relative, f"{template_path}.TaskList", content_sha256, "task_list_invalid"))
+                problems.append(_TemplateProblem("template_definition_invalid", relative, f"{template_path}.TaskList", content_sha256, "task_list_invalid", name, "shared_global", "$"))
                 continue
             parameters, parameter_error = _template_parameters(raw, template_path)
             if parameter_error:
-                problems.append(_TemplateProblem("template_parameter_invalid", relative, template_path, content_sha256, parameter_error))
+                problems.append(_TemplateProblem("template_parameter_invalid", relative, template_path, content_sha256, parameter_error, name, "shared_global", "$"))
                 continue
             drafts.append(
                 _TemplateDraft(
@@ -1211,8 +1231,8 @@ def _template_candidates(
     name: str,
     source_path: str,
     node_path: str,
-    drafts: tuple[_TemplateDraft, ...],
-) -> tuple[_TemplateDraft, ...]:
+    drafts: tuple[_TemplateDraft | _TemplateProblem, ...],
+) -> tuple[_TemplateDraft | _TemplateProblem, ...]:
     same_source = tuple(item for item in drafts if item.source_path == source_path and item.name == name)
     if family == "IncludeGlobalTaskListTemplate":
         return tuple(
@@ -1247,6 +1267,7 @@ def _template_references_for_node(
     node_path: str,
     content_sha256: str,
     drafts: tuple[_TemplateDraft, ...],
+    problems: tuple[_TemplateProblem, ...] = (),
 ) -> tuple[ControlFlowTemplateReferenceIR, ...]:
     requests: list[tuple[str, str, str]] = []
     if family in {"IncludeTaskListTemplate", "IncludeGlobalTaskListTemplate"}:
@@ -1267,12 +1288,14 @@ def _template_references_for_node(
             name=name,
             source_path=source_path,
             node_path=node_path,
-            drafts=drafts,
+            drafts=(*drafts, *problems),
         )
-        candidate_ids = tuple(sorted(item.template_id for item in candidates))
-        reason = "" if len(candidate_ids) == 1 else (
-            f"control_flow_template_missing:{name}" if not candidate_ids else f"control_flow_template_ambiguous:{name}"
+        candidate_ids = tuple(sorted(item.template_id for item in candidates if type(item) is _TemplateDraft))
+        reason = "" if len(candidates) == 1 else (
+            f"control_flow_template_missing:{name}" if not candidates else f"control_flow_template_ambiguous:{name}"
         )
+        if len(candidates) == 1 and type(candidates[0]) is _TemplateProblem:
+            reason = f"control_flow_template_invalid:{name}:{candidates[0].detail}"
         reference_id = _stable_id("control_flow_template_ref", node_id, index, name, field_path)
         references.append(
             ControlFlowTemplateReferenceIR(
@@ -1281,7 +1304,7 @@ def _template_references_for_node(
                 name,
                 cast(Any, kind),
                 candidate_ids,
-                candidate_ids[0] if len(candidate_ids) == 1 else "",
+                candidate_ids[0] if not reason else "",
                 _source(
                     source_path=source_path,
                     raw_type=family,
@@ -1521,6 +1544,7 @@ def build_character_control_flow_contract_catalog(
             node_path=node_path,
             content_sha256=content_sha256,
             drafts=drafts,
+            problems=tuple((*local_template_problems, *shared_template_problems)),
         )
         references.extend(node_references)
         termination = _termination(node_id, occurrence.family, raw, node_source)

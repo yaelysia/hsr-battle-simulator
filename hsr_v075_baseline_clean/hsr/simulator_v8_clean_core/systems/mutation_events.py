@@ -30,6 +30,7 @@ MUTATION_BACKED_EVENT_TYPES = frozenset({
     "weakness.stacked",
     "elation.time.started",
     "elation.time.ended",
+    "elation.points.changed",
 }) | resource_production_event_types()
 
 PRE_MUTATION_BLOCK_REASON = "pre_mutation_listener_recompute_not_admitted"
@@ -221,6 +222,11 @@ def events_for_mutation(
                 },
             ),
         )
+
+    if path == ("global_flags", "elation_runtime"):
+        from .elation import elation_points_event_for_mutation
+
+        return elation_points_event_for_mutation(mutation, actor_id=actor_id, source_id=source_id)
 
     elation_event_type = _elation_time_event_type(path, mutation)
     if elation_event_type:
@@ -626,6 +632,10 @@ def before_toughness_calculation_event(
     )
     if not packet_identity:
         raise ValueError("toughness_before_calculation_packet_identity_missing")
+    metadata = packet.get("metadata")
+    execution_path = metadata.get("ability_task_execution_path") if isinstance(metadata, dict) else None
+    if isinstance(execution_path, str) and execution_path:
+        packet_identity = f"{packet_identity}:{execution_path}"
     return GameEvent(
         event_type="toughness.before_hit",
         source_id=actor_id,
@@ -829,7 +839,7 @@ def _heal_overflow_amount(mutation: Mutation, delta: float) -> float:
 
 def _is_action_delay_mutation(mutation: Mutation) -> bool:
     return (
-        mutation.source == "status_callback_system"
-        and mutation.metadata.get("opcode") == "SetActionDelay"
-        and bool(mutation.metadata.get("action_delay_emission_id"))
+        mutation.metadata.get("opcode") == "SetActionDelay"
+        and (mutation.source == "status_callback_system" and bool(mutation.metadata.get("action_delay_emission_id"))
+             or mutation.source == "effect_system" and bool(mutation.metadata.get("effect_id")))
     )

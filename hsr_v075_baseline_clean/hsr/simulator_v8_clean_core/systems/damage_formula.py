@@ -23,6 +23,7 @@ from .rng import (
 )
 from .scaling_basis import resolve_scaling_basis
 from .unit_stats import effective_unit_stat, status_modifier_numeric_value
+from .toughness_state import read_toughness_segments
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class DamageFormulaInput:
     rng_mode: str | None = None
     direct_modifier_terms: tuple[dict[str, JSONValue], ...] = ()
     decision_identity: dict[str, JSONValue] = field(default_factory=dict)
+    extra_scaling_ratio: float | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +236,25 @@ class DirectDamageFormula:
             key="damage_value",
         )
         flat_damage = sum(float(term.get("value") or 0.0) for term in flat_terms)
+        extra_damage = 0.0
+        extra_terms = ()
+        extra_metadata = {}
+        extra_basis = formula_input.scaling_basis.get("extra_scaling_basis")
+        if extra_basis is not None or formula_input.extra_scaling_ratio is not None:
+            extra_ratio = formula_input.extra_scaling_ratio
+            if type(extra_ratio) not in (int, float) or not math.isfinite(extra_ratio):
+                raise ValueError("extra_scaling_ratio_missing_or_invalid")
+            extra_result = resolve_scaling_basis(state,
+                attacker_id=formula_input.attacker_id, target_id=formula_input.target_id,
+                basis=extra_basis, source_trace=formula_input.source_trace)
+            if not extra_result.ok or extra_result.value is None:
+                raise ValueError(extra_result.blocked_reason or "extra_scaling_basis_not_admitted")
+            extra_damage = max(0.0, extra_result.value * extra_ratio)
+            extra_terms = (_applied_term("scaling_basis", extra_result.unit_id, "base",
+                extra_result.stat, extra_result.unit_ref, "always", extra_damage,
+                "resolved_extra_scaling_basis", "scaling_basis.extra_scaling_basis"),)
+            extra_metadata = {"extra_scaling_basis": extra_result.to_json(),
+                              "extra_scaling_ratio": extra_ratio, "extra_damage": extra_damage}
         adjusted_scaling_value = scaling_value * (1.0 + attack_added_ratio)
         base_bucket = DamageFormulaBucket(
             bucket="base",
@@ -254,15 +275,17 @@ class DirectDamageFormula:
                     _direct_modifier_applied_term(term, "base")
                     for term in (*attack_ratio_terms, *flat_terms)
                 ),
+                *extra_terms,
             ),
             metadata={
                 "unmodified_scaling_value": scaling_value,
                 "attack_added_ratio": attack_added_ratio,
                 "adjusted_scaling_value": adjusted_scaling_value,
                 "flat_damage": flat_damage,
+                **extra_metadata,
             },
         )
-        base_damage = max(0.0, adjusted_scaling_value * scaling_ratio + flat_damage)
+        base_damage = max(0.0, adjusted_scaling_value * scaling_ratio + flat_damage + extra_damage)
 
         crit_resolution, rng_event, crit_bucket = _resolve_crit(formula_input, actor)
         damage_bonus_mult, damage_bonus_bucket = _damage_bonus_bucket(
@@ -271,7 +294,7 @@ class DirectDamageFormula:
             formula_input,
         )
         def_mult, defense_bucket = _defense_bucket(actor, target, formula_input, self.engine_rules)
-        res_mult, resistance_bucket = _resistance_bucket(actor, target, element, self.engine_rules)
+        res_mult, resistance_bucket = _resistance_bucket(actor, target, element, self.engine_rules, formula_input)
         damage_taken_mult, damage_taken_bucket = _damage_taken_bucket(
             target,
             formula_input,
@@ -334,12 +357,38 @@ class DirectDamageFormula:
 
 def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[CritResolution, RNGEvent, DamageFormulaBucket]:
     crit_modifier_terms = _direct_modifier_terms(formula_input, bucket="crit", key="critical_chance")
-    crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
     crit_damage_modifier_terms = _direct_modifier_terms(
         formula_input,
         bucket="crit",
         key="critical_damage",
     )
+    return resolve_damage_crit(
+        formula_input.state, actor, formula_input.target_id,
+        identity={
+            "action_id": formula_input.action_definition.action_id,
+            "action_level": formula_input.action_definition.level,
+            "definition_id": formula_input.action_definition.definition_id,
+            "task_id": str(formula_input.decision_identity.get("task_id") or "damage_formula"),
+            "phase_id": str(formula_input.decision_identity.get("phase_id") or "damage"),
+            "hit_index": int(formula_input.decision_identity.get("hit_index") or 0),
+            "derived_event_id": str(formula_input.decision_identity.get("derived_event_id")
+                                    or f"damage_crit:{formula_input.state.event_index}:{formula_input.action_definition.definition_id}"),
+        },
+        source_trace=formula_input.source_trace, crit_mode=formula_input.crit_mode,
+        rng_choices=formula_input.rng_choices, rng_mode=formula_input.rng_mode,
+        crit_modifier_terms=crit_modifier_terms, crit_damage_modifier_terms=crit_damage_modifier_terms,
+    )
+
+
+def resolve_damage_crit(
+    state: BattleState, actor: UnitState, target_id: str, *,
+    identity: dict[str, JSONValue], source_trace: dict[str, JSONValue],
+    crit_mode: str | None = None, rng_choices: dict[str, JSONValue] | None = None,
+    rng_mode: str | None = None, crit_modifier_terms: tuple[dict[str, JSONValue], ...] = (),
+    crit_damage_modifier_terms: tuple[dict[str, JSONValue], ...] = (),
+) -> tuple[CritResolution, RNGEvent, DamageFormulaBucket]:
+    """Shared character-damage crit roll; identity comes from the actual producer."""
+    crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
     crit_damage_bonus = sum(
         float(term.get("value") or 0.0) for term in crit_damage_modifier_terms
     )
@@ -359,7 +408,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     base_crit_damage = _resource(actor, "critical_damage")
     crit_rate = _clamp(base_crit_rate + status_crit_rate + crit_bonus, 0.0, 1.0)
     crit_damage = base_crit_damage + status_crit_damage + crit_damage_bonus
-    mode = str(formula_input.crit_mode or "").lower()
+    mode = str(crit_mode or "").lower()
     forced_outcome_id = ""
     if mode in {"crit", "forced_crit", "true"}:
         forced_outcome_id = "crit"
@@ -368,27 +417,18 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     elif mode == "expected":
         raise ValueError("expected crit mode is not executable in v0_209")
     elif mode not in {"", "deterministic", "deterministic_seed", "auto"}:
-        raise ValueError(f"unknown crit mode {formula_input.crit_mode!r}")
+        raise ValueError(f"unknown crit mode {crit_mode!r}")
     identity = {
+        **identity,
         "decision_scope": "damage_crit",
         "decision_index": 0,
-        "action_id": formula_input.action_definition.action_id,
-        "action_level": formula_input.action_definition.level,
-        "definition_id": formula_input.action_definition.definition_id,
-        "task_id": str(formula_input.decision_identity.get("task_id") or "damage_formula"),
-        "phase_id": str(formula_input.decision_identity.get("phase_id") or "damage"),
-        "hit_index": int(formula_input.decision_identity.get("hit_index") or 0),
-        "target_id": formula_input.target_id,
-        "derived_event_id": str(
-            formula_input.decision_identity.get("derived_event_id")
-            or f"damage_crit:{formula_input.state.event_index}:{formula_input.action_definition.definition_id}"
-        ),
+        "target_id": target_id,
     }
     choice_key = choice_key_for_identity("crit", identity)
     event_id = event_id_for_identity(
         "crit",
         identity,
-        event_index=formula_input.state.event_index,
+        event_index=state.event_index,
     )
     request = RNGRequest(
         rng_type="crit",
@@ -396,7 +436,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         event_id=event_id,
         choice_key=choice_key,
         source="damage_formula",
-        before_state=formula_input.state.rng_state,
+        before_state=state.rng_state,
         decision_kind="probability",
         outcomes=(
             RNGOutcome(
@@ -410,11 +450,11 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
                 probability=1.0 - crit_rate,
             ),
         ),
-        source_trace=formula_input.source_trace,
+        source_trace=source_trace,
         metadata={
-            "actor_id": formula_input.attacker_id,
-            "target_id": formula_input.target_id,
-            "action_definition_id": formula_input.action_definition.definition_id,
+            "actor_id": actor.unit_id,
+            "target_id": target_id,
+            "action_definition_id": identity.get("definition_id", ""),
             "crit_rate": crit_rate,
             "crit_damage": crit_damage,
         },
@@ -422,8 +462,8 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     )
     resolution_result = resolve_rng_request(
         request,
-        rng_choices=formula_input.rng_choices,
-        rng_mode=formula_input.rng_mode or "deterministic_seed",
+        rng_choices=rng_choices or {},
+        rng_mode=rng_mode or "deterministic_seed",
         forced_outcome_id=forced_outcome_id or None,
     )
     if not resolution_result.ok or resolution_result.selected_outcome is None or resolution_result.event is None:
@@ -437,7 +477,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     multiplier = 1.0 + crit_damage if is_crit else 1.0
     resolution = CritResolution(
         event_id=event_id,
-        mode=mode or str(formula_input.rng_mode or "deterministic"),
+        mode=mode or str(rng_mode or "deterministic"),
         is_crit=is_crit,
         crit_rate=crit_rate,
         crit_damage=crit_damage,
@@ -481,7 +521,7 @@ def _damage_bonus_bucket(
     element_key = f"{element}_damage_added_ratio" if element else ""
     element_bonus = _resource(actor, element_key) if element_key else 0.0
     specialized_keys: tuple[str, ...] = ()
-    if formula_input.attack_type in {"Pursued", "ElationDamage"}:
+    if formula_input.attack_type == "ElationDamage":
         specialized_keys = ("elation_damage_added_ratio",)
     elif formula_input.attack_type == "DOT":
         specialized_keys = ("dot_damage_added_ratio",)
@@ -610,6 +650,7 @@ def _resistance_bucket(
     target: UnitState,
     element: str | None,
     engine_rules: EngineRuleRegistry,
+    formula_input: DamageFormulaInput,
 ) -> tuple[float, DamageFormulaBucket]:
     element_res_key = f"{element}_resistance" if element else ""
     element_pen_key = f"{element}_res_pen" if element else ""
@@ -625,9 +666,15 @@ def _resistance_bucket(
     selected_res = (element_res if uses_element_res else all_res) + status_res_delta
     element_pen = _resource(actor, element_pen_key) if element_pen_key else 0.0
     all_pen = _resource(actor, "all_res_pen")
+    direct_terms = tuple(
+        term
+        for key in ((element_pen_key, "all_res_pen") if element_pen_key else ("all_res_pen",))
+        for term in _direct_modifier_terms(formula_input, bucket="resistance", key=key)
+    )
+    direct_pen = sum(float(term["value"]) for term in direct_terms)
     multiplier, engine_rule = evaluate_resistance_multiplier(
         resistance=selected_res,
-        penetration=element_pen + all_pen,
+        penetration=element_pen + all_pen + direct_pen,
         registry=engine_rules,
     )
     target_res_term = (
@@ -640,6 +687,7 @@ def _resistance_bucket(
         _applied_term("actor.resources", actor.unit_id, "resistance", element_pen_key or "element_res_pen", "actor", f"element={element}", element_pen, _neutral_reason(element_pen), f"resources.{element_pen_key}" if element_pen_key else "resources.<element>_res_pen"),
         _applied_term("actor.resources", actor.unit_id, "resistance", "all_res_pen", "actor", "always", all_pen, _neutral_reason(all_pen), "resources.all_res_pen"),
         *status_terms,
+        *(_direct_modifier_applied_term(term, "resistance") for term in direct_terms),
     )
     skipped_terms = (
         (
@@ -658,6 +706,7 @@ def _resistance_bucket(
         metadata={
             "selected_resistance": selected_res,
             "status_resistance_delta": status_res_delta,
+            **({"direct_resistance_penetration": direct_pen} if direct_terms else {}),
             "engine_rule": engine_rule.to_json(),
         },
     )
@@ -763,13 +812,17 @@ def damage_reduction_residuals(
 def toughness_state_multiplier(target: UnitState) -> float:
     if target.flags.get("toughness_reduction_mode") == "status":
         return 1.0
-    return 0.9 if target.toughness > 0 and not target.flags.get("broken", False) else 1.0
+    segments = read_toughness_segments(target)
+    return 0.9 if segments.remaining_segments > 0 and not target.flags.get("broken", False) else 1.0
 
 
 def _toughness_state_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]:
     broken = bool(target.flags.get("broken", False))
+    segments = read_toughness_segments(target)
     multiplier = toughness_state_multiplier(target)
     reason = "positive_toughness_not_broken" if multiplier == 0.9 else "broken_or_no_positive_toughness"
+    if segments.maximum_segments > 1:
+        reason = "remaining_segments_not_broken" if multiplier == 0.9 else "broken_or_no_remaining_segments"
     if target.flags.get("toughness_reduction_mode") == "status":
         reason = "reduction_owned_by_source_status"
     return multiplier, DamageFormulaBucket(
@@ -778,8 +831,11 @@ def _toughness_state_bucket(target: UnitState) -> tuple[float, DamageFormulaBuck
         applied_terms=(
             _applied_term("target.state", target.unit_id, "toughness_state", "current_toughness", "target", "always", target.toughness, reason, "unit.toughness"),
             _applied_term("target.state", target.unit_id, "toughness_state", "broken", "target", "always", 1.0 if broken else 0.0, reason, "flags.broken"),
+            _applied_term("target.state", target.unit_id, "toughness_state", "remaining_toughness_segments", "target", "always", segments.remaining_segments, reason,
+                          "flags.stance_segments_remaining" if segments.maximum_segments > 1 else "unit.toughness"),
         ),
-        metadata={"broken": broken, "current_toughness": target.toughness, "max_toughness": target.max_toughness},
+        metadata={"broken": broken, "current_toughness": target.toughness, "max_toughness": target.max_toughness,
+                  "toughness_segments": segments.to_json()},
     )
 
 

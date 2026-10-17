@@ -1,0 +1,154 @@
+{
+  "commands": [
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201010110:wave:0:pos:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:0"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201010110:wave:1:pos:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:201010110:wave:1:pos:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201010110:wave:1:pos:2",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:2"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201010110:wave:1:pos:2",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:2"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201010110:wave:1:pos:2"
+      ]
+    }
+  ]
+}

@@ -104,6 +104,34 @@ class TimelineSystem:
     def __init__(self) -> None:
         self.lifecycle = UnitLifecycleSystem()
 
+    def register_current_skill_delay_cost(
+        self, state: BattleState, *, actor_id: str, identity: str,
+        modify_function: str, normalized_value: float, source: str,
+        metadata: dict[str, JSONValue],
+    ) -> Mutation:
+        if actor_id not in state.units or state.global_flags.get("turn_owner_id") != actor_id:
+            raise ValueError("current_skill_delay_cost_actor_not_active_owner")
+        if (not identity or modify_function not in {"Set", "Add"}
+                or type(normalized_value) not in (int, float) or not isfinite(normalized_value)
+                or not isinstance(metadata.get("source_trace"), dict) or not metadata["source_trace"]):
+            raise ValueError("current_skill_delay_cost_input_invalid")
+        _, _, _, _, reason = _turn_action_delay_cost(state, actor_id)
+        if reason:
+            raise ValueError(reason)
+        key = "turn_action_delay_cost_modifiers"
+        raw = state.global_flags.get(key)
+        before = dict(raw or {})
+        if identity in before:
+            raise ValueError("turn_action_delay_cost_duplicate_identity")
+        index = max((entry["operation_index"] for entry in before.values()), default=-1) + 1
+        entry = {**metadata, "actor_id": actor_id, "modify_function": modify_function,
+                 "operation_index": index, "normalized_value": float(normalized_value)}
+        return Mutation(
+            op="set", path=("global_flags", key), before=raw, after={**before, identity: entry},
+            reason="register current skill normalized action delay cost", source=source,
+            before_exists=key in state.global_flags, metadata={**entry, "identity": identity},
+        )
+
     def initialize_action_values(
         self,
         state: BattleState,
@@ -690,6 +718,9 @@ class TimelineSystem:
                     ).to_json(),
                 ),
             )
+        locked = unit.flags.get("action_delay_locked") is True
+        if locked:
+            after = before
         adjustment_metadata = {
             **(metadata or {}),
             **(
@@ -706,6 +737,7 @@ class TimelineSystem:
                 "amount": float(amount),
                 "before_remaining_action_value": before,
                 "after_remaining_action_value": after,
+                "suppressed_by_action_delay_lock": locked,
             },
         }
         plan = TimelineAdjustmentPlan(

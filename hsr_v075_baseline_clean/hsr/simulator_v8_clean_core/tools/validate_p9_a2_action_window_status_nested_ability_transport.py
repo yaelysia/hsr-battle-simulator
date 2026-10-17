@@ -242,6 +242,7 @@ def _request(
         frame_ids=("frame:root", "frame:child"),
         target_ids=target_ids,
         iteration_index=None,
+        execution_path=("invocation:a2:fixture:child", "root:0"),
     )
 
 
@@ -265,6 +266,7 @@ def _single_graph_request(
         frame_ids=(f"frame:{identity}",),
         target_ids=target_ids,
         iteration_index=None,
+        execution_path=(f"invocation:{identity}", "root:0"),
     )
 
 
@@ -393,7 +395,7 @@ def _fast_component_matrix() -> tuple[dict[str, bool], dict[str, Any]]:
         ),
         None,
         sentinel_hooks,
-        [],
+        [], [], set(),
     )
     cast(Any, routed.leaf)(child_request, state)
     cast(Any, routed.condition)(child_request, state)

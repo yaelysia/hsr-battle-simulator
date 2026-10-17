@@ -17,6 +17,7 @@ from .schema import (
     RouteStepSpec,
     ScenarioSpec,
     SetupResourceSpec,
+    TechniqueSetupSpec,
     TimelineSetupSpec,
     UnitSpec,
     WaveSetupSpec,
@@ -212,6 +213,10 @@ def _battle_setup(data: dict[str, Any]) -> BattleSetupSpec:
     initial_summons = tuple(
         _initial_summon(item, index) for index, item in enumerate(_optional_list(raw, "initial_summons", "battle_setup.initial_summons", default=[]))
     )
+    techniques = tuple(
+        _technique(item, index)
+        for index, item in enumerate(_optional_list(raw, "techniques", "battle_setup.techniques", default=[]))
+    )
     objective = _objective(raw.get("objective"), "battle_setup.objective") if raw.get("objective") is not None else None
     metadata = _optional_json_dict(raw, "metadata", "battle_setup.metadata", default={})
     world_level = _optional_int(raw, "world_level", "battle_setup.world_level")
@@ -227,6 +232,19 @@ def _battle_setup(data: dict[str, Any]) -> BattleSetupSpec:
         initial_summons=initial_summons,
         objective=objective,
         metadata=metadata,
+        techniques=techniques,
+    )
+
+
+def _technique(raw: Any, index: int) -> TechniqueSetupSpec:
+    path = f"battle_setup.techniques[{index}]"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path} must be an object")
+    if set(raw) != {"actor_id", "action_ref"}:
+        raise ValueError(f"{path} accepts only actor_id and action_ref; level and parameters come from the build")
+    return TechniqueSetupSpec(
+        actor_id=_required_str(raw, "actor_id", f"{path}.actor_id"),
+        action_ref=_required_str(raw, "action_ref", f"{path}.action_ref"),
     )
 
 

@@ -1,0 +1,78 @@
+{
+  "scenario_id": "ordinary:serval-natasha-vs-antibaryon",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "serval",
+      "side": "ally",
+      "entity_ref": "avatar:1103",
+      "level": 40,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:serval:e0-lv40-p2",
+        "character_card_id": "character_data_card:avatar:1103",
+        "level": 40,
+        "promotion": 2,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:serval:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1103",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "cae8aff1526e7fbd44d7bb429c0bd5313fed3395fe237e85a608e5f8392c5f1c"
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 40,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv40-p2",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 40,
+        "promotion": 2,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "81730c7c69d626d09427e3013f3512becf1be23fad0b52a637858e7544a00b76"
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "400020800",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Two level-28 Antibaryons; wave configuration only."
+    }
+  }
+}

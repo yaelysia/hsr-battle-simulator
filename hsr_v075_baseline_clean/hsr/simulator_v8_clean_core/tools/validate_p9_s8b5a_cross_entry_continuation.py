@@ -115,7 +115,7 @@ def _run() -> tuple[dict[str, bool], dict[str, Any]]:
     request, continuation = captured[0]
     malformed_request_rejected = _raises(
         lambda: TaskGraphHookRequest(
-            "fake", "graph", "node", "task", "opcode", "family", (), {}, ("other",), (), (), None
+            "fake", "graph", "node", "task", "opcode", "family", (), {}, ("other",), (), (), None, ("fixture",)
         ),
         ValueError,
     )

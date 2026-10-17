@@ -11,7 +11,39 @@ from ..rules.expression_ir import is_typed_numeric_expression, numeric_fixed
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from .mutation_events import enrich_event_with_mutation_payload
-from .damage_pipeline import DamageStagePipeline
+from .damage_pipeline import DamagePipelineResult, DamageStagePipeline
+from .toughness_state import read_toughness_segments
+
+
+_TOUGHNESS_OVERFLOW_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class ToughnessOverflow:
+    packet: ToughnessPacket
+    source_mutation: Mutation
+    effective_amount: float
+    remaining_amount: float
+    next_remaining_segments: int
+    amount_result: NumericEvaluationResult
+    pipeline: DamagePipelineResult
+    event_index: int
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        if (self._producer_token is not _TOUGHNESS_OVERFLOW_PRODUCER
+                or mutation.source != "toughness_system"
+                or mutation.path != ("units", self.packet.target_id, "toughness") or mutation.after != 0
+                or type(mutation.before) not in (int, float) or mutation.before <= 0
+                or type(self.effective_amount) not in (int, float) or not math.isfinite(self.effective_amount)
+                or type(self.event_index) is not int or self.event_index < 0
+                or type(self.remaining_amount) not in (int, float) or not math.isfinite(self.remaining_amount)
+                or self.remaining_amount <= 0 or not math.isclose(
+                    self.remaining_amount, self.effective_amount - mutation.before)
+                or type(self.next_remaining_segments) is not int or self.next_remaining_segments < 1
+                or not self.amount_result.ok or not self.pipeline.ok):
+            raise ValueError("toughness_overflow_requires_its_depletion_producer")
 
 
 @dataclass(frozen=True)
@@ -56,6 +88,7 @@ class ToughnessApplicationResult:
     mutations: tuple[Mutation, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     errors: tuple[str, ...] = ()
+    overflow: ToughnessOverflow | None = None
 
 
 class ToughnessSystem:
@@ -112,7 +145,39 @@ class ToughnessSystem:
             return _blocked(packet, str(exc), amount_result)
         if not pipeline.ok:
             return _blocked(packet, pipeline.blocked_reason, amount_result)
-        amount = pipeline.final_amount
+        return self._apply_effective_amount(state, packet, pipeline.final_amount, amount_result, pipeline)
+
+    def apply_overflow(self, state: BattleState, overflow: ToughnessOverflow) -> ToughnessApplicationResult:
+        if type(overflow) is not ToughnessOverflow:
+            raise TypeError("toughness overflow requires its typed producer")
+        target = state.units.get(overflow.packet.target_id)
+        if target is None:
+            return _blocked(overflow.packet, "toughness_overflow_target_missing")
+        try:
+            segments = read_toughness_segments(target)
+        except ValueError as exc:
+            return _blocked(overflow.packet, str(exc))
+        if (state.event_index != overflow.event_index
+                or segments.remaining_segments != overflow.next_remaining_segments
+                or target.toughness != target.max_toughness or target.flags.get("broken", False)):
+            return _blocked(overflow.packet, "toughness_overflow_next_segment_not_committed")
+        return self._apply_effective_amount(state, overflow.packet, overflow.remaining_amount,
+            overflow.amount_result, overflow.pipeline, overflow.source_mutation.stable_id())
+
+    def _apply_effective_amount(
+        self, state: BattleState, packet: ToughnessPacket, amount: float,
+        amount_result: NumericEvaluationResult, pipeline: DamagePipelineResult,
+        overflow_source_mutation_id: str = "",
+    ) -> ToughnessApplicationResult:
+        target = state.units[packet.target_id]
+        try:
+            segments = read_toughness_segments(target)
+        except ValueError as exc:
+            return _blocked(packet, str(exc), amount_result)
+        if segments.remaining_segments <= 0:
+            return _blocked(packet, "toughness_segment_count_already_depleted", amount_result)
+        weaknesses = tuple(str(item) for item in target.flags.get("weaknesses", ()) if isinstance(item, str))
+        force_stance_damage = bool(target.flags.get("force_stance_damage", False))
         pipeline_json = pipeline.to_json()
         before = target.toughness
         after = max(0.0, before - amount)
@@ -125,6 +190,7 @@ class ToughnessSystem:
             "numeric_evaluation": amount_result.to_json(),
             "producer_base_amount": pipeline.producer_base_amount,
             "toughness_pipeline": pipeline_json,
+            "overflow_source_mutation_id": overflow_source_mutation_id,
             "weakness_check": {
                 "element_type": packet.element_type,
                 "weaknesses": list(weaknesses),
@@ -172,7 +238,8 @@ class ToughnessSystem:
         if after <= 0 and not bool(target.flags.get("broken", False)):
             records.append(
                 SettlementRecord(
-                    record_type="toughness_depleted_pending_break",
+                    record_type=("toughness_depleted_pending_break" if segments.remaining_segments == 1
+                                 else "toughness_depleted_pending_segment_count_down"),
                     source="toughness_system",
                     process_only=True,
                     payload={
@@ -200,8 +267,9 @@ class ToughnessSystem:
                     trace=packet.source_trace,
                 ).to_json()
             )
-        callback_events = ["OnBeingStanceDamage"]
-        if after <= 0 and not bool(target.flags.get("broken", False)):
+        # Overflow continues the same hit; it must not notify a second hit.
+        callback_events = [] if overflow_source_mutation_id else ["OnBeingStanceDamage"]
+        if after <= 0 and segments.remaining_segments == 1 and not bool(target.flags.get("broken", False)):
             # Toughness has been committed, but BreakSystem has not entered the
             # break lifecycle yet. This is the unique production boundary for
             # callbacks whose source semantics are "before being broken".
@@ -236,9 +304,13 @@ class ToughnessSystem:
         return ToughnessApplicationResult(
             packet=packet,
             ok=True,
-            events=(enrich_event_with_mutation_payload(hit_event, mutation),),
+            events=((enrich_event_with_mutation_payload(hit_event, mutation),) if callback_events else ()),
             mutations=tuple(mutations),
             records=tuple(records),
+            overflow=(ToughnessOverflow(packet, mutation, amount, amount - before,
+                segments.remaining_segments - 1, amount_result, pipeline, state.event_index,
+                _TOUGHNESS_OVERFLOW_PRODUCER)
+                if after == 0 and amount > before and segments.remaining_segments > 1 else None),
         )
 
 

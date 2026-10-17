@@ -250,7 +250,7 @@ def _definition(
     source_id: str,
     owner_avatar_id: str,
     definition_kind: Literal[
-        "character_main", "character_shared", "presentation"
+        "character_main", "character_shared", "servant", "presentation"
     ],
     source_path: str,
     content_sha256: str,
@@ -299,6 +299,7 @@ def _action_kinds(
         "Normal": "basic",
         "BPSkill": "skill",
         "Ultra": "ultimate",
+        "ElationDamage": "elation",
         "Talent": "passive",
         "Passive": "passive",
         "TalentPassive": "passive",
@@ -310,6 +311,7 @@ def _action_kinds(
         "Normal": "basic",
         "Skill": "skill",
         "Ultra": "ultimate",
+        "Elation": "elation",
         "Passive": "passive",
         "Maze": "maze",
     }

@@ -93,10 +93,12 @@ def build_fidelity_matrix(report: DiscoveryReport, ir: CanonicalIR) -> MechanicF
         "elation_damage": _damage_formula_status(
             ir,
             family="elation",
-            blocked=True,
+            blocked=not all(any(formula.kind == kind and formula.coverage_status == "executable"
+                                for formula in ir.formulas)
+                            for kind in ("elation_level_base", "elation_multiplier_rule")),
             reason=(
-                "ElationDamage is a 4.0 mainline damage family; "
-                "the complete Elation damage formula is recorded as blocked in v0_208"
+                "Shared Elation formula consumes admitted level data, dedicated ratios and typed per-hit points; "
+                "content with missing windows or special overrides remains blocked at its own admission"
             ),
         ),
         "true_damage": _damage_formula_status(
@@ -153,12 +155,14 @@ def _reason(opcode: str, support_status: str, lifecycle: str) -> str:
 def _damage_formula_status(ir: CanonicalIR, family: str, blocked: bool, reason: str) -> dict[str, Any]:
     formulas = [formula for formula in ir.formulas if formula.expression.get("damage_formula_family") == family]
     properties = sorted({str(formula.expression.get("property")) for formula in formulas if formula.expression.get("property")})
-    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable")
+    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable"
+                     or (formula.kind == "elation_multiplier_rule" and formula.coverage_status == "executable"))
     return {
         "lowered": len(formulas),
         "executable": executable,
         "validated": 0,
-        "fidelity_status": "blocked" if formulas and blocked else "lowered" if formulas else "discovered_only",
+        "fidelity_status": ("executable" if family == "elation" and not blocked else
+                            "blocked" if formulas and blocked else "lowered" if formulas else "discovered_only"),
         "properties": properties,
         "reason": reason,
     }

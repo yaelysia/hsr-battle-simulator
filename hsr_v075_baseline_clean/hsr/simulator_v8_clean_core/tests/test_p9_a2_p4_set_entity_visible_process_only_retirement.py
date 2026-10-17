@@ -54,7 +54,7 @@ def _lower(tmp_path: Path, raw: dict):
 
 def test_set_entity_visible_uses_process_only_authority() -> None:
     assert ability_task_execution_mode("SetEntityVisible") == "process_only"
-    assert ability_task_execution_mode("SetEntityForceVisible") == "runtime_effect"
+    assert ability_task_execution_mode("SetEntityForceVisible") == "process_only"
 
 
 def test_set_entity_visible_schema_is_strict() -> None:

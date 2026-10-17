@@ -179,6 +179,7 @@ S7_EVENT_FAMILIES = frozenset(
         "OnDestroy",
         "OnEnterBattle",
         "OnHPChange",
+        "OnElationPointChange",
         "OnListenAfterAttack",
         "OnListenAfterSkillUse",
         "OnListenBeforeAttack",

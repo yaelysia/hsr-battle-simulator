@@ -11,6 +11,69 @@ from hsr.simulator_v8_clean_core.tbgd.battle_catalog import build_battle_ruleboo
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize('use_ultimate,expected', [(False, 'defeat'), (True, 'victory')])
+def test_external_target_order_and_enemy_turn_ultimate_change_battle_outcome(tmp_path, use_ultimate, expected):
+    root = Path(__file__).resolve().parents[4]
+    example = Path(__file__).resolve().parents[1] / 'examples/cli/arlan_vs_antimatter.json'
+    scenario = read_json_object(example)
+    rules = build_battle_rulebook(root / 'turnbasedgamedata-main', scenario)
+    session = BattleSession(rules, scenario)
+    ally_actions = 0
+    off_turn = False
+    for index in range(60):
+        decision = session.advance()
+        if session.outcome:
+            break
+        assert decision.ready, decision.blocked_reason
+        choices = decision.availability.choices
+        turn_id = decision.availability.turn_owner_id
+        requests = [c for c in choices if c.choice_kind == 'manual_ultimate_request']
+        queued = [c for c in choices if c.choice_kind == 'ultimate_window']
+        if queued:
+            choice = queued[0]
+        elif use_ultimate and requests and turn_id and session.state.units[turn_id].side == 'enemy':
+            choice = requests[0]
+            off_turn = True
+        else:
+            action_id = 'avatar_skill:100801' if ally_actions < 2 else 'avatar_skill:100802'
+            choice = next(c for c in reversed(choices) if c.choice_kind == 'timeline_actor'
+                          or c.choice_kind == 'normal_action' and (c.actor_side == 'enemy'
+                          or c.action_id == action_id))
+        query = choice.target_query
+        targets = []
+        if query and query.selection_mode == 'explicit':
+            target_index = ally_actions % len(query.candidate_ids) if (
+                choice.actor_side == 'ally' and choice.choice_kind == 'normal_action'
+            ) else -1
+            targets = [query.candidate_ids[target_index]]
+        command = {**choice.command_template, 'target_ids': targets}
+        if index == 0:
+            before = session.state
+            snapshot = before.snapshot().to_json()
+            enemy_id = next(uid for uid, unit in before.units.items() if unit.side == 'enemy')
+            for invalid in ({**command, 'target_ids': ['arlan']}, {**command, 'actor_id': enemy_id}):
+                rejected = session.submit(command_from_json(invalid))
+                assert not rejected.transition.outcome.successor_eligible
+                assert not rejected.transition.transaction.mutations and not rejected.transition.rng_events
+                assert session.state == before and session.state.snapshot().to_json() == snapshot
+        result = session.submit(command_from_json(command))
+        assert result.transition.outcome.successor_eligible, result.transition.outcome.reason_codes
+        if choice.actor_side == 'ally' and choice.choice_kind == 'normal_action':
+            ally_actions += 1
+    assert session.outcome == expected
+    assert off_turn == use_ultimate
+    assert (session.state.units['arlan'].hp > 0) == use_ultimate
+    before = session.state
+    terminal = session.decisions.current_decision(before)
+    assert not terminal.ready and not terminal.availability.choices
+    rejected = session.submit(command_from_json(command))
+    assert not rejected.transition.outcome.successor_eligible
+    assert not rejected.transition.transaction.mutations and not rejected.transition.rng_events
+    assert session.state == before
+    archive_path = write_archive(tmp_path / f'{expected}-battle.json.gz', session.archive())
+    print(f'archive: {archive_path}')
+
+
 def test_real_battle_startup_actions_victory_and_replay():
     root = Path(__file__).resolve().parents[4]
     example = Path(__file__).resolve().parents[1] / "examples/cli/arlan_vs_antimatter.json"
@@ -255,9 +318,12 @@ def test_real_three_character_party_healing_shock_and_victory(tmp_path):
             seen.add("shock")
             shocked = {key for key in enemies if any(d["modifier_name"] == "MCommon_DOT_Electric"
                        for d in after.units[key].flags["status_details"])}
-            assert len(shocked) == 1
             rolls = [event for event in result.transition.rng_events if event.rng_type == "status_apply"]
-            assert len(rolls) == 2 and {event.result["success"] for event in rolls} == {True, False}
+            assert len(rolls) == 2
+            assert shocked == {event.result["decision_identity"]["target_id"]
+                               for event in rolls if event.result["success"]}
+            assert all(event.result["success"] == (event.result["roll"] < event.result["threshold"])
+                       for event in rolls)
             assert {m.path[1] for m in result.transition.transaction.mutations
                     if m.path[-1] == "hp" and m.metadata.get("damage_formula_family") == "additional"} == shocked
         if command["action_id"] == "avatar_skill:110503" and command.get("source") == "queue":

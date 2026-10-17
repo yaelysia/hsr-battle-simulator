@@ -1,0 +1,84 @@
+{
+  "commands": [
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140202",
+      "action_level": 1,
+      "target_ids": [],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": [],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140203",
+      "action_level": 1,
+      "target_ids": [],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140203",
+      "action_level": 1,
+      "target_ids": [],
+      "source": "queue",
+      "queue_name": "manual_ultimate",
+      "metadata": {}
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140208",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:200020050:wave:0:pos:0"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "summon:servant:f12698d298e4",
+      "action_id": "servant_skill:1140201",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:200020050:wave:0:pos:1"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:200020050:wave:0:pos:1",
+      "action_id": "monster_skill:801101001",
+      "action_level": 1,
+      "target_ids": [
+        "aglaea"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140208",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:200020050:wave:0:pos:1"
+      ],
+      "source": "manual",
+      "queue_name": null,
+      "metadata": {}
+    }
+  ]
+}

@@ -713,7 +713,12 @@ def _update_digest(digest: Any, value: object) -> None:
         digest.update(b";")
         return
     if is_dataclass(value) and not isinstance(value, type):
-        digest.update(f"c{type(value).__module__}.{type(value).__qualname__}{{".encode("utf-8"))
+        module = type(value).__module__
+        # CLI and UI load the same internal IR under two package prefixes.
+        # Deployment/import spelling is not part of the combat rule identity.
+        if module.startswith("simulator_v8_clean_core."):
+            module = f"hsr.{module}"
+        digest.update(f"c{module}.{type(value).__qualname__}{{".encode("utf-8"))
         for item in fields(value):
             _update_digest(digest, item.name)
             _update_digest(digest, getattr(value, item.name))

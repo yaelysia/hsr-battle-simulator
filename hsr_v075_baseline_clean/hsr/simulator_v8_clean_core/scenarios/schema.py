@@ -110,6 +110,18 @@ class InitialSummonSpec:
 
 
 @dataclass(frozen=True)
+class TechniqueSetupSpec:
+    """An already activated technique whose battle-entry effects must be applied."""
+
+    actor_id: str
+    action_ref: str
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not str or not value for value in (self.actor_id, self.action_ref)):
+            raise ValueError("technique actor_id and action_ref must be non-empty strings")
+
+
+@dataclass(frozen=True)
 class TimelineSetupSpec:
     mode: Literal["runtime_initialize", "explicit_action_values"] = "runtime_initialize"
     global_av: float = 0.0
@@ -143,6 +155,7 @@ class BattleSetupSpec:
     initial_summons: tuple[InitialSummonSpec, ...] = ()
     objective: ObjectiveSpec | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    techniques: tuple[TechniqueSetupSpec, ...] = ()
 
 
 @dataclass(frozen=True)

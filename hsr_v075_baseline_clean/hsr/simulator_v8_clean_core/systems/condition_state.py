@@ -16,6 +16,7 @@ from .unit_stats import (
     control_kind_from_behavior_flags,
     effective_status_resistance,
 )
+from .toughness_state import read_toughness_segments
 
 
 _EXTERNAL_FACT_PRODUCERS = {
@@ -26,7 +27,6 @@ _EXTERNAL_FACT_PRODUCERS = {
     "unit.is_battle_event_entity": "p9_s17",
     "unit.stance_current": "p9_s15",
     "unit.stance_ratio": "p9_s15",
-    "unit.stance_segment_count": "p9_s15",
     "unit.stance_weak": "p9_s15",
 }
 
@@ -165,6 +165,15 @@ class CommittedConditionFactProvider:
             if unit_id is None:
                 return self._blocked(request, "unit_hp_requires_one_subject")
             return self._number(request, state.units[unit_id].hp, f"unit:{unit_id}:hp")
+        if request.fact_kind == "unit.stance_segment_count":
+            unit_id = self._single_subject(request)
+            if unit_id is None:
+                return self._blocked(request, "stance_segment_count_requires_one_subject")
+            try:
+                segments = read_toughness_segments(state.units[unit_id])
+            except ValueError as exc:
+                return self._blocked(request, str(exc))
+            return self._number(request, segments.remaining_segments, f"unit:{unit_id}:toughness_segments")
         if request.fact_kind == "unit.lifecycle_mask":
             return self._lifecycle(state, request)
         if request.fact_kind == "unit.avatar_base_type":
@@ -219,6 +228,11 @@ class CommittedConditionFactProvider:
             and relation.selector_hash == key_hash
         )
         mappings = {(relation.selection_kind, relation.selection_ref_ids) for relation in relations}
+        if not mappings and kind == "skill_point":
+            refs = tuple(node.trace_node_id for node in self.rules.character_trace_nodes_for_card(card.card_id)
+                         if node.activation_key == key)
+            if refs:
+                mappings.add(("trace", refs))
         if len(mappings) != 1:
             return self._blocked(request, "character_build_selector_mapping_missing_or_ambiguous")
         selection_kind, refs = next(iter(mappings))
@@ -241,7 +255,7 @@ class CommittedConditionFactProvider:
             bool(set(selected).intersection(refs)),
             fact_kind=request.fact_kind,
             authority=_FACT_AUTHORITIES[request.fact_kind],
-            source_identity="|".join(sorted(relation.selector_relation_id for relation in relations)),
+            source_identity="|".join(sorted(relation.selector_relation_id for relation in relations)) or "|".join(sorted(refs)),
         )
 
     def _avatar_base_type(
@@ -290,12 +304,12 @@ class CommittedConditionFactProvider:
         if not isinstance(card_id, str) or not card_id:
             return self._blocked(request, "monster_data_card_identity_missing")
         card = self.rules.monster_data_card(card_id)
+        # Rank is card metadata; unrelated action coverage does not change it.
         if (
             card is None
-            or card.coverage_status != "executable"
             or state.units[unit_id].template_id != card.entity_ref
         ):
-            return self._blocked(request, "monster_data_card_not_executable")
+            return self._blocked(request, "monster_data_card_identity_mismatch")
         canonical_scores = self.rules.ir.metadata.get("monster_rank_scores")
         committed_scores = state.global_flags.get("monster_rank_scores")
         canonical_score = (

@@ -46,6 +46,8 @@ class TargetEvaluationContext:
     action_window: str | None = None
     admitted_action_target_fact: AdmittedActionTargetFact | None = None
     expected_action_window_scope: ActionWindowExpectedScope | None = None
+    parameter_entity_list_ids: tuple[str, ...] | None = None
+    template_entity_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.caster_id, str) or not self.caster_id:
@@ -79,6 +81,14 @@ class TargetEvaluationContext:
             if len(values) != len(set(values)):
                 raise ValueError(f"target context {field_name} contains duplicate identities")
             object.__setattr__(self, field_name, values)
+        for field_name in ("parameter_entity_list_ids", "template_entity_ids"):
+            values = getattr(self, field_name)
+            if values is None:
+                continue
+            if (not isinstance(values, tuple)
+                    or any(not isinstance(value, str) or not value for value in values)
+                    or len(values) != len(set(values))):
+                raise ValueError("target context parameter list identities are invalid")
         if (
             self.current_target_id is not None
             and self.selected_target_ids
@@ -95,6 +105,8 @@ class TargetEvaluationContext:
             caster_id=self.caster_id,
             effect_owner_id=self.effect_owner_id,
             parameter_entity_ids=(unit_id,),
+            parameter_entity_list_ids=self.parameter_entity_list_ids,
+            template_entity_ids=self.template_entity_ids,
             selected_target_ids=self.selected_target_ids,
             current_target_id=self.current_target_id,
             event_source_id=self.event_source_id,
@@ -129,7 +141,7 @@ EntityRelation = Literal[
     "team.same", "team.opposing", "team.light", "team.dark", "team.teammate",
     "summon.owner", "summon.summoner", "summon.owned",
     "formation.adjacent", "lifecycle.filter", "entity.servant",
-    "entity.battle_event", "entity.creator", "entity.unselectable", "entity.partner", "entity.unique_name",
+    "entity.battle_event", "entity.creator", "entity.created_battle_events", "entity.unselectable", "entity.partner", "entity.unique_name",
     "body_part.members", "body_part.owner",
 ]
 
@@ -194,9 +206,28 @@ class EntityRelationResolver:
         if relation in {"entity.servant", "entity.battle_event"}:
             return self._entity_kind(state, relation, options)
         if relation == "entity.creator":
+            if subjects and all(runtime_unit_is_battle_event_entity(state.units[item]) for item in subjects):
+                creators = tuple(state.units[item].flags.get("summoner_id") for item in subjects)
+                if any(not isinstance(item, str) or item not in state.units for item in creators):
+                    return self._blocked("battle_event_creator_missing", relation)
+                return self._resolved(tuple(dict.fromkeys(creators)), relation)
             return self._summon_relation(
                 state, "summon.summoner", subjects, {"allow_defeated": True}
             )
+        if relation == "entity.created_battle_events":
+            if not subjects:
+                return self._resolved((), relation)
+            events = self._entity_kind(state, "entity.battle_event", {"mask": "Anyone"})
+            if events.blocked:
+                return self._blocked(events.blocked_reason, relation)
+            selected = []
+            for event_id in events.target_ids:
+                creator = self.resolve(state, "entity.creator", context, subject_ids=(event_id,))
+                if creator.blocked:
+                    return self._blocked(creator.blocked_reason, relation)
+                if any(unit_id in subjects for unit_id in creator.target_ids):
+                    selected.append(event_id)
+            return self._resolved(tuple(selected), relation)
         if relation == "entity.unselectable":
             candidates = subjects or tuple(sorted(state.units))
             selected: list[str] = []
@@ -221,6 +252,8 @@ class EntityRelationResolver:
             context.caster_id,
             context.effect_owner_id,
             *context.parameter_entity_ids,
+            *(context.parameter_entity_list_ids or ()),
+            *(context.template_entity_ids or ()),
             *context.selected_target_ids,
             context.current_target_id,
             context.event_source_id,
@@ -245,12 +278,13 @@ class EntityRelationResolver:
         if not subjects:
             return self._blocked("team_relation_subject_missing", relation)
         anchor = state.units[subjects[0]]
-        if any(not is_same_combat_team(anchor, state.units[item]) for item in subjects[1:]):
+        relative_team = relation not in {"team.light", "team.dark"}
+        if relative_team and any(not is_same_combat_team(anchor, state.units[item]) for item in subjects[1:]):
             return self._blocked("team_relation_subjects_cross_team", relation)
         allow_unselectable = options.get("allow_unselectable") is True
         include_limbo = options.get("include_limbo") is True
         anchor_lifecycle = self.lifecycle.view(state, subjects[0])
-        if anchor_lifecycle.is_removed or (not include_limbo and not anchor_lifecycle.is_present):
+        if relative_team and (anchor_lifecycle.is_removed or (not include_limbo and not anchor_lifecycle.is_present)):
             return self._blocked("team_relation_subject_not_admitted", relation)
         include_self = options.get("include_self") is not False
         candidates: list[str] = []
@@ -324,7 +358,7 @@ class EntityRelationResolver:
                         return self._blocked("summon_relation_cycle", relation)
                     visited.add(current)
                     entry = entities.get(current)
-                    if not isinstance(entry, dict) or entry.get("status") != "active":
+                    if not isinstance(entry, dict) or entry.get("status") not in {"active", "removed"}:
                         if current == unit_id:
                             break
                         return self._blocked("summon_relation_chain_missing", relation)
@@ -357,7 +391,7 @@ class EntityRelationResolver:
             return self._blocked("formation_adjacent_requires_one_subject", "formation.adjacent")
         anchor = state.units[subjects[0]]
         anchor_lifecycle = self.lifecycle.view(state, subjects[0])
-        if not anchor_lifecycle.is_active or not anchor_lifecycle.is_present:
+        if anchor_lifecycle.is_removed or not anchor_lifecycle.is_present:
             return self._blocked("formation_anchor_not_present", "formation.adjacent")
         position = anchor.flags.get("position")
         if not isinstance(position, int) or isinstance(position, bool):
@@ -382,7 +416,10 @@ class EntityRelationResolver:
             if not is_same_combat_team(anchor, unit):
                 continue
             lifecycle = self.lifecycle.view(state, unit_id)
-            if (
+            # A defeated, undisposed anchor still locates a later blast hit.
+            # Only its living neighbours are damage recipients.
+            defeated_anchor = unit_id == subjects[0] and lifecycle.is_defeated
+            if not defeated_anchor and (
                 not lifecycle.is_active
                 or not lifecycle.is_present
                 or not lifecycle.can_be_targeted_alive

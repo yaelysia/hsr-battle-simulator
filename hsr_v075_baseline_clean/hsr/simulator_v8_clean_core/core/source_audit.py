@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Any
 
-from .model import BattleTransition, JSONValue, Mutation
+from .model import BattleTransition, JSONValue, Mutation, PendingDefeatPlan, freeze_json
 from ..rules.ir import IRSource
 from ..rules.rulebook import RuleBook
 
@@ -129,6 +129,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["source_trace", "wave_transition_plan or wave_definition_id"],
         "coverage_required": "executable wave definition or traceable battle outcome",
     },
+    "monster_startup": {
+        "required_ir": ["MonsterDataCardIR + PassiveMechanismSlotIR"],
+        "required_metadata": ["monster_data_card_id", "source_trace"],
+        "coverage_required": "source-bound passive startup admission",
+    },
     "summon_system": {
         "required_ir": ["SummonMonsterIntentIR or ServantDefinitionIR"],
         "required_metadata": ["summon_operation", "summon_plan or intent_id", "source_trace"],
@@ -211,7 +216,8 @@ class RuntimeSourceAuditor:
                 violations.append(_violation(mutation, "mutation_has_no_settlement_record"))
                 continue
             if (mutation.source == "damage_system"
-                    and mutation.metadata.get("lifecycle_operation") in {"unit_defeat", "unit_defeat_record"}):
+                    and mutation.metadata.get("lifecycle_operation") in {
+                        "unit_enter_limbo", "unit_defeat", "unit_defeat_record", "unit_pending_defeat_closed"}):
                 trace = self._audit_damage_lifecycle_mutation(
                     mutation, mutation_records, mutations_by_id, violations,
                 )
@@ -252,9 +258,38 @@ class RuntimeSourceAuditor:
         defeat = defeat if isinstance(defeat, dict) else {}
         target = defeat.get("target_id")
         operation = metadata.get("lifecycle_operation")
+        pending_id = metadata.get("pending_defeat_id")
+        # ponytail: linear scan per lifecycle mutation; index by pending_id if
+        # large batches of simultaneous deaths make transaction auditing costly.
+        pending_changes = tuple(item for item in mutations_by_id.values()
+            if item.path == ("units", mutation.path[1], "flags", "pending_defeat")
+            and item.metadata.get("pending_defeat_id") == pending_id) if len(mutation.path) > 1 else ()
+        try:
+            pending = next((item.after if item.after_exists else item.before for item in pending_changes), None)
+            plan = PendingDefeatPlan.from_json(pending)
+            pending_valid = (pending_id == plan.pending_id and hp == plan.hp_mutation
+                and metadata.get("source_frame") == plan.source_frame
+                and metadata.get("source_trace") == plan.source_trace)
+        except ValueError:
+            pending_valid = False
+        if operation in {"unit_enter_limbo", "unit_pending_defeat_closed"}:
+            target = mutation.path[1] if len(mutation.path) > 1 else None
+            valid_path = (
+                (mutation.path == ("units", target, "lifecycle_status")
+                 and mutation.op == "set" and mutation.before == "active" and mutation.after == "limbo")
+                or (mutation.path == ("units", target, "flags", "pending_defeat")
+                    and mutation.op == "set" and not mutation.before_exists and mutation.after_exists)
+                if operation == "unit_enter_limbo" else
+                mutation.path == ("units", target, "flags", "pending_defeat")
+                and mutation.op == "delete" and mutation.before_exists and not mutation.after_exists)
+            if not pending_valid or not valid_path:
+                violations.append(_violation(mutation, "damage_lifecycle_lethal_mutation_lineage_invalid"))
+            return _trace(mutation, records, {"hp_mutation_id": str(metadata.get("hp_mutation_id") or ""),
+                                              "lifecycle_operation": str(operation)})
         status = mutations_by_id.get(str(metadata.get("lifecycle_mutation_id")))
         valid_path = (mutation.path == ("units", target, "lifecycle_status")
-                      and mutation.after == "defeated" and metadata.get("lifecycle_status_before") == "active"
+                      and mutation.before == "limbo" and mutation.after == "defeated"
+                      and metadata.get("lifecycle_status_before") == "limbo"
                       if operation == "unit_defeat" else
                       mutation.path == ("units", target, "flags", "defeat_record")
                       and isinstance(mutation.after, dict)
@@ -262,7 +297,7 @@ class RuntimeSourceAuditor:
                       and status.path == ("units", target, "lifecycle_status") and status.after == "defeated"
                       and mutation.after == {**defeat, "lifecycle_mutation_id": status.stable_id()}
                       and status.metadata.get("hp_mutation_id") == metadata.get("hp_mutation_id"))
-        if (hp is None or hp.source != "damage_system" or hp.op != "set"
+        if (not pending_valid or hp is None or hp.source != "damage_system" or hp.op != "set"
                 or hp.path != ("units", target, "hp")
                 or type(hp.before) not in (int, float) or not math.isfinite(hp.before) or hp.before <= 0
                 or type(hp.after) not in (int, float) or hp.after != 0
@@ -408,10 +443,35 @@ class RuntimeSourceAuditor:
             return self._audit_enemy_action_mutation(mutation, records, violations)
         if mutation.source == "wave_system":
             return self._audit_wave_mutation(mutation, records, violations)
+        if mutation.source == "monster_startup":
+            return self._audit_monster_startup_mutation(mutation, records, violations)
         if mutation.source == "summon_system":
             return self._audit_summon_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
+
+    def _audit_monster_startup_mutation(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        from ..systems.startup import _passive_runtime_activation
+
+        card_id = _required_str(mutation, mutation.metadata, "monster_data_card_id", violations)
+        card = self.rules.monster_data_card(card_id) if card_id else None
+        if card is None:
+            violations.append(_violation(mutation, "monster_startup_card_missing"))
+        else:
+            _audit_source(card.source, card.coverage_status, mutation, violations, executable_required=False)
+            activation = _passive_runtime_activation(self.rules, card)
+            if (mutation.op != "set" or len(mutation.path) != 3
+                    or mutation.path[0] != "units" or mutation.path[2] != "flags"
+                    or not isinstance(mutation.before, dict)
+                    or mutation.before.get("monster_data_card_id") != card.card_id
+                    or mutation.after != freeze_json({**mutation.before, **activation["flags"]})
+                    or activation["flags"].get("blocked_passive_mechanism_slots")
+                    or mutation.metadata.get("source_trace") != card.source.to_json()):
+                violations.append(_violation(mutation, "monster_startup_source_binding_invalid"))
+        return _trace(mutation, records, {"monster_data_card_id": card_id})
 
     def _audit_scenario_setup_mutation(
         self,
@@ -959,14 +1019,22 @@ class RuntimeSourceAuditor:
                         },
                     )
                 )
+            moment_operation = metadata.get("elation_operation")
+            moment_transition = moment_operation in {"start_moment", "end_moment"}
+            value_matches = (
+                self._audit_elation_moment_value(mutation, rule)
+                if moment_transition else (
+                    tuple(mutation.path) == rule.state_path
+                    and type(mutation.after) is type(rule.after_value)
+                    and mutation.after == rule.after_value
+                )
+            )
             contract_matches = (
-                tuple(mutation.path) == rule.state_path
+                value_matches
                 and trigger_kind == rule.trigger_kind
                 and trigger_identity == rule.trigger_identity
                 and runtime_event_type == rule.runtime_event_type
                 and callback_event == rule.callback_event
-                and type(mutation.after) is type(rule.after_value)
-                and mutation.after == rule.after_value
                 and source_trace == rule.source.to_json()
             )
             if not contract_matches:
@@ -984,7 +1052,9 @@ class RuntimeSourceAuditor:
                         },
                     )
                 )
-            if mutation.before_exists:
+            if moment_transition:
+                pass  # The ledger has its own before/after contract above.
+            elif mutation.before_exists:
                 if (
                     type(mutation.before) is not type(rule.before_value)
                     or mutation.before != rule.before_value
@@ -1017,6 +1087,48 @@ class RuntimeSourceAuditor:
                 "trigger_kind": trigger_kind or "",
                 "trigger_identity": trigger_identity or "",
             },
+        )
+
+    @staticmethod
+    def _audit_elation_moment_value(mutation: Mutation, rule) -> bool:
+        from ..systems.elation import validate_elation_runtime
+
+        if (mutation.op != "set" or mutation.path != ("global_flags", "elation_runtime")
+                or rule.state_path != ("global_flags", "elation_time_active")
+                or type(rule.after_value) is not bool
+                or rule.before_value is not (not rule.after_value)):
+            return False
+        before = mutation.before if mutation.before_exists else {
+            "schema_version": "hsr.elation_runtime.v1", "base_points": 0.0, "moments": {},
+            "active_moment_id": "", "moment_sequence": 0,
+        }
+        after = mutation.after
+        if validate_elation_runtime(before) or validate_elation_runtime(after):
+            return False
+        if after["base_points"] != before["base_points"]:
+            return False
+        if rule.after_value:
+            identity = after["active_moment_id"]
+            if (mutation.metadata.get("elation_operation") != "start_moment"
+                    or before["active_moment_id"] or not identity
+                    or after["moment_sequence"] != before["moment_sequence"] + 1
+                    or identity in before["moments"]):
+                return False
+            row = after["moments"][identity]
+            return (
+                {key: value for key, value in after["moments"].items() if key != identity} == before["moments"]
+                and row["points"] == before["base_points"]
+                and (not rule.participant_team or row["team"] == rule.participant_team)
+                and row["source_trace"] == rule.source.to_json()
+            )
+        identity = before["active_moment_id"]
+        return (
+            mutation.metadata.get("elation_operation") == "end_moment" and bool(identity)
+            and not after["active_moment_id"]
+            and after["moment_sequence"] == before["moment_sequence"]
+            and after["moments"] == {
+                identity: {**before["moments"][identity], "active": False},
+            }
         )
 
     def _audit_wave_mutation(
@@ -1150,6 +1262,12 @@ class RuntimeSourceAuditor:
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
         _require_dict(mutation, metadata, "source_frame", violations)
+        if metadata.get("damage_formula_family") == "elation":
+            self._audit_elation_formula(mutation, violations)
+            if metadata.get("status_damage_emission_id"):
+                return self._audit_status_direct_damage_mutation(
+                    mutation, records, violations, expected_family="elation",
+                )
         if metadata.get("damage_formula_family") == "dot" and metadata.get("status_damage_emission_id"):
             return self._audit_status_dot_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "true_damage" and metadata.get("status_damage_emission_id"):
@@ -1229,6 +1347,23 @@ class RuntimeSourceAuditor:
             elif basis_result.get("ok") is not True:
                 violations.append(_violation(mutation, "scaling_basis_result_not_ok", details={"basis_result": basis_result}))
         return _trace(mutation, records, {"damage_emission_id": emission_id or "", "source_task_id": task_id or "", "hit_profile_id": hit_profile_id or ""})
+
+    def _audit_elation_formula(
+        self, mutation: Mutation, violations: list[SourceAuditViolation],
+    ) -> None:
+        formula = self.rules.formula("formula:elation_multiplier_rule")
+        level_table = self.rules.formula("formula:elation_level_base")
+        for definition in (formula, level_table):
+            if definition is None:
+                violations.append(_violation(mutation, "elation_formula_definition_missing"))
+            else:
+                _audit_source(definition.source, definition.coverage_status, mutation, violations,
+                              executable_required=True)
+        facts = mutation.metadata.get("elation_formula")
+        if not isinstance(facts, dict):
+            violations.append(_violation(mutation, "elation_formula_facts_missing"))
+        elif level_table is not None and facts.get("level_formula_source") != level_table.source.to_json():
+            violations.append(_violation(mutation, "elation_level_formula_source_mismatch"))
 
     def _audit_break_damage_mutation(
         self,
@@ -1729,13 +1864,22 @@ class RuntimeSourceAuditor:
                 _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
                 _audit_source(card.source, card.coverage_status, mutation, violations, check_status=False)
                 _audit_source(template.source, template.coverage_status, mutation, violations, executable_required=True)
-                if (task.callback_id != callback.callback_id or task.opcode != "ResetStance"
+                maximum_segments = template_config.get("stance_count") if isinstance(template_config, dict) else None
+                count_reset = task.opcode == "SetStanceCount"
+                expected_path = (("units", metadata.get("target_id"), "flags", "stance_segments_remaining")
+                                 if count_reset else ("units", metadata.get("target_id"), "toughness"))
+                expected_after = maximum_segments if count_reset else metadata.get("max_toughness")
+                expected_record = "ordinary_stance_count_reset" if count_reset else "ordinary_stance_reset"
+                if (task.callback_id != callback.callback_id or task.opcode not in {"ResetStance", "SetStanceCount"}
                         or callback.event != "OnDestroy"
-                        or not isinstance(template_config, dict)
-                        or template_config.get("stance_count") != 1
-                        or mutation.path != ("units", metadata.get("target_id"), "toughness")
-                        or mutation.before != 0 or mutation.after != metadata.get("max_toughness")
-                        or not any(record.get("record_type") == "ordinary_stance_reset" for record in records)):
+                        or task.task_payload.get("TargetType") != "ModifierOwnerEntity"
+                        or type(maximum_segments) is not int or maximum_segments <= 0
+                        or metadata.get("monster_stance_count") != maximum_segments
+                        or count_reset and maximum_segments <= 1
+                        or mutation.path != expected_path
+                        or mutation.before != 0 or mutation.after != expected_after
+                        or not any(record.get("record_type") == expected_record
+                                   and record.get("mutation_id") == mutation.stable_id() for record in records)):
                     violations.append(_violation(mutation, "ordinary_stance_reset_contract_mismatch"))
             return _trace(mutation, records, {"callback_id": metadata.get("callback_id"), "task_id": metadata.get("task_id")})
         if metadata.get("dynamic_key") or metadata.get("property"):
@@ -2528,9 +2672,11 @@ def _audit_dynamic_numeric_binding(
     mutation: Mutation,
     evaluation: dict[str, JSONValue],
     violations: list[SourceAuditViolation],
+    *,
+    template_depth: int = 0,
 ) -> None:
     if evaluation.get("expression_kind") == "postfix_expr":
-        _audit_postfix_dynamic_numeric_binding(mutation, evaluation, violations)
+        _audit_postfix_dynamic_numeric_binding(mutation, evaluation, violations, template_depth=template_depth)
         return
     if evaluation.get("expression_kind") != "dynamic_hash":
         return
@@ -2554,6 +2700,7 @@ def _audit_dynamic_numeric_binding(
         "dynamic_value_store",
         "break_template_runtime_value",
         "character_skill_param_slot",
+        "task_template_parameter",
     }:
         violations.append(
             _violation(
@@ -2570,12 +2717,16 @@ def _audit_dynamic_numeric_binding(
         return
     if not isinstance(entry.get("source_trace"), dict):
         violations.append(_violation(mutation, "dynamic_numeric_binding_source_trace_missing", missing_field="numeric_evaluation.bindings.entry.source_trace"))
+    elif source_type == "task_template_parameter":
+        _audit_template_parameter_binding(mutation, entry, violations, template_depth)
 
 
 def _audit_postfix_dynamic_numeric_binding(
     mutation: Mutation,
     evaluation: dict[str, JSONValue],
     violations: list[SourceAuditViolation],
+    *,
+    template_depth: int = 0,
 ) -> None:
     bindings = evaluation.get("bindings")
     if not isinstance(bindings, dict):
@@ -2602,6 +2753,7 @@ def _audit_postfix_dynamic_numeric_binding(
             "dynamic_value_store",
             "break_template_runtime_value",
             "character_skill_param_slot",
+            "task_template_parameter",
         }:
             violations.append(
                 _violation(
@@ -2624,6 +2776,28 @@ def _audit_postfix_dynamic_numeric_binding(
                     missing_field="numeric_evaluation.bindings.dynamic_operands.bindings.entry.source_trace",
                 )
             )
+        elif source_type == "task_template_parameter":
+            _audit_template_parameter_binding(mutation, entry, violations, template_depth)
+
+
+def _audit_template_parameter_binding(
+    mutation: Mutation, entry: dict[str, JSONValue], violations: list[SourceAuditViolation], depth: int,
+) -> None:
+    trace = entry["source_trace"]
+    source = trace.get("parameter_source")
+    evaluation = trace.get("numeric_evaluation")
+    if (depth >= 32 or not isinstance(source, dict) or not isinstance(evaluation, dict)
+            or any(not isinstance(source.get(key), str) or not source[key]
+                   for key in ("source_path", "raw_type", "raw_id"))
+            or not isinstance(source.get("evidence"), dict)
+            or evaluation.get("ok") is not True
+            or type(entry.get("value")) not in (int, float) or not math.isfinite(entry["value"])
+            or entry["value"] != evaluation.get("value")):
+        violations.append(_violation(mutation, "task_template_parameter_binding_invalid"))
+        return
+    _audit_source(IRSource(source["source_path"], source["raw_type"], source["raw_id"], source["evidence"]),
+                  "executable", mutation, violations, executable_required=True)
+    _audit_dynamic_numeric_binding(mutation, evaluation, violations, template_depth=depth + 1)
 
 
 def _required_str(
