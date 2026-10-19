@@ -44,6 +44,30 @@ Remodifier 查询与精准实例操作使用 `test_remodifier_status_scope.py` �
 对 ParamModifier 延长寿命、保留原 caster、来源审计与晚期失败回滚。后者只执行所选真实
 子图，候选状态为规范组件输入，不代表完整角色已验收。
 
+I11 三个真实来源用例分别使用：
+
+- `test_phainon_ultra_buff_lifetime.py`：真实 Ultra OnStack 子图，按
+  `CurrentTurnOwnerEntity` 逐实例筛正寿命 Buff 并延长，敌方回合所有者不产生变更，
+  来源审计与实例失败回滚；
+- `test_yaoguang_elation_echo_lifetime.py`：真实 OnModifierAdd 事件生产者与回调，
+  省略 TargetType 的 ParamModifier 绑定本次新增状态实例（而不是监听者），爻光 PointB3
+  行迹参数 `+1` 经角色卡/行迹槽解析，两个 Echo 实例只改触发者，缺行迹选择、篡改 payload
+  实例身份、篡改 behavior_flags 条件输入或缺失类型化生命周期事实时原子阻断；
+- `test_castorice_infect_modifier.py`：真实 Skill03_Phase02/SkillMazeInLevel 的
+  Remodifier→InfectModifier 子图，技能任务图消费 CasterServant 目标，复制 caster/层数/
+  剩余寿命/动态值/已算属性，OnStack 在复制实例上重算，Override 重感染替换同实例，
+  缺 servant 时零变更；另覆盖正式预装属性条目在层数 2→3 后的原位更新、生产者身份补齐
+  与来源审计；正式 `status_stack_property_dynamic` 延迟条目在 OnStack 求值后归一化为
+  已应用条目并通过审计；首次追加属性值被篡改（999）、bucket/key/scope 被改或残留延迟
+  标记时审计拒绝；同一 mutation 中其它状态实例被改层数或删除时审计拒绝。两处真实技能叶子
+  均编译为同一契约。
+- `test_aventurine_listener_alias.py`：真实砂金 R6 的 OnListenModifierAdd 监听器接收
+  OnModifierAdd 事件族别名（普通 Buff 添加、无 Shield 条件时为假），验证正式别名关系不
+  被事实校验误阻断，同时拒绝篡改条件输入 payload。
+
+这些检查执行正式任务图、事件派发与状态生命周期，但单位、servant 与来源状态实例仍是
+组件输入；完整构筑/整场未在本批验证。
+
 多层韧性使用 `test_multilayer_toughness.py`：真实怪物卡的三条韧性、单段跨层、中间层伤害和
 通知、公共模板避免重复结算、末层完整击破及自然恢复，连同来源审计与晚期失败回滚集中检查。
 入射削韧动作与攻击者为明确标记的组件输入，不代表完整首领战或角色构筑已验收。

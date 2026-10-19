@@ -8,7 +8,8 @@ from typing import Callable
 
 from ..core.model import (
     BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution,
-    StatusImmunityFact, _STATUS_IMMUNITY_PRODUCER,
+    StatusImmunityFact, StatusLifecycleFact, _STATUS_IMMUNITY_PRODUCER,
+    _STATUS_LIFECYCLE_PRODUCER,
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
@@ -523,6 +524,212 @@ class StatusSystem:
         return StatusApplicationResult(
             True, mutations=tuple(mutations), records=tuple(records), events=tuple(events),
             rng_events=tuple(rng_events), dispatched_event_ids=frozenset(dispatched_event_ids),
+        )
+
+    def infect_modifier(
+        self,
+        state: BattleState,
+        effect: EffectIR,
+        *,
+        source_owner_id: str,
+        source_instance_id: str,
+        target_ids: tuple[str, ...],
+        caster_id: str,
+    ) -> StatusApplicationResult:
+        """Copy one ParamModifier-bound instance to each target.
+
+        UseParamModifierToInfect names the Remodifier-selected instance as the
+        source; Override replaces the target's same-status instance. The copy
+        keeps the source caster, stacks, remaining lifetime, resolved dynamic
+        values and computed stack properties, then reuses the ordinary
+        add/replace lifecycle so events, settlement and audit stay canonical.
+        """
+
+        if self.rules is None:
+            return StatusApplicationResult(False, unsupported=("infect_modifier_requires_rulebook",))
+        if effect.opcode != "InfectModifier":
+            return StatusApplicationResult(False, unsupported=("effect_is_not_infect_modifier",))
+        standard = effect.payload.get("standard")
+        if not (
+            isinstance(standard, dict)
+            and not standard.get("blocked_reason")
+            and standard.get("operation") == "infect_modifier"
+            and standard.get("source_shape_admitted") is True
+            and standard.get("use_param_modifier") is True
+            and standard.get("source_alias") == "Caster"
+            and standard.get("target_alias") == "CasterServant"
+            and standard.get("status_dispel_filter") == "AnyStatus"
+            and standard.get("infect_type") == "Override"
+        ):
+            return StatusApplicationResult(False, unsupported=("infect_modifier_contract_not_admitted",))
+        source_unit = state.units.get(source_owner_id)
+        source_details = _status_details(source_unit.flags) if source_unit is not None else []
+        matches = [
+            detail for detail in source_details
+            if isinstance(detail, dict) and detail.get("instance_id") == source_instance_id
+        ]
+        if len(matches) != 1:
+            return StatusApplicationResult(False, unsupported=("infect_modifier_source_instance_missing_or_ambiguous",))
+        source_detail = matches[0]
+        modifier_name = source_detail.get("modifier_name")
+        if (
+            source_detail.get("owner_id") != source_owner_id
+            or source_detail.get("lifecycle_state") != "active"
+            or not isinstance(modifier_name, str) or not modifier_name
+            or source_detail.get("status_id") not in source_unit.statuses
+        ):
+            return StatusApplicationResult(False, unsupported=("infect_modifier_source_instance_not_active",))
+        if self.rules.modifier_definition(modifier_name) is None:
+            return StatusApplicationResult(False, unsupported=("infect_modifier_source_definition_missing",))
+        # The current real contract is a bounded timed/stacked status. Halo
+        # projections, break templates and control gates carry extra lifecycle
+        # obligations that must not be silently cloned.
+        if (
+            source_detail.get("halo_relations")
+            or _status_detail_halo_relation_id(source_detail)
+            or source_detail.get("break_template_id")
+            or source_detail.get("break_element_type")
+            or source_detail.get("break_status_emission_id")
+            or source_detail.get("control_kind")
+        ):
+            return StatusApplicationResult(False, unsupported=("infect_modifier_source_instance_not_admitted",))
+        source_id = str(source_detail.get("source_id") or effect.effect_id)
+        original_caster_id = str(source_detail.get("caster_id") or caster_id)
+        working_state = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        instances: list[StatusInstance] = []
+        lifecycle_results: list[StatusLifecycleResult] = []
+        for target_id in tuple(dict.fromkeys(target_ids)):
+            target_unit = working_state.units.get(target_id)
+            if target_unit is None:
+                return StatusApplicationResult(False, records=tuple(records),
+                    unsupported=("infect_modifier_target_missing",))
+            status_id = f"modifier:{modifier_name}"
+            instance_id = _status_instance_id(target_id, modifier_name, effect.effect_id, source_id)
+            existing = [
+                detail for detail in _status_details(target_unit.flags)
+                if isinstance(detail, dict)
+                and detail.get("status_id") == status_id
+                and detail.get("lifecycle_state") not in {"removed", "expired"}
+            ]
+            if len(existing) > 1:
+                return StatusApplicationResult(False, records=tuple(records),
+                    unsupported=("infect_modifier_target_status_ambiguous",))
+            existing_detail = existing[0] if existing else None
+            operation = "replace" if existing_detail is not None else "add"
+            infection_trace = {
+                "effect_id": effect.effect_id,
+                "effect_source": effect.source.to_json(),
+                "modifier_name": modifier_name,
+                "infection": {
+                    "source_owner_id": source_owner_id,
+                    "source_instance_id": source_instance_id,
+                    "source_modifier_name": modifier_name,
+                    "source_caster_id": original_caster_id,
+                    "source_detail": dict(source_detail),
+                    "target_id": target_id,
+                    "target_instance_id": instance_id,
+                    "infect_type": "Override",
+                    "status_dispel_filter": "AnyStatus",
+                    "use_param_modifier_to_infect": True,
+                    "replaced_instance_id": (
+                        str(existing_detail.get("instance_id") or "")
+                        if isinstance(existing_detail, dict) else ""
+                    ),
+                },
+            }
+            copied_fields = {
+                item.name: source_detail[item.name]
+                for item in fields(StatusInstance)
+                if item.name in source_detail
+                and item.name not in {
+                    "instance_id", "status_id", "modifier_name", "owner_id",
+                    "source_id", "caster_id", "source_trace", "application_operation",
+                    "halo_relations", "partial", "lifecycle_state",
+                }
+            }
+            instance = StatusInstance(**{
+                **copied_fields,
+                "instance_id": instance_id,
+                "status_id": status_id,
+                "modifier_name": modifier_name,
+                "owner_id": target_id,
+                "source_id": source_id,
+                "caster_id": original_caster_id,
+                "source_trace": {
+                    **(source_detail.get("source_trace") or {}),
+                    "infect_modifier": infection_trace,
+                },
+                "application_operation": operation,
+                "partial": bool(source_detail.get("partial")),
+                "lifecycle_state": "active",
+                "halo_relations": (),
+            })
+            plan = StatusLifecyclePlan(
+                operation=operation,
+                target_id=target_id,
+                status_id=status_id,
+                source="status_system",
+                status_instance=instance,
+                before_details=tuple(_status_details(target_unit.flags)),
+                existing_detail=existing_detail,
+                partial=instance.partial,
+                source_trace=infection_trace,
+            )
+            result = self._apply_lifecycle_plan(working_state, plan)
+            if not result.ok or result.unsupported:
+                return StatusApplicationResult(False, records=tuple((*records, *result.records)),
+                    unsupported=result.unsupported or ("infect_modifier_lifecycle_blocked",))
+            reduction = MutationReducer().apply_all_result(working_state, result.mutations)
+            if not reduction.ok:
+                return StatusApplicationResult(False, records=tuple((*records, *result.records)),
+                    unsupported=("infect_modifier_mutation_conflict",))
+            working_state = reduction.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            records.extend(result.records)
+            detail_mutation = next(
+                (mutation for mutation in result.mutations
+                 if mutation.path == ("units", target_id, "flags", "status_details")),
+                None,
+            )
+            records.append(SettlementRecord(
+                record_type="status_infection",
+                source="status_system",
+                mutation_id=detail_mutation.stable_id() if detail_mutation is not None else None,
+                process_only=False,
+                payload={
+                    "operation": operation,
+                    "source_owner_id": source_owner_id,
+                    "source_instance_id": source_instance_id,
+                    "modifier_name": modifier_name,
+                    "target_id": target_id,
+                    "target_instance_id": instance_id,
+                    "infect_type": "Override",
+                    "status_dispel_filter": "AnyStatus",
+                    "replaced_instance_id": infection_trace["infection"]["replaced_instance_id"],
+                    "copied": {
+                        "caster_id": instance.caster_id,
+                        "stacks": instance.stacks,
+                        "remaining_duration": instance.remaining_duration,
+                        "duration": instance.duration,
+                        "dynamic_values": instance.dynamic_values,
+                        "modifiers": list(instance.modifiers),
+                    },
+                },
+                trace=infection_trace,
+            ).to_json())
+            instances.append(instance)
+            lifecycle_results.append(result)
+        return StatusApplicationResult(
+            ok=True,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=tuple(records),
+            status_instance=instances[-1] if instances else None,
+            lifecycle_result=lifecycle_results[-1] if lifecycle_results else None,
         )
 
     def apply_add_modifier(
@@ -2992,18 +3199,39 @@ def _status_lifecycle_events(
         )
     events: list[GameEvent] = []
     for callback_event in callback_events:
+        event_id = (
+            f"event:{state.event_index}:status_lifecycle:"
+            f"{plan.operation}:{plan.target_id}:{_status_id_fragment(plan.status_id)}:{callback_event}"
+        )
+        lifecycle_fact = None
+        if not remove_like and plan.status_instance is not None:
+            lifecycle_fact = StatusLifecycleFact(
+                operation=plan.operation,
+                callback_event=callback_event,
+                target_id=plan.target_id,
+                owner_id=plan.target_id,
+                modifier_name=modifier_name,
+                status_id=plan.status_id,
+                status_instance_id=status_instance_id,
+                caster_id=caster_id,
+                event_id=event_id,
+                behavior_flags=behavior_flags,
+                status_type=status_type,
+                status_category=status_category,
+                stack_change=stack_change,
+                instance_detail=plan.status_instance.to_json(),
+                _producer_token=_STATUS_LIFECYCLE_PRODUCER,
+            )
         events.append(
             GameEvent(
                 event_type="status.lifecycle",
                 source_id=caster_id or plan.source,
                 target_id=plan.target_id,
-                event_id=(
-                    f"event:{state.event_index}:status_lifecycle:"
-                    f"{plan.operation}:{plan.target_id}:{_status_id_fragment(plan.status_id)}:{callback_event}"
-                ),
+                event_id=event_id,
                 window=callback_event,
                 process_only=True,
                 status_lifecycle_plan=plan if remove_like else None,
+                status_lifecycle_fact=lifecycle_fact,
                 payload={
                     "callback_event": callback_event,
                     "listener_scope": "status_local",

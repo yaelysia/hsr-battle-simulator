@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution, StatusImmunityFact
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution, StatusImmunityFact, StatusLifecycleFact
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -37,6 +37,14 @@ from .unit_relation import EntityRelationResolver, TargetEvaluationContext, comm
 from .unit_stats import effective_unit_stat
 from .unit_lifecycle import UnitLifecycleSystem
 from .task_graph import TaskGraphContinuation, TaskGraphStatusScope
+
+
+# Plans whose OnModifierAdd notification names a still-live instance. Remove-like
+# plans never supply the typed triggering fact to the precision path.
+_CALLBACK_TRIGGERING_OPERATIONS = frozenset({
+    "add", "replace", "refresh", "refresh_or_replace_partial", "replace_partial",
+    "stack", "stack_refresh",
+})
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,7 @@ class EffectExecutionContext:
     admitted_action_target_fact: AdmittedActionTargetFact | None = None
     expected_action_window_scope: ActionWindowExpectedScope | None = None
     shield_exhaustion_fact: ShieldExhaustionFact | None = None
+    status_lifecycle_fact: StatusLifecycleFact | None = None
     action_definition: ActionDefinitionIR | None = None
     heal_ratio_delta: float = 0.0
     ability_instance_id: str = ""
@@ -116,6 +125,7 @@ class EffectRegistry:
             self.register("DispelStatus", self._execute_dispel_status)
             self.register("SetModifierValueByBehaviorFlag", self._execute_modifier_lifetime)
             self.register("SetModifierValue", self._execute_modifier_value)
+            self.register("InfectModifier", self._execute_infect_modifier)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
@@ -525,7 +535,11 @@ class EffectRegistry:
             standard = effect.payload.get("standard")
             if not (isinstance(standard, dict) and not standard.get("blocked_reason")
                     and standard.get("operation") == "modify_modifier_value"
-                    and standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity"}
+                    and (
+                        standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentTurnOwnerEntity"}
+                        or standard.get("target_source") == "callback_triggering_modifier_instance"
+                        and standard.get("callback_target_event") == "OnModifierAdd"
+                    )
                     and isinstance(standard.get("modifier_name"), str) and standard["modifier_name"]
                     and standard.get("modify_function") in {"Set", "Add"}
                     and standard.get("remove_when_zero") is True
@@ -536,6 +550,20 @@ class EffectRegistry:
                          and standard.get("modifier_selector") == "param_modifier"
                          and standard["modifier_name"] == "ParamModifier"
                          and standard["modify_function"] == "Add")):
+                return "blocked"
+        if effect.opcode == "InfectModifier":
+            standard = effect.payload.get("standard")
+            if not (
+                isinstance(standard, dict) and not standard.get("blocked_reason")
+                and standard.get("operation") == "infect_modifier"
+                and standard.get("source_shape_admitted") is True
+                and standard.get("use_param_modifier") is True
+                and standard.get("source_alias") == "Caster"
+                and standard.get("target_alias") == "CasterServant"
+                and standard.get("status_dispel_filter") == "AnyStatus"
+                and standard.get("infect_type") == "Override"
+                and _typed_target_reference_admitted(standard)
+            ):
                 return "blocked"
         if effect.opcode == "SetModifierValueByBehaviorFlag":
             standard = effect.payload.get("standard")
@@ -722,14 +750,43 @@ class EffectRegistry:
         if self.status_system is None or context is None:
             return _unsupported_effect(effect, "modifier_value_context_missing")
         standard = effect.payload["standard"]
-        target_id = _resolve_target_alias(standard["target_alias"], caster_id=context.caster_id,
-            owner_id=context.owner_id, param_entity_id=context.param_entity_id,
-            current_action_target_id=context.current_action_target_id)
-        scope = context.param_status_scope if standard.get("modifier_selector") == "param_modifier" else None
-        if standard.get("modifier_selector") == "param_modifier" and (
-            type(scope) is not TaskGraphStatusScope or scope.owner_id != target_id
-        ):
-            return _unsupported_effect(effect, "param_modifier_value_scope_missing_or_mismatched")
+        status_instance_id: str | None = None
+        if standard.get("target_source") == "callback_triggering_modifier_instance":
+            # ParamModifier names the modifier instance supplied by the formal
+            # callback producer; only the OnModifierAdd producer carries the
+            # added instance identity in its typed payload.
+            if (standard.get("modifier_selector") != "param_modifier"
+                    or standard.get("modifier_name") != "ParamModifier"
+                    or standard.get("callback_target_event") != "OnModifierAdd"):
+                return _unsupported_effect(
+                    effect, "callback_triggering_modifier_contract_not_admitted")
+            fact = context.status_lifecycle_fact
+            payload = context.event_payload if isinstance(context.event_payload, dict) else {}
+            if (
+                type(fact) is not StatusLifecycleFact
+                or fact.callback_event != "OnModifierAdd"
+                or standard.get("callback_target_event") != fact.callback_event
+                or fact.operation not in _CALLBACK_TRIGGERING_OPERATIONS
+                or not fact.matches_state(context.state)
+                or payload.get("event_id") != fact.event_id
+                or payload.get("status_instance_id") != fact.status_instance_id
+                or payload.get("target_id") != fact.target_id
+                or payload.get("owner_id") != fact.owner_id
+            ):
+                return _unsupported_effect(
+                    effect, "callback_triggering_modifier_fact_missing_or_mismatched")
+            target_id = fact.target_id
+            status_instance_id = fact.status_instance_id
+        else:
+            target_id = _resolve_target_alias(standard["target_alias"], caster_id=context.caster_id,
+                owner_id=context.owner_id, param_entity_id=context.param_entity_id,
+                current_action_target_id=context.current_action_target_id, state=context.state)
+            scope = context.param_status_scope if standard.get("modifier_selector") == "param_modifier" else None
+            if standard.get("modifier_selector") == "param_modifier" and (
+                type(scope) is not TaskGraphStatusScope or scope.owner_id != target_id
+            ):
+                return _unsupported_effect(effect, "param_modifier_value_scope_missing_or_mismatched")
+            status_instance_id = scope.instance_id if scope is not None else None
         evaluation = _evaluate_numeric(effect, context, standard["amount"])
         if not evaluation.ok or evaluation.value is None:
             return _unsupported_effect(effect, evaluation.blocked_reason or "modifier_value_amount_not_bound")
@@ -737,7 +794,7 @@ class EffectRegistry:
             context.state, target_id, standard["modifier_name"], standard["value_kind"],
             standard["modify_function"], evaluation.value, caster_id=context.caster_id,
             metadata=_effect_metadata(effect, context, standard, evaluation.value, evaluation),
-            status_instance_id=scope.instance_id if scope is not None else None,
+            status_instance_id=status_instance_id,
         )
         return EffectResult(events=result.events, mutations=result.mutations,
                             records=result.records, unsupported=result.unsupported)
@@ -904,6 +961,86 @@ class EffectRegistry:
 
     def _execute_mechanism_bar_state(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_mechanism_bar_state(effect, context)
+
+    def _execute_infect_modifier(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        if self.status_system is None or self.targets is None or context is None:
+            return _unsupported_effect(effect, "infect_modifier_context_missing")
+        standard = effect.payload.get("standard")
+        if not (
+            isinstance(standard, dict)
+            and not standard.get("blocked_reason")
+            and standard.get("operation") == "infect_modifier"
+            and standard.get("source_shape_admitted") is True
+            and standard.get("use_param_modifier") is True
+            and standard.get("source_alias") == "Caster"
+            and standard.get("target_alias") == "CasterServant"
+        ):
+            return _unsupported_effect(effect, "infect_modifier_contract_not_admitted")
+        scope = context.param_status_scope
+        if type(scope) is not TaskGraphStatusScope:
+            return _unsupported_effect(effect, "infect_modifier_param_status_scope_missing")
+        if scope.owner_id != context.caster_id:
+            return _unsupported_effect(effect, "infect_modifier_source_scope_mismatch")
+        expression = self.status_system.rules.target_expression(
+            str(standard.get("target_expression_id") or ""))
+        if expression is None or expression.alias != standard.get("target_alias"):
+            return _unsupported_effect(effect, "infect_modifier_target_expression_missing_or_inconsistent")
+        resolution = self.targets.resolve_target_expression(
+            context.state,
+            expression,
+            context=TargetEvaluationContext(
+                caster_id=context.caster_id,
+                effect_owner_id=context.owner_id,
+                template_entity_ids=context.template_target_ids,
+                parameter_entity_ids=((context.param_entity_id,) if context.param_entity_id else ()),
+                selected_target_ids=(context.target_resolution.selected
+                                     if context.target_resolution else ()),
+                current_target_id=context.current_action_target_id,
+                turn_owner_id=committed_turn_owner_id(context.state),
+                admitted_action_target_fact=context.admitted_action_target_fact,
+                expected_action_window_scope=context.expected_action_window_scope,
+            ),
+            target_resolution=context.target_resolution,
+            condition_event_payload=context.event_payload,
+            dynamic_values=context.dynamic_values,
+            binding_sources=_binding_sources(context),
+        )
+        if not resolution.resolved:
+            return _unsupported_effect(effect,
+                resolution.blocked_reason or "infect_modifier_target_resolution_failed")
+        if not resolution.target_ids:
+            return EffectResult(
+                rng_events=resolution.rng_events,
+                records=(SettlementRecord(
+                    record_type="status_infection_empty_group",
+                    source="effect_system",
+                    process_only=True,
+                    payload={
+                        "effect_id": effect.effect_id,
+                        "source_owner_id": scope.owner_id,
+                        "source_instance_id": scope.instance_id,
+                        "target_alias": standard.get("target_alias"),
+                        "state_unchanged": True,
+                    },
+                    trace={"effect_source": effect.source.to_json(),
+                           "target_expression": resolution.to_json()},
+                ).to_json(),),
+            )
+        result = self.status_system.infect_modifier(
+            context.state,
+            effect,
+            source_owner_id=scope.owner_id,
+            source_instance_id=scope.instance_id,
+            target_ids=resolution.target_ids,
+            caster_id=context.caster_id,
+        )
+        return EffectResult(
+            events=result.events,
+            mutations=result.mutations,
+            rng_events=resolution.rng_events,
+            records=result.records,
+            unsupported=result.unsupported,
+        )
 
     def _execute_elation_operation(
         self, effect: EffectIR, context: EffectExecutionContext | None,
@@ -3350,6 +3487,8 @@ def _resolve_target_alias(
         return param_entity_id
     if alias == "CurrentActionTarget":
         return current_action_target_id
+    if alias == "CurrentTurnOwnerEntity" and state is not None:
+        return committed_turn_owner_id(state)
     if alias == "AbilityTargetEntity" or (isinstance(alias, str) and alias in _GROUP_HEAL_TARGET_ALIASES):
         selected = target_resolution.selected if target_resolution is not None else ()
         return selected[0] if len(selected) == 1 else None

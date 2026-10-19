@@ -6342,6 +6342,18 @@ class TBGDLowering:
             source=source,
         )
         lowered.target_expressions.extend(task_target_expressions)
+        # Remodifier materializes as a status-scope node; it therefore needs
+        # the same task-level target expression the callback path already
+        # carries.  The expression is closed later by the canonical pipeline.
+        task_target_expression_id = ""
+        if opcode == "Remodifier":
+            target_ref = (payload.get("target_expression_refs") or {}).get("TargetType")
+            if (
+                isinstance(target_ref, dict)
+                and isinstance(target_ref.get("target_expression_id"), str)
+                and target_ref["target_expression_id"]
+            ):
+                task_target_expression_id = target_ref["target_expression_id"]
         execution_mode = ability_task_execution_mode(opcode)
         if presentation_predicate or (opcode in {"Retarget", "FireProjectile", "CharacterChangePhase"} and not _process_only_ability_task_source_blocked_reason(task, opcode)):
             execution_mode = "process_only"
@@ -6406,6 +6418,7 @@ class TBGDLowering:
                 opcode=opcode,
                 effect_id=effect_id,
                 condition_id=remodifier_condition.condition_id if remodifier_condition is not None else "",
+                target_expression_id=task_target_expression_id,
                 parent_task_id=parent_task_id,
                 source=source,
                 execution_mode=execution_mode,  # type: ignore[arg-type]
@@ -8746,7 +8759,8 @@ class TBGDLowering:
         effect_payload = task_target_payload or None
         if opcode not in STATUS_CALLBACK_EFFECTLESS_OPCODES:
             effect_payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
-                _effect_payload(task, opcode, modifier_name, source=source), task,
+                _effect_payload(task, opcode, modifier_name, source=source,
+                                status_callback_event=event), task,
                 effect_id=effect_id, source=source,
                 target_language_definitions=self._strict_target_language_definitions(),
             )
@@ -17873,10 +17887,13 @@ def _standard_elation_payload(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str,
-                    *, source: IRSource | None = None) -> dict[str, Any]:
+                    *, source: IRSource | None = None,
+                    status_callback_event: str | None = None) -> dict[str, Any]:
     payload = _compact_payload(value)
     if opcode == "ElationOperation":
         payload["standard"] = _standard_elation_payload(value)
+    if opcode == "InfectModifier":
+        payload["standard"] = _standard_infect_modifier_payload(value)
     if opcode == "Remodifier":
         _status, reason = _remodifier_task_admission(value)
         payload["standard"] = {"operation": "select_status_instances",
@@ -17957,12 +17974,25 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             {"IsDynamic": False, "FixedValue": {"Value": count_rule["amount"]}} if count_rule and "amount" in count_rule else None)
         param_lifetime = (modifier_name == "ParamModifier" and value_kind == "LifeTime"
             and function == "Add" and (numeric_fixed_value(amount) is None or numeric_fixed_value(amount) >= 0))
+        # A status callback that already receives the triggering modifier can
+        # operate on that instance through ParamModifier without repeating a
+        # target alias.  Only the event whose producer carries the added
+        # instance identity is admitted; other omitted targets stay blocked.
+        callback_triggering_modifier = (
+            target is None and param_lifetime
+            and status_callback_event == "OnModifierAdd" and not count_rule
+        )
+        target_semantics_admitted = (
+            callback_triggering_modifier
+            or target is None and bool(count_rule)
+            or isinstance(target, dict) and set(target) == {"$type", "Alias"}
+            and target.get("$type") == "RPG.GameCore.TargetAlias"
+            and target_alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentTurnOwnerEntity"}
+        )
         admitted = (
             value.get("$type") == "RPG.GameCore.SetModifierValue"
             and not set(value) - {"$type", "TargetType", "ModifierName", "ValueType", "ModifyFunction", "Value"}
-            and (target is None and count_rule or isinstance(target, dict)
-                 and set(target) == {"$type", "Alias"} and target.get("$type") == "RPG.GameCore.TargetAlias")
-            and target_alias in {"Caster", "ModifierOwnerEntity", "ParamEntity"}
+            and target_semantics_admitted
             and (value_kind in {"Layer", "independent_count"} or param_lifetime) and function in {"Set", "Add"}
             and isinstance(modifier_name, str) and bool(modifier_name)
             and _numeric_expr_can_be_runtime_bound(amount)
@@ -17972,6 +18002,10 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             "modifier_name": modifier_name,
             "value_kind": value_kind, "modify_function": function, "amount": amount,
             **({"modifier_selector": "param_modifier"} if param_lifetime else {}),
+            **({
+                "target_source": "callback_triggering_modifier_instance",
+                "callback_target_event": "OnModifierAdd",
+            } if callback_triggering_modifier else {}),
             "remove_when_zero": True,
             "blocked_reason": "" if admitted else "modifier_value_fields_or_defaults_not_admitted",
             "adopted_rule_source": {"kind": "adopted_mechanism_data", "research": count_rule["research"],
@@ -20327,6 +20361,18 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
     if opcode == "ElationOperation":
         standard = payload.get("standard", {})
         return "executable" if standard.get("kind") == "elation" and not standard.get("blocked_reason") else "blocked"
+    if opcode == "InfectModifier":
+        standard = payload.get("standard")
+        return "executable" if (
+            isinstance(standard, dict) and not standard.get("blocked_reason")
+            and standard.get("operation") == "infect_modifier"
+            and standard.get("source_shape_admitted") is True
+            and standard.get("source_alias") == "Caster"
+            and standard.get("target_alias") == "CasterServant"
+            and standard.get("use_param_modifier") is True
+            and standard.get("status_dispel_filter") == "AnyStatus"
+            and standard.get("infect_type") == "Override"
+        ) else "blocked"
     if opcode == "Remodifier":
         standard = payload.get("standard", {})
         return "executable" if (standard.get("operation") == "select_status_instances"
@@ -20352,7 +20398,12 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         return "executable" if (
             isinstance(standard, dict) and not standard.get("blocked_reason")
             and standard.get("operation") == "modify_modifier_value"
-            and standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity"} and standard.get("modifier_name")
+            and (
+                standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentTurnOwnerEntity"}
+                or standard.get("target_source") == "callback_triggering_modifier_instance"
+                and standard.get("callback_target_event") == "OnModifierAdd"
+            )
+            and standard.get("modifier_name")
             and (standard.get("value_kind") in {"Layer", "independent_count"}
                  or standard.get("value_kind") == "LifeTime"
                  and standard.get("modifier_selector") == "param_modifier"
@@ -24328,6 +24379,47 @@ def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
         "omitted_chance_semantics_source": {
             "kind": "engine_rule",
             "rule_id": "add_modifier_omitted_chance_is_guaranteed",
+        },
+    }
+
+
+def _standard_infect_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Project the real Castorice infection shape without inventing fields."""
+
+    source = value.get("SourceType")
+    target = value.get("TargetType")
+    source_alias = _target_alias(source)
+    target_alias = _target_alias(target)
+    admitted = (
+        value.get("$type") == "RPG.GameCore.InfectModifier"
+        and not set(value) - {"$type", "SourceType", "TargetType", "StatusDispelFilter",
+                              "InfectType", "UseParamModifierToInfect"}
+        and isinstance(source, dict) and set(source) == {"$type", "Alias"}
+        and source.get("$type") == "RPG.GameCore.TargetAlias"
+        and source_alias == "Caster"
+        and isinstance(target, dict) and set(target) == {"$type", "Alias"}
+        and target.get("$type") == "RPG.GameCore.TargetAlias"
+        and target_alias == "CasterServant"
+        and value.get("StatusDispelFilter") == "AnyStatus"
+        and value.get("InfectType") == "Override"
+        and value.get("UseParamModifierToInfect") is True
+    )
+    return {
+        "operation": "infect_modifier",
+        "source_alias": source_alias,
+        "target_alias": target_alias,
+        "status_dispel_filter": value.get("StatusDispelFilter")
+        if isinstance(value.get("StatusDispelFilter"), str) else "",
+        "infect_type": value.get("InfectType")
+        if isinstance(value.get("InfectType"), str) else "",
+        "use_param_modifier": value.get("UseParamModifierToInfect") is True,
+        "source_shape_admitted": admitted,
+        "blocked_reason": "" if admitted else "infect_modifier_source_shape_not_admitted",
+        "adopted_rule_source": {
+            "kind": "adopted_mechanism_data",
+            "url": "https://hsr.gachabase.net/characters/1407/castorice/release/4.6.0?lang=chs",
+            "condition": "Castorice skill/maze summon: if Castorice owns the talent damage bonus, the effect spreads to Pollux",
+            "behavior": "copy the Remodifier-selected modifier instance to CasterServant; Override replaces the same status; AnyStatus admits any source status type",
         },
     }
 

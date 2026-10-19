@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, cast
 
-from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, RNGEvent, StanceCountDownFact, TargetResolution
+from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -291,6 +291,52 @@ def _blocked_task_graph_hook_result(name: str, reason: str) -> object:
     if name == "template_bindings":
         return TaskGraphTemplateBindingsResult("blocked", blocked_reason=reason)
     raise ValueError("unknown task graph hook channel")
+
+
+def _evaluated_stack_property_entry(
+    item: dict[str, JSONValue],
+    *,
+    task_id: str,
+    task_path: str,
+    value: float,
+) -> dict[str, JSONValue]:
+    """Return the post-OnStack shape of one computed property entry.
+
+    A formal _runtime_modifiers entry may be delayed (value None plus
+    value_mode/deferred_dynamic_hashes) until this task evaluates its dynamic
+    expression. Once evaluated it becomes an ordinary applied entry carrying
+    the producer identity; the deferred markers must not survive.
+    """
+
+    updated = {
+        **item,
+        "value": value,
+        "producer_task_id": task_id,
+        "producer_task_path": task_path,
+        "applied_reason": "status_stack_property",
+    }
+    updated.pop("value_mode", None)
+    updated.pop("deferred_dynamic_hashes", None)
+    return updated
+
+
+def _status_callback_event_matches_fact(
+    callback_event: str,
+    fact_event: str,
+) -> bool:
+    """Admit the dispatcher's formal listener alias family.
+
+    A produced OnModifierAdd fact may be consumed by an OnListenModifierAdd
+    listener (and likewise for the other lifecycle companion pairs). Reuse the
+    dispatcher companion-key rule instead of requiring an identical name.
+    """
+
+    if callback_event == fact_event:
+        return True
+    from .event_dispatch import _callback_companion_key
+
+    callback_key = _callback_companion_key(callback_event)
+    return bool(callback_key) and callback_key == _callback_companion_key(fact_event)
 
 
 class StatusCallbackSystem:
@@ -865,6 +911,22 @@ class StatusCallbackSystem:
     ) -> StatusCallbackExecutionResult:
         if callback.coverage_status != "executable":
             reason = callback.blocked_reason or f"status_callback_not_executable:{callback.coverage_status}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_callback_blocked_record(callback=callback, detail=detail, reason=reason),),
+                errors=(reason,),
+            )
+        lifecycle_fact = trigger_event.status_lifecycle_fact if trigger_event is not None else None
+        if lifecycle_fact is not None and (
+            type(lifecycle_fact) is not StatusLifecycleFact
+            or not _status_callback_event_matches_fact(
+                callback.event, lifecycle_fact.callback_event)
+            or not lifecycle_fact.matches(state, trigger_event)
+        ):
+            # Producer facts are authoritative; a payload-only instance
+            # identity is never allowed to satisfy this callback.
+            reason = "status_lifecycle_fact_missing_or_mismatched"
             return StatusCallbackExecutionResult(
                 ok=False,
                 after_state=state,
@@ -2097,12 +2159,23 @@ class StatusCallbackSystem:
                 owner_id = str(detail["owner_id"])
                 unit = state.units[owner_id]
                 before = list(unit.flags["status_details"])
-                modifiers = [{**item, "value": value.value} if item == installed[0] else item
-                             for item in detail.get("modifiers", ())] if installed else [
+                # A preinstalled modifier entry (formal _runtime_modifiers) only
+                # carries its raw_path; the producer identity is filled in when
+                # this task owns the value, including the in-place update path.
+                modifiers = [
+                    _evaluated_stack_property_entry(
+                        item,
+                        task_id=task.task_id,
+                        task_path=task.task_path,
+                        value=value.value,
+                    ) if item == installed[0] else item
+                    for item in detail.get("modifiers", ())
+                ] if installed else [
                     *detail.get("modifiers", ()),
                     {"bucket": mapped[0], "key": mapped[1], "scope": mapped[2],
                      "value": value.value, "property": task.task_payload["Property"],
-                     "producer_task_id": task.task_id, "raw_path": task.task_path,
+                     "producer_task_id": task.task_id, "producer_task_path": task.task_path,
+                     "raw_path": task.task_path,
                      "applied_reason": "status_stack_property"},
                 ]
                 after = [{**item, "modifiers": modifiers} if item.get("instance_id") == detail["instance_id"] else item
@@ -3558,12 +3631,14 @@ class StatusCallbackSystem:
         }:
             return None
         target_expression_id = standard.get("target_expression_id")
-        if alias is None and not (
+        if alias in (None, "") and not (
             isinstance(target_expression_id, str) and target_expression_id
         ):
             # Global effects such as team-resource changes intentionally have
             # no target.  They must reach their typed effect executor instead
-            # of being mistaken for an unresolved list target.
+            # of being mistaken for an unresolved list target.  An omitted
+            # TargetType may also be a typed callback-instance binding, which
+            # the effect executor admits or rejects on its own contract.
             return None
         expression = (
             self.rules.target_expression(str(target_expression_id))
@@ -6440,6 +6515,11 @@ def _effect_context(
         ),
         shield_exhaustion_fact=(
             event.shield_exhaustion_fact if event is not None else None
+        ),
+        status_lifecycle_fact=(
+            event.status_lifecycle_fact
+            if event is not None and event.event_type == "status.lifecycle"
+            else None
         ),
     )
 

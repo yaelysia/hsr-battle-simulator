@@ -715,10 +715,24 @@ def _evaluate_condition_payload(
             source_trace=source_trace,
         )
     event_payload = context.event_payload or {}
+    from ..core.model import GameEvent, StatusLifecycleFact
+
+    trigger_event = context.trigger_event
+    lifecycle_fact = (
+        trigger_event.status_lifecycle_fact
+        if trigger_event is not None
+        and type(trigger_event) is GameEvent
+        and type(trigger_event.status_lifecycle_fact) is StatusLifecycleFact
+        else None
+    )
     if opcode == "ByCheckModifierCallBackIsSelf":
         explicit = event_payload.get("is_self")
         detail = context.status_detail or {}
-        event_instance_id = event_payload.get("status_instance_id")
+        event_instance_id = (
+            lifecycle_fact.status_instance_id
+            if lifecycle_fact is not None
+            else event_payload.get("status_instance_id")
+        )
         listener_instance_id = detail.get("instance_id")
         if isinstance(explicit, bool):
             matched = explicit
@@ -742,7 +756,8 @@ def _evaluate_condition_payload(
         )
     if opcode == "ByCheckModifierCallBackName":
         expected = _value_field(payload.get("ModifierName"))
-        actual = event_payload.get("modifier_name")
+        actual = (lifecycle_fact.modifier_name if lifecycle_fact is not None
+                  else event_payload.get("modifier_name"))
         if not isinstance(expected, str) or not expected:
             return _condition_blocked(condition_id, opcode, "modifier_name_missing", {}, source_trace)
         if not isinstance(actual, str) or not actual:
@@ -760,7 +775,8 @@ def _evaluate_condition_payload(
         "ByCompareCurrentModifierStatusType",
     }:
         expected = _value_field(payload.get("TargetStatusType"))
-        actual = event_payload.get("status_type")
+        actual = (lifecycle_fact.status_type if lifecycle_fact is not None
+                  else event_payload.get("status_type"))
         if not isinstance(expected, str) or not expected:
             return _condition_blocked(condition_id, opcode, "target_status_type_missing", {}, source_trace)
         if not isinstance(actual, str) or not actual:
@@ -774,12 +790,12 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByCheckModifierCallBackBehaviorFlag":
-        from ..core.model import GameEvent, StatusImmunityFact
+        from ..core.model import StatusImmunityFact
 
         expected = payload.get("Flag")
         if not isinstance(expected, str) or not expected:
             return _condition_blocked(condition_id, opcode, "behavior_flag_missing", {}, source_trace)
-        trigger = context.trigger_event
+        trigger = trigger_event
         if trigger is not None and type(trigger) is not GameEvent:
             return _condition_blocked(condition_id, opcode, "callback_trigger_event_invalid", {}, source_trace)
         if (trigger is not None and (trigger.event_type == "status.immunity" or trigger.status_immunity_fact is not None)
@@ -797,7 +813,11 @@ def _evaluate_condition_payload(
                     "status_immunity_condition_fact_missing_or_mismatched", {}, source_trace)
             raw_flags = fact.incoming_behavior_flags
         else:
-            raw_flags = event_payload.get("behavior_flags")
+            raw_flags = (
+                list(lifecycle_fact.behavior_flags)
+                if lifecycle_fact is not None
+                else event_payload.get("behavior_flags")
+            )
         if not isinstance(raw_flags, (list, tuple)):
             return _condition_blocked(condition_id, opcode, "callback_behavior_flags_missing", {}, source_trace)
         flags = tuple(str(item) for item in raw_flags if isinstance(item, str))

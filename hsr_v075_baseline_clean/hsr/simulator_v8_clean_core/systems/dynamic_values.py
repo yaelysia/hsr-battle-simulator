@@ -1929,7 +1929,126 @@ def character_skill_param_binding_sources(
         rank_source = _character_rank_param_binding_source(rules, state, unit_id, excluded_hashes)
         if rank_source is not None:
             sources.append(rank_source)
+        declared = {
+            *(
+                str(key)
+                for source in sources
+                if source.get("unit_id") == unit_id
+                for key in (
+                    source.get("by_hash", {}).keys()
+                    if isinstance(source.get("by_hash"), dict)
+                    else ()
+                )
+            ),
+            *excluded_hashes,
+        }
+        trace_source = character_trace_param_binding_source(
+            rules, state, unit_id, excluded_hashes=tuple(sorted(declared)),
+        )
+        if trace_source is not None:
+            sources.append(trace_source)
     return tuple(sources)
+
+
+def character_trace_param_binding_source(
+    rules: RuleBook,
+    state: BattleState,
+    unit_id: str,
+    *,
+    excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    """Read selected trace parameters through their formal build slots.
+
+    SkillTreeParam values are declared on the character config and carried by
+    the trace node's ability-hook mechanism slot.  Only explicitly selected,
+    executable trace nodes supply values; an unselected or blocked node never
+    falls back to its raw param list.
+    """
+
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return None
+    card_id = unit.flags.get("character_data_card_id")
+    if card_id is not None:
+        if not isinstance(card_id, str) or not card_id:
+            return None
+        card = rules.character_data_card(card_id)
+        if card is None or card.entity_ref != unit.template_id:
+            return None
+    else:
+        card = rules.character_data_card_for_entity(unit.template_id)
+    if card is None:
+        return None
+    selected = unit.flags.get("selected_trace_node_ids")
+    if not isinstance(selected, (list, tuple)) or not selected:
+        return None
+    selected_ids = {
+        item for item in selected if isinstance(item, str) and item
+    }
+    excluded = {str(item) for item in excluded_hashes if str(item)}
+    entries: dict[str, JSONValue] = {}
+    for node in rules.character_trace_nodes_for_card(card.card_id):
+        if (
+            node.trace_node_id not in selected_ids
+            or node.coverage_status != "executable"
+            or node.blocked_reason
+        ):
+            continue
+        for slot_id in node.linked_mechanism_slot_ids:
+            slot = rules.character_mechanism_slot(slot_id)
+            if (
+                slot is None
+                or slot.character_data_card_id != card.card_id
+                or slot.mechanism_kind != "trace_ability_hook"
+            ):
+                continue
+            semantics = slot.semantics if isinstance(slot.semantics, dict) else {}
+            bindings = semantics.get("dynamic_value_bindings")
+            by_hash = bindings.get("by_hash") if isinstance(bindings, dict) else None
+            params = semantics.get("param_values")
+            if not isinstance(by_hash, dict) or not isinstance(params, (list, tuple)):
+                continue
+            for raw_hash, binding in by_hash.items():
+                if not isinstance(binding, dict) or str(raw_hash) in excluded:
+                    continue
+                index = binding.get("param_index")
+                if (
+                    type(index) is not int
+                    or not 0 <= index < len(params)
+                    or not _finite_number(params[index])
+                ):
+                    continue
+                entry = {
+                    "scope": "character_trace_param",
+                    "owner_id": unit_id,
+                    "status_id": None,
+                    "status_instance_id": None,
+                    "effect_id": None,
+                    "name": None,
+                    "hash": str(raw_hash),
+                    "value": float(params[index]),
+                    "source_trace": {
+                        "character_data_card_id": card.card_id,
+                        "character_data_card_source": card.source.to_json(),
+                        "trace_node_id": node.trace_node_id,
+                        "trace_node_source": node.source.to_json(),
+                        "mechanism_slot_id": slot.mechanism_slot_id,
+                        "mechanism_slot_source": slot.source.to_json(),
+                        "dynamic_value_binding": binding,
+                        "param_values": list(params),
+                        "selection_source": "character_build_assembly",
+                    },
+                }
+                entries[_entry_key(entry)] = entry
+    if not entries:
+        return None
+    indexed = _reindex({"entries": entries})
+    return {
+        "source_type": "character_trace_param",
+        "unit_id": unit_id,
+        "character_data_card_id": card.card_id,
+        **indexed,
+    }
 
 
 def _character_rank_param_binding_source(
@@ -2180,7 +2299,7 @@ def character_skill_param_declared_keys(
             for raw_hash, binding in by_hash.items()
             if isinstance(binding, dict)
             and isinstance(binding.get("read_info"), dict)
-            and binding["read_info"].get("Type") in {"SkillParam", "SkillRank"}
+            and binding["read_info"].get("Type") in {"SkillParam", "SkillRank", "SkillTreeParam"}
         )
     )
     return hashes, ()

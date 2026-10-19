@@ -16,8 +16,113 @@
 `node hsr_v075_baseline_clean/hsr/simulator_v8_ui/test_live_client.cjs` 通过。
 这些结果不代表全部集成路线或全角色内容已验收。
 
-后续首批交给 dsh / DeepSeek：V2 普通单韧性的自然风属性击破与恢复路线。先核对真实
-来源和正式准入，再补场景、固定命令及一项集成检查；运行阻断保留复现与归因，交回验收。
+基线后的 V2 普通单韧性自然风击破路线与 I11 真实来源精准状态操作均已完成验收，成果和
+剩余边界见下文。后续继续按共享机制批次交给 dsh / DeepSeek 实现，完成后集中验收。
+
+### 2026-10-19 dsh / DeepSeek I11 真实来源精准状态操作
+
+**验收通过，按下述范围收口。** 最终版本复验此前全部 8 个审查复现（4.01 秒，日志
+`/tmp/hsr-i11-all-reproductions-review.log`）与 54 项相关检查（另有 2 项未选，13.16 秒，
+日志 `/tmp/hsr-i11-final-targeted-review.log`），均通过；`git diff --check` 通过。
+最终验收未重跑完整普通回归或整场；下方 146/574 项为开发侧验证记录。验收覆盖本批真实
+来源子图、生命周期事实与属性审计，不代表完整角色构筑或完整技能已可用。
+
+本批接通三个真实来源用例，均从来源编译、类型化 IR、正式消费者到原生审计完成接线；复用
+现有逐实例作用域、任务图与状态生命周期，不新增按角色名或状态名分支。
+
+- **Phainon（Avatar_Phainon_00_Ability.json::MAvatar_Phainon_00_Ultra.OnStack）**：
+  Remodifier(CurrentTurnOwnerEntity, PredicateFilter=LifeTime>0, StatusTypeMask=Buff) 与子
+  SetModifierValue(CurrentTurnOwnerEntity, ParamModifier, LifeTime Add 1) 已准入并执行。
+  SetModifierValue 新增 CurrentTurnOwnerEntity 目标，运行时读 committed turn owner；
+  只延长当前回合所有者身上正寿命 Buff，Debuff/零时长/永久及其它单位不变；回合所有者是敌方时
+  源 PredicateTaskList 不产生任何 mutation。真实子图执行、来源审计、第二个实例失败整图回滚
+  见 tests/test_phainon_ultra_buff_lifetime.py。该回调其它兄弟任务（控制器映射缺少
+  SkillTriggerKey 的一项等）仍独立阻断，完整角色未验收。
+- **YaoGuang（Avatar_YaoGuang_00_Ability.json::MAvatar_YaoGuang_00_SkillTree03.OnModifierAdd）**：
+  确认省略 TargetType 的 ParamModifier 指本次回调提供的触发状态实例，不是监听者
+  SkillTree03。来源新增正式目标语义 callback_triggering_modifier_instance（仅 OnModifierAdd
+  的生产者携带新增实例身份时准入）。效果只从状态生命周期 producer 附带的类型化
+  `StatusLifecycleFact` 绑定实例；普通 payload 的身份字段即使被篡改也不能改变目标，缺 fact
+  或事件/owner/实例不一致时拒绝，不做同名猜测。寿命增量 hash -755873381 是角色配置的 SkillTreeParam PointB3 Index 1；新增
+  character_trace_param_binding_source 从正式角色卡、选中行迹节点与 trace_ability_hook
+  机制槽读取 ParamList（组件测试中值为 1），不再缺绑定。检查覆盖真实 OnModifierAdd 事件
+  生产者→回调→寿命修改、两个 ElationEchoPoint 实例只改触发者、监听者与其它状态不变、
+  来源审计，以及移除 selected_trace_node_ids 时整次派发零 mutation 的原子阻断，见
+  tests/test_yaoguang_elation_echo_lifetime.py。语义依据：TBGD 交叉来源（Level_RogueBuff_Ability_7 的
+  OnModifierOnStack、Avatar_RogueBattleevent121/122）都让省略目标的 ParamModifier 指向本次回调
+  触发实例；[官方行迹「鸿运鳞集/Felicity Ensemble」](https://honkai-star-rail.fandom.com/wiki/Felicity_Ensemble)
+  写明获得「好活当赏」时持续时间 +1 回合，与 ParamList 第 2 项=1 吻合。
+- **Castorice（Avatar_Castorice_00_Ability.json::Skill03_Phase02.OnStart[6] 与
+  SkillMazeInLevel.OnStart[10]）**：真实 Remodifier(Caster, 指定天赋增伤状态) +
+  InfectModifier(SourceType=Caster, TargetType=CasterServant, StatusDispelFilter=AnyStatus,
+  InfectType=Override, UseParamModifierToInfect=true) 已接通。L0 生成独立 InfectModifier
+  契约；能力任务级 Remodifier 现在携带正式目标表达式并可物化为 status_scope 节点；运行时以
+  Remodifier 选中实例为源，解析 CasterServant，复制定义/原 caster/层数/max layer/剩余寿命/
+  动态值/已算属性修正/回调触发身份，并复用正式 add/replace 状态生命周期与事件。目标已有
+  同名状态时按 Override 原位替换同一实例；复制实例随后自己的 OnStack 重新计算
+  MDF_Layer=2 与 AllDamageTypeAddedRatio=0.4，不污染原主与其它单位。两处真实技能叶子
+  均编译为同一契约；覆盖来源审计、Override 重感染、缺失 servant 时零变更，见
+  tests/test_castorice_infect_modifier.py。InfectModifier 只准入这条真实形状，其它
+  InfectType/目标/过滤变体继续拒绝。
+
+共享修复包括：SetModifierValue 空目标别名的效果不再被列表目标预检误判；能力级
+Remodifier 现在携带正式目标表达式（否则无法物化为 status_scope 节点）；状态回调
+StackProperty 产生的 status_details.modifiers 写出现在有原生来源审计分支（校验回调/
+任务来源、实例身份、数值评估与结算记录）；原位更新正式预装属性条目时补齐
+producer_task_id/producer_task_path，使审计同时覆盖原位与首次追加路径。固定审查发现的
+两处 P2 已修：ParamModifier 不再信任普通 payload 实例身份，改由 producer 事实并校验
+事件/owner/实例；属性审计接受正式预装条目并覆盖原位更新。后续审查再修两处：
+status_stack_property_dynamic 延迟条目在 OnStack 求值后归一化为 status_stack_property
+（移除 value_mode/deferred_dynamic_hashes 并补生产者身份），审计按该形状校验；首次追加
+分支与所有分支一样强制 entry.value == numeric_evaluation.value，篡改写入值会被拒绝。
+最后四项审查修复：生命周期事实校验允许同一正式事件族的 listener 别名
+（OnModifierAdd↔OnListenModifierAdd，复用派发器 companion key），真实砂金 R6 监听
+普通 Buff 添加时不再误阻断，回归见 `tests/test_aventurine_listener_alias.py`；事实携带并
+校验 behavior_flags/status_type/status_category/stack 变化等条件输入，条件求值优先读
+生产者事实，篡改普通 payload 的 ElationEchoPoint 不再能延长 Buff；属性审计校验完整
+status_details 列表差分，其它实例被改层数或删除会拒绝；首次追加条目按正式 Property
+映射校验 bucket/key/scope/完整字段集，并拒绝延迟标记残留。未修改 TBGD submodule、
+未新增依赖。本批与已验收的 V2 风击破交付一并收录为下一批工作基线。
+全目录共 23 处能力级 Remodifier 来源未在本批逐个重编；本批只对遐蝶两处做真实物化，
+其它内容的行为变化留给全目录/相应版本验收。
+
+验证与本批边界：本轮修复后定向批次 146 项通过（砂金别名模块 2 项 + 3 个新模块共 16
+项 + Remodifier/共享回调/任务图/构筑启动/生命周期事件等受影响检查）；由于审计与生命周期
+校验为共享路径，另跑完整普通回归 574 项：100%、216.62 秒、峰值约 1,384,340 KiB，无 F/E
+（日志 `/tmp/i11_full_regression3.log`；pytest 静默输出未打印汇总行，按 574 个用例点与
+100% 判定）。本批未跑全目录编译或整场路线，也不重复已通过的风击破路线。这些检查执行
+正式任务图、事件派发和状态生命周期，但单位、servant、候选状态与部分构筑输入仍是标注
+清楚的组件输入。
+
+剩余依赖（具体阻断，不猜默认）：
+
+- 爻光 A6 的监听状态安装仍取决于行迹启动能力链：character_cards 生成的非 Enhanced
+  trace_ability_hook 槽仍为 trace_ability_effect_not_admitted_v0_265，
+  _admit_trace_startup_ability_slots 只对 Enhanced 槽重新准入；kernel fixture 构筑会跳过
+  该 blocked 槽。完整普通角色构筑能否经 formal_character_build 的 dynamic graph refs 安装
+  SkillTree03 尚未在本批验证，故本条证据限定为 OnModifierAdd 回调实例级接线。
+- 遐蝶完整可用仍依赖忆灵/死龙内容装配与整场；本批只处理状态扩散子图，未验证其它召唤、
+  忆灵技或完整角色构筑。
+- Phainon 完整 Ultra 仍受同回调其它未准入任务阻挡；本批只覆盖 Buff 寿命过滤/延长子树。
+- 其它 InfectModifier 用法（关卡/战斗事件：StackIncrement、InfectChance、filter-sweep、
+  AutoRemoveFromSource、StatusTypeListFilter、其它目标别名）和其它/组合 StatusTypeMask、
+  寿命 Set/减少继续 fail-closed，未据本批外推。
+
+### 2026-10-18 V2 风属性普通击破自然多轮验证
+
+丹恒 E0/Lv1＋娜塔莎 E0/Lv40、空装备，对来源波次 `400020830` 的单只 Lv23 `8011010`
+（`StanceWeakList` 含 Wind，`StanceCount=1`、基础韧性 30）。只经公开
+`BattleSession.advance/submit` 与 CLI `run` 推进：丹恒普攻首次风击破（移除
+`MonsterAllDamageReduce`，安装 `StanceBreakState` 与 1 层 `MCommon_Element_Poison`，
+行动值延迟 0.25 个完整行动值）→ 娜塔莎合法普攻 → 目标自然回合在 `ModifierPhase1End`
+先结算风化 17.72 伤害（来源仍为存活丹恒），随后韧性自然恢复到 30、清 `broken` 与
+`StanceBreakState` 并装回减伤 → 敌方行动 → 丹恒再次风击破同一目标 → 下一合法行动成功；
+丹恒全程存活。配置与固定命令为 `examples/cli/danheng_wind_break_natural{,.commands}.json`，
+集成检查 `tests/test_ordinary_wind_break_natural_route.py` 断言顺序、DOT 来源、自然恢复、
+二次击破、后续合法动作及归档回放。CLI `run` 34.02 秒、峰值 494468 KiB，战斗未结束按约定
+退出码 3；`cli replay` `ok=true`、11 步、38.65 秒、峰值 499424 KiB；集成检查单条约
+55.02 秒、峰值 530376 KiB。本证据只覆盖风元素普通单韧性；其余五元素、I7 多层/共享韧性、
+风击破的 BigBoss/Elite 分支、来源死亡后的 DOT 保留和完整关卡均未验证。
 
 ### 2026-10-16 剩余工作分类（当前源码核对）
 
@@ -47,7 +152,7 @@
 | I8 | 当前固定根节点之外、确实影响战斗顺序的并行形态 | `systems/ability.py::_execute_parallel_abilities` 仅普通动作上下文及固定根时间戳可用；动态/嵌套屏障、超出父动作目标范围等仍拒绝，子攻击后通知当前在整组结束时派发。只处理影响数值/回调的差异，不复刻纯表现同步。 |
 | I9 | 快照实体创建的正式事件生产者 | 当前没有 OnSnapshotCreate 的正式 producer；`tests/test_birth_snapshot_event_separation.py` 明确验证出生不得伪装成快照创建。影响实际订阅该事件的装备/能力，不能拿普通 snapshot 导出代替。 |
 | I10 | 双 mute 退场之外的特殊强制死亡形态 | `systems/effect.py::_execute_force_kill` 当前仅支持已准入的 battle_event/servant 双 mute 退场；其它死亡通知/抑制组合未实现。普通受击死亡、行动前 DOT 死亡已通。 |
-| I11 | Remodifier 其余类型筛选及 ParamModifier 操作 | 命名状态、flags、caster、max 与逐实例上下文已接；Buff 单 mask＋正式 PredicateFilter、ParamModifier 的非负 LifeTime Add 已通，真实源子图和审计通过。其它/组合 StatusTypeMask、InfectModifier、寿命 Set/减少及其它未接精准实例操作仍拒绝；不把所有筛选和生命周期操作统称为缺实现。 |
+| I11 | Remodifier 其余类型筛选及 ParamModifier 操作 | 命名状态、flags、caster、max 与逐实例上下文已接；Buff 单 mask＋正式 PredicateFilter、ParamModifier 的非负 LifeTime Add 已通。2026-10-19 追加真实来源：`CurrentTurnOwnerEntity` 目标的正寿命 Buff 逐实例延长、OnModifierAdd 触发实例绑定（省略 TargetType 的 ParamModifier）与 SkillTreeParam 行迹参数运行时绑定、真实 InfectModifier(AnyStatus/Override/UseParamModifierToInfect→CasterServant) 状态复制生命周期，均有定向来源审计。其它/组合 StatusTypeMask、其它 InfectModifier 变体、寿命 Set/减少及其它未接精准实例操作仍拒绝；不把所有筛选和生命周期操作统称为缺实现。 |
 | I12 | 独立复合伤害中存在多个主倍率时的逐任务绑定 | 普通单倍率、唯一主倍率与其它技能比例参数的复合公式已接；无法唯一确定各任务主基准的复合图仍拒绝，需要逐任务绑定能力，不以默认攻击力补齐。 |
 
 I6 本轮查证记录：最接近的[《战斗必修》资料](https://game.xiaomi.com/viewpoint/1414251050_1685961943790_253)
@@ -317,7 +422,7 @@ mutation 来源审计；实际消费叶失败时 mutation/事件/RNG/已处理 I
 | 编号 | 范围 | 已有证据 / 尚缺证据 |
 | --- | --- | --- |
 | V1 | 当前工作台已接功能的真实浏览器使用 | 配置、双方选择、构筑/装备表单、保存恢复、分支回溯已有服务端/HTTP/客户端检查和限定实战；缺实际浏览器点击、布局与导入/下载操作验收。完整关卡能力不在本项内。 |
-| V2 | 七元素普通击破的自然多轮使用 | 七元素进入、首次回合效果、普通恢复有共用组件证据，物理已有自然技能击破路线；仍缺其余元素相应自然战斗、多轮恢复的整合证据。仅普通单韧性，不包含 I7 和来源死亡后的 DOT。 |
+| V2 | 七元素普通击破的自然多轮使用 | 七元素进入、首次回合效果、普通恢复有共用组件证据，物理已有自然技能击破路线；风属性已有自然多轮整合证据（2026-10-18，见上文：首次击破→风化结算→自然恢复→二次击破→后续合法行动）；仍缺其余五元素相应自然战斗、多轮恢复的整合证据。仅普通单韧性，不包含 I7 和来源死亡后的 DOT。 |
 | V3 | 已准入 SummonMonster 形态的自然召唤战斗 | 正式出生、被动初始化、关系/光环、事件一次派发与失败回滚已有组件证据；缺实际怪物在自然动作中召唤后继续战斗的路线。未准入的特殊子卡不算本项。 |
 
 已验收过的限定行为不重复列作 V 项：编译缓存、来源构造，普通伤害/治疗/护盾、普通双方外控，

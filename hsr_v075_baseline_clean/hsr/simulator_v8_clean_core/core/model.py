@@ -866,6 +866,124 @@ class StatusImmunityFact:
                 and bool(matches[0]["status_id"]) and matches[0]["status_id"] in target.statuses)
 
 
+_STATUS_LIFECYCLE_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class StatusLifecycleFact:
+    """One produced status.lifecycle notification and its exact live instance.
+
+    The identity fields above are authoritative; ordinary event payload fields
+    are only a transport copy and must never be used to select the instance.
+    """
+
+    operation: str
+    callback_event: str
+    target_id: str
+    owner_id: str
+    modifier_name: str
+    status_id: str
+    status_instance_id: str
+    caster_id: str
+    event_id: str
+    behavior_flags: tuple[str, ...]
+    status_type: str
+    status_category: str
+    stack_change: dict[str, JSONValue]
+    instance_detail: dict[str, JSONValue]
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _STATUS_LIFECYCLE_PRODUCER:
+            raise ValueError("status lifecycle fact requires StatusSystem producer")
+        if (
+            any(
+                not isinstance(value, str) or not value
+                for value in (
+                    self.operation,
+                    self.callback_event,
+                    self.target_id,
+                    self.owner_id,
+                    self.modifier_name,
+                    self.status_id,
+                    self.status_instance_id,
+                    self.event_id,
+                    self.status_type,
+                )
+            )
+            or not isinstance(self.caster_id, str)
+            or not isinstance(self.status_category, str)
+        ):
+            raise ValueError("status lifecycle fact requires complete identities")
+        if any(not isinstance(flag, str) or not flag for flag in self.behavior_flags):
+            raise ValueError("status lifecycle fact behavior flags are invalid")
+        object.__setattr__(self, "behavior_flags", tuple(self.behavior_flags))
+        detail = freeze_json(dict(self.instance_detail))
+        stack_change = freeze_json(dict(self.stack_change))
+        if not isinstance(detail, dict) or not isinstance(stack_change, dict):
+            raise TypeError("status lifecycle fact detail must be an object")
+        if (
+            detail.get("instance_id") != self.status_instance_id
+            or detail.get("owner_id") != self.owner_id
+            or detail.get("modifier_name") != self.modifier_name
+            or detail.get("status_id") != self.status_id
+        ):
+            raise ValueError("status lifecycle fact detail identity mismatch")
+        object.__setattr__(self, "instance_detail", detail)
+        object.__setattr__(self, "stack_change", stack_change)
+
+    def matches_state(self, state: BattleState) -> bool:
+        unit = state.units.get(self.owner_id)
+        details = unit.flags.get("status_details") if unit is not None else None
+        if not isinstance(details, (list, tuple)):
+            return False
+        matches = [
+            detail
+            for detail in details
+            if isinstance(detail, Mapping)
+            and detail.get("instance_id") == self.status_instance_id
+        ]
+        if len(matches) != 1:
+            return False
+        detail = matches[0]
+        return (
+            detail.get("owner_id") == self.owner_id
+            and detail.get("modifier_name") == self.modifier_name
+            and detail.get("status_id") == self.status_id
+            and detail.get("caster_id") == self.caster_id
+            and tuple(detail.get("behavior_flags") or ()) == self.behavior_flags
+            and detail.get("status_type") == self.status_type
+            and detail.get("status_category") == self.status_category
+            and detail.get("lifecycle_state") == "active"
+            and self.status_id in unit.statuses
+        )
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        return (
+            event.event_type == "status.lifecycle"
+            and event.event_id == self.event_id
+            and event.window == self.callback_event
+            and event.target_id == self.target_id
+            and isinstance(event.payload, dict)
+            and event.payload.get("callback_event") == self.callback_event
+            and event.payload.get("status_instance_id") == self.status_instance_id
+            and event.payload.get("owner_id") == self.owner_id
+            and event.payload.get("modifier_name") == self.modifier_name
+            and event.payload.get("status_id") == self.status_id
+            and event.payload.get("caster_id") == self.caster_id
+            and event.payload.get("param_entity_2_id") == self.caster_id
+            and event.payload.get("lifecycle_operation") == self.operation
+            and event.payload.get("behavior_flags") == list(self.behavior_flags)
+            and event.payload.get("status_type") == self.status_type
+            and event.payload.get("status_category") == self.status_category
+            and all(
+                event.payload.get(key) == value
+                for key, value in self.stack_change.items()
+            )
+            and self.matches_state(state)
+        )
+
+
 @dataclass(frozen=True)
 class GameEvent:
     event_type: str
@@ -899,6 +1017,9 @@ class GameEvent:
         default=None, repr=False, compare=False,
     )
     status_lifecycle_plan: StatusLifecyclePlan | None = field(
+        default=None, repr=False, compare=False,
+    )
+    status_lifecycle_fact: StatusLifecycleFact | None = field(
         default=None, repr=False, compare=False,
     )
     status_immunity_fact: StatusImmunityFact | None = field(

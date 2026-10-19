@@ -1,0 +1,79 @@
+{
+  "scenario_id": "ordinary:danheng-wind-break-natural",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "danheng",
+      "side": "ally",
+      "entity_ref": "avatar:1002",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "danheng:build",
+        "character_card_id": "character_data_card:avatar:1002",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "danheng:equipment",
+          "character_card_id": "character_data_card:avatar:1002",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "e3ca59d22f8d85aed483e76893ef4f4aa1b76bfdee721eb4e505781e3c07dcb7"
+        },
+        "input_fingerprint": "3f2a6baf86bb4c9250b09c9afaf452f02df1cf78b1bf62dfad21d162a74e1417"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 40,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv40-p2",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 40,
+        "promotion": 2,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "81730c7c69d626d09427e3013f3512becf1be23fad0b52a637858e7544a00b76"
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "400020830",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: one Lv23 Minion 8011010 (Wind weakness, StanceCount=1, source toughness 30). Dan Heng E0/Lv1 and Natasha E0/Lv40 use assembled builds with empty equipment; no injected HP, toughness, status, timeline or queue values."
+    }
+  }
+}

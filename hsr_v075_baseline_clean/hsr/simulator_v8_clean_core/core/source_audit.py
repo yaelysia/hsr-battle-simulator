@@ -1884,6 +1884,12 @@ class RuntimeSourceAuditor:
             return _trace(mutation, records, {"callback_id": metadata.get("callback_id"), "task_id": metadata.get("task_id")})
         if metadata.get("dynamic_key") or metadata.get("property"):
             return self._audit_status_callback_dynamic_value_mutation(mutation, records, violations)
+        if any(
+            record.get("record_type") == "status_stack_property"
+            and record.get("mutation_id") == mutation.stable_id()
+            for record in records
+        ):
+            return self._audit_status_stack_property_mutation(mutation, records, violations)
         callback_id = _required_str(mutation, metadata, "callback_id", violations)
         task_id = _required_str(mutation, metadata, "task_id", violations)
         is_current_skill_delay_cost = mutation.path == (
@@ -1994,6 +2000,253 @@ class RuntimeSourceAuditor:
                 "task_id": task_id or "",
                 "dynamic_key": str(metadata.get("dynamic_key") or ""),
                 "property": str(metadata.get("property") or ""),
+            },
+        )
+
+    def _audit_status_stack_property_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        callback_id = _required_str(mutation, metadata, "callback_id", violations)
+        task_id = _required_str(mutation, metadata, "task_id", violations)
+        instance_id = _required_str(mutation, metadata, "status_instance_id", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        evaluation = metadata.get("numeric_evaluation")
+        value = (
+            evaluation.get("value")
+            if isinstance(evaluation, dict) and evaluation.get("ok") is True
+            else None
+        )
+        if (
+            type(value) not in (int, float)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            violations.append(
+                _violation(mutation, "status_stack_property_numeric_evaluation_invalid")
+            )
+            value = None
+        callback = self.rules.status_callback(callback_id) if callback_id else None
+        if callback is None:
+            violations.append(
+                _violation(mutation, "status_callback_missing",
+                           details={"callback_id": callback_id})
+            )
+        else:
+            _audit_source(callback.source, callback.coverage_status, mutation,
+                          violations, executable_required=True)
+        task = self.rules.status_callback_task(task_id) if task_id else None
+        property_name = ""
+        if task is None:
+            violations.append(
+                _violation(mutation, "status_callback_task_missing",
+                           details={"task_id": task_id})
+            )
+        else:
+            _audit_source(task.source, task.coverage_status, mutation,
+                          violations, executable_required=True)
+            property_name = str(task.task_payload.get("Property") or "")
+            if (
+                task.callback_id != callback_id
+                or task.opcode != "StackProperty"
+                or not property_name
+            ):
+                violations.append(
+                    _violation(mutation, "status_stack_property_task_contract_mismatch",
+                               details={"callback_id": callback_id, "task_id": task_id})
+                )
+        from ..systems.status import _map_stack_property
+
+        property_mapping = _map_stack_property(property_name) if property_name else None
+        target_id = str(mutation.path[1]) if len(mutation.path) > 1 else ""
+        after_details = mutation.after if isinstance(mutation.after, list) else []
+        before_details = mutation.before if isinstance(mutation.before, list) else []
+        after_matches = [
+            item for item in after_details
+            if isinstance(item, dict) and item.get("instance_id") == instance_id
+        ]
+        before_matches = [
+            item for item in before_details
+            if isinstance(item, dict) and item.get("instance_id") == instance_id
+        ]
+        expected_before_value: JSONValue = None
+        if (
+            mutation.op != "set"
+            or mutation.path != ("units", target_id, "flags", "status_details")
+            or len(after_matches) != 1
+            or len(before_matches) != 1
+        ):
+            violations.append(
+                _violation(mutation, "status_stack_property_mutation_path_invalid",
+                           details={"path": list(mutation.path),
+                                    "instance_id": instance_id})
+            )
+        else:
+            after = after_matches[0]
+            before = before_matches[0]
+            installed = [
+                item for item in after.get("modifiers", ())
+                if isinstance(item, dict) and item.get("producer_task_id") == task_id
+            ]
+            identity_ok = (
+                task is not None
+                and value is not None
+                and len(installed) == 1
+                and installed[0].get("property") == property_name
+                and installed[0].get("value") == value
+                and installed[0].get("producer_task_path") == task.task_path
+                and installed[0].get("applied_reason") == "status_stack_property"
+            )
+            non_modifier_unchanged = (
+                {key: item for key, item in after.items() if key != "modifiers"}
+                == {key: item for key, item in before.items() if key != "modifiers"}
+            )
+            sibling_unchanged = (
+                len(after_details) == len(before_details)
+                and all(
+                    after_detail == before_detail
+                    for before_detail, after_detail in zip(before_details, after_details)
+                    if not (
+                        isinstance(before_detail, dict)
+                        and before_detail.get("instance_id") == instance_id
+                    )
+                )
+            )
+            if not sibling_unchanged:
+                violations.append(
+                    _violation(mutation, "status_stack_property_sibling_instance_changed")
+                )
+            if (
+                value is None
+                or not identity_ok
+                or not non_modifier_unchanged
+                or not sibling_unchanged
+            ):
+                violations.append(
+                    _violation(mutation, "status_stack_property_settlement_mismatch")
+                )
+            else:
+                entry = installed[0]
+                raw_path = entry.get("raw_path")
+                before_modifiers = list(before.get("modifiers", ()))
+                after_modifiers = list(after.get("modifiers", ()))
+                before_entries = [
+                    item for item in before_modifiers
+                    if isinstance(item, dict)
+                    and item.get("raw_path") == raw_path
+                    and item.get("property") == property_name
+                ] if isinstance(raw_path, str) and raw_path else []
+                if (
+                    not isinstance(raw_path, str)
+                    or not raw_path
+                    or len(before_entries) > 1
+                ):
+                    violations.append(
+                        _violation(mutation, "status_stack_property_entry_identity_invalid")
+                    )
+                elif before_entries:
+                    # Formal _runtime_modifiers entries carry raw_path only and
+                    # may still be delayed (value None + value_mode /
+                    # deferred_dynamic_hashes). The evaluated shape must be the
+                    # ordinary applied entry with the producer identity.
+                    before_entry = before_entries[0]
+                    expected_before_value = before_entry.get("value")
+                    excluded = {
+                        "value",
+                        "applied_reason",
+                        "value_mode",
+                        "deferred_dynamic_hashes",
+                        "producer_task_id",
+                        "producer_task_path",
+                    }
+                    unchanged_before = {
+                        key: item for key, item in before_entry.items()
+                        if key not in excluded
+                    }
+                    unchanged_after = {
+                        key: item for key, item in entry.items()
+                        if key not in excluded
+                    }
+                    dropped = set(before_entry) - set(entry)
+                    added = set(entry) - set(before_entry)
+                    before_others = [
+                        item for item in before_modifiers if item != before_entry
+                    ]
+                    after_others = [
+                        item for item in after_modifiers if item != entry
+                    ]
+                    if (
+                        unchanged_before != unchanged_after
+                        or entry.get("value") != value
+                        or entry.get("applied_reason") != "status_stack_property"
+                        or entry.get("producer_task_id") != task_id
+                        or entry.get("producer_task_path") != task.task_path
+                        or property_mapping is None
+                        or entry.get("bucket") != property_mapping[0]
+                        or entry.get("key") != property_mapping[1]
+                        or entry.get("scope") != property_mapping[2]
+                        or "value_mode" in entry
+                        or "deferred_dynamic_hashes" in entry
+                        or not dropped <= {"value_mode", "deferred_dynamic_hashes"}
+                        or not added <= {"producer_task_id", "producer_task_path"}
+                        or before_others != after_others
+                    ):
+                        violations.append(
+                            _violation(mutation, "status_stack_property_settlement_mismatch")
+                        )
+                elif (
+                    property_mapping is None
+                    or set(entry) != {
+                        "bucket",
+                        "key",
+                        "scope",
+                        "value",
+                        "property",
+                        "producer_task_id",
+                        "producer_task_path",
+                        "raw_path",
+                        "applied_reason",
+                    }
+                    or entry.get("bucket") != property_mapping[0]
+                    or entry.get("key") != property_mapping[1]
+                    or entry.get("scope") != property_mapping[2]
+                    or entry.get("raw_path") != task.task_path
+                    or entry.get("value") != value
+                    or after_modifiers != [*before_modifiers, entry]
+                ):
+                    # First authoritative write appends exactly one complete
+                    # applied entry mapped from the formal Property, with no
+                    # delayed marker left behind.
+                    violations.append(
+                        _violation(mutation, "status_stack_property_settlement_mismatch")
+                    )
+        matching_records = tuple(
+            record
+            for record in records
+            if record.get("record_type") == "status_stack_property"
+            and record.get("source") == "status_callback_system"
+            and record.get("mutation_id") == mutation.stable_id()
+            and isinstance(record.get("payload"), dict)
+            and record["payload"].get("status_instance_id") == instance_id
+            and record["payload"].get("property") == property_name
+            and record["payload"].get("before") == expected_before_value
+            and record["payload"].get("after") == value
+        )
+        if not matching_records:
+            violations.append(
+                _violation(mutation, "status_stack_property_record_missing")
+            )
+        return _trace(
+            mutation,
+            records,
+            {
+                "callback_id": callback_id or "",
+                "task_id": task_id or "",
+                "status_instance_id": instance_id or "",
+                "property": property_name,
             },
         )
 
