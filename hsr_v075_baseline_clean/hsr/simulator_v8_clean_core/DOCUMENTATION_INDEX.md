@@ -40,6 +40,7 @@
 | 角色来源范围基线 | [`CHARACTER_ABILITY_SCOPE_LEDGER.md`](docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_LEDGER.md)；只用于追溯 P9 开工分母 |
 | 角色目录旧盘点与 CHAR-M1 | [`docs/archive/character/`](docs/archive/character/)；均为历史状态 |
 | 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
+| I12 独立伤害逐任务绑定 | [修复契约与验收清单](docs/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | UI 规划 | `../simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`，仅在该草案存在且任务涉及 UI 时读取 |
 
 这些专题文档提供领域事实，不是当前阶段 checklist。其结论与当前源码冲突时，以源码、正式来源和
@@ -68,13 +69,16 @@
 | [`docs/archive/bootstrap_v075/`](docs/archive/bootstrap_v075/) | v0.75 导入、工作区基线和旧 v7 检查记录 |
 | [`docs/archive/character/`](docs/archive/character/) | P9 开工前角色目录盘点和已完成 CHAR-M1 执行卡 |
 | [`docs/archive/workflow_sources/`](docs/archive/workflow_sources/) | 现行 HSR 工作流吸收过的便携版流程草案 |
+| [2026-10-19 交接历史快照](docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md) | 瘦身前的验收记录、机制证据与历史检查点；不作为当前状态 |
 | [`docs/archive/`](docs/archive/) | 瘦身前 AGENTS、交接和索引快照 |
 
 旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格目录仍属于历史实现，不是 v8 runtime 依赖。
 
 ## 维护规则
 
-- 当前进度写交接文档；工程路线只写 P9 总计划第 0 节，历史 checklist 不因新路线自动补勾。
+- 交接只维护当前任务、已验收基线、阻断、下一步与入口，目标 150 行以内；覆盖更新对应条目，
+  不逐轮追加修复经过、测试耗时或历史计划。较长契约放对应任务说明，历史按 Git 或归档追溯。
+- 工程路线只写 P9 总计划第 0 节，历史 checklist 不因新路线自动补勾；不为每轮修复新增快照。
 - 稳定架构、目标与工作流文档不记录每张卡的计数和耗时。
 - 已完成阶段的详细计划整体归档，不在根目录继续充当活动入口。
 - 报告不复述执行卡；执行卡不复述工作流；AGENTS 不承载阶段流水账。

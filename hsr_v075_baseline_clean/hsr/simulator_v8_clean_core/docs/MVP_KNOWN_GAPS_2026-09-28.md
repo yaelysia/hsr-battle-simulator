@@ -6,7 +6,7 @@
 2026-10-08 按逆向驱动路线新增 G13/G14，已只读核对 PR #8
 `9a7ab71b00a0027e994ad33d06a918a998602a24` 的治疗/HP 与能量记录，并修复相关来源接线。
 本表保留各自日期的行为证据与缺口边界，不是全角色普查或新提交的独立审核。
-当前提交与 MCP 信息同步结果见[当前交接](../../CODEX_HANDOFF.md#mcp-status-20260930)。
+历史提交与 MCP 信息同步结果见[历史交接快照](archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md#mcp-status-20260930)。
 
 此表最初记录的是 2026-09-28 单波命令行 MVP，不能作为当前工程的范围裁决。
 当前按[工程完结路线](../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-工程完结路线)

@@ -2261,9 +2261,15 @@ class TBGDLowering:
             standalone_tasks,
             standalone_effects,
             skill_formula_bindings,
-            {f"standalone_ability:{graph.ability_name}": next(
-                definition for definition in action_definitions if definition.action_id == graph.action_id
-            ) for graph in standalone_ability_graphs if graph.action_id},
+            {
+                **{f"standalone_ability:{graph.ability_name}": next(
+                    definition for definition in action_definitions if definition.action_id == graph.action_id
+                ) for graph in standalone_ability_graphs if graph.action_id},
+                # Each damage task resolves its stance action from its own
+                # main parameter skill action; the graph-level entry remains
+                # the compatibility fallback.
+                **{definition.action_id: definition for definition in action_definitions},
+            },
         )
         hit_profiles.extend(standalone_hit_profiles)
         damage_emissions.extend(
@@ -15642,7 +15648,7 @@ def _lower_damage_emissions(
     damage_tag_registry: dict[int, tuple[dict[str, Any], ...]],
 ) -> list[DamageEmissionIR]:
     effect_by_id = {effect.effect_id: effect for effect in effects}
-    direct_basis_bindings = _direct_damage_binding_lookup(skill_formula_bindings)
+    direct_basis_bindings = _direct_damage_binding_lookup(skill_formula_bindings, tasks)
     profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
     tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
     for profile in hit_profiles:
@@ -15691,6 +15697,13 @@ def _lower_damage_emissions(
                 hit_energy_gain, hit_energy_reason = _monster_hit_energy_gain(effect, profile)
                 if not blocked_reason:
                     blocked_reason = hit_energy_reason
+                if (not blocked_reason and profile.damage_formula_family == "direct"
+                        and not _attack_without_stance(effect, profile)
+                        and "StanceValue" not in (effect.payload.get("AttackProperty") or {})):
+                    # A direct hit that must reduce toughness has no StanceValue
+                    # binding at all: block the hit atomically instead of
+                    # emitting damage whose toughness source is missing.
+                    blocked_reason = "attack_property_stance_value_missing"
                 source = _damage_emission_source(
                     task,
                     effect,
@@ -15821,7 +15834,7 @@ def _lower_toughness_emissions(
     skill_formula_bindings: Iterable[SkillFormulaBindingIR] = (),
 ) -> list[ToughnessEmissionIR]:
     effect_by_id = {effect.effect_id: effect for effect in effects}
-    direct_basis_bindings = _direct_damage_binding_lookup(list(skill_formula_bindings))
+    direct_basis_bindings = _direct_damage_binding_lookup(list(skill_formula_bindings), tasks)
     profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
     tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
     for profile in hit_profiles:
@@ -15988,7 +16001,7 @@ def _target_profiles_for_damage_task(
     action_profiles: tuple[HitProfileIR, ...],
     task: AbilityTaskIR,
     effect: EffectIR | None,
-    direct_basis_bindings: dict[tuple[str, int, int], SkillFormulaBindingIR] | None = None,
+    direct_basis_bindings: dict[str, dict[tuple, SkillFormulaBindingIR]] | None = None,
 ) -> tuple[HitProfileIR | None, ...]:
     if not action_profiles:
         return (None,)
@@ -16042,9 +16055,9 @@ def _target_profiles_for_damage_task(
     if len(matching) > 1 and not any(profile.target_group.startswith("bounce:") for profile in matching):
         # A raw damage request owns one packet per target. Multiple description
         # parameters can describe different casters, not additional hit requests.
-        bindings = tuple((direct_basis_bindings or {}).get(
-            (task.action_id, task.level, _hit_profile_param_index(profile)),
-        ) for profile in matching)
+        bindings = tuple(_direct_basis_binding(direct_basis_bindings or {}, task,
+                                                _hit_profile_param_index(profile))
+                          for profile in matching)
         bases = {(binding.scaling_basis_expr.get("kind"), binding.scaling_basis_expr.get("unit_ref"),
                   binding.scaling_basis_expr.get("stat")) for binding in bindings if binding is not None}
         attack = effect.payload.get("AttackProperty", {}) if effect is not None else {}
@@ -16085,7 +16098,8 @@ def _bind_character_queue_damage(
                 hashes = tuple(dict.fromkeys(str(item) for item in numeric_dynamic_hashes(
                     _numeric_expr_summary(_attack_percentage_value(attack))) if item is not None))
                 if not hashes or not isinstance(attack.get("AttackType"), str) or not attack["AttackType"]:
-                    break
+                    # Missing raw attack type leaves only this task unbound.
+                    continue
                 primary = {}
                 parameter_reads = {}
                 for dynamic_hash in hashes:
@@ -16124,17 +16138,13 @@ def _bind_character_queue_damage(
                 else:
                     if len(primary) == 1:
                         candidates.append((task, effect, *next(iter(primary.values())), parameter_reads))
-            # ponytail: mixed primary parameter roles in a compound graph need
-            # task-specific profile binding; keep that ambiguity unbound.
-            if (any(len(row[-1]) > 1 for row in candidates)
-                    and len({row[2] for row in candidates}) != 1):
-                candidates = []
-        if len(candidates) != len(damage_tasks) or not candidates or len({row[-2] for row in candidates}) != 1:
-            result.append(graph)
-            continue
-        result.append(replace(graph, action_id=candidates[0][-2]))
+        # Per-task binding: every damage task binds its own main multiplier
+        # parameter, stat basis, skill level, target and stance action. Zero
+        # executable mains (missing) or several mains (ambiguous) leave that
+        # task unbound; there is no attack default and no candidate picking.
+        bound_actions = sorted({row[-2] for row in candidates})
         for task, effect, dynamic_hash, declaration, binding, action_id, parameter_reads in candidates:
-            key = (task.action_id, dynamic_hash)
+            key = (task.task_id, dynamic_hash)
             if key in projected_keys:
                 continue
             projected_keys.add(key)
@@ -16142,8 +16152,8 @@ def _bind_character_queue_damage(
             basis = {**binding.scaling_basis_expr, "dynamic_hash": dynamic_hash,
                      "runtime_skill_param": True, "attack_type": attack["AttackType"]}
             projected.append(replace(binding,
-                binding_id=f"skill_formula_binding:{task.action_id}:0:direct_damage:hash:{dynamic_hash}",
-                formula_slot_id=f"formula_slot:{task.action_id}:0:direct_damage:hash:{dynamic_hash}",
+                binding_id=f"skill_formula_binding:{task.action_id}:0:direct_damage:hash:{dynamic_hash}:task:{_safe_id(task.task_id)}",
+                formula_slot_id=f"formula_slot:{task.action_id}:0:direct_damage:hash:{dynamic_hash}:task:{_safe_id(task.task_id)}",
                 action_id=task.action_id, level=0, formula_role="direct_damage", scaling_basis_expr=basis,
                 source=IRSource(binding.source.source_path, "CharacterQueuedSkillParam", task.task_id, {
                     "action_id": action_id, "declaration": declaration,
@@ -16153,6 +16163,10 @@ def _bind_character_queue_damage(
                     "task_source": task.source.to_json(),
                     "level_selection": "assembled_character_effective_skill_level",
                 })))
+        if len(bound_actions) == 1:
+            result.append(replace(graph, action_id=bound_actions[0]))
+        else:
+            result.append(graph)
     return result, projected
 
 
@@ -16178,10 +16192,15 @@ def _lower_standalone_hit_profiles(
         payload = effect.payload if effect is not None else {}
         target_alias = _target_alias(payload.get("TargetType")) if isinstance(payload, dict) else None
         target_group = _standalone_target_group(target_alias)
-        binding = _standalone_binding_for_damage_task(
-            tuple(bindings_by_action.get((task.action_id, task.level), ())),
-            effect,
-        )
+        # Each damage task may use only its own projected binding; borrowing
+        # another task's main parameter would share one main basis across the
+        # graph again, so missing or ambiguous tasks stay unbound. TriggerAbility
+        # inheritance is projected per child damage task, so its own task
+        # identity is the only match.
+        task_bindings = tuple(binding for binding in bindings_by_action.get((task.action_id, task.level), ())
+                              if binding.source.raw_id == task.task_id
+                              or binding.source.raw_id.startswith(f"{task.task_id}:"))
+        binding = _standalone_binding_for_damage_task(task_bindings, effect)
         blocked_reason = ""
         if target_group == "unknown":
             blocked_reason = f"standalone_damage_target_alias_not_admitted:{target_alias or 'missing'}"
@@ -16190,7 +16209,11 @@ def _lower_standalone_hit_profiles(
         elif binding.coverage_status != "executable":
             blocked_reason = binding.blocked_reason or f"skill_formula_binding_not_executable:{binding.coverage_status}"
         multiplier_expr = _binding_param_multiplier_expr(binding, effect) if binding is not None else {"kind": "missing", "blocked_reason": "standalone_damage_skill_formula_binding_missing"}
-        action_definition = (action_definitions or {}).get(task.action_id)
+        # The stance action is the task's own main parameter skill action.
+        main_action_id = binding.source.evidence.get("action_id") if binding is not None else None
+        action_definition = (action_definitions or {}).get(main_action_id) if main_action_id else None
+        if action_definition is None and binding is not None:
+            action_definition = (action_definitions or {}).get(task.action_id)
         profiles.append(
             HitProfileIR(
                 hit_profile_id=(
@@ -16221,6 +16244,29 @@ def _lower_standalone_hit_profiles(
     return profiles
 
 
+def _formula_declaration_key(binding: SkillFormulaBindingIR) -> tuple:
+    """Identity of the formal parameter declaration a binding was projected from.
+
+    Two bindings may repeat the same declaration (for example one parent
+    parameter forwarded twice); only then they may be deduplicated.
+    """
+    evidence = binding.source.evidence if isinstance(binding.source.evidence, dict) else {}
+    nested = evidence.get("skill_formula_binding_source")
+    if isinstance(nested, dict):
+        return (
+            str(nested.get("source_path") or binding.source.source_path),
+            str(nested.get("raw_type") or ""),
+            str(nested.get("raw_id") or ""),
+            json.dumps(_json_safe(nested.get("evidence")), sort_keys=True),
+        )
+    return (
+        str(binding.source.source_path),
+        str(binding.source.raw_type),
+        str(binding.source.raw_id),
+        json.dumps(_json_safe(evidence), sort_keys=True),
+    )
+
+
 def _project_standalone_skill_formula_bindings(
     tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
@@ -16229,8 +16275,21 @@ def _project_standalone_skill_formula_bindings(
     """Project parent skill parameters through explicit TriggerAbility links."""
 
     effect_by_id = {effect.effect_id: effect for effect in effects}
-    available: dict[tuple[str, str], SkillFormulaBindingIR] = {}
-    for binding in existing_bindings:
+    damage_tasks_by_action: dict[str, list[AbilityTaskIR]] = {}
+    for task in sorted(tasks, key=lambda item: (item.action_id, item.task_id)):
+        if task.opcode == "DamageByAttackProperty":
+            damage_tasks_by_action.setdefault(task.action_id, []).append(task)
+    # ``available`` carries the compile-internal parameter context of each action
+    # as candidate declarations, never as a chosen binding, and it reaches
+    # abilities that only trigger the next one. ``owned_by_task`` keeps the
+    # parameters a concrete damage task already binds through its own projection.
+    available: dict[tuple[str, str], list[SkillFormulaBindingIR]] = {}
+    owned_by_task: dict[tuple[str, str], SkillFormulaBindingIR] = {}
+    own_declarations: dict[tuple[str, str], list[SkillFormulaBindingIR]] = {}
+    damage_task_ids = sorted(
+        (task.task_id for tasks_of_action in damage_tasks_by_action.values()
+         for task in tasks_of_action), key=len, reverse=True)
+    for binding in sorted(existing_bindings, key=lambda item: item.binding_id):
         dynamic_hash = binding.scaling_basis_expr.get("dynamic_hash")
         if (
             binding.formula_role != "direct_damage"
@@ -16239,7 +16298,19 @@ def _project_standalone_skill_formula_bindings(
             or dynamic_hash is None
         ):
             continue
-        available.setdefault((binding.action_id, str(dynamic_hash)), binding)
+        evidence = binding.source.evidence if isinstance(binding.source.evidence, dict) else {}
+        raw_id = str(binding.source.raw_id)
+        scope = next((task_id for task_id in damage_task_ids
+                      if raw_id == task_id or raw_id.startswith(f"{task_id}:")), None)
+        if (scope is not None
+                and evidence.get("projection_kind") != "trigger_ability_parameter_inheritance"):
+            owned_by_task.setdefault((scope, str(dynamic_hash)), binding)
+            # The declaration is part of the ability's parameter context for
+            # whatever it triggers, but it materializes only for the concrete
+            # task that already owns it.
+            own_declarations.setdefault((binding.action_id, str(dynamic_hash)), []).append(binding)
+            continue
+        available.setdefault((binding.action_id, str(dynamic_hash)), []).append(binding)
 
     projected: list[SkillFormulaBindingIR] = []
     trigger_tasks = tuple(
@@ -16247,7 +16318,15 @@ def _project_standalone_skill_formula_bindings(
         for task in sorted(tasks, key=lambda item: (item.action_id, item.task_id))
         if task.opcode == "TriggerAbility" and task.linked_standalone_graph_id
     )
+    provenance: dict[tuple[str, str], tuple[str, str, str]] = {}
+    # One depth is one TriggerAbility hop: each pass reads the context as of the
+    # start of the pass, so enumeration order cannot make a chain travel further
+    # than the supported depth and repeating a cycle cannot add new context.
     for _depth in range(4):
+        snapshot = {key: tuple(candidates) for key, candidates in available.items()}
+        own_snapshot = {key: tuple(candidates) for key, candidates in own_declarations.items()}
+        staged: dict[tuple[str, str], list[SkillFormulaBindingIR]] = {}
+        staged_provenance: dict[tuple[str, str], tuple[str, str, str]] = {}
         added = False
         for task in trigger_tasks:
             effect = effect_by_id.get(task.effect_id)
@@ -16256,43 +16335,95 @@ def _project_standalone_skill_formula_bindings(
             if not isinstance(child_name, str) or not child_name:
                 continue
             child_action_id = f"standalone_ability:{child_name}"
-            parent_bindings = tuple(
-                (dynamic_hash, binding)
-                for (action_id, dynamic_hash), binding in available.items()
-                if action_id == task.action_id
-            )
-            for dynamic_hash, source_binding in parent_bindings:
-                key = (child_action_id, dynamic_hash)
-                if key in available:
-                    continue
-                projection = replace(
-                    source_binding,
-                    binding_id=f"skill_formula_binding:{child_action_id}:0:direct_damage:hash:{dynamic_hash}",
-                    formula_slot_id=f"formula_slot:{child_action_id}:0:direct_damage:hash:{dynamic_hash}",
-                    action_id=child_action_id,
-                    level=0,
-                    sequence_order=len(projected),
-                    matched_text="DamageByAttackProperty.DamagePercentage:trigger_ability_projection",
-                    source=IRSource(
-                        source_path=source_binding.source.source_path,
-                        raw_type="StandaloneSkillFormulaBindingProjection",
-                        raw_id=f"{task.task_id}:{dynamic_hash}",
-                        evidence={
-                            "source_binding_id": source_binding.binding_id,
-                            "source_trigger_task_id": task.task_id,
-                            "linked_standalone_graph_id": task.linked_standalone_graph_id,
-                            "parent_action_id": task.action_id,
-                            "child_action_id": child_action_id,
-                            "dynamic_hash": dynamic_hash,
-                            "projection_kind": "trigger_ability_parameter_inheritance",
-                        },
-                    ),
-                )
-                projected.append(projection)
-                available[key] = projection
-                added = True
+            # Compile-internal parameter propagation: the child ability sees the
+            # parent's parameter context even when it owns no damage task and
+            # only triggers the next ability in the chain. The context keeps
+            # candidate declarations; it never picks one.
+            context: dict[str, list[SkillFormulaBindingIR]] = {}
+            for (action_id, dynamic_hash), candidates in snapshot.items():
+                if action_id == task.action_id:
+                    context.setdefault(dynamic_hash, []).extend(candidates)
+            for (action_id, dynamic_hash), candidates in own_snapshot.items():
+                if action_id == task.action_id:
+                    context.setdefault(dynamic_hash, []).extend(candidates)
+            for dynamic_hash in sorted(context):
+                child_key = (child_action_id, dynamic_hash)
+                bucket = staged.setdefault(child_key, list(snapshot.get(child_key, ())))
+                declarations = {_formula_declaration_key(item) for item in bucket}
+                for candidate in sorted(context[dynamic_hash], key=lambda item: item.binding_id):
+                    declaration = _formula_declaration_key(candidate)
+                    if declaration in declarations:
+                        continue
+                    bucket.append(candidate)
+                    declarations.add(declaration)
+                    added = True
+                staged_provenance.setdefault(child_key, (task.task_id, task.action_id,
+                                                         task.linked_standalone_graph_id))
         if not added:
             break
+        available.update(staged)
+        for child_key, entry in staged_provenance.items():
+            provenance.setdefault(child_key, entry)
+    # Materialization is per concrete child damage task: a hit that reads a
+    # single parameter, carries no own binding for it, and whose propagated
+    # context holds exactly one formal declaration. Compound programs, missing
+    # context and conflicting declarations stay without a binding.
+    for child_action_id in sorted(damage_tasks_by_action):
+        for child_task in damage_tasks_by_action[child_action_id]:
+            dynamic_hash = _damage_percentage_dynamic_hash(
+                effect_by_id.get(child_task.effect_id))
+            if dynamic_hash is None:
+                continue
+            if (child_task.task_id, dynamic_hash) in owned_by_task:
+                # The concrete task already carries this parameter through its
+                # own projection; reuse it instead of adding an inherited one.
+                continue
+            bucket = available.get((child_action_id, dynamic_hash))
+            if not bucket:
+                continue
+            declarations: dict[tuple, list[SkillFormulaBindingIR]] = {}
+            for candidate in bucket:
+                declarations.setdefault(_formula_declaration_key(candidate), []).append(candidate)
+            if len(declarations) != 1:
+                # Different formal parameters or sources cannot be merged and
+                # are not disambiguated by order; the task stays unbound.
+                continue
+            source_candidates = sorted(next(iter(declarations.values())),
+                                       key=lambda item: item.binding_id)
+            source_binding = source_candidates[0]
+            trigger_task_id, parent_action_id, linked_graph_id = provenance.get(
+                (child_action_id, dynamic_hash), (child_task.task_id, child_action_id, ""))
+            projected.append(replace(
+                source_binding,
+                binding_id=(
+                    f"skill_formula_binding:{child_action_id}:0:direct_damage:hash:{dynamic_hash}"
+                    f":task:{_safe_id(child_task.task_id)}"
+                ),
+                formula_slot_id=(
+                    f"formula_slot:{child_action_id}:0:direct_damage:hash:{dynamic_hash}"
+                    f":task:{_safe_id(child_task.task_id)}"
+                ),
+                action_id=child_action_id,
+                level=0,
+                sequence_order=len(projected),
+                matched_text="DamageByAttackProperty.DamagePercentage:trigger_ability_projection",
+                source=IRSource(
+                    source_path=source_binding.source.source_path,
+                    raw_type="StandaloneSkillFormulaBindingProjection",
+                    raw_id=child_task.task_id,
+                    evidence={
+                        "source_binding_id": source_binding.binding_id,
+                        "source_binding_ids": [item.binding_id for item in source_candidates],
+                        "source_trigger_task_id": trigger_task_id,
+                        "linked_standalone_graph_id": linked_graph_id,
+                        "parent_action_id": parent_action_id,
+                        "child_action_id": child_action_id,
+                        "child_task_id": child_task.task_id,
+                        "dynamic_hash": dynamic_hash,
+                        "projection_kind": "trigger_ability_parameter_inheritance",
+                    },
+                ),
+            ))
     for task in sorted(tasks, key=lambda item: (item.action_id, item.task_id)):
         if task.opcode != "DamageByAttackProperty":
             continue
@@ -16397,7 +16528,10 @@ def _standalone_binding_for_damage_task(
     effect_hash = _damage_percentage_dynamic_hash(effect)
     candidates = tuple(binding for binding in bindings if str(binding.scaling_basis_expr.get("dynamic_hash")) == str(effect_hash))
     if candidates:
-        return sorted(candidates, key=lambda item: item.binding_id)[0]
+        # A task's own projected binding is reused before an inherited copy of
+        # the same parameter declaration.
+        return sorted(candidates, key=lambda item: (
+            item.source.raw_type == "StandaloneSkillFormulaBindingProjection", item.binding_id))[0]
     return sorted(bindings, key=lambda item: item.binding_id)[0] if effect_hash is None and len(bindings) == 1 else None
 
 
@@ -16488,20 +16622,65 @@ def _damage_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> st
 
 def _direct_damage_binding_lookup(
     bindings: list[SkillFormulaBindingIR],
-) -> dict[tuple[str, int, int], SkillFormulaBindingIR]:
-    lookup: dict[tuple[str, int, int], SkillFormulaBindingIR] = {}
+    tasks: Iterable[AbilityTaskIR] = (),
+) -> dict[str, dict[tuple, SkillFormulaBindingIR]]:
+    """Index direct-damage bindings by key and by the task they belong to.
+
+    Ordinary skill bindings keep a constant-time lookup by
+    ``(action_id, level, param_index)``; standalone bindings, including the ones
+    projected from a TriggerAbility parent, are pre-indexed by the task identity
+    they were projected for, so no binding is selected at action scope.
+    """
+    by_key: dict[tuple, SkillFormulaBindingIR] = {}
+    by_task: dict[tuple, SkillFormulaBindingIR] = {}
+    task_ids = sorted({task.task_id for task in tasks}, key=len, reverse=True)
+
+    def store(index: dict[tuple, SkillFormulaBindingIR], key: tuple,
+              binding: SkillFormulaBindingIR) -> None:
+        existing = index.get(key)
+        if existing is None:
+            index[key] = binding
+            return
+        existing_projected = existing.source.raw_type == "StandaloneSkillFormulaBindingProjection"
+        binding_projected = binding.source.raw_type == "StandaloneSkillFormulaBindingProjection"
+        if existing_projected and not binding_projected:
+            # The task's own binding wins over an inherited copy.
+            index[key] = binding
+            return
+        if (existing_projected == binding_projected
+                and existing.coverage_status != "executable"
+                and binding.coverage_status == "executable"):
+            index[key] = binding
+
     for binding in sorted(bindings, key=lambda item: item.binding_id):
         if binding.formula_role != "direct_damage":
             continue
         if not _formula_binding_data_card_id(binding):
             continue
         key = (binding.action_id, binding.level, binding.param_index)
-        existing = lookup.get(key)
-        if existing is None or (
-            existing.coverage_status != "executable" and binding.coverage_status == "executable"
-        ):
-            lookup[key] = binding
-    return lookup
+        if not binding.action_id.startswith("standalone_ability:"):
+            store(by_key, key, binding)
+            continue
+        raw_id = str(binding.source.raw_id)
+        scope = next((task_id for task_id in task_ids
+                      if raw_id == task_id or raw_id.startswith(f"{task_id}:")), None)
+        if scope is not None:
+            store(by_task, (*key, scope), binding)
+    return {"by_key": by_key, "by_task": by_task}
+
+
+def _direct_basis_binding(
+    lookup: dict[str, dict[tuple, SkillFormulaBindingIR]] | None,
+    task: AbilityTaskIR,
+    param_index: int,
+) -> SkillFormulaBindingIR | None:
+    if not lookup:
+        return None
+    key = (task.action_id, task.level, param_index)
+    binding = lookup["by_task"].get((*key, task.task_id))
+    if binding is not None:
+        return binding
+    return lookup["by_key"].get(key)
 
 
 def _formula_binding_data_card_id(binding: SkillFormulaBindingIR) -> str:
@@ -16586,7 +16765,7 @@ def _damage_scaling_basis_expr(
     task: AbilityTaskIR,
     effect: EffectIR | None,
     profile: HitProfileIR | None,
-    direct_basis_bindings: dict[tuple[str, int, int], SkillFormulaBindingIR],
+    direct_basis_bindings: dict[str, dict[tuple, SkillFormulaBindingIR]],
 ) -> dict[str, Any]:
     attack = effect.payload.get("AttackProperty", {}) if effect is not None else {}
     if (profile is not None and profile.damage_formula_family == "elation"
@@ -16606,7 +16785,7 @@ def _damage_scaling_basis_expr(
         }
     payload = effect.payload if effect else {}
     param_index = _hit_profile_param_index(profile)
-    binding = direct_basis_bindings.get((task.action_id, task.level, param_index))
+    binding = _direct_basis_binding(direct_basis_bindings, task, param_index)
     if binding is None:
         return {
             "kind": "missing",
@@ -16690,13 +16869,11 @@ def _damage_task_scaling_ratio_expr(
     task: AbilityTaskIR,
     effect: EffectIR | None,
     profile: HitProfileIR | None,
-    direct_basis_bindings: dict[tuple[str, int, int], SkillFormulaBindingIR],
+    direct_basis_bindings: dict[str, dict[tuple, SkillFormulaBindingIR]],
 ) -> dict[str, Any]:
     if profile is None:
         return numeric_missing("damage_emission_hit_profile_missing")
-    binding = direct_basis_bindings.get(
-        (task.action_id, task.level, _hit_profile_param_index(profile))
-    )
+    binding = _direct_basis_binding(direct_basis_bindings, task, _hit_profile_param_index(profile))
     expression = (_binding_param_multiplier_expr(binding, effect) if binding is not None
                   else _numeric_expr_summary(_attack_percentage_value(effect.payload.get("AttackProperty")))
                   if effect is not None and profile.damage_formula_family == "elation"

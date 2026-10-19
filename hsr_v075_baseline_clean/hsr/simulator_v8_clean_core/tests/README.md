@@ -159,6 +159,22 @@ mutation 回放及失败整波回滚；真实三人两波路线使用正式构�
 晚失败完整回滚；单位构筑与倍率初值为明确的组件输入。`test_registered_event_nested_ability.py`
 同时检查外层保留内部事件证据且只消费一次。它们不要求重新编译完整角色目录。
 
+独立复合伤害逐任务绑定的定向入口是 `test_standalone_task_binding.py`：真实
+`Avatar_Ashveil_00_Insert_Enhance`、`Avatar_Hook_00_Skill21_Phase02` 与
+`Avatar_Yukong_00_Skill01_Phase02` 三张多任务图验证各伤害任务独立绑定自己的倍率主参数、
+属性基准、技能等级、目标与削韧来源；天赋/终极等级独立变化互不影响，缺 raw attack type、
+缺 StanceValue 与单任务多主基准歧义的绑定均原子阻断且零 mutation。配合
+`test_independent_ability_damage.py` 的 Topaz 复合双技能等级回归与
+`test_additional_damage_toughness.py` 的附加伤害缺省无削韧契约。技能相位任务 raw 缺
+AttackType 时继承主参数技能行 AttackType 的规则待用户裁决，当前保持 fail-closed 拒绝。
+`test_standalone_trigger_inheritance.py` 用真实 Hook 来源（`Avatar_Hook_00_SkillMazeInLevel` →
+`Avatar_Hook_00_PassiveSkill01_2`）锁定 TriggerAbility 参数继承绑定：继承在投影阶段落到具体子
+伤害任务（单参数程序才生成），子命中可执行而父行动任务不能借用；复合子命中保持缺失绑定拒绝；
+经无伤害中间能力（`Skill01_Phase01`）继续触发时最终子任务仍可继承且中间节点无悬挂绑定；
+同 param_index、不同 hash 的两个任务各自解析自己的绑定。`test_standalone_inheritance_contract.py`
+用标注组件输入补齐契约边界：多子任务共用 hash 各自绑定、自有绑定优先于继承副本、不同正式声明
+冲突拒绝且输入顺序不影响结果、循环与超出传播深度的链有限结束并保持拒绝。
+
 关卡环境接线的定向入口为 `test_stage_environment_source.py`：真实关卡能力从正式图启动，
 通过出生监听授予暴击增益，并影响共享伤害结算；它隔离模板其它依赖，不代表完整关卡验收。
 `test_level_enter_battle_order.py` 检查关卡自身的入场通知只执行一次及其与单位出生的顺序。

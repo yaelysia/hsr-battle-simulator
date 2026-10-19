@@ -26,7 +26,7 @@
 
 - 2026-10-08 用户明确采用逆向研究驱动，目标为尽量还原实际战斗，不完整复刻原生引擎。
   已修阿兰低 HP 战技下限，并贯通阿兰+娜塔莎的静态构筑治疗胜利路线。
-  下一行为、视频证据限制和本轮验证见[当前交接](hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md#reverse-driven-20261008)。
+  当时的方向与来源使用边界见[历史交接快照](hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md#reverse-driven-20261008)。
 - [当前路线](hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)
   按实际内容追踪行为依赖，修准入误判和真正机制缺口；特殊机制由具体内容需求推动。
   不把所有旧 P9 未勾选项、特殊韧性、多波或 UI 变成现有 MVP 的前置。
@@ -42,7 +42,7 @@
 - 2026-09-30 用户曾要求同步 MCP 看板的信息层。该次账本为 4 条 completed、
   3 条 cancelled；只更新说明的两次请求也被终态转换校验拒绝，故看板尚未写入成功。
   当前接口没有工作流外成果补录入口；不直接改账本，不伪造批准、审核或新任务完成记录。
-  当前成果、剩余事项和接口阻断统一见[本次状态校准](hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md#mcp-status-20260930)。
+  该次 MCP 同步记录见[历史交接快照](hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md#mcp-status-20260930)。
 
 验证以能说明实际行为的最小正例、真实 CLI 战斗和独立 replay 为主，不追覆盖率或形式性
 非法输入矩阵。

@@ -10,7 +10,9 @@ from hsr.simulator_v8_clean_core.rules.ir import (
     AbilityTaskIR, ActionDefinitionIR, EffectIR, HitProfileIR, IRSource, SkillFormulaBindingIR,
 )
 from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSystem
-from hsr.simulator_v8_clean_core.tbgd.lowering import _damage_scaling_basis_expr
+from hsr.simulator_v8_clean_core.tbgd.lowering import (
+    _damage_scaling_basis_expr, _direct_damage_binding_lookup,
+)
 
 
 def _walk(value, path='$'):
@@ -38,7 +40,8 @@ def test_source_extra_defense_reaches_shared_damage_and_uses_current_stat():
         'direct_damage', 'selected', 0.5,
         {'kind': 'unit_stat', 'unit_ref': 'attacker', 'stat': 'attack', 'admission_status': 'executable'},
         '', '', '', source, coverage_status='executable')
-    basis = _damage_scaling_basis_expr(task, effect, profile, {('action', 1, 0): binding})
+    direct_basis_bindings = _direct_damage_binding_lookup([binding])
+    basis = _damage_scaling_basis_expr(task, effect, profile, direct_basis_bindings)
     assert basis['extra_scaling_basis']['stat'] == 'defense'
     assert 'extra_damage_ratio_expr' in basis
     action = ActionDefinitionIR('definition', 'action', 1, 'Insert', 'SingleAttack', 'Single',
@@ -71,4 +74,4 @@ def test_source_extra_defense_reaches_shared_damage_and_uses_current_stat():
     unknown = replace(effect, payload={**raw, 'AttackProperty': {
         **raw['AttackProperty'], 'ExtraFormulaType': 'UnmappedFormula',
     }})
-    assert _damage_scaling_basis_expr(task, unknown, profile, {('action', 1, 0): binding})['kind'] == 'missing'
+    assert _damage_scaling_basis_expr(task, unknown, profile, direct_basis_bindings)['kind'] == 'missing'
