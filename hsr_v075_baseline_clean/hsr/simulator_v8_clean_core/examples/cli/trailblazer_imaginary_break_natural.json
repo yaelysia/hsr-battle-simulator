@@ -1,0 +1,80 @@
+{
+  "scenario_id": "ordinary:imaginary-break-natural",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "trailblazer",
+      "side": "ally",
+      "entity_ref": "avatar:8005",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "trailblazer:build",
+        "character_card_id": "character_data_card:avatar:8005",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "trailblazer:equipment",
+          "character_card_id": "character_data_card:avatar:8005",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "931f8cb279a2973bc2c47ecc0ef04406e816ccfaa1047f12a8ab7fbdb9e72ea3"
+        },
+        "input_fingerprint": "76f2f6accec54a5dbb78c486877b3006286be0668deecd5d488a46c1fa0c291d"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+        },
+        "input_fingerprint": "22608c41813fb531bf28ac3ad4e71f657caf306d4465e966c755a8f3b05c5c66"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "1022231",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: stage 1022231 wave 0, two Lv32 Soldiers 1022020 (Ice/Wind/Imaginary weaknesses, StanceCount=1, source toughness 60). The assigned enhanced Welt avatar (1004) is not usable in the current formal build (enhanced AvatarConfig and after-attack listener admission), so the attacker is the formal Imaginary Trailblazer (8005) basic attack avatar_skill:800501 (Imaginary, ShowStanceList 30); no passive or binding is skipped. Trailblazer E0/Lv1 and Natasha E0/Lv80 use assembled builds with empty equipment; no injected HP, toughness, status, timeline or queue values."
+    }
+  }
+}

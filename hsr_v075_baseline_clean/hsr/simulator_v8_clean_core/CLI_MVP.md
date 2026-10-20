@@ -54,6 +54,34 @@ export PYTHONPATH=hsr_v075_baseline_clean
 面对来源波次的两只 Lv28 反重子，五次提交内发生两次物理击破、一次敌方攻击并获胜。
 网页场景选择中同样可用；这是波次配置，尚不包含完整关卡环境。
 
+## V2 五元素普通击破自然路线（2026-10-19）
+
+五条普通单韧性自然击破路线集中在
+`tests/test_ordinary_element_break_natural_routes.py`；示例与固定操作各一对：
+
+- 火：`asta_fire_break_natural`
+- 雷：`arlan_thunder_break_natural`
+- 冰：`march7th_ice_break_natural`
+- 量子：`lynx_quantum_break_natural`
+- 虚数：`trailblazer_imaginary_break_natural`
+
+每个场景同名加 `.commands.json`，将上述 `run` 命令的场景与操作路径替换即可复现。路线在交付链
+完成后可能战斗未完，CLI 返回 `3` 并保存可继续会话；量子示例（含独立归档回放 13 步、0 错误）：
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/lynx_quantum_break_natural.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/lynx_quantum_break_natural.commands.json \
+  --output /tmp/hsr-v2-quantum-postfix.json.gz
+```
+
+五元素差异：火/雷是击破 DOT（灼烧/触电）tick；冰冻结消耗目标回合且该回合不恢复，解冻后下一
+自然回合才恢复；量子由实际命中增加纠缠计数并在到期时一次结算；虚数禁锢提供减速与行动延后，
+到期恢复。计划角色因正式准入阻断，实际使用同元素合法角色（冰为三月七、量子为玲可、虚数为
+同谐主），示例文件名已按实际角色命名；五行结果与剩余依赖见
+[V2 执行说明](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
+
 关卡公共环境示例为 `arlan_common_stage_environment.json`，操作文件同名加 `.commands.json`。
 阿兰 E0/Lv80、空装备，对关卡 `200020050` 的两只 Lv2 重子；配置使用 `full_stage`，
 由关卡模板安装公共战斗能力和欢愉公共环境，再执行出生与入场通知。三次双方操作后获胜，

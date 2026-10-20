@@ -1,0 +1,137 @@
+{
+  "commands": [
+    {
+      "actor_id": "trailblazer",
+      "action_id": "avatar_skill:800501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:1022231:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": [],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:0",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:1",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "trailblazer",
+      "action_id": "avatar_skill:800501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:1022231:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:1",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:0",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "trailblazer",
+      "action_id": "avatar_skill:800501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:1022231:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:1",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:0",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "trailblazer",
+      "action_id": "avatar_skill:800501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:1022231:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:1022231:wave:0:pos:1",
+      "action_id": "monster_skill:102202001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    }
+  ]
+}

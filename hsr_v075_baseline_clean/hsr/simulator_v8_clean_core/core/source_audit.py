@@ -2468,7 +2468,138 @@ class RuntimeSourceAuditor:
                         details={"duration_admission": duration_admission},
                     )
                 )
+        if mutation.path == ("global_flags", "dynamic_value_store"):
+            self._audit_status_dynamic_value_cleanup(
+                mutation,
+                records,
+                violations,
+                lifecycle,
+            )
         return _trace(mutation, records, {"effect_id": effect_id or "", "modifier_name": modifier_name or "", "lifecycle_plan": lifecycle})
+
+    def _audit_status_dynamic_value_cleanup(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+        lifecycle: dict[str, JSONValue],
+    ) -> None:
+        """Audit the exact diff of a status-lifecycle dynamic value cleanup.
+
+        The mutation replaces the whole store, so the lifecycle source alone is
+        not enough: the after store must be exactly the before store with the
+        removed instance's ``status`` scoped entries (and their operation
+        ledger rows) dropped. Otherwise a legitimate removal source could carry
+        unrelated value/index changes into the global store.
+        """
+        from ..systems.dynamic_values import (
+            normalized_dynamic_value_store,
+            remove_status_instance_entries,
+        )
+
+        metadata = mutation.metadata
+        instance_id = metadata.get("status_instance_id")
+        existing = lifecycle.get("existing_detail")
+        existing_instance = (
+            existing.get("instance_id") if isinstance(existing, dict) else None
+        )
+        if (
+            not isinstance(instance_id, str)
+            or not instance_id
+            or instance_id != existing_instance
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_instance_mismatch",
+                    details={
+                        "status_instance_id": instance_id,
+                        "lifecycle_instance_id": existing_instance,
+                    },
+                )
+            )
+            return
+        if mutation.op != "set" or not mutation.before_exists:
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_operation_invalid",
+                    details={"op": mutation.op, "before_exists": mutation.before_exists},
+                )
+            )
+            return
+        if not isinstance(mutation.before, dict) or not isinstance(mutation.after, dict):
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_store_missing",
+                    details={"before_type": type(mutation.before).__name__,
+                             "after_type": type(mutation.after).__name__},
+                )
+            )
+            return
+        try:
+            before = normalized_dynamic_value_store(mutation.before)
+            after = normalized_dynamic_value_store(mutation.after)
+        except (TypeError, ValueError) as exc:
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_store_invalid",
+                    details={"error": str(exc)},
+                )
+            )
+            return
+        expected = remove_status_instance_entries(before, instance_id)
+        if expected is None or expected != after:
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_diff_mismatch",
+                    details={
+                        "status_instance_id": instance_id,
+                        "before_entry_count": len(before["entries"]),
+                        "after_entry_count": len(after["entries"]),
+                    },
+                )
+            )
+            return
+        removed_entry_count = len(before["entries"]) - len(after["entries"])
+        cleanup_records = [
+            record
+            for record in records
+            if isinstance(record, dict)
+            and record.get("record_type") == "status_dynamic_value_cleanup"
+        ]
+        if len(cleanup_records) != 1:
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_record_mismatch",
+                    details={"record_count": len(cleanup_records)},
+                )
+            )
+            return
+        record = cleanup_records[0]
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if (
+            record.get("source") != "status_system"
+            or payload.get("status_instance_id") != instance_id
+            or payload.get("operation") != lifecycle.get("operation")
+            or payload.get("removed_entry_count") != removed_entry_count
+            or removed_entry_count <= 0
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "status_dynamic_value_cleanup_record_mismatch",
+                    details={
+                        "record_source": record.get("source"),
+                        "payload": payload,
+                        "removed_entry_count": removed_entry_count,
+                    },
+                )
+            )
 
     def _audit_break_status_source(
         self,

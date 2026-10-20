@@ -1,0 +1,86 @@
+{
+  "scenario_id": "ordinary:ice-break-natural-march7th",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "march7th",
+      "side": "ally",
+      "entity_ref": "avatar:1001",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "march7th:build",
+        "character_card_id": "character_data_card:avatar:1001",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "march7th:equipment",
+          "character_card_id": "character_data_card:avatar:1001",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "a4b98035a4e4b5622bda45489bd77d14e8f785e5149693217d534759d139a1e0"
+        },
+        "input_fingerprint": "6aea43e1e3e57be8d9a4e570f389a6aa96f144d61cd4acd5bbddc6de73b4565a"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 40,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 40,
+        "promotion": 2,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+        },
+        "input_fingerprint": "d07273a7a93745bafc5a732d13005ae885cc271445124c8441aa39327ece775f"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "202232051",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: one Lv32 8001010 (Physical/Ice weakness, StanceCount=1, source toughness 30, HP 340.3). March 7th E0/Lv1 and Natasha E0/Lv40 are formal assembled builds with empty equipment. Pela avatar:1106 is the planned Ice candidate, but her basic attack avatar_skill:110601 is rejected by task-graph admission (task_graph_control_requires_domains:hit_random_sequence,projectile_source_shape_not_admitted,task_graph_definition_not_admitted:effect:blocked), so the same-element legal basic attack avatar_skill:100101 is used. No HP, toughness, status, timeline, queue or RNG value is injected.",
+      "character_substitution": {
+        "planned": "avatar:1106 (Pela) basic attack avatar_skill:110601",
+        "used": "avatar:1001 (March 7th) basic attack avatar_skill:100101",
+        "reason": "task_graph_control_requires_domains:hit_random_sequence,projectile_source_shape_not_admitted,task_graph_definition_not_admitted:effect:blocked",
+        "authorized_by": "team lead: same-element legal character substitution is allowed for this batch"
+      }
+    }
+  }
+}

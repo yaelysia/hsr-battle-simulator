@@ -21,6 +21,16 @@
 替换路径可选择其它检查；省略路径会运行全部集成检查。
 集成组件探查不等同于游戏操作整链，支持边界见各测试与 CLI 文档。
 
+V2 五元素普通击破自然路线集中在 `test_ordinary_element_break_natural_routes.py`，一条命令
+一次运行火/雷/冰/量子/虚数五条自然链（显式选择 `integration`，复用编译缓存）：
+
+```bash
+.venv/bin/python -B -m pytest -o addopts='' -q -m integration \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/tests/test_ordinary_element_break_natural_routes.py
+```
+
+路线说明、示例与五行结果见 [V2 执行说明](../docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
+
 `TBGDLowering.build()` 默认复用持久化编译缓存，CLI、UI 和独立回放共用此入口。
 默认目录为 `/tmp/hsr-v8-ir-cache-<uid>`，可用 `HSR_IR_CACHE_DIR` 指定持久目录。
 来源 JSON（含仅供展示的 TextMap）、生产代码、Python 主/次版本、内容范围或 lowering limits

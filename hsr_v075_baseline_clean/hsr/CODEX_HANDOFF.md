@@ -1,37 +1,40 @@
 # v8 当前交接
 
-更新：2026-10-19。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
+更新：2026-10-20。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
 
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已验收提交：`b4b8227`（I11 精准状态操作与自然风击破）；I12 及本次文档整理未提交。
+- 最近已验收提交：`fc2e6ff`（I12 逐任务参数绑定与交接瘦身）；前基线为 `b4b8227`。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 当前只收口 I12。验收通过后先提交工作基线，再安排下一批。
+- 当前基线已提交；V2 五元素自然路线与共享清理修复均已验收通过，尚未提交。
 
-## 当前任务：I12 独立复合伤害逐任务绑定
+## 当前任务：V2 剩余五元素普通击破自然路线
 
-**状态：本批验收通过，待提交。** 逐任务倍率、基准和削韧来源接线及继承契约已核对。
+**状态：本批验收通过，待提交。** 五条自然路线通过；共享动态值清理的多目标事务合并、
+差分审计及晚期失败不泄漏 mutation 均已复验。
 
-- 多级继承复现已通过：`A → B → C` 经过无伤害的 B 时，参数可传到 C，中间不产悬挂绑定。
-  Hook 中间链重定向及子命中替换属于已标注的组件输入，不代表原始整图运行。
-- 实现：编译内部沿正式引用传播参数候选上下文；只在具体消费任务上物化唯一绑定。
-  保留逐任务隔离、唯一基准判定、来源一致及普通路径的常数时间查找。
-- 完整设计约束与固定验收清单见
-  [I12 修复契约](simulator_v8_clean_core/docs/I12_STANDALONE_DAMAGE_BINDING.md)。
-  后续修改按整组要求核对后集中交回，不仅修最后一条复现。
-- 本轮受影响检查与此前失败复现合计 **29 项通过，17.36 秒**；覆盖多任务隔离、候选冲突、
-  自有绑定优先、顺序与深度边界，并复用真实叶子组件的原生审计与失败零 mutation/RNG 检查。
-- 入口：`tbgd/lowering.py` 的 `_bind_character_queue_damage`、
-  `_project_standalone_skill_formula_bindings`、`_lower_standalone_hit_profiles` 与直接基准索引；
-  检查见 `tests/test_standalone_{task_binding,trigger_inheritance,inheritance_contract}.py`。
-- 保留边界：本批不放宽缺失 AttackType、相邻目标别名及削韧准入，也不宣称完整角色可用。
-  无自有绑定的复合继承程序继续拒绝；既有 Topaz 自有复合公式继续可用。
+- 执行说明、五行结果表与验证成本见
+  [V2_ORDINARY_ELEMENT_BREAK_ROUTES.md](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
+- 集成入口：`simulator_v8_clean_core/tests/test_ordinary_element_break_natural_routes.py`；
+  五个示例与固定命令为 `examples/cli/{asta_fire,arlan_thunder,march7th_ice,lynx_quantum,
+  trailblazer_imaginary}_break_natural{,.commands}.json`。
+- 共享修复：状态移除/过期同一事务清理 status 作用域动态值（避免二次生命周期复用来源哈希
+  `instance_id` 时串值）；`apply_remove_modifier`/`apply_dispel_status` 改为在候选状态上逐目标
+  规划并原子合并整仓写入；`source_audit` 校验清理 mutation 的精确差分、保留条目/索引/ledger
+  与结算关联。永久回归见 `tests/test_status_dynamic_value_cleanup.py`，覆盖两个移除调用者、
+  清理范围与结算篡改。
+- Codex 最终复验：原始复现、相关组件与第二目标失败检查共 16 项通过；量子自然路线
+  1 项通过。此前五路线通过及量子独立 replay 13 步、0 错误的证据继续复用。
+- 计划的佩拉/希儿/瓦尔特均被正式准入阻断，按同元素合法角色交付（三月七/玲可/同谐主），
+  示例文件名已同步；各元素剩余依赖见执行说明五行表，不阻断本批普通单韧性路线验收。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
+| V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，场景与边界见当前任务说明。 |
+| I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](simulator_v8_clean_core/docs/I12_STANDALONE_DAMAGE_BINDING.md)。 |
 | I11 真实来源子图 | Phainon 当前回合所有者 Buff 寿命延长、爻光新增状态实例寿命修改、遐蝶限定 InfectModifier 状态复制；生命周期事实与属性审计通过。 |
 | I11 完整内容限制 | 爻光 A6 正式构筑启动尚未验证；遐蝶完整忆灵/死龙与整场未验；Phainon 完整 Ultra 仍有其它未准入任务。 |
 | V2 风属性普通击破 | 丹恒＋娜塔莎自然完成首次击破、风化、恢复、二次击破和后续行动，并完成回放；仅普通单韧性，配置与固定命令为 `examples/cli/danheng_wind_break_natural{,.commands}.json`。 |
@@ -57,7 +60,6 @@
 | I10 | battle_event/servant 双 mute 退场之外的 ForceKill 形态。 |
 | I11 余项 | 其它/组合 StatusTypeMask、寿命 Set/减少、其它 InfectModifier 变体及尚未接通的精准实例操作。 |
 | V1 | 工作台真实浏览器点击、布局、导入/下载；已有 HTTP/客户端检查不代替浏览器验收。 |
-| V2 余项 | 除物理、风外五元素的普通单韧性自然多轮路线；不包含 I7、BigBoss/Elite 分支或来源死亡后的 DOT。 |
 | V3 | 已准入 SummonMonster 形态自然召唤后继续战斗；特殊子卡仍按各自依赖处理。 |
 
 ## 规则待定与待归因

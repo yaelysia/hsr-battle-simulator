@@ -246,6 +246,54 @@ def store_from_state(state: BattleState) -> dict[str, JSONValue]:
     return normalized_dynamic_value_store(state.global_flags.get("dynamic_value_store"))
 
 
+def remove_status_instance_entries(
+    store: object,
+    status_instance_id: str,
+) -> dict[str, JSONValue] | None:
+    """Drop status-scoped dynamic values once their status instance is gone.
+
+    Status instance ids are deterministic source identities, so a later
+    lifecycle of the same modifier can reuse the id. Leaving per-instance
+    entries behind would let the new lifecycle read counters from the removed
+    one. Only entries whose scope kind is ``status`` and whose instance id
+    matches are pruned; unit/ability/event scoped entries are untouched.
+    Returns ``None`` when nothing was pruned so callers emit no mutation.
+    """
+    if not isinstance(status_instance_id, str) or not status_instance_id:
+        return None
+    normalized = normalized_dynamic_value_store(store)
+    entries = normalized.get("entries")
+    if not isinstance(entries, dict):
+        return None
+    kept = {
+        key: entry
+        for key, entry in entries.items()
+        if not (
+            isinstance(entry, dict)
+            and str(entry.get("scope_kind") or "") == "status"
+            and str(entry.get("status_instance_id") or "") == status_instance_id
+        )
+    }
+    if len(kept) == len(entries):
+        return None
+    ledger = normalized.get("operation_ledger")
+    kept_ledger = (
+        {
+            key: item
+            for key, item in ledger.items()
+            if isinstance(item, dict) and item.get("destination_entry_key") in kept
+        }
+        if isinstance(ledger, dict)
+        else {}
+    )
+    return _reindex(
+        {
+            "entries": kept,
+            "operation_ledger": kept_ledger,
+        }
+    )
+
+
 def binding_source_from_store(
     store: object,
     *,

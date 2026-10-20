@@ -37,6 +37,7 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
+from .dynamic_values import remove_status_instance_entries
 from .target import TargetSystem
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext, committed_turn_owner_id
 from .unit_lifecycle import UnitLifecycleSystem
@@ -2121,21 +2122,26 @@ class StatusSystem:
         else:
             return _unsupported_result(effect, f"{effect.opcode} has no modifier_name or status_id")
         lifecycle_results: list[StatusLifecycleResult] = []
+        # Each target is planned on the state produced by the previous targets.
+        # A removal can write the whole status-scoped dynamic value store, so
+        # planning several targets from the same original state would produce
+        # conflicting store mutations in one atomic return.
+        current_state = state
         for target_id in target_ids:
-            before_details = _status_details(unit_flags=state.units[target_id].flags)
+            before_details = _status_details(unit_flags=current_state.units[target_id].flags)
             candidates = before_details
             if only_caster:
                 same_status = [detail for detail in before_details
                                if isinstance(detail, dict) and detail.get("status_id") == status_id]
                 if (any(not isinstance(detail.get("caster_id"), str) or not detail["caster_id"]
                         for detail in same_status)
-                        or not same_status and status_id in state.units[target_id].statuses):
+                        or not same_status and status_id in current_state.units[target_id].statuses):
                     return _unsupported_result(effect, "remove_modifier_instance_caster_missing")
                 candidates = [detail for detail in same_status if detail["caster_id"] == caster_id]
             existing_detail = _find_status_detail(candidates, status_id)
             plan = StatusLifecyclePlan(
                 operation=("idempotent" if existing_detail is None and (
-                    only_caster or status_id not in state.units[target_id].statuses
+                    only_caster or status_id not in current_state.units[target_id].statuses
                 ) else "remove"),
                 target_id=target_id,
                 status_id=status_id,
@@ -2149,7 +2155,17 @@ class StatusSystem:
                     "caster_filter": caster_id if only_caster else None,
                 },
             )
-            lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
+            result = self._apply_lifecycle_plan(current_state, plan)
+            lifecycle_results.append(result)
+            if result.ok and result.mutations:
+                reduction = MutationReducer().apply_all_result(current_state, result.mutations)
+                if not reduction.ok:
+                    return StatusApplicationResult(
+                        ok=False,
+                        records=tuple(record for item in lifecycle_results for record in item.records),
+                        unsupported=("remove_modifier_multi_target_mutation_conflict",),
+                    )
+                current_state = reduction.after_state
         base_result = StatusApplicationResult(
             ok=bool(lifecycle_results) and all(result.ok for result in lifecycle_results),
             mutations=tuple(mutation for result in lifecycle_results for mutation in result.mutations),
@@ -2259,8 +2275,13 @@ class StatusSystem:
         records: list[dict[str, JSONValue]] = []
         rng_events: list[RNGEvent] = list(target_rng_events)
         unsupported: list[str] = []
+        # Plan each dispelled target on the state produced by the previous
+        # targets: the store cleanup mutation carries the whole store, so
+        # original-state planning would conflict when two targets are dispelled
+        # in one atomic effect.
+        current_state = state
         for target_id in target_ids:
-            before_details = _status_details(state.units[target_id].flags)
+            before_details = _status_details(current_state.units[target_id].flags)
             candidates, skipped = _dispel_candidates(before_details, standard)
             target_trace = {**source_trace, "target_id": target_id, "skipped_candidates": skipped}
             if not candidates:
@@ -2280,7 +2301,7 @@ class StatusSystem:
                     unsupported.append(reason)
                     continue
                 event = _status_choice_rng_event(
-                    state,
+                    current_state,
                     rng_type="status_dispel",
                     source="status_system",
                     purpose="random_dispel_candidate",
@@ -2320,7 +2341,17 @@ class StatusSystem:
                     existing_detail=detail,
                     source_trace=detail_trace,
                 )
-                lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
+                result = self._apply_lifecycle_plan(current_state, plan)
+                lifecycle_results.append(result)
+                if result.ok and result.mutations:
+                    reduction = MutationReducer().apply_all_result(current_state, result.mutations)
+                    if not reduction.ok:
+                        return StatusApplicationResult(
+                            ok=False,
+                            records=tuple(records),
+                            unsupported=("dispel_multi_target_mutation_conflict",),
+                        )
+                    current_state = reduction.after_state
                 break
         mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
         events = tuple(event for result in lifecycle_results for event in result.events)
@@ -2738,6 +2769,62 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
     )
 
 
+def _status_dynamic_value_cleanup(
+    state: BattleState,
+    plan: StatusLifecyclePlan,
+) -> tuple[Mutation, dict[str, JSONValue]] | None:
+    """Drop status-scoped dynamic values in the same transaction as removal.
+
+    The instance id of an ordinary break status is a deterministic source
+    identity and is reused by a later lifecycle of the same modifier. Values
+    written for the removed lifecycle (for example Entanglement hit counters)
+    must not be readable by the next lifecycle, so the store entries are
+    pruned after the removal callbacks have consumed them.
+    """
+    detail = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
+    if not isinstance(detail, dict):
+        return None
+    instance_id = str(detail.get("instance_id") or "")
+    before = state.global_flags.get("dynamic_value_store")
+    after = remove_status_instance_entries(before, instance_id)
+    if after is None:
+        return None
+    before_entries = (
+        before.get("entries")
+        if isinstance(before, dict) and isinstance(before.get("entries"), dict)
+        else {}
+    )
+    after_entries = after.get("entries") if isinstance(after.get("entries"), dict) else {}
+    mutation = Mutation(
+        op="set",
+        path=("global_flags", "dynamic_value_store"),
+        before=before,
+        after=after,
+        reason="drop status-scoped dynamic values of the removed status instance",
+        source="status_system",
+        before_exists="dynamic_value_store" in state.global_flags,
+        metadata={
+            "status_id": plan.status_id,
+            "operation": plan.operation,
+            "status_instance_id": instance_id,
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+    record = SettlementRecord(
+        record_type="status_dynamic_value_cleanup",
+        source="status_system",
+        mutation_id=mutation.stable_id(),
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "status_instance_id": instance_id,
+            "removed_entry_count": len(before_entries) - len(after_entries),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    return mutation, record
+
+
 def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
     unit = state.units[plan.target_id]
     before_statuses = list(unit.statuses)
@@ -2832,6 +2919,11 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         mutations = (*mutations, departure_mutation)
         mutation_ids.append(departure_mutation.stable_id())
         records.append(departure_record)
+    cleanup = _status_dynamic_value_cleanup(state, plan)
+    if cleanup is not None:
+        cleanup_mutation, cleanup_record = cleanup
+        mutations = (*mutations, cleanup_mutation)
+        records.append(cleanup_record)
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
@@ -3000,6 +3092,11 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         mutations = (*mutations, departure_mutation)
         mutation_ids.append(departure_mutation.stable_id())
         records.append(departure_record)
+    cleanup = _status_dynamic_value_cleanup(state, plan)
+    if cleanup is not None:
+        cleanup_mutation, cleanup_record = cleanup
+        mutations = (*mutations, cleanup_mutation)
+        records.append(cleanup_record)
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,

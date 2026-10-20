@@ -1,0 +1,80 @@
+{
+  "scenario_id": "ordinary:quantum-break-natural",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "lynx",
+      "side": "ally",
+      "entity_ref": "avatar:1110",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "lynx:build",
+        "character_card_id": "character_data_card:avatar:1110",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "lynx:equipment",
+          "character_card_id": "character_data_card:avatar:1110",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "1a92054928adc11af33d5b4392df00319137ce8dc2c13ce940929d55d0ddbdff"
+        },
+        "input_fingerprint": "17924219cc1ac3dd5de54f1c92441783c736c788afb73ce7f02904ec93cbd5a5"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+        },
+        "input_fingerprint": "22608c41813fb531bf28ac3ad4e71f657caf306d4465e966c755a8f3b05c5c66"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "400020800",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: two Lv28 Minion 8011020 (Physical/Quantum weakness, StanceCount=1, source toughness 30). Quantum attacker Lynx avatar:1110 E0/Lv1 and Natasha E0/Lv80/promotion6 use assembled builds with empty equipment; Seele avatar:1102 is unavailable as the enhanced-data 50% auto-skill listener blocks formal session actions (enhanced action_target_fact gap), see the route report. No injected HP, toughness, status, timeline or queue values."
+    }
+  }
+}
