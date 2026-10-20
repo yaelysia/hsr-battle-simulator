@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from ..core.model import JSONValue
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+from .action_event_contract import condition_skill_type
 from .resource import ResourcePlan
+from .skill_properties import (
+    resolve_skill_property_overrides,
+    skill_property_override_evidence,
+    skill_property_override_plan,
+)
 
 
 def action_skill_point_delta(bp_need: float, bp_add: float) -> int:
@@ -24,6 +30,8 @@ def action_resource_blocked_reason(errors: tuple[str, ...]) -> str:
             return "resource_unknown_actor"
         if error.startswith("ultimate_energy_"):
             return error
+        if error.startswith("resource_skill_property_override_blocked:"):
+            return error
     return "resource_plan_failed"
 
 
@@ -34,23 +42,71 @@ def action_resource_plan(
     metadata: dict[str, JSONValue] | None = None,
     queue_resource_policy: dict[str, JSONValue] | None = None,
     rules: RuleBook | None = None,
+    state: Any | None = None,
+    actor_id: str = "",
 ) -> ResourcePlan:
     policy = queue_resource_policy or {}
-    skill_point_delta = action_skill_point_delta(action_definition.bp_need, action_definition.bp_add)
-    energy_gain = action_definition.sp_base
-    if rules is not None and action_ability_grants_base_energy(rules, action_definition):
-        energy_gain = 0.0
+    overrides = (
+        resolve_skill_property_overrides(state, actor_id, condition_skill_type(action_definition))
+        if state is not None and actor_id
+        else None
+    )
+    override_values = skill_property_override_plan(
+        action_definition,
+        overrides.values if overrides is not None and overrides.ok else {},
+    )
+    bp_need = override_values.get("bp_need", action_definition.bp_need)
+    skill_point_delta = action_skill_point_delta(bp_need, action_definition.bp_add)
+    energy_gain = action_energy_gain(rules, action_definition, override_values)
     if policy.get("ignore_skill_point_delta") is True:
         skill_point_delta = 0
     if policy.get("ignore_energy_gain") is True:
         energy_gain = 0.0
+    blocked_reason = ""
+    if overrides is not None:
+        metadata = {
+            **(metadata or {}),
+            "skill_property_override_plan": override_values,
+            "skill_property_overrides": skill_property_override_evidence(overrides),
+        }
+        if not overrides.ok:
+            # An unresolved or conflicting override must fail the resource
+            # admission itself; formatting a fallback plan would let the body
+            # charge a cost the source no longer declares.
+            blocked_reason = (
+                "resource_skill_property_override_blocked:" + overrides.blocked_reason
+            )
+            metadata["skill_property_override_blocked_reason"] = overrides.blocked_reason
     return ResourcePlan(
         skill_point_delta=skill_point_delta,
         energy_gain=energy_gain,
         energy_cost=action_definition.sp_need if action_definition.attack_type == "Ultra" else 0.0,
         source=source,
         metadata=metadata or {},
+        blocked_reason=blocked_reason,
     )
+
+
+def action_energy_gain(
+    rules: RuleBook | None,
+    definition: ActionDefinitionIR,
+    override_values: Mapping[str, float] | None = None,
+    *,
+    base_value: float | None = None,
+) -> float:
+    """Single producer for one action's energy gain.
+
+    An explicit source request (ModifySPNew scaled by action_sp_base) owns the
+    body grant, so the resource plan must stay zero even when a skill property
+    override changes that body value. Otherwise the plan grants the override
+    and the body grants it again.
+    """
+
+    if rules is not None and action_ability_grants_base_energy(rules, definition):
+        return 0.0
+    values = override_values or {}
+    fallback = definition.sp_base if base_value is None else base_value
+    return float(values.get("sp_base", fallback))
 
 
 def action_ability_grants_base_energy(rules: RuleBook, definition: ActionDefinitionIR) -> bool:

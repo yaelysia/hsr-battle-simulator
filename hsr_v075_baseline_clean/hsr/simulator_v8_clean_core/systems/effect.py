@@ -31,6 +31,7 @@ from .mutation_events import events_for_mutation
 from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusApplicationResult, StatusLifecyclePlan, StatusSystem, remove_self_intrinsic_target_admitted
 from .shield import NORMAL_SHIELD_FAMILIES, ShieldExhaustionFact, ShieldSystem
+from .skill_properties import effective_action_property
 from .target import TargetSystem
 from .timeline import TimelineSystem
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext, committed_turn_owner_id
@@ -126,6 +127,7 @@ class EffectRegistry:
             self.register("SetModifierValueByBehaviorFlag", self._execute_modifier_lifetime)
             self.register("SetModifierValue", self._execute_modifier_value)
             self.register("InfectModifier", self._execute_infect_modifier)
+            self.register("ModifySkillPropertyByType", self._execute_modify_skill_property)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
@@ -225,6 +227,148 @@ class EffectRegistry:
             mutation_id=mutation.stable_id() if mutation else None, process_only=mutation is None,
             payload=metadata, trace=effect.source.to_json(),
         ).to_json(),))
+
+    def _execute_modify_skill_property(
+        self, effect: EffectIR, context: EffectExecutionContext | None
+    ) -> EffectResult:
+        standard = effect.payload.get("standard")
+        if (
+            context is None
+            or self.status_system is None
+            or not isinstance(standard, dict)
+            or standard.get("operation") != "modify_skill_property_by_type"
+            or standard.get("source_shape_admitted") is not True
+            or standard.get("blocked_reason")
+        ):
+            return _unsupported_effect(
+                effect, "skill_property_context_or_definition_missing"
+            )
+        payload = context.event_payload if isinstance(context.event_payload, dict) else {}
+        instance_id = str(payload.get("status_instance_id") or "")
+        owner_id = context.owner_id
+        skill_types = standard.get("skill_types")
+        properties = standard.get("properties")
+        if (
+            not isinstance(instance_id, str)
+            or not instance_id
+            or not isinstance(owner_id, str)
+            or not owner_id
+            or not isinstance(skill_types, list)
+            or not skill_types
+            or not isinstance(properties, list)
+            or not properties
+        ):
+            return _unsupported_effect(effect, "skill_property_status_scope_missing")
+        target_id = _resolve_target_alias(
+            standard.get("target_alias"),
+            caster_id=context.caster_id,
+            owner_id=owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+        )
+        if target_id != owner_id:
+            return _unsupported_effect(
+                effect, "skill_property_override_requires_status_owner_target"
+            )
+        unit = context.state.units.get(owner_id)
+        details = unit.flags.get("status_details") if unit is not None else None
+        if unit is None or not isinstance(details, (list, tuple)):
+            return _unsupported_effect(effect, "skill_property_status_detail_missing")
+        index = next(
+            (
+                position
+                for position, detail in enumerate(details)
+                if isinstance(detail, dict) and detail.get("instance_id") == instance_id
+            ),
+            -1,
+        )
+        if index < 0:
+            return _unsupported_effect(effect, "skill_property_status_detail_missing")
+        applied: list[dict[str, JSONValue]] = []
+        evaluations: dict[str, JSONValue] = {}
+        for item in properties:
+            if not isinstance(item, dict):
+                return _unsupported_effect(effect, "skill_property_entry_invalid")
+            property_type = str(item.get("property_type") or "")
+            raw_value = item.get("value")
+            if raw_value is None:
+                value = 0.0
+            else:
+                evaluation = _evaluate_numeric(effect, context, raw_value)
+                if not evaluation.ok or evaluation.value is None:
+                    return _unsupported_effect(
+                        effect,
+                        evaluation.blocked_reason
+                        or "skill_property_value_unresolved",
+                    )
+                value = float(evaluation.value)
+                # Explicit property values retain their runtime evaluation as
+                # the native audit fact of this mutation.
+                evaluations[property_type] = evaluation.to_json()
+            if not math.isfinite(value):
+                return _unsupported_effect(effect, "skill_property_value_not_finite")
+            applied.append({
+                "property_type": property_type,
+                "skill_types": list(skill_types),
+                "value": value,
+                "value_source": str(item.get("value_source") or ""),
+                "status_instance_id": instance_id,
+                "effect_id": effect.effect_id,
+            })
+        detail = details[index]
+        existing = detail.get("skill_property_overrides")
+        if existing is not None and not isinstance(existing, list):
+            return _unsupported_effect(effect, "skill_property_status_detail_state_invalid")
+        kept = [
+            entry
+            for entry in (existing or ())
+            if not (
+                isinstance(entry, dict)
+                and (entry.get("property_type"), tuple(entry.get("skill_types") or ()))
+                in {(entry_new["property_type"], tuple(entry_new["skill_types"])) for entry_new in applied}
+            )
+        ]
+        updated_detail = {**detail, "skill_property_overrides": [*kept, *applied]}
+        before = [dict(item) if isinstance(item, dict) else item for item in details]
+        after = [
+            updated_detail if position == index else dict(item) if isinstance(item, dict) else item
+            for position, item in enumerate(details)
+        ]
+        mutation = Mutation(
+            "set",
+            ("units", owner_id, "flags", "status_details"),
+            before,
+            after,
+            "modify skill property for the owning status instance",
+            "effect_system",
+            metadata={
+                "effect_id": effect.effect_id,
+                "opcode": effect.opcode,
+                "status_instance_id": instance_id,
+                "skill_property_overrides": applied,
+                "numeric_evaluations": evaluations,
+                "effect_source": effect.source.to_json(),
+                "source_trace": effect.source.to_json(),
+            },
+        )
+        return EffectResult(
+            mutations=(mutation,),
+            records=(
+                SettlementRecord(
+                    record_type="skill_property_modified",
+                    source="effect_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        "status_instance_id": instance_id,
+                        "owner_id": owner_id,
+                        "overrides": applied,
+                        "target_alias": standard.get("target_alias"),
+                    },
+                    trace=effect.source.to_json(),
+                ).to_json(),
+            ),
+        )
 
     def _execute_set_action_delay(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         if context is None:
@@ -3415,10 +3559,26 @@ def _resolve_formula_amount(
         if scale_basis == "action_sp_base":
             if type(action_definition) is not ActionDefinitionIR:
                 return 0.0, details, "unsupported_formula:resource_action_context_missing"
-            base = action_definition.sp_base
+            base, override_blocked = effective_action_property(
+                state,
+                caster_id,
+                action_definition,
+                "SPBase",
+                float(action_definition.sp_base),
+            )
+            if override_blocked:
+                return 0.0, details, (
+                    "unsupported_formula:resource_action_sp_base_override_blocked:"
+                    + override_blocked
+                )
             if type(base) not in (int, float) or not math.isfinite(base) or base < 0:
                 return 0.0, details, "unsupported_formula:resource_action_sp_base_invalid"
             details["base_value"] = base
+            details["base_value_source"] = (
+                "skill_property_override"
+                if base != action_definition.sp_base
+                else "action_definition"
+            )
             details["definition_id"] = action_definition.definition_id
             return base * raw_value, details, ""
         if scale_basis == "max_skill_points":

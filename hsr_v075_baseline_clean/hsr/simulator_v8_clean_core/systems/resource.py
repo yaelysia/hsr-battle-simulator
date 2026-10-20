@@ -15,6 +15,7 @@ class ResourcePlan:
     source: str = "resource_system"
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     energy_cost: float | None = 0.0
+    blocked_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,8 @@ class ResourceSystem:
         errors: list[str] = []
         mutations: list[Mutation] = []
 
+        if plan.blocked_reason:
+            return ResourcePlanResult(False, errors=(plan.blocked_reason,))
         if actor_id not in state.units:
             return ResourcePlanResult(False, errors=(f"unknown actor_id: {actor_id}",))
 

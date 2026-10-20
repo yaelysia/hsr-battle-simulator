@@ -23,6 +23,7 @@ from .action_selection import ActionTargetQuery, ActionTargetSelectionSystem
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .queue import QueueDrainPlan, QueueSystem
 from .resource import ResourceSystem, ultimate_energy_blocked_reason
+from .skill_properties import effective_action_property
 from .phase_machine import AWAITING_DECISION, CombatPhaseMachine
 from .scheduler import (
     TIMELINE_TIE_CHOICE_ACTION_ID,
@@ -755,7 +756,15 @@ class ActionAvailabilitySystem:
         if event_reason:
             return f"queue_action_event_not_admitted:{event_reason}"
         resource_policy = _queue_entry_resource_policy(plan)
-        if resource_policy.get("ignore_skill_point_delta") is not True and definition.bp_need > state.skill_points:
+        effective_bp_need, override_blocked = effective_action_property(
+            state, actor_id, definition, "BPNeed", float(definition.bp_need)
+        )
+        if override_blocked:
+            return f"queue_action_resource_override_blocked:{override_blocked}"
+        if (
+            resource_policy.get("ignore_skill_point_delta") is not True
+            and effective_bp_need > state.skill_points
+        ):
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
             actor = state.units[actor_id]
@@ -1808,6 +1817,8 @@ class ActionAvailabilitySystem:
                 rules=self.rules,
                 metadata={"definition_id": definition.definition_id},
                 queue_resource_policy=queue_resource_policy,
+                state=state,
+                actor_id=actor_id,
             ),
         )
         if result.ok:

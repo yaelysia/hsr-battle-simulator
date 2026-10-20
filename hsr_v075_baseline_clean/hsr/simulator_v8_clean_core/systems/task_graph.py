@@ -1584,6 +1584,59 @@ class TaskGraphExecutor:
             return self._blocked(state, tuple(run.projections), str(exc))
         return self._committed(run)
 
+    def execute_selected_nodes(
+        self,
+        state: BattleState,
+        graph: TaskGraphIR,
+        context: TaskGraphExecutionContext,
+        hooks: TaskGraphExecutionHooks,
+        node_ids: tuple[str, ...],
+    ) -> TaskGraphExecutionResult:
+        """Execute one source-predeclared branch selection atomically.
+
+        The selected nodes stay part of their materialized graph (identity,
+        projections and hooks are unchanged); only the entry roots are replaced
+        by the caller's formal branch children.
+        """
+
+        if type(state) is not BattleState:
+            raise TypeError("task graph executor requires exact BattleState")
+        if not isinstance(node_ids, tuple) or not node_ids or any(
+            not isinstance(item, str) or not item for item in node_ids
+        ) or len(node_ids) != len(set(node_ids)):
+            return self._blocked(state, (), "task_graph_selected_nodes_invalid")
+        reason = self._preflight(graph, context, hooks)
+        if reason:
+            return self._blocked(state, (), reason)
+        node_by_id = {item.graph_node_id: item for item in graph.nodes}
+        selected = []
+        for node_id in node_ids:
+            node = node_by_id.get(node_id)
+            if node is None:
+                return self._blocked(state, (), f"task_graph_selected_node_missing:{node_id}")
+            if node.materialization_status != "materialized":
+                return self._blocked(
+                    state, (), node.status_reason or f"task_graph_selected_node_not_materialized:{node_id}"
+                )
+            selected.append(node)
+        run = _TaskGraphRun(state, context, hooks)
+        run.active_graphs = [*context.active_graph_stack, graph.graph_id]
+        try:
+            for ordinal, node in enumerate(selected):
+                run.execute_node(
+                    graph,
+                    node,
+                    node_by_id,
+                    (
+                        *context.parent_execution_path,
+                        f"invocation:{context.invocation_id}",
+                        f"selected:{ordinal}",
+                    ),
+                )
+        except _ExecutionBlocked as exc:
+            return self._blocked(state, tuple(run.projections), str(exc))
+        return self._committed(run)
+
     def execute_interleaved(
         self,
         state: BattleState,

@@ -638,12 +638,15 @@ def test_one_composite_damage_request_does_not_expand_description_parameters_int
     binding = SkillFormulaBindingIR('binding:0', 'card', 'slot', 'action', 1, 0, 0, 'direct_damage',
         'primary', {'Value': 1}, {'kind': 'unit_stat', 'unit_ref': 'attacker', 'stat': 'attack'},
         '', '', '', source, coverage_status='executable')
-    bindings = {('action', 1, 0): binding, ('action', 1, 2): replace(binding, param_index=2)}
+    bindings = {
+        'by_key': {('action', 1, 0): binding, ('action', 1, 2): replace(binding, param_index=2)},
+        'by_task': {},
+    }
     assert _target_profiles_for_damage_task(profiles, task, effect, bindings) == (profile,)
     expression = _binding_param_multiplier_expr(binding, effect)
     assert expression['kind'] == 'program'
     assert any(instruction.get('hash') == 8 for instruction in expression['instructions'])
-    bindings['action', 1, 2] = replace(binding, param_index=2,
+    bindings['by_key']['action', 1, 2] = replace(binding, param_index=2,
                                       scaling_basis_expr={'kind': 'unit_stat', 'unit_ref': 'attacker', 'stat': 'max_hp'})
     assert _target_profiles_for_damage_task(profiles, task, effect, bindings) == (None,)
 

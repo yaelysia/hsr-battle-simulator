@@ -68,6 +68,8 @@ class QueueEntry:
     status: str = "pending"
     drain_status: str = "not_attempted"
     elation_override_points: float | None = None
+    custom_tag: str = ""
+    insert_abort: dict[str, JSONValue] | None = None
 
     def __post_init__(self) -> None:
         value = self.elation_override_points
@@ -102,6 +104,8 @@ class QueueEntry:
             "status": self.status,
             "drain_status": self.drain_status,
             "elation_override_points": self.elation_override_points,
+            "custom_tag": self.custom_tag,
+            "insert_abort": self.insert_abort or {},
         }
 
 
@@ -542,15 +546,21 @@ class QueueSystem:
         state: BattleState,
         queue_name: str,
         resolution: QueueResolutionIR | None,
+        *,
+        rules: "RuleBook | None" = None,
     ) -> QueueDrainPlan:
         entry = self.peek(state, queue_name)
-        return self._plan_entry(state, queue_name, entry, resolution, drain_order=0)
+        return self._plan_entry(
+            state, queue_name, entry, resolution, drain_order=0, rules=rules
+        )
 
     def plan_next_drain(
         self,
         state: BattleState,
         queue_name: str,
         resolutions_by_intent: dict[str, QueueResolutionIR],
+        *,
+        rules: "RuleBook | None" = None,
     ) -> QueueDrainPlan:
         entries = self._entries(state, queue_name)
         if not entries:
@@ -585,6 +595,7 @@ class QueueSystem:
                 entry,
                 resolutions_by_intent.get(str(entry.get("queue_intent_id") or "")),
                 drain_order=index,
+                rules=rules,
             )
             for index, entry in enumerate(entries)
         ]
@@ -618,6 +629,7 @@ class QueueSystem:
         resolution: QueueResolutionIR | None,
         *,
         drain_order: int | None,
+        rules: "RuleBook | None" = None,
     ) -> QueueDrainPlan:
         if entry is None:
             return QueueDrainPlan(False, "blocked", queue_name, {}, "", "", "queue_empty_or_legacy_entry")
@@ -763,7 +775,9 @@ class QueueSystem:
                     window,
                 )
         elif resolution.resolved_kind == "action_definition":
-            action_match = self._resolve_action_candidate(state, entry, resolution)
+            action_match = self._resolve_action_candidate(
+                state, entry, resolution, rules=rules
+            )
             window = self._queue_window_plan(
                 entry,
                 resolution,
@@ -1015,6 +1029,8 @@ class QueueSystem:
         state: BattleState,
         entry: dict[str, JSONValue],
         resolution: QueueResolutionIR,
+        *,
+        rules: "RuleBook | None" = None,
     ) -> dict[str, JSONValue]:
         actor_id = str(entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
@@ -1046,6 +1062,44 @@ class QueueSystem:
         match = matches[0]
         action_id = match.get("action_ref")
         action_level = match.get("action_level")
+        level_source = "action_set_default_level"
+        skill_index_key = resolution.resolved_ids.get("skill_index")
+        if rules is not None and isinstance(skill_index_key, str) and skill_index_key:
+            # The actual action comes from the acting unit's combatant action set;
+            # the precompiled candidate list only cross-checks it.
+            action_set = rules.combatant_action_set(actor.template_id)
+            if action_set is None:
+                return {
+                    "ok": False,
+                    "blocked_reason": f"queue_action_set_missing_for_actor:{actor.template_id}",
+                }
+            slot = action_set.skill_index_map.get(skill_index_key)
+            if not isinstance(slot, dict) or not isinstance(slot.get("action_ref"), str):
+                return {
+                    "ok": False,
+                    "blocked_reason": (
+                        f"queue_action_set_slot_missing:{actor.template_id}:{skill_index_key}"
+                    ),
+                }
+            if slot["action_ref"] != action_id:
+                return {
+                    "ok": False,
+                    "blocked_reason": (
+                        f"queue_action_set_candidate_mismatch:{action_id}:{slot['action_ref']}"
+                    ),
+                }
+            levels = actor.flags.get("effective_skill_levels_by_action_id")
+            effective_level = levels.get(action_id) if isinstance(levels, dict) else None
+            if isinstance(effective_level, int) and not isinstance(effective_level, bool):
+                action_level = effective_level
+                level_source = "effective_skill_levels_by_action_id"
+            elif isinstance(action_level, int):
+                level_source = "action_set_default_level"
+            if rules.action_definition(action_id, int(action_level)) is None:
+                return {
+                    "ok": False,
+                    "blocked_reason": f"queue_action_effective_definition_missing:{action_id}:{action_level}",
+                }
         if not isinstance(action_id, str) or not action_id:
             return {"ok": False, "blocked_reason": "queue_action_ref_missing"}
         if not isinstance(action_level, int):
@@ -1061,6 +1115,7 @@ class QueueSystem:
             "ok": True,
             "action_id": action_id,
             "action_level": action_level,
+            "level_source": level_source,
             "combatant_action_set_id": str(match.get("combatant_action_set_id") or ""),
         }
 
@@ -1436,7 +1491,8 @@ class QueueSystem:
             "queue.action.before", source_id=fact.actor_id, event_id=event_id, window="queue",
             process_only=True, queue_action_start_fact=fact,
             payload={"queue_entry": entry, "queue_mutation_id": mutation.stable_id(),
-                     "actor_id": fact.actor_id, "target_ids": list(fact.target_ids)},
+                     "actor_id": fact.actor_id, "target_ids": list(fact.target_ids),
+                     "queue_intent_id": fact.queue_intent_id, "custom_tag": fact.custom_tag},
         )
 
     def action_terminal_event(

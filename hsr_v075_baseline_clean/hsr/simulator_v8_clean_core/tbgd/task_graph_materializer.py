@@ -163,6 +163,70 @@ class _MaterializationContext:
     template_by_id: Mapping[str, ControlFlowTemplateDefinitionIR]
     template_refs_by_node: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]]
     definitions: _DefinitionIndexes
+    admitted_insert_action_task_ids: frozenset[str]
+
+
+def _admitted_insert_action_task_ids(canonical: CanonicalIR) -> frozenset[str]:
+    """Source tasks whose TurnInsertAction intent is admitted end to end.
+
+    A queue node is only materialized when the formal QueueIntent, QueueWindow
+    and QueueResolution all admit the entry itself; the abort branch stays in
+    the graph as the delayed cancellation path.
+    """
+
+    if type(canonical) is not CanonicalIR:
+        raise TypeError("insert-action admission requires exact CanonicalIR")
+    windows_by_intent: dict[str, list[Any]] = defaultdict(list)
+    for window in canonical.queue_windows:
+        windows_by_intent[window.queue_intent_id].append(window)
+    resolutions_by_intent: dict[str, list[Any]] = defaultdict(list)
+    for resolution in canonical.queue_resolutions:
+        resolutions_by_intent[resolution.queue_intent_id].append(resolution)
+    admitted: set[str] = set()
+    for intent in canonical.queue_intents:
+        if intent.opcode != "TurnInsertAction" or intent.coverage_status != "executable":
+            continue
+        windows = windows_by_intent.get(intent.queue_intent_id, ())
+        resolutions = resolutions_by_intent.get(intent.queue_intent_id, ())
+        if (
+            len(windows) != 1
+            or len(resolutions) != 1
+            or windows[0].coverage_status != "executable"
+            or windows[0].window_family != "insert_action"
+            or resolutions[0].coverage_status != "executable"
+            or resolutions[0].resolved_kind != "action_definition"
+            or not intent.source_task_id
+        ):
+            continue
+        admitted.add(intent.source_task_id)
+    return frozenset(admitted)
+
+
+def _insert_action_queue_shape(
+    control: CharacterControlFlowNodeIR | None,
+    task: _FormalTask,
+    branches: Sequence[TaskGraphBranchIR],
+) -> bool:
+    """Return whether this control node keeps its formal abort branch."""
+
+    if (
+        control is None
+        or control.family != task.opcode
+        or task.family != "TurnInsertAction"
+        or control.control_role != "action_abort_continuation"
+        or control.coverage_status == "blocked"
+        or control.blocked_reason
+        or task.coverage_status != "executable"
+    ):
+        return False
+    abort_branches = tuple(
+        branch for branch in branches if branch.branch_kind == "insert_abort"
+    )
+    return (
+        len(abort_branches) == 1
+        and bool(abort_branches[0].child_node_ids)
+        and len(branches) == 1
+    )
 
 
 def build_complete_task_graph_catalog(
@@ -252,6 +316,7 @@ def materialize_ability_task_graph_catalog(
         context.base.source_dispositions,
         entries,
         graphs,
+        context.admitted_insert_action_task_ids,
     )
     return _catalog(
         source_catalog,
@@ -297,6 +362,7 @@ def materialize_character_runtime_task_graph_catalog(
         context.base.source_dispositions,
         entries,
         graphs,
+        context.admitted_insert_action_task_ids,
     )
     return _catalog(
         source_catalog,
@@ -598,7 +664,12 @@ def materialize_selected_character_task_graphs(
                      _ordered_status_task_ids(callback, tasks), tuple(_status_task(task) for task in tasks))
     if not entries:
         return complete
-    dispositions = _materialization_dispositions(complete.source_dispositions, tuple(entries), tuple(graphs))
+    dispositions = _materialization_dispositions(
+        complete.source_dispositions,
+        tuple(entries),
+        tuple(graphs),
+        context.admitted_insert_action_task_ids,
+    )
     return _catalog(source_catalog, "formal_slice" if len(entries) == 1 else "formal_catalog",
                     dispositions, tuple(entries), tuple(graphs))
 
@@ -687,6 +758,8 @@ def attach_task_graph_catalog(canonical: CanonicalIR, catalog: TaskGraphCatalogI
 def merge_task_graph_slices(
     complete_catalog: TaskGraphCatalogIR,
     slices: Iterable[TaskGraphCatalogIR],
+    *,
+    admitted_insert_action_task_ids: frozenset[str] = frozenset(),
 ) -> TaskGraphCatalogIR:
     """Merge source-closed formal slices for installation in one production RuleBook."""
 
@@ -724,6 +797,7 @@ def merge_task_graph_slices(
             complete_catalog.source_dispositions,
             item.entry_materializations,
             item.graphs,
+            admitted_insert_action_task_ids,
         )
         if item.source_dispositions != expected:
             raise ValueError("task graph slice source ledger is inconsistent with its base")
@@ -739,6 +813,7 @@ def merge_task_graph_slices(
         complete_catalog.source_dispositions,
         tuple(entries),
         tuple(graphs),
+        admitted_insert_action_task_ids,
     )
     return TaskGraphCatalogIR(
         scope_mode=("formal_slice" if len(entries) == 1 else "formal_catalog"),
@@ -867,6 +942,7 @@ def _materialize(
         context.base.source_dispositions,
         (entry,),
         graphs,
+        context.admitted_insert_action_task_ids,
     )
     return _catalog(
         source_catalog,
@@ -929,6 +1005,7 @@ def _prepare_materialization(
                 ("phase_id", "standalone_ability_graph_id"),
             ),
         ),
+        _admitted_insert_action_task_ids(canonical),
     )
 
 
@@ -1010,6 +1087,7 @@ def _materialize_entry(
             context.template_by_id,
             context.template_refs_by_node,
             context.definitions,
+            context.admitted_insert_action_task_ids,
         )
     except _Blocked as exc:
         entry = TaskGraphEntryMaterializationIR(
@@ -1057,6 +1135,7 @@ def _build_graph(
     template_by_id: Mapping[str, ControlFlowTemplateDefinitionIR],
     refs_by_node: Mapping[str, tuple[ControlFlowTemplateReferenceIR, ...]],
     definitions: _DefinitionIndexes,
+    admitted_insert_action_task_ids: frozenset[str],
 ) -> TaskGraphIR:
     task_by_id = {item.task_id: item for item in tasks}
     if set(ordered_task_ids) != set(task_by_id):
@@ -1135,6 +1214,17 @@ def _build_graph(
                 control.termination.source,
             ))
         node_kind, status, owner_domains, reason = _node_status(control, task, references)
+        if (
+            task.task_id in admitted_insert_action_task_ids
+            and _insert_action_queue_shape(control, task, branches)
+        ):
+            # The formal queue intent, window and resolution admit this
+            # insertion; its OnInsertAbort children stay in the graph as the
+            # delayed cancellation branch and are retired by the source
+            # disposition once the runtime cancellation path is proven.
+            node_kind, status, owner_domains, reason = (
+                "sequence", "materialized", ("task_graph_execution",), ""
+            )
         template_parameters = ()
         if node_kind == "template_call" and control is not None:
             template_refs = refs_by_node.get(control.node_id, ())
@@ -2019,10 +2109,16 @@ def _materialization_dispositions(
     base: tuple[TaskGraphSourceDispositionIR, ...],
     entries: tuple[TaskGraphEntryMaterializationIR, ...],
     graphs: tuple[TaskGraphIR, ...],
+    admitted_insert_action_task_ids: frozenset[str] = frozenset(),
 ) -> tuple[TaskGraphSourceDispositionIR, ...]:
     if any(item.formal_materialization_ids for item in base):
         raise ValueError("task graph materialization base already contains formal links")
     graph_by_id = {item.graph_id: item for item in graphs}
+    graph_node_by_id = {
+        node.graph_node_id: (graph, node)
+        for graph in graphs
+        for node in graph.nodes
+    }
     weighted_node_ids = {
         selection.graph_node_id
         for graph in graphs
@@ -2063,6 +2159,22 @@ def _materialization_dispositions(
         for record_id in linked:
             materializations_by_record[record_id].append(materialization_id)
     result: list[TaskGraphSourceDispositionIR] = []
+
+    def insert_action_abort_branch_materialized(node: TaskGraphNodeIR) -> bool:
+        _graph, owner = graph_node_by_id.get(node.graph_node_id, (None, None))
+        if owner is None:
+            return False
+        abort_branches = tuple(
+            branch for branch in owner.branches if branch.branch_kind == "insert_abort"
+        )
+        if len(abort_branches) != 1 or not abort_branches[0].child_node_ids:
+            return False
+        return all(
+            (child := graph_node_by_id.get(child_id)) is not None
+            and child[1].materialization_status == "materialized"
+            for child_id in abort_branches[0].child_node_ids
+        )
+
     for item in base:
         materialization_ids = tuple(
             sorted(materializations_by_record.get(item.source_record_id, ()))
@@ -2195,6 +2307,23 @@ def _materialization_dispositions(
                 for node in linked_nodes
             )
         )
+        retire_insert_action_queue = (
+            item.source_kind == "control_node"
+            and item.family == "TurnInsertAction"
+            and bool(linked_nodes)
+            and all(
+                node.source_family == node.opcode == item.family
+                and node.node_kind == "sequence"
+                and node.materialization_status == "materialized"
+                and node.owner_domains == ("task_graph_execution",)
+                and node.formal_task_id in admitted_insert_action_task_ids
+                and len(node.branches) == 1
+                and node.branches[0].branch_kind == "insert_abort"
+                and bool(node.branches[0].child_node_ids)
+                and insert_action_abort_branch_materialized(node)
+                for node in linked_nodes
+            )
+        )
         remaining_domains = tuple(
             domain
             for domain in item.owner_domains
@@ -2216,6 +2345,7 @@ def _materialization_dispositions(
             and not (retire_runtime_retarget and domain == "hit_random_sequence")
             and not (retire_runtime_remodifier and domain == "status_lifecycle")
             and not (retire_single_projectile and domain == "hit_random_sequence")
+            and not (retire_insert_action_queue and domain == "timeline_queue")
         )
         result.append(replace(
             item,

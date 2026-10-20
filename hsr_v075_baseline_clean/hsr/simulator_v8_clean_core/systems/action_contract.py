@@ -947,6 +947,8 @@ class ActionContractSystem:
                 rules=self.rules,
                 metadata={"admission_id": admission.admission_id},
                 queue_resource_policy=queue_resource_policy or {},
+                state=state,
+                actor_id=actor.unit_id,
             ),
         )
         if not resource_result.ok:

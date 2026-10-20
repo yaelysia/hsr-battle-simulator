@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, cast
 
-from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution
+from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -198,6 +198,88 @@ class TaskGraphStatusConditionProvider:
             reason = "remodifier_condition_status_value_unavailable"
         return TransientConditionOperandResolution.blocked(reason,
             fact_kind=request.fact_kind, invocation_id=request.invocation_id)
+
+
+@dataclass(frozen=True)
+class QueueEventConditionProvider:
+    """Typed queue-event facts for contextual conditions on one invocation.
+
+    The only admitted source is the queue start fact produced by QueueSystem;
+    the payload string is never read, so an ordinary event payload cannot
+    impersonate the insertion tag.
+    """
+
+    state: BattleState
+    invocation_id: str
+    window: str
+    event: GameEvent | None
+    owner_id: str = ""
+    queue_fact: QueueActionStartFact | QueueActionTerminalFact | None = None
+
+    def resolve_transient(
+        self, request: TransientConditionOperandRequest
+    ) -> TransientConditionOperandResolution:
+        if request.fact_kind != "event.param_string":
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_condition_fact_not_admitted",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        if request.invocation_id != self.invocation_id or request.window != self.window:
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_param_string_identity_mismatch",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        if request.subject_ids or request.parameters:
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_param_string_request_not_admitted",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        fact = self.queue_fact
+        event = self.event
+        expected_type = (
+            "queue.action.before" if type(fact) is QueueActionStartFact
+            else "queue.action.after" if type(fact) is QueueActionTerminalFact
+            and fact.event_type == "queue.action.after"
+            else "queue.action.abort" if type(fact) is QueueActionTerminalFact
+            else ""
+        )
+        if (
+            type(fact) not in {QueueActionStartFact, QueueActionTerminalFact}
+            or event is None
+            or event.event_type != expected_type
+            or not fact.matches_dispatch(self.state, event)
+        ):
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_param_string_fact_missing_or_mismatched",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        if not fact.custom_tag:
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_param_string_custom_tag_fact_missing",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        if self.owner_id and self.owner_id != fact.actor_id:
+            return TransientConditionOperandResolution.blocked(
+                "queue_event_param_string_actor_scope_mismatch",
+                fact_kind=request.fact_kind,
+                invocation_id=request.invocation_id,
+            )
+        return TransientConditionOperandResolution.resolved(
+            "string",
+            fact.custom_tag,
+            fact_kind=request.fact_kind,
+            invocation_id=request.invocation_id,
+            window=self.window,
+            source_identity=(
+                f"queue_event:{event.event_type}:{fact.queue_intent_id}:"
+                f"{fact.actor_id}:{fact.custom_tag}"
+            ),
+        )
 
 
 def resolve_remodifier_status_scopes(
@@ -1157,6 +1239,150 @@ class StatusCallbackSystem:
             dispatched_event_ids=frozenset(dispatched_event_ids),
         )
 
+    def execute_insert_abort(
+        self,
+        state: BattleState,
+        *,
+        binding: Mapping[str, JSONValue],
+        trigger_event: GameEvent | None,
+    ) -> StatusCallbackExecutionResult:
+        """Run one QueueEntry's formal OnInsertAbort branch before cleanup commits.
+
+        The branch comes from the same source graph that produced the queue
+        entry; a missing binding, status instance or graph identity is an
+        implementation blocker, never a silent cancellation.
+        """
+
+        def blocked(reason: str) -> StatusCallbackExecutionResult:
+            return StatusCallbackExecutionResult(
+                ok=False, after_state=state, errors=(reason,),
+                records=(SettlementRecord(
+                    record_type="insert_abort_blocked", source="status_callback_system",
+                    process_only=True, payload={"reason": reason, "binding": dict(binding)},
+                    trace={"insert_abort_binding": dict(binding)},
+                ).to_json(),),
+            )
+
+        callback_id = str(binding.get("callback_id") or "")
+        event_name = str(binding.get("event") or "")
+        graph_id = str(binding.get("graph_id") or "")
+        graph_node_id = str(binding.get("graph_node_id") or "")
+        owner_id = str(binding.get("owner_id") or "")
+        modifier_name = str(binding.get("modifier_name") or "")
+        status_instance_id = str(binding.get("status_instance_id") or "")
+        child_task_ids = binding.get("child_formal_task_ids")
+        if (
+            not callback_id or not event_name or not graph_id or not graph_node_id
+            or not owner_id or not modifier_name or not status_instance_id
+            or not isinstance(child_task_ids, (list, tuple)) or not child_task_ids
+            or any(not isinstance(item, str) or not item for item in child_task_ids)
+        ):
+            return blocked("insert_abort_binding_incomplete")
+        callback = self.rules.status_callback(callback_id)
+        if callback is None or callback.coverage_status != "executable":
+            return blocked("insert_abort_callback_not_executable")
+        detail = find_status_detail(state, owner_id, modifier_name=modifier_name)
+        if (
+            detail is None
+            or str(detail.get("instance_id") or "") != status_instance_id
+            or str(detail.get("owner_id") or "") != owner_id
+        ):
+            return blocked("insert_abort_status_instance_missing")
+        tasks = tuple(self.rules.status_callback_tasks_for_callback(callback_id))
+        graph_result = self.rules.query_formal_task_graph(
+            "status_callback",
+            callback_id,
+            callback.event,
+            tuple(task.task_id for task in tasks),
+        )
+        graph = graph_result.value
+        if (
+            graph_result.status != "resolved"
+            or type(graph) is not TaskGraphIR
+            or graph.graph_id != graph_id
+        ):
+            return blocked("insert_abort_graph_identity_mismatch")
+        node_by_id = {item.graph_node_id: item for item in graph.nodes}
+        insert_node = node_by_id.get(graph_node_id)
+        if insert_node is None or insert_node.opcode != "TurnInsertAction":
+            return blocked("insert_abort_node_missing")
+        abort_branches = tuple(
+            item for item in insert_node.branches if item.branch_kind == "insert_abort"
+        )
+        if len(abort_branches) != 1 or not abort_branches[0].child_node_ids:
+            return blocked("insert_abort_branch_missing")
+        child_node_ids = abort_branches[0].child_node_ids
+        bound_tasks = [node_by_id[item].formal_task_id for item in child_node_ids]
+        if tuple(bound_tasks) != tuple(child_task_ids):
+            return blocked("insert_abort_binding_task_mismatch")
+        trigger_event_id = (
+            str(trigger_event.to_json().get("event_id") or "")
+            if trigger_event is not None else "direct"
+        )
+        invocation_id = (
+            f"status_callback:{state.event_index}:{callback_id}:"
+            f"{status_instance_id}:insert_abort:{trigger_event_id}"
+        )
+        execution_context = TaskGraphExecutionContext(
+            invocation_id,
+            {
+                "callback_id": callback.callback_id,
+                "modifier_name": callback.modifier_name,
+                "event": callback.event,
+                "status_instance_id": status_instance_id,
+                "owner_id": owner_id,
+                "trigger_event_id": (
+                    trigger_event.event_id if trigger_event is not None else ""
+                ),
+                "insert_abort": True,
+            },
+        )
+        hooks = self._formal_status_hooks(
+            callback,
+            detail,
+            trigger_event,
+            None,
+            None,
+            [],
+            [],
+            set(),
+        )
+        execution = self.task_graph_executor.execute_selected_nodes(
+            state, graph, execution_context, hooks, child_node_ids
+        )
+        callback_record, callback_event = _status_callback_envelope(
+            callback, detail, trigger_event,
+        )
+        if not execution.ok:
+            reason = (
+                execution.errors[0] if execution.errors
+                else "insert_abort_task_graph_execution_blocked"
+            )
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    _callback_blocked_record(
+                        callback=callback, detail=detail, reason=reason,
+                    ),
+                ),
+                errors=(reason,),
+                node_results=execution.outcome.node_results,
+            )
+        return StatusCallbackExecutionResult(
+            ok=True,
+            after_state=execution.after_state,
+            mutations=execution.mutations,
+            rng_events=execution.rng_events,
+            records=(
+                callback_record,
+                *(item.to_json() for item in execution.settlement_records),
+            ),
+            events=(callback_event, *execution.events),
+            node_results=execution.outcome.node_results,
+            task_graph_projections=execution.node_projections,
+        )
+
     def _formal_status_hooks(
         self,
         callback: StatusCallbackIR,
@@ -1422,6 +1648,77 @@ class StatusCallbackSystem:
             return None, node, "status_callback_task_graph_formal_identity_mismatch"
         return task, node, ""
 
+    def _insert_action_cancel_leaf(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+    ) -> TaskGraphLeafResult | None:
+        """Legal in-game cancellation of one insertion before it starts.
+
+        Only the source PreCheck decides this branch; an unusable intent,
+        window or resolution stays on the implementation-blocked path instead
+        of being reported as a normal cancellation.
+        """
+
+        if task.opcode != "TurnInsertAction":
+            return None
+        intents = tuple(
+            intent
+            for intent in self.rules.queue_intents_for_callback(callback.callback_id)
+            if intent.source_task_id == task.task_id
+        )
+        if len(intents) != 1:
+            return None
+        intent = intents[0]
+        if intent.coverage_status != "executable" or not intent.custom_tag:
+            return None
+        window = self.rules.queue_window_for_intent(intent.queue_intent_id)
+        if (
+            window is None
+            or window.coverage_status != "executable"
+            or window.window_family != "insert_action"
+        ):
+            return None
+        resolution = self.rules.queue_resolution_for_intent(intent.queue_intent_id)
+        if resolution is None or resolution.coverage_status != "executable":
+            return None
+        cancel_reason = _queue_insert_precheck_blocked(state, intent)
+        if cancel_reason not in _INSERT_ACTION_LEGAL_CANCEL_REASONS:
+            # Unresolved or malformed PreCheck data is an implementation
+            # blocker; only a confirmed source condition may clean up as a
+            # normal in-game cancellation.
+            return None
+        return TaskGraphLeafResult(
+            "resolved",
+            outcome_kind="insert_abort",
+            settlement_records=(
+                TaskGraphSettlementRecord(
+                    record_type="insert_action_cancelled_before_start",
+                    source="status_callback_system",
+                    process_only=True,
+                    payload={
+                        "queue_intent_id": intent.queue_intent_id,
+                        "callback_id": callback.callback_id,
+                        "task_id": task.task_id,
+                        "custom_tag": intent.custom_tag,
+                        "cancel_reason": cancel_reason,
+                        "queue_mutation_id": None,
+                        "body_executed": False,
+                    },
+                    trace={
+                        "queue_intent_source": intent.source.to_json(),
+                        "queue_window_source": window.source.to_json(),
+                        "queue_resolution_source": resolution.source.to_json(),
+                        "status_callback_source": callback.source.to_json(),
+                        "status_task_source": task.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                ),
+            ),
+        )
+
     def _execute_formal_status_leaf(
         self,
         request: TaskGraphHookRequest,
@@ -1451,6 +1748,9 @@ class StatusCallbackSystem:
                 outcome_kind="",
                 blocked_reason="status_callback_structural_node_reached_leaf",
             )
+        insert_cancel = self._insert_action_cancel_leaf(state, callback, task, detail)
+        if insert_cancel is not None:
+            return insert_cancel
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
@@ -1562,9 +1862,12 @@ class StatusCallbackSystem:
             scoped_event,
             selected_target_ids=request.target_ids,
             rng_identity_scope=(request.invocation_id, request.graph_node_id, *request.frame_ids, request.iteration_index),
-            transient_condition_provider=(TaskGraphStatusConditionProvider(
-                state, request.status_scope, request.invocation_id, request.graph_node_id)
-                if request.status_scope is not None else None),
+            transient_condition_provider=_formal_status_transient_provider(
+                state,
+                request,
+                scoped_event,
+                str(detail.get("owner_id") or ""),
+            ),
             template_target_ids=request.template_target_ids,
             template_binding_sources=request.template_binding_sources,
             immunity_trigger_event=(trigger_event if trigger_event is not None
@@ -2291,7 +2594,15 @@ class StatusCallbackSystem:
             return self._execute_delay_emissions(state, callback, task, detail, trigger_event, tuple(delay_emissions),
                 template_binding_sources=template_binding_sources)
         if queue_intents:
-            return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
+            return self._execute_queue_intents(
+                state,
+                callback,
+                task,
+                detail,
+                trigger_event,
+                tuple(queue_intents),
+                task_graph_continuation=task_graph_continuation,
+            )
         if task.effect_id:
             return self._execute_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger,
                 status_scope=status_scope, template_target_ids=template_target_ids,
@@ -2753,7 +3064,7 @@ class StatusCallbackSystem:
         *,
         selected_target_ids: tuple[str, ...] = (),
         rng_identity_scope: tuple[object, ...] = (),
-        transient_condition_provider: TaskGraphStatusConditionProvider | None = None,
+        transient_condition_provider: TransientConditionOperandProvider | None = None,
         template_target_ids: tuple[str, ...] | None = None,
         template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
         immunity_trigger_event: GameEvent | None = None,
@@ -5148,6 +5459,56 @@ class StatusCallbackSystem:
             },
         )
 
+    def _queue_insert_abort_binding(
+        self,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        continuation: TaskGraphContinuation | None,
+        intent: QueueIntentIR,
+    ) -> dict[str, JSONValue] | None:
+        """Bind one formal TurnInsertAction node to its delayed abort branch.
+
+        The binding is audit data for the queue entry: the cancellation path
+        re-enters the same source graph instead of a character-specific runner.
+        """
+
+        if continuation is None or task.opcode != "TurnInsertAction":
+            return None
+        node_result = self.rules.query_task_graph_node(continuation.parent_graph_node_id)
+        node = node_result.value
+        if (
+            node_result.status != "resolved"
+            or type(node) is not TaskGraphNodeIR
+            or node.opcode != "TurnInsertAction"
+            or node.formal_task_id != task.task_id
+        ):
+            return None
+        abort_branches = tuple(
+            branch for branch in node.branches if branch.branch_kind == "insert_abort"
+        )
+        if len(abort_branches) != 1 or not abort_branches[0].child_node_ids:
+            return None
+        child_task_ids: list[str] = []
+        for child_node_id in abort_branches[0].child_node_ids:
+            child_result = self.rules.query_task_graph_node(child_node_id)
+            child = child_result.value
+            if child_result.status != "resolved" or type(child) is not TaskGraphNodeIR:
+                return None
+            child_task_ids.append(child.formal_task_id)
+        return {
+            "callback_id": callback.callback_id,
+            "event": callback.event,
+            "graph_id": continuation.parent_graph_id,
+            "graph_node_id": node.graph_node_id,
+            "child_formal_task_ids": child_task_ids,
+            "owner_id": str(detail.get("owner_id") or ""),
+            "modifier_name": str(detail.get("modifier_name") or ""),
+            "status_instance_id": str(detail.get("instance_id") or ""),
+            "queue_intent_id": intent.queue_intent_id,
+            "custom_tag": intent.custom_tag,
+        }
+
     def _execute_queue_intents(
         self,
         state: BattleState,
@@ -5156,6 +5517,8 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         intents: tuple[QueueIntentIR, ...],
+        *,
+        task_graph_continuation: TaskGraphContinuation | None = None,
     ) -> StatusCallbackExecutionResult:
         current_state = state
         mutations: list[Mutation] = []
@@ -5194,7 +5557,7 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
-            precheck_reason = _queue_insert_precheck_blocked(current_state, intent, target_resolution.actor_id)
+            precheck_reason = _queue_insert_precheck_blocked(current_state, intent)
             if precheck_reason:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, precheck_reason))
                 errors.append(precheck_reason)
@@ -5284,6 +5647,10 @@ class StatusCallbackSystem:
                 status="pending",
                 drain_status="not_admitted",
                 elation_override_points=elation_override_points,
+                custom_tag=intent.custom_tag,
+                insert_abort=self._queue_insert_abort_binding(
+                    callback, task, detail, task_graph_continuation, intent
+                ),
             )
             mutation = self.queue.enqueue(
                 current_state,
@@ -5382,7 +5749,7 @@ class StatusCallbackSystem:
                 )
                 if not target_resolution.ok:
                     continue
-                reason = _queue_insert_precheck_blocked(state, intent, target_resolution.actor_id)
+                reason = _queue_insert_precheck_blocked(state, intent)
                 if not reason:
                     continue
                 records = (
@@ -5537,28 +5904,58 @@ def _queue_priority_value_resolution(
     return resolution.to_json()
 
 
-def _queue_insert_precheck_blocked(state: BattleState, intent: QueueIntentIR, actor_id: str) -> str:
+_INSERT_ACTION_LEGAL_CANCEL_REASONS = frozenset({
+    "queue_insert_precheck_same_tag_pending",
+})
+
+
+def _queue_insert_precheck_blocked(state: BattleState, intent: QueueIntentIR) -> str:
+    """Count already queued, not yet consumed insert actions with the same tag.
+
+    SameTagInsertUnusedCount compares the pending insertion count for the
+    entry's own CustomTag; it is not a permanent per-unit debuff guard. The
+    maximum is a fixed source value or the check stays blocked.
+    """
+
     policy = intent.abort_policy.get("insert_once_policy") if isinstance(intent.abort_policy, dict) else None
     if not isinstance(policy, dict):
         return ""
     if policy.get("kind") != "same_tag_insert_unused_count":
         return ""
-    used_modifiers = tuple(str(item) for item in policy.get("used_modifier_names", ()) if isinstance(item, str) and item)
-    if not used_modifiers:
-        return "queue_insert_precheck_used_marker_missing"
-    actor = state.units.get(actor_id)
-    if actor is None:
-        return "queue_insert_precheck_actor_missing"
-    active_modifiers = set(actor.statuses)
-    detail_modifiers = {
-        str(detail.get("modifier_name") or "")
-        for detail in actor.flags.get("status_details", ())
-        if isinstance(detail, dict)
-    }
-    for modifier_name in used_modifiers:
-        if modifier_name in active_modifiers or f"modifier:{modifier_name}" in active_modifiers or modifier_name in detail_modifiers:
-            return "queue_insert_precheck_same_tag_already_used"
+    custom_tag = str(policy.get("custom_tag") or intent.custom_tag or "")
+    if not custom_tag:
+        return "queue_insert_precheck_custom_tag_missing"
+    maximum = _fixed_precheck_maximum(policy.get("max_count_expr"))
+    if maximum is None:
+        return "queue_insert_precheck_max_count_unresolved"
+    pending = 0
+    for entries in state.queues.values():
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("custom_tag") != custom_tag:
+                continue
+            if str(entry.get("status") or "pending") != "pending":
+                continue
+            pending += 1
+    if pending >= maximum:
+        return "queue_insert_precheck_same_tag_pending"
     return ""
+
+
+def _fixed_precheck_maximum(expression: object) -> int | None:
+    if not isinstance(expression, Mapping):
+        return None
+    if expression.get("kind") != "fixed":
+        return None
+    value = expression.get("value")
+    if type(value) not in (int, float) or isinstance(value, bool):
+        return None
+    if value != int(value) or value < 0:
+        return None
+    return int(value)
 
 
 def _retarget_candidates(
@@ -6252,6 +6649,39 @@ def _evaluate_callback_numeric(
     )
 
 
+def _formal_status_transient_provider(
+    state: BattleState,
+    request: TaskGraphHookRequest,
+    scoped_event: GameEvent | None,
+    owner_id: str,
+) -> TransientConditionOperandProvider | None:
+    queue_fact = None
+    if scoped_event is not None:
+        if scoped_event.event_type == "queue.action.before":
+            queue_fact = scoped_event.queue_action_start_fact
+        elif scoped_event.event_type in {"queue.action.after", "queue.action.abort"}:
+            queue_fact = scoped_event.queue_action_terminal_fact
+    queue_provider = (
+        QueueEventConditionProvider(
+            state,
+            request.invocation_id,
+            request.graph_node_id,
+            scoped_event,
+            owner_id,
+            queue_fact,
+        )
+        if queue_fact is not None
+        else None
+    )
+    if request.status_scope is None:
+        return queue_provider
+    status_provider = TaskGraphStatusConditionProvider(
+        state, request.status_scope, request.invocation_id, request.graph_node_id,
+        fallback=queue_provider,
+    )
+    return status_provider
+
+
 def _condition_context(
     rules: RuleBook,
     state: BattleState,
@@ -6261,7 +6691,7 @@ def _condition_context(
     condition: ConditionIR | None = None,
     targets: TargetSystem | None = None,
     selected_target_ids: tuple[str, ...] = (),
-    transient_condition_provider: TaskGraphStatusConditionProvider | None = None,
+    transient_condition_provider: TransientConditionOperandProvider | None = None,
     template_target_ids: tuple[str, ...] | None = None,
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     immunity_trigger_event: GameEvent | None = None,

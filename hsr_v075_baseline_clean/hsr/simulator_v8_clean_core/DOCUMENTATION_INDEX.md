@@ -43,6 +43,7 @@
 | I12 独立伤害逐任务绑定 | [修复契约与验收清单](docs/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
 | 技能后置监听行动事实 | [执行说明与验收约束](docs/POST_ACTION_LISTENER_FACT_CLOSURE.md)、[希儿自然路线与来源子图证据](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)；当前进度仍见交接 |
+| 自动插入行动完整执行链 | [失败输入、共享边界与集中验收约束](docs/AUTOMATIC_INSERT_ACTION_CLOSURE.md)、[希儿自然路线、实现边界与固定命令](docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)；当前进度仍见交接 |
 | UI 规划 | `../simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`，仅在该草案存在且任务涉及 UI 时读取 |
 
 这些专题文档提供领域事实，不是当前阶段 checklist。其结论与当前源码冲突时，以源码、正式来源和

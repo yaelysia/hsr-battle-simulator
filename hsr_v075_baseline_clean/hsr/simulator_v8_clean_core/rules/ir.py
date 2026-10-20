@@ -6721,12 +6721,17 @@ class QueueIntentIR:
     owner_alive_state: Literal["alive_only", "alive_or_limbo"] = "alive_only"
     target_alive_state: Literal["alive_only", "alive_or_limbo"] = "alive_only"
     can_run_on_unselectable_target: bool = False
+    custom_tag: str = ""
 
     def __post_init__(self) -> None:
         for name in ("owner_alive_state", "target_alive_state"):
             _require_string_enum(getattr(self, name), frozenset({"alive_only", "alive_or_limbo"}), name)
         if type(self.can_run_on_unselectable_target) is not bool:
             raise ValueError("queue unselectable-target permission must be bool")
+        if not isinstance(self.custom_tag, str):
+            raise TypeError("queue custom tag must be a string")
+        if self.custom_tag and not self.custom_tag.isprintable():
+            raise ValueError("queue custom tag must be printable text")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6750,6 +6755,7 @@ class QueueIntentIR:
             "owner_alive_state": self.owner_alive_state,
             "target_alive_state": self.target_alive_state,
             "can_run_on_unselectable_target": self.can_run_on_unselectable_target,
+            "custom_tag": self.custom_tag,
         }
 
 

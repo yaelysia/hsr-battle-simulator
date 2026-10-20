@@ -51,6 +51,7 @@ from .phase_machine import (
     CombatPhaseMachine,
 )
 from .resource import ResourceSystem, ultimate_energy_blocked_reason
+from .skill_properties import effective_action_property
 from .status import StatusSystem, status_control_gate_for_actor
 from .startup import apply_monster_startup
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
@@ -2189,6 +2190,19 @@ class CombatScheduler:
                 source="queue",
                 queue_name=plan.queue_name,
                 metadata={
+                    # The body command keeps the typed insertion identity that
+                    # its accepted action derived; rebuilding the command must
+                    # not drop it before action window dispatch.
+                    "is_insert_action": bool(selected_command.metadata.get(
+                        "is_insert_action",
+                        window_family in {"ultimate", "insert_action"},
+                    )),
+                    "queue_window_family": str(
+                        selected_command.metadata.get("queue_window_family") or window_family
+                    ),
+                    "action_choice_source": selected_command.metadata.get(
+                        "action_choice_source", "queue_resolution"
+                    ),
                     "queue_parent": {
                         "queue_entry": plan.queue_entry,
                         "queue_intent_id": plan.queue_intent_id,
@@ -2281,7 +2295,7 @@ class CombatScheduler:
             after_state = after_action
             mutations = (*mutations, *action_transition.transaction.mutations)
             rng_events = (*rng_events, *action_transition.rng_events)
-            if window_family == "ultimate":
+            if window_family in {"ultimate", "insert_action"}:
                 definition = self.rules.require_action_definition(queue_command.action_id, queue_command.action_level)
                 action_event = self.rules.require_action_event(queue_command.action_id, queue_command.action_level)
                 restore_window = Mutation(
@@ -2291,7 +2305,7 @@ class CombatScheduler:
                     after=state.global_flags.get("current_window"),
                     before_exists="current_window" in after_state.global_flags,
                     after_exists="current_window" in state.global_flags,
-                    reason="resume window interrupted by ultimate queue action",
+                    reason=f"resume window interrupted by {window_family} queue action",
                     source="combat_executor.timeline",
                     metadata={
                         "definition_id": definition.definition_id,
@@ -2457,6 +2471,32 @@ class CombatScheduler:
         rng_events: tuple[RNGEvent, ...] = ()
         callback_records: tuple[dict[str, JSONValue], ...] = ()
         callback_nodes: tuple[ExecutionNodeResult, ...] = ()
+        insert_abort = plan.queue_entry.get("insert_abort")
+        abort_event = next(
+            (item for item in terminal.events if item.event_type == "queue.action.abort"),
+            None,
+        )
+        if terminal_plan.disposition == "cancelled" and isinstance(insert_abort, dict) and insert_abort:
+            abort_result = self.event_dispatcher.status_callbacks.execute_insert_abort(
+                after,
+                binding=insert_abort,
+                trigger_event=abort_event,
+            )
+            if not abort_result.ok:
+                return self._blocked(
+                    state, "queue:abort",
+                    ";".join(abort_result.errors) or "insert_abort_execution_blocked",
+                    {
+                        "queue_terminal_plan": terminal_plan.to_json(),
+                        "insert_abort_binding": insert_abort,
+                    },
+                )
+            after = abort_result.after_state
+            mutations = (*mutations, *abort_result.mutations)
+            events = (*events, *abort_result.events)
+            rng_events = (*rng_events, *abort_result.rng_events)
+            callback_records = (*callback_records, *abort_result.records)
+            callback_nodes = (*callback_nodes, *abort_result.node_results)
         for event in terminal.events:
             if event.event_type != "queue.action.abort":
                 events = (*events, event)
@@ -2592,7 +2632,15 @@ class CombatScheduler:
             if allowed and not _action_kind_allowed(definition.attack_type, definition.skill_effect, allowed):
                 return "extra_turn_action_kind_not_admitted"
         resource_policy = _queue_entry_resource_policy(plan)
-        if resource_policy.get("ignore_skill_point_delta") is not True and definition.bp_need > state.skill_points:
+        effective_bp_need, override_blocked = effective_action_property(
+            state, actor_id, definition, "BPNeed", float(definition.bp_need)
+        )
+        if override_blocked:
+            return f"queue_action_resource_override_blocked:{override_blocked}"
+        if (
+            resource_policy.get("ignore_skill_point_delta") is not True
+            and effective_bp_need > state.skill_points
+        ):
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
             ultimate_rule, rule_blocked_reason = self.rules.select_resource_rule("ultimate_energy_cost")
@@ -2624,7 +2672,14 @@ class CombatScheduler:
             target_ids=tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str)),
             source="queue",
             queue_name=plan.queue_name,
-            metadata={"action_choice_source": "queue_resolution"},
+            metadata={
+                "action_choice_source": "queue_resolution",
+                # Typed action-window fact: every event derived from this queue
+                # body reports the same insertion identity (ultimate bodies are
+                # insertions as well, matching the damage metadata producer).
+                "is_insert_action": window_family in {"ultimate", "insert_action"},
+                "queue_window_family": window_family,
+            },
         )
 
     def _extra_action_policy_for_plan(self, plan: QueueDrainPlan):
@@ -3231,7 +3286,7 @@ def select_next_queue_drain_plan(rules: RuleBook, queue: QueueSystem, state: Bat
         if not state.queues.get(queue_name):
             continue
         resolutions = _resolutions_for_queue(rules, state, queue_name)
-        plan = queue.plan_next_drain(state, queue_name, resolutions)
+        plan = queue.plan_next_drain(state, queue_name, resolutions, rules=rules)
         if plan.ok:
             admitted.append(plan)
         else:

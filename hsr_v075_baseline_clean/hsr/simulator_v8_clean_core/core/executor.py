@@ -55,8 +55,8 @@ from ..systems.action_event_contract import (
     derived_post_action_listener_event as _derived_post_action_listener_event,
 )
 from ..systems.action_preflight import (
-    action_ability_grants_base_energy,
     action_binding_blocked_reason,
+    action_energy_gain,
     action_event_blocked_reason,
     action_skill_point_delta,
     combined_blocked_reason,
@@ -66,6 +66,11 @@ from ..systems.damage import DamageModifierContribution, DamagePacket, DamageSys
 from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
+from ..systems.skill_properties import (
+    resolve_skill_property_overrides,
+    skill_property_override_evidence,
+    skill_property_override_plan,
+)
 from ..systems.rng import rng_choices_from_payload, validate_rng_choice_ledger
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
@@ -481,6 +486,7 @@ class CombatExecutor:
             self.value_resolver,
             command,
             action_definition,
+            state=state,
             metadata={
                 **action_source_metadata,
                 "queue_resource_policy": queue_resource_policy,
@@ -586,7 +592,7 @@ class CombatExecutor:
                     preserve_turn_owner=(
                         submission_authorization is not None
                         and submission_authorization.submission_mode == "queue"
-                        and submission_authorization.window == "ultimate"
+                        and submission_authorization.window in {"ultimate", "insert_action"}
                     ),
                 ),
             )
@@ -2508,6 +2514,7 @@ def _action_resource_plan_with_value_resolution(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
     *,
+    state: BattleState | None = None,
     metadata: dict[str, JSONValue],
     queue_resource_policy: dict[str, JSONValue],
 ) -> tuple[ResourcePlan, tuple[str, ...]]:
@@ -2534,10 +2541,25 @@ def _action_resource_plan_with_value_resolution(
             )
     if action_definition.attack_type == "Ultra" and values.get("sp_need", 0.0) <= 0.0:
         blocked_reasons.append("ultimate_energy_cost_invalid")
-    skill_point_delta = action_skill_point_delta(values.get("bp_need", 0.0), values.get("bp_add", 0.0))
-    energy_gain = values.get("sp_base", 0.0)
-    if action_ability_grants_base_energy(resolver.rules, action_definition):
-        energy_gain = 0.0
+    overrides = resolve_skill_property_overrides(
+        state, command.actor_id, _condition_skill_type(action_definition)
+    ) if state is not None else None
+    override_values = skill_property_override_plan(
+        action_definition,
+        overrides.values if overrides is not None and overrides.ok else {},
+    )
+    override_blocked_reason = (
+        "resource_skill_property_override_blocked:" + overrides.blocked_reason
+        if overrides is not None and not overrides.ok else ""
+    )
+    bp_need = override_values.get("bp_need", values.get("bp_need", 0.0))
+    skill_point_delta = action_skill_point_delta(bp_need, values.get("bp_add", 0.0))
+    energy_gain = action_energy_gain(
+        resolver.rules,
+        action_definition,
+        override_values,
+        base_value=values.get("sp_base", 0.0),
+    )
     if queue_resource_policy.get("ignore_skill_point_delta") is True:
         skill_point_delta = 0
     if queue_resource_policy.get("ignore_energy_gain") is True:
@@ -2551,8 +2573,14 @@ def _action_resource_plan_with_value_resolution(
             metadata={
                 **metadata,
                 "resource_value_resolutions": resolutions,
+                "skill_property_override_plan": override_values,
+                "skill_property_overrides": (
+                    skill_property_override_evidence(overrides)
+                    if overrides is not None else {}
+                ),
                 "value_resolver_admitted": not blocked_reasons,
             },
+            blocked_reason=override_blocked_reason,
         ),
         tuple(blocked_reasons),
     )

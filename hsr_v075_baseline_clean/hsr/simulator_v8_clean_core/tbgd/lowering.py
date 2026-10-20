@@ -2504,6 +2504,12 @@ class TBGDLowering:
             ),
             status_callbacks=tuple(status_callbacks),
             status_callback_tasks=tuple(status_callback_tasks),
+            # Queue admission evidence is part of the source slice: a
+            # TurnInsertAction control node may only materialize when its
+            # intent, window and resolution are executable here.
+            queue_intents=tuple(queue_intents),
+            queue_resolutions=tuple(queue_resolutions),
+            queue_windows=tuple(queue_windows),
         )
         task_graph_scope_complete = all(
             value is None
@@ -7904,7 +7910,12 @@ class TBGDLowering:
                     if equipment_source_admitted
                     else "unknown"
                 )
-                if equipment_source_admitted:
+                if not tasks and not equipment_source_admitted and not callback_shape_reason:
+                    # An empty CallbackConfig is a source-proven no-op: the
+                    # modifier defines no reaction for this event. Removing or
+                    # destroying such a modifier must not fail the dispatch.
+                    admitted_event = True
+                elif equipment_source_admitted:
                     admitted_event = (
                         equipment_modifier_reachable
                         and
@@ -18213,6 +18224,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
                      and type(text_id["Hash"]) is int and text_id["Hash"] >= 0)
             ),
         }
+    if opcode == "ModifySkillPropertyByType":
+        payload["standard"] = _standard_modify_skill_property_payload(value)
     if opcode == "AddModifier":
         payload["standard"] = _standard_add_modifier_payload(value)
     elif opcode == "FireProjectile":
@@ -20613,6 +20626,16 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         return "executable" if payload.get("standard") == {
             "operation": "verify_death_settlement", "source_shape_admitted": True,
         } else "blocked"
+    if opcode == "ModifySkillPropertyByType":
+        standard = payload.get("standard")
+        return (
+            "executable"
+            if isinstance(standard, dict)
+            and standard.get("operation") == "modify_skill_property_by_type"
+            and standard.get("source_shape_admitted") is True
+            and not standard.get("blocked_reason")
+            else "blocked"
+        )
     if opcode == "AddModifier":
         standard = payload.get("standard")
         if not isinstance(standard, dict):
@@ -21209,6 +21232,12 @@ def _status_callback_task_admission(
         payload = source_effect_payload if source_effect_payload is not None else _effect_payload(task, opcode, source_modifier_name)
         admitted = event == "OnStack" and payload.get("standard", {}).get("source_shape_admitted") is True
         return ("executable", "") if admitted else ("blocked", "attached_skill_disable_source_shape_not_admitted")
+    if opcode == "ModifySkillPropertyByType":
+        payload = source_effect_payload if source_effect_payload is not None else _effect_payload(task, opcode, source_modifier_name)
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", str(payload.get("standard", {}).get("blocked_reason") or "skill_property_source_shape_not_admitted")
     if ability_task_execution_mode(opcode) == "process_only":
         reason = _process_only_ability_task_source_blocked_reason(task, opcode)
         return "blocked", reason or "source_proven_presentation_only"
@@ -22781,6 +22810,7 @@ def _queue_intent_from_task(
     skill_index_expr = _queue_skill_index_expr(task, opcode)
     priority_source = _queue_priority_source(task, opcode, queue_priority_lookup)
     abort_policy = _queue_abort_policy(task)
+    custom_tag, custom_tag_reason = _queue_custom_tag(task)
     owner_alive_state, target_alive_state, can_run_on_unselectable_target, abort_state_reason = (
         _queue_task_abort_states(task)
     )
@@ -22798,6 +22828,9 @@ def _queue_intent_from_task(
     if abort_state_reason:
         coverage_status = "blocked"
         blocked_reason = ";".join(filter(None, (blocked_reason, abort_state_reason)))
+    if custom_tag_reason:
+        coverage_status = "blocked"
+        blocked_reason = ";".join(filter(None, (blocked_reason, custom_tag_reason)))
     dynamic_values = task.get("DynamicValues", {})
     override_declared = "OverrideElationPoint" in task
     override_value = task.get("OverrideElationPoint")
@@ -22833,6 +22866,7 @@ def _queue_intent_from_task(
         owner_alive_state=owner_alive_state,
         target_alive_state=target_alive_state,
         can_run_on_unselectable_target=can_run_on_unselectable_target,
+        custom_tag=custom_tag,
     )
 
 
@@ -22949,6 +22983,16 @@ def _queue_priority_source(
     }
 
 
+def _queue_custom_tag(task: dict[str, Any]) -> tuple[str, str]:
+    raw = task.get("CustomTag")
+    if raw is None:
+        return "", ""
+    tag = _value_field(raw)
+    if not isinstance(tag, str) or not tag or not tag.isprintable():
+        return "", f"queue_custom_tag_not_admitted:{_json_safe(raw)}"
+    return tag, ""
+
+
 def _queue_abort_policy(task: dict[str, Any]) -> dict[str, Any]:
     fields = {
         "OnInsertAbort": _json_safe(task.get("OnInsertAbort")),
@@ -22963,9 +23007,11 @@ def _queue_abort_policy(task: dict[str, Any]) -> dict[str, Any]:
     }
     policy = {key: value for key, value in fields.items() if value not in (None, [], {})}
     if policy.get("IgnoreBPDec") is True:
+        # IgnoreBPDec suppresses the skill-point (BP) decrement only. Energy is
+        # a separate skill property (SPBase) owned by the start callback's
+        # ModifySkillPropertyByType task, never by this flag.
         policy["resource_policy"] = {
             "ignore_skill_point_delta": True,
-            "ignore_energy_gain": True,
             "source_field": "IgnoreBPDec",
             "source_basis": "tbgd_turn_insert_action_ignore_bp_dec",
         }
@@ -24528,6 +24574,82 @@ def _raw_condition_payload_executable(
     return _condition_payload_executable(
         opcode, payload, local_aliases=local_aliases
     )
+
+
+SKILL_PROPERTY_TYPES = {"SPBase", "BPNeed"}
+
+
+def _standard_modify_skill_property_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Typed skill-property modification owned by one status-callback instance.
+
+    A Properties[] entry without Value mutes the property to its source-neutral
+    zero: the Windfury SkillNoNeed counterpart establishes "no BP need" for the
+    same call shape, and Seele's ...InsertMuteSp start callback uses it for
+    SPBase (energy gain). Absent values are recorded as such so the runtime can
+    label the zero source instead of inventing a number.
+    """
+
+    target = value.get("TargetType")
+    target_alias = _target_alias(target) if target is not None else "ModifierOwnerEntity"
+    skill_types = value.get("SkillTypes")
+    properties = value.get("Properties")
+    admitted = (
+        value.get("$type") == "RPG.GameCore.ModifySkillPropertyByType"
+        and not set(value) - {"$type", "TargetType", "SkillTypes", "Properties"}
+        and (
+            target is None
+            or isinstance(target, dict) and set(target) == {"$type", "Alias"}
+            and target.get("$type") == "RPG.GameCore.TargetAlias"
+        )
+        and target_alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget", "CurrentTurnOwnerEntity"}
+        and isinstance(skill_types, list) and bool(skill_types)
+        and all(isinstance(item, str) and item in {"Normal", "Skill", "Ultra"} for item in skill_types)
+        and len(skill_types) == len(set(skill_types))
+        and isinstance(properties, list) and bool(properties)
+    )
+    normalized: list[dict[str, Any]] = []
+    blocked_reason = "" if admitted else "skill_property_source_shape_not_admitted"
+    for item in properties if isinstance(properties, list) else ():
+        if not isinstance(item, dict) or not set(item) <= {"PropertyType", "Value"}:
+            blocked_reason = blocked_reason or "skill_property_entry_shape_not_admitted"
+            continue
+        property_type = item.get("PropertyType")
+        if not isinstance(property_type, str) or property_type not in SKILL_PROPERTY_TYPES:
+            blocked_reason = blocked_reason or (
+                "skill_property_type_not_admitted:" + str(property_type or "missing")
+            )
+            continue
+        if "Value" in item:
+            expression = _numeric_expr_summary(item.get("Value"))
+            if not _numeric_expr_can_be_runtime_bound(expression):
+                blocked_reason = blocked_reason or (
+                    "skill_property_value_not_executable:" + property_type
+                )
+                continue
+            normalized.append({
+                "property_type": property_type,
+                "value": expression,
+                "value_source": "explicit_numeric",
+            })
+            continue
+        normalized.append({
+            "property_type": property_type,
+            "value": None,
+            "value_source": "absent_value_muted_to_zero",
+            "source_basis": "source_absent_property_value_mutes_property",
+        })
+    if admitted and (not normalized or len(normalized) != len(properties)):
+        admitted = False
+        blocked_reason = blocked_reason or "skill_property_properties_not_admitted"
+    return {
+        "operation": "modify_skill_property_by_type",
+        "target_alias": target_alias,
+        "target_alias_defaulted": target is None,
+        "skill_types": list(skill_types) if isinstance(skill_types, list) else [],
+        "properties": normalized,
+        "source_shape_admitted": admitted,
+        "blocked_reason": "" if admitted else blocked_reason,
+    }
 
 
 def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:

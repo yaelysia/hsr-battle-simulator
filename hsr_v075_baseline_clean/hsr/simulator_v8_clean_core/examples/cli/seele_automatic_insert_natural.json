@@ -1,0 +1,80 @@
+{
+  "scenario_id": "ordinary:seele-automatic-insert",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "seele",
+      "side": "ally",
+      "entity_ref": "avatar:1102",
+      "level": 1,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "probe:seele",
+        "character_card_id": "character_data_card:avatar:1102",
+        "level": 1,
+        "promotion": 0,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "probe:seele:empty",
+          "character_card_id": "character_data_card:avatar:1102",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "9334c131d0ce1317a21e3eee8485b94719cc63ca5ef46289cb9456187021aba3"
+        },
+        "input_fingerprint": "731055ea4edfe1178643b29855b63388cd4d7da201c3124fb7aff3a59fb01c3c"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 32,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build:20",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 32,
+        "promotion": 2,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:equipment:20",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "92c98585c253b54d245817be2a087b8b51889c1a111bca259ec57c043b287fd3"
+        },
+        "input_fingerprint": "9052b1f7626ac4628caffff3040895ef60b823644d184c48a8ee4640d3ec505c"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "400020800",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: two Lv28 Minion 8011020 (Physical/Quantum weakness, toughness 30). Enhanced Seele avatar:1102 E0/Lv1/P0 and Natasha avatar:1105 E0/Lv32/P2 use assembled builds with empty equipment; the ally level was raised from the reproduction input (Lv20/P1) only so the existing physical-break applier survives the three scripted enemy attacks, avoiding the still-unresolved dead-applier DOT property retention gap. The public sequence brings a living target below the real enhanced post-attack listener threshold and exercises TurnInsertAction, its automatic skill, cleanup and a later public action. No injected HP, toughness, status, timeline or queue values."
+    }
+  }
+}

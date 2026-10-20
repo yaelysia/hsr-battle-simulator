@@ -602,6 +602,8 @@ class QueueActionTerminalFact:
     event_type: str
     actor_id: str
     target_ids: tuple[str, ...] = field(init=False)
+    custom_tag: str = field(init=False)
+    queue_intent_id: str = field(init=False)
     _producer_token: object = field(repr=False, compare=False)
     completed_command: ActionCommand | None = field(default=None, repr=False)
     completed_target_resolution: TargetResolution | None = field(default=None, repr=False)
@@ -648,6 +650,12 @@ class QueueActionTerminalFact:
             or not isinstance(mutation.after, (list, tuple)) or entry in mutation.after
         ):
             raise ValueError("queue terminal fact requires a QueueSystem removal")
+        custom_tag = entry.get("custom_tag", "")
+        queue_intent_id = entry.get("queue_intent_id", "")
+        if not isinstance(custom_tag, str) or not isinstance(queue_intent_id, str):
+            raise ValueError("queue terminal fact requires the entry intent and typed tag")
+        object.__setattr__(self, "custom_tag", custom_tag)
+        object.__setattr__(self, "queue_intent_id", queue_intent_id)
 
     @staticmethod
     def accepted_entry_target_ids(entry: dict[str, JSONValue]) -> tuple[str, ...] | None:
@@ -667,6 +675,9 @@ class QueueActionTerminalFact:
         return tuple(targets)
 
     def matches(self, state: BattleState, event: GameEvent) -> bool:
+        return self.matches_dispatch(state, event)
+
+    def matches_dispatch(self, state: BattleState, event: GameEvent) -> bool:
         entry = self.source_mutation.metadata["queue_entry"]
         return (
             event.event_type == self.event_type and event.event_id == self.event_id
@@ -691,6 +702,8 @@ class QueueActionStartFact:
     accepted_command: ActionCommand | None = field(default=None, repr=False)
     queue_kind: str = field(init=False)
     window_family: str = field(init=False)
+    custom_tag: str = field(init=False)
+    queue_intent_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         mutation = self.source_mutation
@@ -722,14 +735,33 @@ class QueueActionStartFact:
             or not isinstance(entry.get("window_family"), str) or not entry["window_family"]
         ):
             raise ValueError("queue start fact requires a removed entry and accepted selections")
+        custom_tag = entry.get("custom_tag", "")
+        queue_intent_id = entry.get("queue_intent_id", "")
+        if not isinstance(custom_tag, str) or not isinstance(queue_intent_id, str):
+            raise ValueError("queue start fact requires the entry intent and typed tag")
         object.__setattr__(self, "queue_kind", entry["queue_kind"])
         object.__setattr__(self, "window_family", entry["window_family"])
+        object.__setattr__(self, "custom_tag", custom_tag)
+        object.__setattr__(self, "queue_intent_id", queue_intent_id)
 
     def matches(self, state: BattleState, event: GameEvent) -> bool:
+        return state is self._state and self.matches_dispatch(state, event)
+
+    def matches_dispatch(self, state: BattleState, event: GameEvent) -> bool:
+        """Validate the typed fact across one atomic listener dispatch.
+
+        Earlier listeners of the same dispatch may have applied their own
+        mutations, so the consuming state need not be the producing object.
+        Identity comes from the event binding, the event index and the removed
+        queue entry; a replayed or foreign fact still fails here.
+        """
+
         return (
-            state is self._state and state.event_index == self.event_index
+            state.event_index == self.event_index
             and event.event_type == "queue.action.before" and event.event_id == self.event_id
             and event.source_id == self.actor_id and event.target_id is None and event.window == "queue"
+            and self.actor_id in state.units
+            and all(target in state.units for target in self.target_ids)
             and self.source_mutation.metadata["queue_entry"] not in state.queues.get(self.source_mutation.path[1], ())
         )
 

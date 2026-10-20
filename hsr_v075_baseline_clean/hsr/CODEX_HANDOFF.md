@@ -5,37 +5,42 @@
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已验收提交：`58a6376`（V2 五元素自然击破与状态动态值清理）；前基线为 `fc2e6ff`。
+- 最近已验收基线：本次提交（自动插入行动完整执行链）；前基线为 `a2afebf`。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 当前基线已提交；本批技能后置监听的行动事实传递已验收通过，待提交。
+- 自动插入行动完整执行链已通过 Codex 集中验收，随本次提交收口。
 
-## 当前任务：技能后置监听的行动事实传递
+## 最近收口：自动插入行动完整执行链
 
-**状态：本批验收通过，待提交。** 希儿 E0/Lv1 正式入场后的合法普攻已从
-`action_target_fact_missing` 变为成功，并可继续从公开决策提交合法行动。
+**状态：已验收。** 真实条件满足→入队→插入开始→自动战技→清理→后续公开行动已
+打通；取消与晚期失败回滚按共享边界收口，不以创建队列代替整批交付。
 
-- [执行说明与完整约束](simulator_v8_clean_core/docs/POST_ACTION_LISTENER_FACT_CLOSURE.md)、
-  [自然路线、来源子图与剩余依赖](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)。
-- 真实来源：希儿增强版 `Avatar_Advanced_Seele_00_Ability.json` 的
-  `MAvatar_Advanced_Seele_00_Skill02_AutoInsertListen.OnListenAfterAttack`；动作
-  `avatar_skill:1110201`。其 `ParamEntityAttackTargetList.SortByHP` Retarget 消费行动目标表。
-- 共享修复：`systems/action_event_contract.py` 新增派生通知事实绑定；
-  `core/executor.py` 的 `action.after_attack` 逐目标携带自己的事实与作用域。派发、监听与
-  Retarget 消费链未改，缺失/伪造/跨执行/跨步骤拒绝和原子回滚保留。
-- 验证：示例 `examples/cli/seele_post_attack_listener_natural{,.commands}.json`（4 次公开提交，
-  战斗未完，CLI 退出码 3），归档回放 9 步 0 错误；新增契约用例与既有 A2、并行目标、嵌套能力
-  边界测试通过；集成路线用例 `test_seele_post_attack_listener_natural.py` 1 项通过。
-  首次含本次代码的编译 51.24 s、峰值 535840 KiB。Codex 集中复验：89 项定向检查通过，
-  希儿自然路线 1 项通过（49.22 s、峰值 511720 KiB）；唯一失败为旧复合伤害测试仍传扁平
-  lookup，已用 HEAD 原始用例与未改动 lowering 复现 `KeyError: by_task`，不属于本批回归。
-- 瓦尔特 `OnListenAfterSkillUse` 复查为**不同根**：其事实由正式 `after_skill_use` 窗口在基线
-  已提供，剩余缺口在动作任务图与行迹额外效果来源，不并入本批成果。
-- 剩余：`TurnInsertAction` 条件为真的插入行动路线、注册事件根 `TriggerAbility` 嵌套事实传递。
+- [执行说明、完整调用链与一次性验收约束](simulator_v8_clean_core/docs/AUTOMATIC_INSERT_ACTION_CLOSURE.md)；
+  [自然路线、实现边界、固定命令与验收入口](simulator_v8_clean_core/docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。
+- 复现输入与最终命令：examples/cli/seele_automatic_insert_natural{,.commands}.json；希儿
+  E0/Lv1/P0、娜塔莎 E0/Lv32/P2（仅从复现记录的 Lv20/P1 提升存活等级，避开“施加者死亡后的
+  DOT 属性保留规则待补”；命令、目标、波次和正式回调未替换），空装备、来源波次 400020800
+  wave0，无 HP/状态/队列注入。前八次提交复现真实阈值路线并完成自动战技，第九次为战技后的
+  公开行动；原复现记录（Lv20/P1 第八次提交以 task_graph_control_requires_domains:timeline_queue
+  原子阻断）保留在执行说明中供前后对比。
+- 已接通：QueueIntentIR.custom_tag 与 IgnoreBPDec/SPBase 资源拆分；TurnInsertAction 在正式
+  QueueIntent/Window/Resolution 与保留的 OnInsertAbort 子分支成立时物化，timeline_queue 按
+  同族退役；条目保存 tag 与正式取消绑定；开始/终结事件提供类型化 tag 事实（拒绝 payload 冒用、
+  他条目凭据与错位调用）；按实际行动者动作集与有效等级选技；insert_action 窗口恢复、
+  开始/正文/结束/取消清理；ModifySkillPropertyByType 以状态实例作用域覆盖技能属性。
+- 验证：Codex 最终定向快测 113 项通过，真实来源组件验证无覆盖及 SPBase=0/5/60 时
+  两处计划均不预发回能，正文只发放一次。tests/test_automatic_insert_action_closure.py 八项单元通过、三项真实场景已标记
+  integration（含 RuntimeSourceAuditor 审计、action.window is_insert_action、资源门槛/公式与
+  未解析预检阻断、显式回能单一生产者）；固定九步命令运行后归档独立 replay 19 步 0 错误；定向回归（队列、资源、
+  能量、目标上下文、编译器一致性）通过；同步 tests/test_sustain_resource_reconciled_rules.py
+  的旧 lookup fixture，未给生产代码增加旧输入兼容。
+- 未纳入：其它插入类型迁移、瓦尔特其它缺口、limbo 救援、注册事件根 TriggerAbility 行动事实
+  作用域（只在真实链依赖时接线）；施加者死亡 DOT 属性保留仍按“规则待定”处理。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
+| 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；Codex 89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支另见当前任务。 |
 | V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
 | I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](simulator_v8_clean_core/docs/I12_STANDALONE_DAMAGE_BINDING.md)。 |
 | I11 真实来源子图 | Phainon 当前回合所有者 Buff 寿命延长、爻光新增状态实例寿命修改、遐蝶限定 InfectModifier 状态复制；生命周期事实与属性审计通过。 |

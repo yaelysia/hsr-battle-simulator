@@ -104,6 +104,26 @@ export PYTHONPATH=hsr_v075_baseline_clean
 [希儿后置监听路线](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)；完整增强版自动追击、特殊追加
 行动和其它技能分支不在本批范围。
 
+## 希儿增强版自动插入行动（2026-10-20）
+
+场景 `seele_automatic_insert_natural.json`，操作文件同名加 `.commands.json`。希儿
+`avatar:1102` E0/Lv1/P0 与娜塔莎 `avatar:1105` E0/Lv32/P2 均空装备，进入来源波次
+`400020800` wave0。前八次公开提交复现真实监听阈值路线；第八次希儿普攻使目标进入真实
+HP 比例阈值后，正式 `TurnInsertAction` 入队并在下一步排空：开始回调按类型化 tag 命中、
+自动以希儿实际动作集与有效等级执行战技、正文后完成 MuteSp/Clean/Ready/InsertCheck 清理。
+第九次为自动战技后的公开行动（娜塔莎治疗战技 110502 对自身）；脚本结束时敌方仍有一只存活，CLI 返回 `3`：
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/seele_automatic_insert_natural.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/seele_automatic_insert_natural.commands.json \
+  --output /tmp/hsr-seele-automatic-insert.json.gz
+```
+
+实现边界、取消/清理语义与验收入口见
+[自动插入行动路线](docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。
+
 关卡公共环境示例为 `arlan_common_stage_environment.json`，操作文件同名加 `.commands.json`。
 阿兰 E0/Lv80、空装备，对关卡 `200020050` 的两只 Lv2 重子；配置使用 `full_stage`，
 由关卡模板安装公共战斗能力和欢愉公共环境，再执行出生与入场通知。三次双方操作后获胜，
