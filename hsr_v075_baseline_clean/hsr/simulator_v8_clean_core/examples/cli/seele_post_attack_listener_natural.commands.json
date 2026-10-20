@@ -1,0 +1,40 @@
+{
+  "commands": [
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110201",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:400020800:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:400020800:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:400020800:wave:0:pos:1",
+      "action_id": "monster_skill:801102001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110201",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:400020800:wave:0:pos:0"
+      ],
+      "metadata": {}
+    }
+  ]
+}

@@ -39,6 +39,13 @@ V2 五元素普通击破自然路线集中在 `test_ordinary_element_break_natur
 缓存只保存已验证的类型化 IR，不改变运行时准入、来源审计或归档指纹。
 修改 Python 代码后先重启常驻服务以载入新代码；缓存不承担模块热重载。
 
+技能后置监听的事实传递使用 `test_p9_a2_action_attack_target_context.py` 的新用例
+`test_derived_post_action_notice_binds_its_own_target_fact`：派生后置通知只能由实际执行边界按
+自己的事件/步骤身份绑定事实，监听侧三种目标表继续拒绝缺失、伪造、跨执行和跨步骤凭证；公开路线
+示例为 `examples/cli/seele_post_attack_listener_natural{,.commands}.json`，来源子图与剩余依赖见
+[希儿后置监听路线](../docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)；`test_seele_post_attack_listener_natural.py`
+显式集成复跑该公开路线的 4 次提交与后续决策。
+
 共享免疫与一次性保护消费使用 `test_status_shared_immunity.py`；其中真实玲可 E2 来源小检查
 从正式状态施加进入 `OnImmuneDebuff` 并移除保护，覆盖不同 caster/owner、免疫先于效果抵抗、
 回调只消费一次、来源审计与失败原子回滚。单位和 incoming 异常是组件输入，不代表完整

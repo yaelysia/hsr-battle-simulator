@@ -14,6 +14,7 @@ from hsr.simulator_v8_clean_core.rules.ir import IRSource, TargetExpressionNodeI
 from hsr.simulator_v8_clean_core.systems.action_event_contract import (
     AdmittedActionTargetFact,
     _issue_action_window_expected_scope,
+    derived_post_action_listener_event,
 )
 from hsr.simulator_v8_clean_core.systems.action_selection import ActionTargetSelectionSystem
 from hsr.simulator_v8_clean_core.systems.status_callbacks import (
@@ -246,6 +247,98 @@ def test_target_map_uses_only_issued_invocation_bound_impact_fact(selection_fixt
     )
     assert result.resolved
     assert result.target_ids == impact.resolution.impact_group
+
+
+def test_derived_post_action_notice_binds_its_own_target_fact(selection_fixture) -> None:
+    rules, state, _system, command, _context_value, event, impact = _resolved_impact(
+        selection_fixture, "single"
+    )
+    fact = impact.admitted_action_target_fact
+    assert fact is not None
+    notice = GameEvent(
+        "action.after_attack",
+        source_id=command.actor_id,
+        target_id=fact.target_ids[0],
+        event_id="event:9:action_after_attack:enemy:actor",
+        window="OnListenAfterAttack",
+        process_only=True,
+    )
+    bound_notice = derived_post_action_listener_event(
+        action_target_fact=fact,
+        execution_token=object(),
+        command=command,
+        canonical_action_event_id=event.action_event_id,
+        impact_fingerprint=impact.impact_fingerprint,
+        event=notice,
+        step_id="after_attack_notice:0:enemy:actor",
+        step_index=0,
+    )
+    bound = bound_notice.admitted_action_target_fact
+    scope = bound_notice.expected_action_window_scope
+    assert bound is not None and scope is not None
+    assert (bound.event_id, bound.window) == (notice.event_id, "OnListenAfterAttack")
+    assert bound.invocation_blocked_reason(expected_scope=scope) == ""
+    # The derived notice does not reuse the action.window credential.
+    window_fact, _window_scope = _bind_fact(fact)
+    assert window_fact.invocation_blocked_reason(
+        expected_scope=scope
+    ) == "action_target_fact_invocation_mismatch"
+    # The listener-side target table consumes exactly this notice's fact.
+    expression = _map_expression("RPG.GameCore.TargetFetchParamEntity")
+    assert TargetSystem().resolve_target_expression(
+        state,
+        expression,
+        context=TargetEvaluationContext(
+            caster_id=command.actor_id,
+            parameter_entity_ids=(command.actor_id,),
+            admitted_action_target_fact=bound,
+            expected_action_window_scope=scope,
+        ),
+    ).target_ids == fact.target_ids
+    # A listener owned by another unit still consumes the executing action's table.
+    other_owner = "enemy:actor" if command.actor_id != "enemy:actor" else "ally:actor"
+    assert TargetSystem().resolve_target_expression(
+        state,
+        expression,
+        context=TargetEvaluationContext(
+            caster_id=other_owner,
+            parameter_entity_ids=(command.actor_id,),
+            admitted_action_target_fact=bound,
+            expected_action_window_scope=scope,
+        ),
+    ).target_ids == fact.target_ids
+    # Before the derived binding, the same notice cannot consume the table.
+    assert TargetSystem().resolve_target_expression(
+        state,
+        expression,
+        context=TargetEvaluationContext(
+            caster_id=command.actor_id,
+            parameter_entity_ids=(command.actor_id,),
+        ),
+    ).blocked_reason == "action_target_fact_missing"
+    # Another execution's identity and an already bound fact are refused.
+    with pytest.raises(ValueError, match="scope_mismatch"):
+        derived_post_action_listener_event(
+            action_target_fact=fact,
+            execution_token=object(),
+            command=replace(command, actor_id="enemy:actor"),
+            canonical_action_event_id=event.action_event_id,
+            impact_fingerprint=impact.impact_fingerprint,
+            event=notice,
+            step_id="after_attack_notice:0:enemy:actor",
+            step_index=0,
+        )
+    with pytest.raises(ValueError, match="already_bound"):
+        derived_post_action_listener_event(
+            action_target_fact=bound,
+            execution_token=object(),
+            command=command,
+            canonical_action_event_id=event.action_event_id,
+            impact_fingerprint=impact.impact_fingerprint,
+            event=notice,
+            step_id="after_attack_notice:0:enemy:actor",
+            step_index=0,
+        )
 
 
 def test_skill_sub_targets_come_from_the_source_contract_not_the_hit_list(selection_fixture):

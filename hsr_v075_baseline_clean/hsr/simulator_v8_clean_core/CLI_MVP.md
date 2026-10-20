@@ -82,6 +82,28 @@ export PYTHONPATH=hsr_v075_baseline_clean
 同谐主），示例文件名已按实际角色命名；五行结果与剩余依赖见
 [V2 执行说明](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
 
+## 希儿增强版普攻后置监听（2026-10-20）
+
+场景 `seele_post_attack_listener_natural.json`，操作文件同名加 `.commands.json`。希儿
+`avatar:1102` E0/Lv1/P0 与娜塔莎 E0/Lv80/P6 均空装备，进入来源波次 `400020800` wave0。
+四次公开提交依次为希儿增强版普攻 `avatar_skill:1110201`、娜塔莎普攻、敌方行动和希儿再次
+普攻；脚本结束时战斗未结束，CLI 返回 `3` 并保存可继续会话：
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/seele_post_attack_listener_natural.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/seele_post_attack_listener_natural.commands.json \
+  --output /tmp/hsr-seele-post-attack.json.gz
+```
+
+真实后置监听 `MAvatar_Advanced_Seele_00_Skill02_AutoInsertListen` 的
+`OnListenAfterAttack` 回调会消费本次已准入行动的完整目标表（
+`ParamEntityAttackTargetList.SortByHP` 的 Retarget）。满血目标的 HP 比例条件为假时选择空集，
+不新增状态也不插入行动。路线、来源子图组件证据与剩余依赖见
+[希儿后置监听路线](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)；完整增强版自动追击、特殊追加
+行动和其它技能分支不在本批范围。
+
 关卡公共环境示例为 `arlan_common_stage_environment.json`，操作文件同名加 `.commands.json`。
 阿兰 E0/Lv80、空装备，对关卡 `200020050` 的两只 Lv2 重子；配置使用 `full_stage`，
 由关卡模板安装公共战斗能力和欢愉公共环境，再执行出生与入场通知。三次双方操作后获胜，

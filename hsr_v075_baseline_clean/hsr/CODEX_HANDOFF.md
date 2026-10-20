@@ -5,35 +5,38 @@
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已验收提交：`fc2e6ff`（I12 逐任务参数绑定与交接瘦身）；前基线为 `b4b8227`。
+- 最近已验收提交：`58a6376`（V2 五元素自然击破与状态动态值清理）；前基线为 `fc2e6ff`。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 当前基线已提交；V2 五元素自然路线与共享清理修复均已验收通过，尚未提交。
+- 当前基线已提交；本批技能后置监听的行动事实传递已验收通过，待提交。
 
-## 当前任务：V2 剩余五元素普通击破自然路线
+## 当前任务：技能后置监听的行动事实传递
 
-**状态：本批验收通过，待提交。** 五条自然路线通过；共享动态值清理的多目标事务合并、
-差分审计及晚期失败不泄漏 mutation 均已复验。
+**状态：本批验收通过，待提交。** 希儿 E0/Lv1 正式入场后的合法普攻已从
+`action_target_fact_missing` 变为成功，并可继续从公开决策提交合法行动。
 
-- 执行说明、五行结果表与验证成本见
-  [V2_ORDINARY_ELEMENT_BREAK_ROUTES.md](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
-- 集成入口：`simulator_v8_clean_core/tests/test_ordinary_element_break_natural_routes.py`；
-  五个示例与固定命令为 `examples/cli/{asta_fire,arlan_thunder,march7th_ice,lynx_quantum,
-  trailblazer_imaginary}_break_natural{,.commands}.json`。
-- 共享修复：状态移除/过期同一事务清理 status 作用域动态值（避免二次生命周期复用来源哈希
-  `instance_id` 时串值）；`apply_remove_modifier`/`apply_dispel_status` 改为在候选状态上逐目标
-  规划并原子合并整仓写入；`source_audit` 校验清理 mutation 的精确差分、保留条目/索引/ledger
-  与结算关联。永久回归见 `tests/test_status_dynamic_value_cleanup.py`，覆盖两个移除调用者、
-  清理范围与结算篡改。
-- Codex 最终复验：原始复现、相关组件与第二目标失败检查共 16 项通过；量子自然路线
-  1 项通过。此前五路线通过及量子独立 replay 13 步、0 错误的证据继续复用。
-- 计划的佩拉/希儿/瓦尔特均被正式准入阻断，按同元素合法角色交付（三月七/玲可/同谐主），
-  示例文件名已同步；各元素剩余依赖见执行说明五行表，不阻断本批普通单韧性路线验收。
+- [执行说明与完整约束](simulator_v8_clean_core/docs/POST_ACTION_LISTENER_FACT_CLOSURE.md)、
+  [自然路线、来源子图与剩余依赖](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)。
+- 真实来源：希儿增强版 `Avatar_Advanced_Seele_00_Ability.json` 的
+  `MAvatar_Advanced_Seele_00_Skill02_AutoInsertListen.OnListenAfterAttack`；动作
+  `avatar_skill:1110201`。其 `ParamEntityAttackTargetList.SortByHP` Retarget 消费行动目标表。
+- 共享修复：`systems/action_event_contract.py` 新增派生通知事实绑定；
+  `core/executor.py` 的 `action.after_attack` 逐目标携带自己的事实与作用域。派发、监听与
+  Retarget 消费链未改，缺失/伪造/跨执行/跨步骤拒绝和原子回滚保留。
+- 验证：示例 `examples/cli/seele_post_attack_listener_natural{,.commands}.json`（4 次公开提交，
+  战斗未完，CLI 退出码 3），归档回放 9 步 0 错误；新增契约用例与既有 A2、并行目标、嵌套能力
+  边界测试通过；集成路线用例 `test_seele_post_attack_listener_natural.py` 1 项通过。
+  首次含本次代码的编译 51.24 s、峰值 535840 KiB。Codex 集中复验：89 项定向检查通过，
+  希儿自然路线 1 项通过（49.22 s、峰值 511720 KiB）；唯一失败为旧复合伤害测试仍传扁平
+  lookup，已用 HEAD 原始用例与未改动 lowering 复现 `KeyError: by_task`，不属于本批回归。
+- 瓦尔特 `OnListenAfterSkillUse` 复查为**不同根**：其事实由正式 `after_skill_use` 窗口在基线
+  已提供，剩余缺口在动作任务图与行迹额外效果来源，不并入本批成果。
+- 剩余：`TurnInsertAction` 条件为真的插入行动路线、注册事件根 `TriggerAbility` 嵌套事实传递。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
-| V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，场景与边界见当前任务说明。 |
+| V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
 | I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](simulator_v8_clean_core/docs/I12_STANDALONE_DAMAGE_BINDING.md)。 |
 | I11 真实来源子图 | Phainon 当前回合所有者 Buff 寿命延长、爻光新增状态实例寿命修改、遐蝶限定 InfectModifier 状态复制；生命周期事实与属性审计通过。 |
 | I11 完整内容限制 | 爻光 A6 正式构筑启动尚未验证；遐蝶完整忆灵/死龙与整场未验；Phainon 完整 Ultra 仍有其它未准入任务。 |
@@ -60,7 +63,7 @@
 | I10 | battle_event/servant 双 mute 退场之外的 ForceKill 形态。 |
 | I11 余项 | 其它/组合 StatusTypeMask、寿命 Set/减少、其它 InfectModifier 变体及尚未接通的精准实例操作。 |
 | V1 | 工作台真实浏览器点击、布局、导入/下载；已有 HTTP/客户端检查不代替浏览器验收。 |
-| V3 | 已准入 SummonMonster 形态自然召唤后继续战斗；特殊子卡仍按各自依赖处理。 |
+| V3 | SummonMonster 自然召唤后继续战斗；已有出生/启动底座，候选仍需核对完整父动作与子卡，不能用固定 ID 叶子准入代替特殊阶段整链。 |
 
 ## 规则待定与待归因
 

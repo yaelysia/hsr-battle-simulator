@@ -74,7 +74,7 @@
     },
     "metadata": {
       "stage_scope": "wave_only",
-      "scope": "Source wave only: two Lv28 Minion 8011020 (Physical/Quantum weakness, StanceCount=1, source toughness 30). Quantum attacker Lynx avatar:1110 E0/Lv1 and Natasha E0/Lv80/promotion6 use assembled builds with empty equipment; Seele avatar:1102 is unavailable as the enhanced-data 50% auto-skill listener blocks formal session actions (enhanced action_target_fact gap), see the route report. No injected HP, toughness, status, timeline or queue values."
+      "scope": "Source wave only: two Lv28 Minion 8011020 (Physical/Quantum weakness, StanceCount=1, source toughness 30). Quantum attacker Lynx avatar:1110 E0/Lv1 and Natasha E0/Lv80/promotion6 use assembled builds with empty equipment; Seele avatar:1102 keeps its own enhanced post-action listener route in seele_post_attack_listener_natural. No injected HP, toughness, status, timeline or queue values."
     }
   }
 }

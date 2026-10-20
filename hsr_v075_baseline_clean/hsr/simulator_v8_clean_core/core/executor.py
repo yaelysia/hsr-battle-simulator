@@ -52,6 +52,7 @@ from ..systems.action_event_contract import (
     _issue_action_window_expected_scope,
     condition_skill_type as _condition_skill_type,
     damage_listener_window_event as _damage_listener_window_event,
+    derived_post_action_listener_event as _derived_post_action_listener_event,
 )
 from ..systems.action_preflight import (
     action_ability_grants_base_energy,
@@ -1499,7 +1500,9 @@ class CombatExecutor:
                         sequence_id=hit_sequence_key[0],
                     )
                 )
-            for hit_target_id in dict.fromkeys(action_hit_targets):
+            for notice_index, hit_target_id in enumerate(
+                dict.fromkeys(action_hit_targets)
+            ):
                 after_attack_event = GameEvent(
                     "action.after_attack",
                     source_id=command.actor_id,
@@ -1528,6 +1531,23 @@ class CombatExecutor:
                         "source_trace": action_source_metadata.get("source_trace", {}),
                     },
                 )
+                if action_target_fact is not None:
+                    # The post-action notice is produced by this owning
+                    # execution. It carries the accepted action's target fact
+                    # under its own invocation identity; listeners still have
+                    # to pass the contract check before consuming it.
+                    after_attack_event = _derived_post_action_listener_event(
+                        action_target_fact=action_target_fact,
+                        execution_token=action_execution_token,
+                        command=command,
+                        canonical_action_event_id=action_event_ir.action_event_id,
+                        impact_fingerprint=target_result.impact_fingerprint,
+                        event=after_attack_event,
+                        step_id=(
+                            f"after_attack_notice:{notice_index}:{hit_target_id}"
+                        ),
+                        step_index=notice_index,
+                    )
                 dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=after_attack_event)
                 current_state = dispatch_result.after_state
                 listener_dispatch_results.append(dispatch_result)

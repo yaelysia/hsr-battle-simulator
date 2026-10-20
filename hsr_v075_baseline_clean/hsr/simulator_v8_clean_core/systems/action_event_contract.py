@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..core.model import (
     ActionCommand,
@@ -458,6 +458,75 @@ def parallel_attack_window_event(
         },
     )
     return event, scope
+
+
+def derived_post_action_listener_event(
+    *,
+    action_target_fact: AdmittedActionTargetFact,
+    execution_token: object,
+    command: ActionCommand,
+    canonical_action_event_id: str,
+    impact_fingerprint: str,
+    event: GameEvent,
+    step_id: str,
+    step_index: int,
+) -> GameEvent:
+    """Bind the accepted action's target fact to one derived post-action notice.
+
+    The post-action notification is produced by the same owning execution as the
+    accepted action, so it may carry that action's target fact.  It must bind its
+    own invocation identity: the notice event id/window and its own step.  The
+    previously issued action.window credential is never reused and no listener
+    payload can build this fact.
+    """
+    if (
+        type(action_target_fact) is not AdmittedActionTargetFact
+        or action_target_fact._issuer is not _ACTION_TARGET_FACT_ISSUER
+        or action_target_fact._claims != action_target_fact._claim_values()
+    ):
+        raise ValueError("derived_post_action_target_fact_not_issued")
+    if action_target_fact.event_id or action_target_fact.window:
+        raise ValueError("derived_post_action_target_fact_already_bound")
+    if (
+        type(command) is not ActionCommand
+        or execution_token is None
+        or action_target_fact.actor_id != command.actor_id
+        or action_target_fact.action_id != command.action_id
+        or action_target_fact.action_level != command.action_level
+        or action_target_fact.canonical_action_event_id
+        != canonical_action_event_id
+        or action_target_fact.impact_fingerprint != impact_fingerprint
+    ):
+        raise ValueError("derived_post_action_target_fact_scope_mismatch")
+    if (
+        type(event) is not GameEvent
+        or not event.event_type
+        or not event.event_id
+        or not event.window
+        or not isinstance(step_id, str)
+        or not step_id
+        or not isinstance(step_index, int)
+        or isinstance(step_index, bool)
+        or step_index < 0
+    ):
+        raise ValueError("derived_post_action_listener_event_identity_invalid")
+    scope = _issue_action_window_expected_scope(
+        execution_token=execution_token,
+        actor_id=command.actor_id,
+        action_id=command.action_id,
+        action_level=command.action_level,
+        canonical_action_event_id=canonical_action_event_id,
+        impact_fingerprint=impact_fingerprint,
+        event_id=event.event_id,
+        window=event.window,
+        step_id=step_id,
+        step_index=step_index,
+    )
+    return replace(
+        event,
+        admitted_action_target_fact=action_target_fact.bind_invocation(scope),
+        expected_action_window_scope=scope,
+    )
 
 
 @dataclass(frozen=True)
