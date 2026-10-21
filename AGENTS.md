@@ -114,7 +114,7 @@ TBGD / 已采纳机制资料 -> compiler/lowering 或规则注册
 | 禁止事项和历史兼容红线 | `<core>/FORBIDDEN.md` |
 | 阶段实施 | 当前阶段执行卡及卡内列出的直接依赖 |
 | 规划、验收、验证成本、执行角色 | `<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md` |
-| P9 全角色共享机制 | `<core>/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`、`<core>/docs/p9_execution_cards/README.md` |
+| 工程路线与 P9 历史 | `<core>/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`；旧卡仅追溯时读 `<core>/docs/archive/p9/execution_cards/README.md` |
 | 光锥、遗器和构筑历史 | `<core>/docs/archive/p8/P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`、`<core>/docs/archive/p8/execution_cards/README.md` |
 | 状态系统历史 | `<core>/docs/archive/completed_phase_plans/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md` |
 | 召唤物、忆灵和 servant 历史 | `<core>/docs/archive/completed_phase_plans/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md` |
@@ -122,7 +122,7 @@ TBGD / 已采纳机制资料 -> compiler/lowering 或规则注册
 | 公式、动态值和参数绑定历史 | `<core>/docs/archive/completed_phase_plans/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md` |
 | 怪物卡 | `<core>/MONSTER_CARD_SPEC.md` 及对应阶段卡 |
 | UI | `hsr_v075_baseline_clean/hsr/simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md` |
-| 当前验收证据 | `hsr_v075_baseline_clean/hsr/live_validation_reports/` 中与当前阶段同名的报告 |
+| 当前验收证据与历史报告 | `hsr_v075_baseline_clean/hsr/live_validation_reports/README.md`；只按当前交接点名读取 |
 | 完整文档归属和历史档案 | `<core>/DOCUMENTATION_INDEX.md` |
 
 这张表是定位器，不是必读列表。当前状态只相信 `CODEX_HANDOFF.md`；旧计划和报告只用于追溯，

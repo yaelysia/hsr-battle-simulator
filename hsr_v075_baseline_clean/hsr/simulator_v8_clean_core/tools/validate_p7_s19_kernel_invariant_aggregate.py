@@ -256,7 +256,7 @@ def run_validation(
     current_regression_manifest: Path,
 ) -> dict[str, Any]:
     hsr_root = package_root.parent
-    reports_root = hsr_root / "live_validation_reports"
+    reports_root = hsr_root / "live_validation_reports" / "archive" / "pre_2026_10_21"
     tools_root = package_root / "tools"
     static = run_static_checks(package_root)
     stage_validation_evidence = _stage_validation_evidence(package_root, stage_evidence_manifest)

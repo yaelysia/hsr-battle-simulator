@@ -145,7 +145,7 @@ def main() -> int:
     started = time.perf_counter(); root = Path(__file__).resolve().parents[1]; output = Path(args.output_dir); output.mkdir(parents=True, exist_ok=True)
     formal_tasks = _formal_lowering(); graph_roundtrip, old_payload_rejected = _graph_codec(); ledger_exact, duplicate_owner_rejected = _external_ledger(); reads = _runtime_reads(root)
     loop = AbilityTaskIR("loop", "phase", "action", 1, "Ability", "OnStart", 0, "OnStart[0]", "root", "LoopExecuteTaskListWithInterval", _source("validation_fixture/loop.json", "loop", "$.Loop", "LoopExecuteTaskListWithInterval"), repeat_count=1, coverage_status="executable")
-    plan = root.joinpath("P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md").read_text(encoding="utf-8"); s8c = root.joinpath("docs/p9_execution_cards/P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md").read_text(encoding="utf-8")
+    plan = root.joinpath("docs/archive/p9/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md").read_text(encoding="utf-8"); s8c = root.joinpath("docs/archive/p9/execution_cards/P9-S8C_HIT_BARRIER_RANDOM_SEQUENCE.md").read_text(encoding="utf-8")
     reader_pairs = {(str(row["path"]), str(row["function"])) for row in reads}
     unexpected_readers = reader_pairs - ALLOWED_READERS
     checks = {

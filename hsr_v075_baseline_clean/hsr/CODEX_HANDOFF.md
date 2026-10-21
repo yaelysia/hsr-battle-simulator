@@ -5,57 +5,34 @@
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已验收基线：本次提交（第一轮编译与测试提速）；前基线为 `35289a0`。
+- 最近已提交基线：`b1f42db`（第二轮编译与执行提速，已验收）。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 第一轮提速已验收；下一步深挖冷编译、战斗执行和内存开销，再集中实施优化。
+- 第二轮四项优化已验收并提交；下一步回归主线，按真实内容核对下一批入口。
 
-## 当前任务：第二轮性能剖析
+## 最近收口：第二轮编译与执行集中优化
 
-实测及一次性约束见[耗时优化执行说明](simulator_v8_clean_core/docs/COMPILE_AND_TEST_COST_REDUCTION.md)。
-第一轮已验收：共享真实八步前置、复用正式构筑指纹、加快完整来源枚举；权限语义回归已修复。
-Codex 最终快测 30 项通过；4 项集成已验证分支顺序隔离，约 123–126 秒，原参考 272 秒。
-第二轮先测量和定位，不改生产实现；保持规则、指纹、失效检查及失败断言。
-
-## 最近收口：自动插入行动完整执行链
-
-**状态：已验收。** 真实条件满足→入队→插入开始→自动战技→清理→后续公开行动已
-打通；取消与晚期失败回滚按共享边界收口，不以创建队列代替整批交付。
-
-- [执行说明、完整调用链与一次性验收约束](simulator_v8_clean_core/docs/AUTOMATIC_INSERT_ACTION_CLOSURE.md)；
-  [自然路线、实现边界、固定命令与验收入口](simulator_v8_clean_core/docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。
-- 复现输入与最终命令：examples/cli/seele_automatic_insert_natural{,.commands}.json；希儿
-  E0/Lv1/P0、娜塔莎 E0/Lv32/P2（仅从复现记录的 Lv20/P1 提升存活等级，避开“施加者死亡后的
-  DOT 属性保留规则待补”；命令、目标、波次和正式回调未替换），空装备、来源波次 400020800
-  wave0，无 HP/状态/队列注入。前八次提交复现真实阈值路线并完成自动战技，第九次为战技后的
-  公开行动；原复现记录（Lv20/P1 第八次提交以 task_graph_control_requires_domains:timeline_queue
-  原子阻断）保留在执行说明中供前后对比。
-- 已接通：QueueIntentIR.custom_tag 与 IgnoreBPDec/SPBase 资源拆分；TurnInsertAction 在正式
-  QueueIntent/Window/Resolution 与保留的 OnInsertAbort 子分支成立时物化，timeline_queue 按
-  同族退役；条目保存 tag 与正式取消绑定；开始/终结事件提供类型化 tag 事实（拒绝 payload 冒用、
-  他条目凭据与错位调用）；按实际行动者动作集与有效等级选技；insert_action 窗口恢复、
-  开始/正文/结束/取消清理；ModifySkillPropertyByType 以状态实例作用域覆盖技能属性。
-- 验证：Codex 最终定向快测 113 项通过，真实来源组件验证无覆盖及 SPBase=0/5/60 时
-  两处计划均不预发回能，正文只发放一次。tests/test_automatic_insert_action_closure.py 八项单元通过、三项真实场景已标记
-  integration（含 RuntimeSourceAuditor 审计、action.window is_insert_action、资源门槛/公式与
-  未解析预检阻断、显式回能单一生产者）；固定九步命令运行后归档独立 replay 19 步 0 错误；定向回归（队列、资源、
-  能量、目标上下文、编译器一致性）通过；同步 tests/test_sustain_resource_reconciled_rules.py
-  的旧 lookup fixture，未给生产代码增加旧输入兼容。
-- 未纳入：其它插入类型迁移、瓦尔特其它缺口、limbo 救援、注册事件根 TriggerAbility 行动事实
-  作用域（只在真实链依赖时接线）；施加者死亡 DOT 属性保留仍按“规则待定”处理。
+范围、约束与实测见[集中优化说明](simulator_v8_clean_core/docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。
+reducer 冻结子树共享、五处只读摘要、来源弃用证据和目录哈希编码已验收；保持正式校验、
+指纹、导出隔离与回滚。Codex 88 项定向检查通过，1205 组输入与旧 reducer 的结果及冲突一致；
+取消→晚期失败→成功顺序的 4 项集成通过，48.88 s、峰值 840748 KiB。
+交付限定冷构建约 27 s、九步执行约 27 s，独立 replay 19 步 0 错误；未改 submodule 或依赖。
+性能优化已提交；旧文档归档与现行导航随本次文档提交收口。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
-| 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；Codex 89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支另见当前任务。 |
+| 自动插入行动 | 真实监听阈值→入队→自动战技→清理→后续公开操作已验收；开始/终结 tag 事实、实际等级、BP 免扣与 SPBase 单一回能生产者、取消和晚期回滚受原子边界保护。九步归档独立 replay 19 步 0 错误；限定构筑、命令和剩余边界见[路线说明](simulator_v8_clean_core/docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。 |
+| 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；Codex 89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支见上行。 |
 | V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
-| I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](simulator_v8_clean_core/docs/I12_STANDALONE_DAMAGE_BINDING.md)。 |
+| I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](simulator_v8_clean_core/docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)。 |
 | I11 真实来源子图 | Phainon 当前回合所有者 Buff 寿命延长、爻光新增状态实例寿命修改、遐蝶限定 InfectModifier 状态复制；生命周期事实与属性审计通过。 |
 | I11 完整内容限制 | 爻光 A6 正式构筑启动尚未验证；遐蝶完整忆灵/死龙与整场未验；Phainon 完整 Ultra 仍有其它未准入任务。 |
 | V2 风属性普通击破 | 丹恒＋娜塔莎自然完成首次击破、风化、恢复、二次击破和后续行动，并完成回放；仅普通单韧性，配置与固定命令为 `examples/cli/danheng_wind_break_natural{,.commands}.json`。 |
 | 已有共享链与路线 | 普通伤害/治疗/护盾、双方外控、任务图与 RNG、限定两波及归档恢复、普通公共环境 full_stage、普通多层韧性，以及阿兰/娜塔莎/希露瓦、三月七、佩拉、阿格莱雅等已记录的限定路线继续复用。 |
 
 以上均按已验证的来源、构筑和行为范围使用，不代表全角色、全装备或全部整场已通过。
+其它插入类型迁移、注册事件根 TriggerAbility 的行动事实作用域及瓦尔特其它缺口仍待具体内容接线。
 详细历史证据按关键词查[归档快照](simulator_v8_clean_core/docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md)，
 实际命令和检查入口以 CLI 与测试文档为准。
 

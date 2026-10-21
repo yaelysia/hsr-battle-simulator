@@ -18,16 +18,13 @@
 
 ## 当前主线
 
-工程路线已依据 2026-10-10 的目录、正式调用链和分域编译结果重写；核对结果是路线依据，
-不再设置未来盘点的 R0。先修已复现的编译/来源断点，再按依赖完成普通战斗与双方外控、
-构筑装备、复杂机制与内容、怪物和关卡、操作产品，最后全目录验收封版。
-四层架构与已交付能力复用；固定脚本、机制底座或来源缺口登记均不能代替整个版本验收。
+工程路线维护产品终点、交付顺序与结束条件；当前已验收行为、剩余限制和下一批只看交接。
+旧目录数量、编译阻断、阶段勾选与审查状态均在归档中，不能作为当前剩余任务统计。
 
 - 工程终点、里程碑与新增需求处理：
   [工程完结路线](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-工程完结路线)
 - 当前实际进度与下一项：[CODEX_HANDOFF.md](../CODEX_HANDOFF.md)
 - 已交付命令行场景与操作：[CLI_MVP.md](CLI_MVP.md)
-- 旧执行卡与历史来源导航：[参考索引](docs/p9_execution_cards/README.md)
 
 旧阶段 checklist 保留已完成边界，不再作为唯一当前卡或逐阶段审批链。后续任务只读相关机制
 和调用者，不默认通读执行卡目录或恢复 MCP 工作流。
@@ -36,14 +33,12 @@
 
 | 主题 | 当前入口 |
 |---|---|
-| 角色能力范围与共享缺口 | [`CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md`](docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md)、[`CHARACTER_SHARED_MECHANISM_GAP_PLAN.md`](docs/character_execution_cards/CHARACTER_SHARED_MECHANISM_GAP_PLAN.md) |
-| 角色来源范围基线 | [`CHARACTER_ABILITY_SCOPE_LEDGER.md`](docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_LEDGER.md)；只用于追溯 P9 开工分母 |
-| 角色目录旧盘点与 CHAR-M1 | [`docs/archive/character/`](docs/archive/character/)；均为历史状态 |
 | 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
-| I12 独立伤害逐任务绑定 | [修复契约与验收清单](docs/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
+| 独立伤害逐任务绑定 | [已验收批次的绑定契约](docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
-| 技能后置监听行动事实 | [执行说明与验收约束](docs/POST_ACTION_LISTENER_FACT_CLOSURE.md)、[希儿自然路线与来源子图证据](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)；当前进度仍见交接 |
-| 自动插入行动完整执行链 | [失败输入、共享边界与集中验收约束](docs/AUTOMATIC_INSERT_ACTION_CLOSURE.md)、[希儿自然路线、实现边界与固定命令](docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)；当前进度仍见交接 |
+| 技能后置监听行动事实 | [自然路线、实现边界与固定命令](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md) |
+| 自动插入行动完整执行链 | [自然路线、实现边界与固定命令](docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md) |
+| 编译与执行耗时 | [第二轮性能定位与集中优化约束](docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)、[第一轮编译与测试提速](docs/COMPILE_AND_TEST_COST_REDUCTION.md) |
 | UI 规划 | `../simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`，仅在该草案存在且任务涉及 UI 时读取 |
 
 这些专题文档提供领域事实，不是当前阶段 checklist。其结论与当前源码冲突时，以源码、正式来源和
@@ -51,7 +46,7 @@
 
 ## 验收证据
 
-阶段报告位于仓库级 `../live_validation_reports/`。使用规则：
+阶段报告与历史报告入口见 [`../live_validation_reports/README.md`](../live_validation_reports/README.md)。使用规则：
 
 - 交接文档或当前执行卡点名的报告才是默认入口；
 - `ready_for_review` 只是执行交付，不等于已验收；
@@ -68,6 +63,10 @@
 | [`docs/archive/phase1/`](docs/archive/phase1/) | P1 总结、执行计划和最终报告导航 |
 | [`docs/archive/completed_phase_plans/`](docs/archive/completed_phase_plans/) | 已完成的 P2-P7 总计划 |
 | [`docs/archive/p8/`](docs/archive/p8/) | P8 装备总计划和全部执行卡 |
+| [P9 历史计划](docs/archive/p9/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)、[执行卡索引](docs/archive/p9/execution_cards/README.md) | 原目录核对、阶段拆分、勾选和旧任务约束；不作为当前施工计划 |
+| [`docs/archive/completed_tasks/`](docs/archive/completed_tasks/README.md) | I12、后置监听与自动插入行动的已验收任务说明 |
+| [`docs/archive/checkpoints/`](docs/archive/checkpoints/) | 旧 MVP 缺口与 PR #8 事实对账；状态均为历史快照 |
+| [历史阶段报告](../live_validation_reports/archive/pre_2026_10_21/README.md) | 2026-10-21 整理时迁出的旧报告，保留原验收状态 |
 | [`docs/archive/validation_governance/`](docs/archive/validation_governance/) | 已结束的验证治理试点计划和执行卡 |
 | [`docs/archive/bootstrap_v075/`](docs/archive/bootstrap_v075/) | v0.75 导入、工作区基线和旧 v7 检查记录 |
 | [`docs/archive/character/`](docs/archive/character/) | P9 开工前角色目录盘点和已完成 CHAR-M1 执行卡 |

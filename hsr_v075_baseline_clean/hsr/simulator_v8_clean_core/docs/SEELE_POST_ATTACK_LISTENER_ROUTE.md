@@ -1,7 +1,7 @@
 # 希儿增强版普攻后置监听路线与行动事实链路
 
 2026-10-20。基线 `58a6376`；任务约束见
-[POST_ACTION_LISTENER_FACT_CLOSURE.md](POST_ACTION_LISTENER_FACT_CLOSURE.md)，当前进度只在
+[POST_ACTION_LISTENER_FACT_CLOSURE.md](archive/completed_tasks/POST_ACTION_LISTENER_FACT_CLOSURE.md)，当前进度只在
 [交接文档](../../CODEX_HANDOFF.md)维护。
 
 ## 新增可用行为

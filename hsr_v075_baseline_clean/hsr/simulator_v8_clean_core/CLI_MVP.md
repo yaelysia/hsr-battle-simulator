@@ -307,7 +307,7 @@ PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean
 扩散伤害主目标死亡但尚未移除时，其位置仍能作为后续邻位查询的参照，死亡单位不能被重新选为攻击目标。
 本路线在敌人行动前清怪；枪兵自然施加裂伤及下一回合扣血已在另一条定向路线通过，
 尚未据此验证该两波路线中的全部交互。
-这证明正式换波和限定整场可用，不表示银鬃兵全部动作或完整关卡已完成；见[缺口记录](docs/MVP_KNOWN_GAPS_2026-09-28.md#验证缺口与内容范围不是新规则问题)。
+这证明正式换波和限定整场可用，不表示银鬃兵全部动作或完整关卡已完成；当时的限制见[历史缺口记录](docs/archive/checkpoints/MVP_KNOWN_GAPS_2026-09-28.md#验证缺口与内容范围不是新规则问题)，当前范围以[交接](../CODEX_HANDOFF.md)为准。
 
 两波自然交战样例 `arlan_melee_two_waves` 使用阿兰 Lv80、希露瓦/娜塔莎 Lv1，均 E0 空装备。
 浏览器选择“三人队 · 两波近战兵交战”。阿兰战技优先击败枪兵，另外两人普攻近战兵；敌方
@@ -379,7 +379,7 @@ PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean
 
 整场使用未经手工修改的出生状态，输出标准归档供独立 CLI 回放。224 个装备能力图中，
 本次修复 7 个编译/查询阻断，仍有 6 个依赖缺省公式、行动延迟运算或快照事件的图保留阻断；
-这不是全部装备已完成实战验收。详情见[机制缺口记录](docs/MVP_KNOWN_GAPS_2026-09-28.md#2026-10-11-装备能力查询与保留阻断)。
+这不是全部装备已完成实战验收。当时的限制见[历史机制缺口](docs/archive/checkpoints/MVP_KNOWN_GAPS_2026-09-28.md#2026-10-11-装备能力查询与保留阻断)，当前范围以[交接](../CODEX_HANDOFF.md)为准。
 
 ## 普通败北与敌方回合终结技对照（2026-10-10）
 
@@ -527,7 +527,7 @@ export PYTHONPATH=hsr_v075_baseline_clean
 `/tmp/hsr-mvp-pr8-shared-final-20260928-run.log`、
 `/tmp/hsr-mvp-pr8-shared-final-20260928-replay.log`。
 
-逐项机制、内容和验证边界见 [2026-09-28 已知缺口清单](docs/MVP_KNOWN_GAPS_2026-09-28.md)。
+当时逐项边界见[历史缺口清单](docs/archive/checkpoints/MVP_KNOWN_GAPS_2026-09-28.md)；当前机制与内容边界见[交接](../CODEX_HANDOFF.md)。
 
 ## 第二个可运行波次（2026-09-30）
 
