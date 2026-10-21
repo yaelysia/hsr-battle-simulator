@@ -55,7 +55,15 @@ class BattleSession:
         self.state = self.build.state
         self.decisions = DecisionSystem(rules)
         self.operations: list[dict[str, Any]] = []
-        self.rules_fingerprint = canonical_ir_fingerprint(rules.ir)
+        # The builder derived this manifest from the same RuleBook, so its rule
+        # identity already covers the same IR. Component-only scenarios have no
+        # formal build manifest and keep the direct fingerprint path.
+        manifest = self.build.build_manifest
+        self.rules_fingerprint = (
+            manifest.rule_identity.canonical_ir_fingerprint
+            if manifest is not None
+            else canonical_ir_fingerprint(rules.ir)
+        )
         self.initial_snapshot = self.state.snapshot().to_json(detach=False)
         self.setup_audit = {
             "records": list(self.build.setup_records),

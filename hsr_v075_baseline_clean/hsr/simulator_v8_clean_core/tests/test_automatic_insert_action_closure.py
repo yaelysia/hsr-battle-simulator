@@ -1,14 +1,16 @@
 """Automatic insert-action closure: queue tag facts, cleanup and rollback.
 
-Unit checks stay synthetic. The integration checks replay the public example
-route (eight submissions, then the automatic insert body) and its independent
-archive replay marker.
+Unit checks stay synthetic. The integration checks share one formal rule build
+and one public eight-step prelude: the success route owns that session history
+and its ninth submission, while the cancel and late-failure branches only read
+the saved prelude state.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -239,36 +241,83 @@ def test_skill_property_overrides_are_status_instance_scoped() -> None:
 
 
 @pytest.fixture(scope="module")
-def natural_route() -> dict:
-    scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
-    commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
-    rules = build_battle_rulebook(_REPO_ROOT / "turnbasedgamedata-main", scenario)
-    return {"scenario": scenario, "commands": commands, "rules": rules}
+def preparation_counts():
+    """Count the production preparations this module actually performs."""
+    from hsr.simulator_v8_clean_core import session as session_module
+
+    counts = {"rulebook_builds": 0, "sessions": 0, "fingerprint_calls": 0}
+    original_build = build_battle_rulebook
+    original_init = session_module.BattleSession.__init__
+    original_fingerprint = session_module.canonical_ir_fingerprint
+
+    def counting_build(*args, **kwargs):
+        counts["rulebook_builds"] += 1
+        return original_build(*args, **kwargs)
+
+    def counting_init(session, *args, **kwargs):
+        counts["sessions"] += 1
+        return original_init(session, *args, **kwargs)
+
+    def counting_fingerprint(*args, **kwargs):
+        counts["fingerprint_calls"] += 1
+        return original_fingerprint(*args, **kwargs)
+
+    with mock.patch.dict(globals(), {"build_battle_rulebook": counting_build}), \
+            mock.patch.object(
+                session_module.BattleSession, "__init__", counting_init), \
+            mock.patch.object(
+                session_module, "canonical_ir_fingerprint", counting_fingerprint):
+        yield counts
+    assert counts == {
+        "rulebook_builds": 1, "sessions": 1, "fingerprint_calls": 0,
+    }, counts
 
 
-def _run_commands(rules, scenario, commands):
-    from hsr.simulator_v8_clean_core.session import BattleSession, command_from_json
+def _open_session(rules, scenario):
+    from hsr.simulator_v8_clean_core.session import BattleSession
 
-    session = BattleSession(rules, scenario)
-    transitions = []
-    for index, command in enumerate(commands):
+    return BattleSession(rules, scenario)
+
+
+def _submit_public_prefix(session, commands, count):
+    from hsr.simulator_v8_clean_core.session import command_from_json
+
+    for index, command in enumerate(commands[:count]):
         decision = session.advance()
         assert decision.ready, (index, decision.blocked_reason)
         result = session.submit(command_from_json(command))
         assert result.transition.outcome.successor_eligible, (
             index, result.transition.outcome.reason_codes,
         )
-        transitions.append(result.transition)
-    return session, transitions
+
+
+@pytest.fixture(scope="module")
+def natural_route(preparation_counts) -> dict:
+    """Build the formal rules and run the shared eight-step prelude once."""
+    scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
+    commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
+    rules = build_battle_rulebook(_REPO_ROOT / "turnbasedgamedata-main", scenario)
+    session = _open_session(rules, scenario)
+    _submit_public_prefix(session, commands, 8)
+    return {
+        "scenario": scenario,
+        "commands": commands,
+        "rules": rules,
+        "session": session,
+        # Branches that must not advance the success history read this saved
+        # prelude state instead of the session's later state.
+        "pending": session.state,
+        "counts": preparation_counts,
+    }
 
 
 @pytest.mark.integration
 def test_natural_insert_route_executes_body_and_cleanup(natural_route) -> None:
     rules = natural_route["rules"]
-    session, _ = _run_commands(
-        rules, natural_route["scenario"], natural_route["commands"][:8]
-    )
-    pending = session.state
+    # The success route owns the shared session and keeps its history.
+    session = natural_route["session"]
+    pending = natural_route["pending"]
+    assert session.state is pending
     queued = pending.queues.get("turn_insert_action", ())
     assert len(queued) == 1
     entry = queued[0]
@@ -351,6 +400,11 @@ def test_natural_insert_route_executes_body_and_cleanup(natural_route) -> None:
     assert requested and requested[0].payload["action_level"] == expected_level
 
     session._accept(step)
+    # Advancing the success history must not touch the prelude state other
+    # branches read.
+    assert session.state is not pending
+    assert natural_route["pending"] is pending
+    assert len(pending.queues.get("turn_insert_action", ())) == 1
     statuses = session.state.units["seele"].statuses
     assert _MUTE not in statuses
     assert _CLEAN not in statuses
@@ -377,6 +431,21 @@ def test_natural_insert_route_executes_body_and_cleanup(natural_route) -> None:
 
 
 @pytest.mark.integration
+def test_shared_preparation_and_formal_fingerprint_reuse(natural_route) -> None:
+    # One formal rule build, one session and one eight-step prelude serve every
+    # integration branch. The session reuses the builder's formal rule identity
+    # instead of hashing the same IR a second time.
+    assert natural_route["counts"] == {
+        "rulebook_builds": 1, "sessions": 1, "fingerprint_calls": 0,
+    }
+    session = natural_route["session"]
+    manifest = session.build.build_manifest
+    assert manifest is not None
+    assert session.rules_fingerprint == manifest.rule_identity.canonical_ir_fingerprint
+    assert len(natural_route["pending"].queues.get("turn_insert_action", ())) == 1
+
+
+@pytest.mark.integration
 def test_insert_action_cancel_before_start_runs_abort_branch(natural_route) -> None:
     from hsr.simulator_v8_clean_core.systems.dynamic_values import find_status_detail
     from hsr.simulator_v8_clean_core.systems.effect import EffectRegistry
@@ -385,10 +454,9 @@ def test_insert_action_cancel_before_start_runs_abort_branch(natural_route) -> N
     from hsr.simulator_v8_clean_core.rules.task_graph import TaskGraphNodeIR
 
     rules = natural_route["rules"]
-    session, _ = _run_commands(
-        rules, natural_route["scenario"], natural_route["commands"][:8]
-    )
-    state = session.state
+    # The cancel branch reads the saved prelude state, never the advanced
+    # success session, and keeps its own scheduler and candidate state.
+    state = natural_route["pending"]
     queued = state.queues.get("turn_insert_action", ())
     assert len(queued) == 1
     entry = queued[0]
@@ -427,10 +495,9 @@ def test_insert_action_cancel_before_start_runs_abort_branch(natural_route) -> N
 @pytest.mark.integration
 def test_late_queue_finish_failure_rolls_back_consumption(natural_route, monkeypatch) -> None:
     rules = natural_route["rules"]
-    session, _ = _run_commands(
-        rules, natural_route["scenario"], natural_route["commands"][:8]
-    )
-    before = session.state
+    # The late-failure branch reads the saved prelude state, never the advanced
+    # success session, and keeps its own scheduler and failed dispatch hook.
+    before = natural_route["pending"]
     assert len(before.queues.get("turn_insert_action", ())) == 1
     scheduler = CombatScheduler(rules)
     original = scheduler.event_dispatcher.dispatch_event

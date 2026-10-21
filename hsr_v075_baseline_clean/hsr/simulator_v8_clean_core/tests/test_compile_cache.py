@@ -13,7 +13,7 @@ from hsr.simulator_v8_clean_core import BASELINE_VERSION
 from hsr.simulator_v8_clean_core.immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json
 from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR, ConditionIR, IRSource
 from hsr.simulator_v8_clean_core.tbgd.compile_cache import (
-    _IRPickler, _IRUnpickler, _cache_key, _read_cache, cached_ir,
+    _IRPickler, _IRUnpickler, _cache_key, _read_cache, _source_entries, cached_ir,
 )
 from hsr.simulator_v8_clean_core.tbgd.lowering import LoweringLimits
 
@@ -109,9 +109,13 @@ def test_compile_dependencies_invalidate_but_runtime_system_changes_do_not(tmp_p
     executor.write_text('VERSION = 1\n')
     model = code / 'core/model.py'
     model.write_text('VERSION = 1\n')
+    session = code / 'session.py'
+    session.write_text('VERSION = 1\n')
     before = _cache_key(root, LoweringLimits(), {}, code_root=code)
     scheduler.write_text('VERSION = 2\n')
     executor.write_text('VERSION = 2\n')
+    # The L3 session boundary has no L0 caller, so its edits keep the IR valid.
+    session.write_text('VERSION = 2\n')
     assert _cache_key(root, LoweringLimits(), {}, code_root=code) == before
     unit_stats.write_text('VERSION = 2\n')
     after_stats = _cache_key(root, LoweringLimits(), {}, code_root=code)
@@ -121,6 +125,70 @@ def test_compile_dependencies_invalidate_but_runtime_system_changes_do_not(tmp_p
     before_model = _cache_key(root, LoweringLimits(), {}, code_root=code)
     model.write_text('VERSION = 2\n')
     assert _cache_key(root, LoweringLimits(), {}, code_root=code) != before_model
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='needs ordinary POSIX permission checks')
+def test_denied_kind_check_keeps_rglob_visibility(tmp_path):
+    # A nonmatching symlink whose target sits behind an unsearchable directory
+    # makes the directory classification raise. Path.rglob still returns the
+    # same-directory matches, so the scan must neither fail nor lose them.
+    protected = tmp_path / 'protected'
+    protected.mkdir()
+    (protected / 'target').mkdir()
+    code = tmp_path / 'code'
+    code.mkdir()
+    (code / 'lowering.py').write_text('VERSION = 1\n')
+    for order in ('link_first', 'link_last'):
+        root = tmp_path / order
+        root.mkdir()
+        if order == 'link_first':
+            (root / 'opaque-link').symlink_to(protected / 'target')
+        (root / 'ability.json').write_text('{}')
+        (root / 'nested').mkdir()
+        (root / 'nested' / 'inner.json').write_text('{}')
+        if order == 'link_last':
+            (root / 'opaque-link').symlink_to(protected / 'target')
+        protected.chmod(0)
+        try:
+            native = [(str(path.relative_to(root)), (stat := path.stat()).st_size,
+                       stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+                      for path in sorted(root.rglob('*.json'))]
+            scanned = [(os.sep.join(parts), (stat := entry.stat()).st_size,
+                        stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+                       for parts, entry in _source_entries(root, '.json')]
+            assert scanned == native
+            assert 'ability.json' in [name for name, *_ in scanned]
+            key = _cache_key(root, LoweringLimits(), {}, code_root=code)
+            assert len(key) == 64
+        finally:
+            protected.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason='needs ordinary POSIX permission checks')
+def test_denied_stat_of_matching_entry_still_fails(tmp_path):
+    # A matching name whose own metadata is unreadable stays visible to the scan
+    # but must still fail the cache key, exactly like Path.rglob plus stat.
+    protected = tmp_path / 'protected'
+    protected.mkdir()
+    (protected / 'target').mkdir()
+    code = tmp_path / 'code'
+    code.mkdir()
+    (code / 'lowering.py').write_text('VERSION = 1\n')
+    root = tmp_path / 'source'
+    root.mkdir()
+    (root / 'ability.json').write_text('{}')
+    (root / 'opaque.json').symlink_to(protected / 'target')
+    protected.chmod(0)
+    try:
+        assert [os.sep.join(parts) for parts, _ in _source_entries(root, '.json')] == [
+            'ability.json', 'opaque.json',
+        ]
+        with pytest.raises(PermissionError):
+            [path.stat() for path in sorted(root.rglob('*.json'))]
+        with pytest.raises(PermissionError):
+            _cache_key(root, LoweringLimits(), {}, code_root=code)
+    finally:
+        protected.chmod(0o700)
 
 
 def test_corrupt_cache_rebuilds_and_failed_build_publishes_nothing(tmp_path):

@@ -1,6 +1,7 @@
 """Local, disposable cache of already-validated Canonical IR, preserving sharing."""
 from __future__ import annotations
 
+import errno
 import fcntl
 import gzip
 import importlib
@@ -22,6 +23,7 @@ from ..rules.ir import CanonicalIR, _FrozenIRPayloadDict, _FrozenIRPayloadList
 
 _MAGIC = b"HSR_IR_CACHE_V1\n"
 _CORE = __package__.rsplit(".tbgd", 1)[0]
+_IGNORED_SCAN_ERRORS = frozenset((errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP))
 
 
 def _mapping_proxy(values):
@@ -64,27 +66,71 @@ def _request_key(root: Path, limits, scope: dict) -> str:
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _source_entries(root: Path, suffix: str) -> list[tuple[tuple[str, ...], os.DirEntry]]:
+    """Enumerate source names under root with Path.rglob visibility semantics.
+
+    Hidden entries stay visible, symlinked directories are not entered (linked
+    files still match), unreadable directories are skipped, entry kinds that
+    cannot be read count as non-directories, and results sort by path parts.
+    A denied kind check keeps that directory's own matches but stops classifying
+    its remaining entries, exactly like Path.rglob; denied stats of matched names
+    still propagate. The source store keeps 123k JSON files, so this avoids
+    building a Path object per file without changing what is seen.
+    """
+    found: dict[tuple[str, ...], os.DirEntry] = {}
+
+    def scan(directory: str, parts: tuple[str, ...]) -> None:
+        try:
+            with os.scandir(directory) as iterator:
+                entries = list(iterator)
+        except PermissionError:
+            return
+        # Path.rglob matches a directory's own names before it classifies their
+        # kinds, so a denied kind check must not drop same-directory matches.
+        for entry in entries:
+            if entry.name.endswith(suffix):
+                found.setdefault(parts + (entry.name,), entry)
+        try:
+            for entry in entries:
+                try:
+                    is_dir = entry.is_dir()
+                except OSError as error:
+                    if error.errno not in _IGNORED_SCAN_ERRORS:
+                        raise
+                    is_dir = False
+                if is_dir and not entry.is_symlink():
+                    scan(os.path.join(directory, entry.name), parts + (entry.name,))
+        except PermissionError:
+            return  # Path.rglob also stops classifying this directory's entries.
+
+    if root.is_dir():
+        scan(str(root), ())
+    return sorted(found.items())
+
+
 def _cache_key(root: Path, limits, scope: dict, *, code_root: Path | None = None) -> str:
     digest = sha256(_request_key(root, limits, scope).encode())
     # ponytail: local FS metadata avoids rereading gigabytes on every hit. If the
     # source store can forge size/mtime/ctime/inode together, use content hashes.
-    for path in sorted(root.rglob("*.json")):
-        stat = path.stat()
-        digest.update(json.dumps((str(path.relative_to(root)), stat.st_size,
+    for parts, entry in _source_entries(root, ".json"):
+        stat = entry.stat()
+        digest.update(json.dumps((os.sep.join(parts), stat.st_size,
             stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)).encode())
     production = code_root or Path(__file__).resolve().parents[1]
-    for path in sorted(production.rglob("*.py")):
-        relative = path.relative_to(production)
-        if set(relative.parts) & {"tests", "tools", "docs", "examples", "__pycache__"}:
+    for parts, entry in _source_entries(production, ".py"):
+        if set(parts) & {"tests", "tools", "docs", "examples", "__pycache__"}:
             continue
         # L0 does not depend on combat systems. Keep the shared evaluator's
         # indirect unit_stats dependency; other runtime edits do not change IR.
-        if relative.parts[0] == "systems" and relative != Path("systems/unit_stats.py"):
+        if parts[0] == "systems" and parts != ("systems", "unit_stats.py"):
             continue
-        if relative == Path("core/executor.py"):
+        if parts == ("session.py",):
+            continue  # The L3 session boundary is never imported by L0.
+        if parts == ("core", "executor.py"):
             continue  # Combat execution consumes IR; L0 does not import it.
-        digest.update(str(relative).encode())
-        digest.update(path.read_bytes())
+        digest.update(os.sep.join(parts).encode())
+        with open(entry.path, "rb") as stream:
+            digest.update(stream.read())
     return digest.hexdigest()
 
 
