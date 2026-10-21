@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .immutable_json import thaw_json
+from .immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
 from .model import (
     JSONValue,
     LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,
@@ -57,9 +57,19 @@ UNIT_STATE_MUTABLE_FIELDS = frozenset(
 )
 
 
-def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
+def unit_state_to_payload(
+    unit: UnitState,
+    *,
+    detach: bool = True,
+) -> dict[str, JSONValue]:
+    """Encode one unit as its canonical payload.
+
+    Passing detach=False keeps the already frozen flags and shield instances shared
+    for internal read-only consumers; the default still returns a detached plain
+    JSON document.
+    """
     _require_lifecycle_integrity(unit)
-    flags = thaw_json(unit.flags)
+    flags = thaw_json(unit.flags) if detach else unit.flags
     if not isinstance(flags, dict):
         raise ValueError("unit state flags must be a JSON object")
     resources = {
@@ -77,7 +87,11 @@ def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
         "level": unit.level,
         **{field_name: _finite_number(getattr(unit, field_name), field_name) for field_name in UNIT_STATE_FLOAT_FIELDS},
         "statuses": list(unit.statuses),
-        "shield_instances": [thaw_json(instance) for instance in unit.shield_instances],
+        "shield_instances": (
+            [thaw_json(instance) for instance in unit.shield_instances]
+            if detach
+            else list(unit.shield_instances)
+        ),
         "flags": flags,
         "resources": resources,
         "stat_pools": [pool.to_json() for pool in unit.stat_pools],
@@ -87,8 +101,14 @@ def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
     return payload
 
 
-def unit_state_from_payload(payload: Any) -> UnitState:
-    raw = thaw_json(payload)
+def unit_state_from_payload(payload: Any, *, detach: bool = True) -> UnitState:
+    """Decode one canonical unit payload.
+
+    Passing detach=False reads already trusted frozen JSON in place instead of first
+    producing a mutable copy; the constructed unit still normalizes and freezes at
+    its own boundary, so mutable input is never shared.
+    """
+    raw = thaw_json(payload) if detach else payload
     if not isinstance(raw, dict):
         raise ValueError("unit state payload must be a JSON object")
     if set(raw) != UNIT_STATE_PAYLOAD_FIELDS:
@@ -188,7 +208,7 @@ def validate_canonical_unit_field_value(field_name: str, value: Any) -> None:
         _validate_shield_instances(value)
         return
     if field_name == "flags":
-        flags = thaw_json(value)
+        flags = _read_only_json(value)
         if not isinstance(flags, dict):
             raise ValueError("unit flags must be a JSON object")
         legacy_lifecycle_flags = sorted(
@@ -201,7 +221,7 @@ def validate_canonical_unit_field_value(field_name: str, value: Any) -> None:
             )
         return
     if field_name == "resources":
-        resources = thaw_json(value)
+        resources = _read_only_json(value)
         if not isinstance(resources, dict) or not all(
             isinstance(key, str) and type(item) is float and math.isfinite(item)
             for key, item in resources.items()
@@ -280,8 +300,15 @@ def _require_lifecycle_integrity(unit: UnitState) -> None:
     )
 
 
+def _read_only_json(value: Any) -> Any:
+    """Reuse exact internally-frozen JSON; detach any other input."""
+    if type(value) in (FrozenJSONDict, FrozenJSONList):
+        return value
+    return thaw_json(value)
+
+
 def _validate_shield_instances(value: Any) -> None:
-    instances = thaw_json(value)
+    instances = value if type(value) in (FrozenJSONList, list) else thaw_json(value)
     if not isinstance(instances, list):
         raise ValueError("unit shield_instances must be a JSON list")
     required = {

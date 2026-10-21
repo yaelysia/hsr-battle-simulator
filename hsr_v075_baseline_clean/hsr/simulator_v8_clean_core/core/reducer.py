@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .immutable_json import thaw_json
+from .immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
 from .model import (
     LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,
     BattleState,
@@ -28,6 +29,9 @@ _BATTLE_SCALAR_TYPES: dict[str, type[object]] = {
     "rng_state": str,
     "event_index": int,
 }
+# Exact internally-frozen JSON containers are immutable and already validated;
+# only these may be shared instead of detached. Subclasses stay untrusted.
+_FROZEN_JSON_CONTAINERS = (FrozenJSONDict, FrozenJSONList)
 @dataclass(frozen=True)
 class MutationConflict:
     code: str
@@ -355,7 +359,7 @@ class MutationReducer:
             unit = state.units.get(unit_id)
             return _PathValue(
                 unit is not None,
-                unit_state_to_payload(unit) if unit is not None else None,
+                unit_state_to_payload(unit, detach=False) if unit is not None else None,
                 "unit_root",
             )
         unit = state.units.get(unit_id)
@@ -381,7 +385,7 @@ class MutationReducer:
 
     def _write_path(self, state: BattleState, mutation: Mutation) -> BattleState:
         head = mutation.path[0]
-        after = thaw_json(mutation.after)
+        after = _retained_json_value(mutation.after)
         if head in _BATTLE_SCALAR_TYPES:
             return replace(state, **{head: after})
         if head == "global_flags":
@@ -401,7 +405,7 @@ class MutationReducer:
 
         unit_id = mutation.path[1]
         if len(mutation.path) == 2:
-            unit = unit_state_from_payload(after)
+            unit = unit_state_from_payload(after, detach=False)
             units = dict(state.units)
             units[unit_id] = unit
             return replace(state, units=units)
@@ -410,15 +414,11 @@ class MutationReducer:
         field_name = mutation.path[2]
         if len(mutation.path) == 3:
             value: Any = after
-            if field_name == "statuses":
-                assert isinstance(value, list)
-                value = tuple(value)
-            elif field_name == "shield_instances":
+            if field_name in {"statuses", "shield_instances"}:
                 assert isinstance(value, list)
                 value = tuple(value)
             elif field_name in {"flags", "resources"}:
                 assert isinstance(value, dict)
-                value = dict(value)
             unit = replace(unit, **{field_name: value})
         else:
             mapping = getattr(unit, field_name)
@@ -442,8 +442,8 @@ def _write_mapping(mapping: dict[str, Any], key: str, mutation: Mutation) -> dic
     if mutation.op == "delete":
         updated.pop(key)
     else:
-        updated[key] = thaw_json(mutation.after)
-    return updated
+        updated[key] = _retained_json_value(mutation.after)
+    return FrozenJSONDict(updated)
 
 
 def _validate_after_value(path: tuple[str, ...], kind: str, value: JSONValue) -> None:
@@ -495,8 +495,7 @@ def _validate_after_value(path: tuple[str, ...], kind: str, value: JSONValue) ->
 
 def _validate_spawn_payload(path: tuple[str, ...], payload: JSONValue) -> None:
     try:
-        mutable_payload = thaw_json(payload)
-        unit = unit_state_from_payload(mutable_payload)
+        unit = unit_state_from_payload(payload, detach=False)
     except (TypeError, ValueError) as exc:
         raise _ReductionIssue("invalid_spawn_payload", str(exc), expected=payload) from exc
     if unit.unit_id != path[1]:
@@ -505,8 +504,8 @@ def _validate_spawn_payload(path: tuple[str, ...], payload: JSONValue) -> None:
             f"spawn payload unit_id {unit.unit_id!r} does not match path {path[1]!r}",
             expected=payload,
         )
-    canonical = unit_state_to_payload(unit)
-    if not _typed_equal(canonical, mutable_payload):
+    canonical = unit_state_to_payload(unit, detach=False)
+    if not _typed_equal(canonical, payload):
         raise _ReductionIssue(
             "invalid_spawn_payload",
             "spawn payload must explicitly and exactly describe the resulting unit",
@@ -519,6 +518,9 @@ def _json_value(value: Any) -> JSONValue:
     if value is None or isinstance(value, (bool, int, float, str)):
         if isinstance(value, float) and not math.isfinite(value):
             raise _ReductionIssue("invalid_state_value", "state contains a non-finite float")
+        return value
+    if type(value) in _FROZEN_JSON_CONTAINERS:
+        # Immutable and validated at freeze time; sharing avoids a recursive copy.
         return value
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
@@ -542,17 +544,67 @@ def _is_json_value(value: Any) -> bool:
 
 
 def _typed_equal(left: Any, right: Any) -> bool:
-    return _typed_equal_plain(thaw_json(left), thaw_json(right))
+    """Strict JSON equality with the result of the former thaw-then-compare walk.
 
-
-def _typed_equal_plain(left: Any, right: Any) -> bool:
-    if type(left) is not type(right):
+    Objects compare as objects (frozen or plain), arrays as arrays (list or
+    tuple); scalars keep exact type identity, so True, 1 and 1.0 stay distinct and
+    a missing value stays distinct from None. Exact internally-frozen containers
+    are immutable and already validated, so the same object is equal without
+    recursion. Plain input is validated as the walk reaches it, and invalid JSON
+    never compares equal.
+    """
+    if left is right:
+        if type(left) in _FROZEN_JSON_CONTAINERS or left is None:
+            return True
+        if type(left) in (bool, int, str):
+            return True
+        if type(left) is float and math.isfinite(left):
+            return True
+        # Plain mutable containers fall through so their content is validated.
+    left_kind = _json_compare_kind(left)
+    right_kind = _json_compare_kind(right)
+    if left_kind != right_kind:
         return False
-    if isinstance(left, list):
-        return len(left) == len(right) and all(_typed_equal_plain(a, b) for a, b in zip(left, right))
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(_typed_equal_plain(left[key], right[key]) for key in left)
-    return bool(left == right)
+    if left_kind == "object":
+        if left.keys() != right.keys():
+            return False
+        return all(_typed_equal(left[key], right[key]) for key in left)
+    if left_kind == "array":
+        return len(left) == len(right) and all(
+            _typed_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    return type(left) is type(right) and bool(left == right)
+
+
+def _json_compare_kind(value: Any) -> str:
+    """Classify and validate one JSON value the way thawing it would."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return "scalar"
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return "scalar"
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("JSON object keys must be strings")
+        return "object"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    raise TypeError(f"value is not JSON-compatible: {type(value).__name__}")
+
+
+def _retained_json_value(value: Any) -> Any:
+    """Reuse exact internally-frozen JSON and detach any other JSON input."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return value
+    if type(value) in _FROZEN_JSON_CONTAINERS:
+        return value
+    return thaw_json(value)
 
 
 def _first_mismatch_path(expected: Any, actual: Any, path: tuple[str, ...] = ()) -> tuple[str, ...]:

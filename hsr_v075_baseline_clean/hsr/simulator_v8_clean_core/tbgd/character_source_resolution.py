@@ -193,6 +193,10 @@ _EQUIVALENT_REQUIRED_ROLES: dict[str, frozenset[str]] = {
     for spec in _DECODE_SPECS.values()
     if spec.equivalent_type
 }
+# Each raw type keeps at most this many observed structures. Once the retained
+# bucket is full and its first entry satisfies the required roles, no later node
+# can clear or promote it, so those nodes are only walked for candidates.
+_EQUIVALENT_EVIDENCE_CAPACITY = 16
 
 
 def _child_path(path: str, key: object) -> str:
@@ -408,29 +412,44 @@ def _package_index(
                 isinstance(raw_type, str)
                 and raw_type in equivalent_types
             ):
-                evidence = _equivalent_evidence(
-                    raw_type=raw_type,
-                    value=value,
-                    source_path=relative_path,
-                    json_path=json_path,
-                    content_sha256=digest,
+                required_roles = _EQUIVALENT_REQUIRED_ROLES[raw_type]
+                retained = equivalent_evidence.get(raw_type)
+                retained_settled = bool(retained) and (
+                    len(retained) >= _EQUIVALENT_EVIDENCE_CAPACITY
+                    and required_roles.issubset(
+                        set(retained[0].field_role_mapping.values())
+                    )
                 )
-                if evidence is not None:
-                    rows = equivalent_evidence[raw_type]
-                    required_roles = _EQUIVALENT_REQUIRED_ROLES[raw_type]
-                    compatible = required_roles.issubset(
-                        set(evidence.field_role_mapping.values())
+                if retained_settled:
+                    # Full compatible bucket cannot be cleared or promoted; keep
+                    # walking for candidates without building discarded evidence.
+                    pass
+                else:
+                    evidence = _equivalent_evidence(
+                        raw_type=raw_type,
+                        value=value,
+                        source_path=relative_path,
+                        json_path=json_path,
+                        content_sha256=digest,
                     )
-                    retained_compatible = bool(rows) and required_roles.issubset(
-                        set(rows[0].field_role_mapping.values())
-                    )
-                    if compatible and not retained_compatible:
-                        rows.clear()
-                        retained_compatible = True
-                    if (compatible and len(rows) < 16) or (
-                        not retained_compatible and len(rows) < 16
-                    ):
-                        rows.append(evidence)
+                    if evidence is not None:
+                        rows = equivalent_evidence[raw_type]
+                        compatible = required_roles.issubset(
+                            set(evidence.field_role_mapping.values())
+                        )
+                        retained_compatible = bool(rows) and required_roles.issubset(
+                            set(rows[0].field_role_mapping.values())
+                        )
+                        if compatible and not retained_compatible:
+                            rows.clear()
+                            retained_compatible = True
+                        if (
+                            compatible and len(rows) < _EQUIVALENT_EVIDENCE_CAPACITY
+                        ) or (
+                            not retained_compatible
+                            and len(rows) < _EQUIVALENT_EVIDENCE_CAPACITY
+                        ):
+                            rows.append(evidence)
             ability_list = value.get("AbilityList")
             if isinstance(ability_list, (list, tuple)):
                 list_path = _child_path(json_path, "AbilityList")

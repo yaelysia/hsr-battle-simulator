@@ -75,6 +75,42 @@ def task_graph_node_id(graph_id: str, formal_task_id: str, occurrence_id: str) -
     return _id("task_graph_node", graph_id, formal_task_id, occurrence_id)
 
 
+def _catalog_identity_digest(identity: Mapping[str, object]) -> str:
+    """Digest the compact sorted JSON byte stream of one task graph identity.
+
+    The output is byte-identical to
+    `json.dumps(identity, sort_keys=True, separators=(",", ":"),
+    default=lambda item: item.to_json())`, but top-level array members are encoded
+    one at a time so the catalog never becomes a single string.
+    """
+    encoder = json.JSONEncoder(
+        sort_keys=True,
+        separators=(",", ":"),
+        default=lambda item: item.to_json(),
+    )
+    digest = sha256()
+    digest.update(b"{")
+    for position, key in enumerate(sorted(identity)):
+        if position:
+            digest.update(b",")
+        digest.update(encoder.encode(key).encode("utf-8"))
+        digest.update(b":")
+        value = identity[key]
+        if isinstance(value, (list, tuple)):
+            # ponytail: peak memory follows the largest single member instead of
+            # the whole identity; stream members only if one becomes that large.
+            digest.update(b"[")
+            for index, member in enumerate(value):
+                if index:
+                    digest.update(b",")
+                digest.update(encoder.encode(member).encode("utf-8"))
+            digest.update(b"]")
+        else:
+            digest.update(encoder.encode(value).encode("utf-8"))
+    digest.update(b"}")
+    return digest.hexdigest()
+
+
 def _exact(value: object, fields: set[str], subject: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != fields:
         raise ValueError(f"{subject} JSON schema is invalid")
@@ -1148,15 +1184,12 @@ class TaskGraphCatalogIR:
             "selected_entry_ids": list(selected),
             "source_ledger_complete": self.source_ledger_complete,
         }
-        digest = sha256()
-        encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), default=lambda item: item.to_json())
-        for chunk in encoder.iterencode(identity):
-            digest.update(chunk.encode("utf-8"))
+        digest = _catalog_identity_digest(identity)
         object.__setattr__(self, "source_dispositions", canonical_dispositions)
         object.__setattr__(self, "entry_materializations", canonical_entries)
         object.__setattr__(self, "graphs", canonical_graphs)
         object.__setattr__(self, "selected_entry_ids", selected)
-        object.__setattr__(self, "catalog_id", f"task_graph_catalog:{digest.hexdigest()}")
+        object.__setattr__(self, "catalog_id", f"task_graph_catalog:{digest}")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {

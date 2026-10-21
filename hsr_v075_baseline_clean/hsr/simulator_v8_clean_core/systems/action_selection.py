@@ -29,7 +29,8 @@ _SELECTION_CONTEXT_ISSUER = object()
 
 def action_target_state_revision(state: BattleState) -> str:
     payload = json.dumps(
-        state.snapshot().to_json(),
+        # Internal digest: encode the read-only frozen snapshot without a copy.
+        state.snapshot().to_json(detach=False),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

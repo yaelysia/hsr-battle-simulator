@@ -722,7 +722,8 @@ def execute_dynamic_value_plan(
 
 def dynamic_value_state_fingerprint(state: BattleState) -> str:
     encoded = json.dumps(
-        state.snapshot().to_json(),
+        # Internal digest: encode the read-only frozen snapshot without a copy.
+        state.snapshot().to_json(detach=False),
         ensure_ascii=True,
         allow_nan=False,
         sort_keys=True,

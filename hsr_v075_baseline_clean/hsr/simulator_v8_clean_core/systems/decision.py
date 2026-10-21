@@ -496,7 +496,8 @@ def _choice_revision(availability: ActionAvailabilityView) -> str:
 
 
 def _state_revision(state: BattleState) -> str:
-    return _digest("state", state.snapshot().to_json())
+    # Internal digest: encode the read-only frozen snapshot without a copy.
+    return _digest("state", state.snapshot().to_json(detach=False))
 
 
 def _single_choice_actor_id(choices: tuple[ActionChoice, ...]) -> str:
