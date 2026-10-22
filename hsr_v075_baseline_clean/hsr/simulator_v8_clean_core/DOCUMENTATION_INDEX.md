@@ -34,6 +34,7 @@
 | 主题 | 当前入口 |
 |---|---|
 | 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
+| 战斗中怪物自然召唤 | [真实入口、共享调用链与集中验收约束](docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)；当前进度仍见交接 |
 | 独立伤害逐任务绑定 | [已验收批次的绑定契约](docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
 | 技能后置监听行动事实 | [自然路线、实现边界与固定命令](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md) |

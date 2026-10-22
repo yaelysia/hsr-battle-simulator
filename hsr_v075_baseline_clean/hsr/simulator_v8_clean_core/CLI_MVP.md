@@ -82,6 +82,26 @@ export PYTHONPATH=hsr_v075_baseline_clean
 同谐主），示例文件名已按实际角色命名；五行结果与剩余依赖见
 [V2 执行说明](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
 
+## 银鬃尉官战斗内自然召唤（2026-10-22）
+
+场景 `silvermane_lieutenant_summon_natural.json`，操作文件同名加 `.commands.json`。
+来源为 StageConfig `307311` wave 0 的单只 Lv44 银鬃尉官 `monster:1003010`；阿兰
+`avatar:1008` E0/Lv80/P6 与娜塔莎 `avatar:1105` E0/Lv80/P6 使用既有空装备正式构筑。
+18 次公开提交依次完成：外部选择召唤技能、两名 `1002040` 士兵出生并各行动一次、娜塔莎自然
+击败其中一名、尉官存活时再次召唤、新实例行动与一次后续公开普攻；脚本结束时战斗未结束，CLI
+返回 `3` 并保存可继续会话：
+
+```bash
+export PYTHONPATH=hsr_v075_baseline_clean
+.venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \
+  hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/silvermane_lieutenant_summon_natural.json \
+  --commands hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/silvermane_lieutenant_summon_natural.commands.json \
+  --output /tmp/hsr-v3-lieutenant-summon.json.gz
+```
+
+来源分支选择、卡片级 CustomValues 绑定、省略 ResetValue 语义、出生后启动与再召唤收口边界见
+[自然召唤执行说明](docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)。
+
 ## 希儿增强版普攻后置监听（2026-10-20）
 
 场景 `seele_post_attack_listener_natural.json`，操作文件同名加 `.commands.json`。希儿

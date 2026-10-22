@@ -1,27 +1,34 @@
 # v8 当前交接
 
-更新：2026-10-21。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
+更新：2026-10-22。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
 
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已提交基线：`b1f42db`（第二轮编译与执行提速，已验收）。
+- 最近已提交基线：本次 V3 怪物自然召唤提交；父提交 `255f153`，含已验收性能优化 `b1f42db`。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 第二轮四项优化已验收并提交；下一步回归主线，按真实内容核对下一批入口。
+- 当前主线：V3 怪物自然召唤已验收并随本提交收口；下一批尚未开工。
 
-## 最近收口：第二轮编译与执行集中优化
+## 最近收口：V3 战斗中自然召唤（已验收并提交）
 
-范围、约束与实测见[集中优化说明](simulator_v8_clean_core/docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。
-reducer 冻结子树共享、五处只读摘要、来源弃用证据和目录哈希编码已验收；保持正式校验、
-指纹、导出隔离与回滚。Codex 88 项定向检查通过，1205 组输入与旧 reducer 的结果及冲突一致；
-取消→晚期失败→成功顺序的 4 项集成通过，48.88 s、峰值 840748 KiB。
-交付限定冷构建约 27 s、九步执行约 27 s，独立 replay 19 步 0 错误；未改 submodule 或依赖。
-性能优化已提交；旧文档归档与现行导航随本次文档提交收口。
+范围与一次性约束见[自然召唤执行说明](simulator_v8_clean_core/docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)，
+实现内容、实际来源、公开操作、审计/回放与剩余依赖见该文末「本批交付」。
+固定来源 Stage 307311 wave 0、银鬃尉官 1003010 与召唤技能 100301004：被动初始化按来源根执行，
+外部选择召唤技能后走真实 Failed 分支出生两个 `1002040`，子单位各自行动一次，玩家自然击败一个后
+尉官存活时再次召唤，新实例行动并继续公开操作。卡片级 CustomValues 绑定（含 1003011 冲突拒绝，
+施法者作用域为正式 intent 字段而非审计证据）、省略 ResetValue 语义、`ByCompareMonsterID`、
+`ByIsTeamLocationIndexType`、`ByCheckCustomValueBool`（`W1_Soldier` 标签）、出生位置按当前
+阵型唯一分配、First/Last 端点顺序、波次清场顺序与死亡子单位的目标过滤一并收口。
+示例为 `examples/cli/silvermane_lieutenant_summon_natural{,.commands}.json`；integration 模块
+`tests/test_monster_summon_natural_route.py` 的自然链、来源审计及独立进程 replay 已通过。
+Codex 本轮复验 52 项快测通过（含两个原始端点复现）；复用上一轮自然路线与回放证据。
+仅选无配置分歧的父卡；不并入其它首领、主人死亡政策或完整 Rogue 环境。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
+| 第二轮性能优化 | 冻结子树共享、内部只读摘要、来源证据容量与目录哈希编码已验收；九步约 27 s，Codex 四项集成 48.88 s、88 项快测及 1205 组旧新对照通过。证据与范围见[优化说明](simulator_v8_clean_core/docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。 |
 | 自动插入行动 | 真实监听阈值→入队→自动战技→清理→后续公开操作已验收；开始/终结 tag 事实、实际等级、BP 免扣与 SPBase 单一回能生产者、取消和晚期回滚受原子边界保护。九步归档独立 replay 19 步 0 错误；限定构筑、命令和剩余边界见[路线说明](simulator_v8_clean_core/docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。 |
 | 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；Codex 89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支见上行。 |
 | V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](simulator_v8_clean_core/docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
@@ -52,7 +59,7 @@ reducer 冻结子树共享、五处只读摘要、来源弃用证据和目录哈
 | I10 | battle_event/servant 双 mute 退场之外的 ForceKill 形态。 |
 | I11 余项 | 其它/组合 StatusTypeMask、寿命 Set/减少、其它 InfectModifier 变体及尚未接通的精准实例操作。 |
 | V1 | 工作台真实浏览器点击、布局、导入/下载；已有 HTTP/客户端检查不代替浏览器验收。 |
-| V3 | SummonMonster 自然召唤后继续战斗；已有出生/启动底座，候选仍需核对完整父动作与子卡，不能用固定 ID 叶子准入代替特殊阶段整链。 |
+| V3 | 自然召唤主路线已验收；余下为主人死亡清理、评分/成就事件族、`ByIsTeamLocationIndexType` 的 Pos2/Pos3 等未采纳类型、灰熊等配置分歧与完整 Rogue 环境。 |
 
 ## 规则待定与待归因
 

@@ -1,0 +1,158 @@
+{
+  "commands": [
+    {
+      "actor_id": "enemy:stage:307311:wave:0:pos:0",
+      "action_id": "monster_skill:100301004",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {}
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:307311:wave:0:pos:0",
+      "action_id": "monster_skill:100301001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:5d24d2264811:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": [],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:5d24d2264811:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:9805b140d368:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:summon:9805b140d368:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:307311:wave:0:pos:0",
+      "action_id": "monster_skill:100301004",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {}
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:5d24d2264811:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:stage:307311:wave:0:pos:0",
+      "action_id": "monster_skill:100301001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:694877bac620:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": [],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:694877bac620:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "enemy:summon:7f5beb59d5b6:0",
+      "action_id": "monster_skill:100204001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {}
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:307311:wave:0:pos:0"
+      ],
+      "metadata": {}
+    }
+  ]
+}

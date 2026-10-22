@@ -373,13 +373,20 @@ class EntityRelationResolver:
         if len(selected) != len(set(selected)):
             selected = list(dict.fromkeys(selected))
         allow_defeated = options.get("allow_defeated") is True
+        current_targets: list[str] = []
         for unit_id in selected:
             ok, lifecycle_reason = self.lifecycle.can_target(
                 state, unit_id, allow_defeated=allow_defeated
             )
             if not ok:
+                if relation == "summon.owned" and lifecycle_reason == "unit_defeated":
+                    # An owned instance that was defeated is no longer a current
+                    # target of its owner. It stays in the runtime audit ledger,
+                    # but it must not fail the whole relation or block resummons.
+                    continue
                 return self._blocked(f"summon_relation_lifecycle_blocked:{lifecycle_reason}", relation)
-        return self._resolved(tuple(selected), relation)
+            current_targets.append(unit_id)
+        return self._resolved(tuple(current_targets), relation)
 
     def _adjacent(
         self,

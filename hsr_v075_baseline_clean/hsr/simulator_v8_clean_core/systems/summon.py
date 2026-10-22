@@ -19,7 +19,12 @@ from .summon_runtime import (
     validate_summon_runtime,
 )
 from .status import StatusSystem
-from .unit_spawn import UnitSpawnRequest, UnitSpawnSystem, spawn_plans_from_metadata
+from .unit_spawn import (
+    UnitSpawnPlan,
+    UnitSpawnRequest,
+    UnitSpawnSystem,
+    spawn_plans_from_metadata,
+)
 from .unit_lifecycle import UnitLifecycleSystem
 
 
@@ -186,6 +191,12 @@ class SummonSystem:
         spawn_requests: list[UnitSpawnRequest] = []
         blocked: list[str] = []
         seen_unit_ids: set[str] = set()
+        # Allocate formation slots against the current team formation and against
+        # the siblings planned earlier in this same intent. A relative First/Last
+        # spawn must never reuse a living unit's position.
+        formation_positions = _present_team_formation_positions(
+            state, owner, self.lifecycle
+        )
         spawn_index = 0
         for entry_index, entry in enumerate(intent.entries):
             if entry.coverage_status != "executable":
@@ -215,6 +226,7 @@ class SummonSystem:
                     entry_index=entry_index,
                     copy_index=copy_index,
                     spawn_index=spawn_index,
+                    formation_positions=tuple(sorted(formation_positions)),
                     source_trace=intent.source.to_json(),
                     entry_source_trace=entry.source.to_json(),
                 )
@@ -222,6 +234,9 @@ class SummonSystem:
                 if not spawn_plan.ok:
                     blocked.append(spawn_plan.blocked_reason or "summon_monster_spawn_plan_blocked")
                     continue
+                planned_position = _spawn_plan_position(spawn_plan)
+                if planned_position is not None:
+                    formation_positions.add(planned_position)
                 unit_ids.append(unit_id)
                 spawn_requests.append(spawn_request)
                 unit_spawn_plans.append(spawn_plan.to_json())
@@ -1575,6 +1590,34 @@ def _queue_entry_references_removed(entry: JSONValue, removed_ids: set[str]) -> 
     if isinstance(target_resolution, dict) and _queue_entry_references_removed(target_resolution, removed_ids):
         return True
     return False
+
+
+def _present_team_formation_positions(
+    state: BattleState,
+    owner: UnitState,
+    lifecycle: UnitLifecycleSystem,
+) -> set[int]:
+    """Collect the owner team's present formation positions for allocation."""
+
+    positions: set[int] = set()
+    for unit_id, unit in state.units.items():
+        if unit.side != owner.side:
+            continue
+        if not lifecycle.view(state, unit_id).is_present:
+            continue
+        position = unit.flags.get("position")
+        if isinstance(position, int) and not isinstance(position, bool):
+            positions.add(position)
+    return positions
+
+
+def _spawn_plan_position(spawn_plan: UnitSpawnPlan) -> int | None:
+    unit_payload = spawn_plan.unit if isinstance(spawn_plan.unit, dict) else {}
+    flags = unit_payload.get("flags")
+    position = flags.get("position") if isinstance(flags, dict) else None
+    if isinstance(position, bool) or not isinstance(position, int):
+        return None
+    return position
 
 
 def _summoned_monster_unit_id(

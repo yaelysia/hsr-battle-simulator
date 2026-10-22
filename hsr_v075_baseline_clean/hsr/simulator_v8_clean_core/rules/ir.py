@@ -4977,6 +4977,9 @@ class SummonMonsterIntentIR:
     entries: tuple[SummonMonsterEntryIR, ...]
     source_event: str
     source: IRSource
+    # Formal card scope of the actual caster. Runtime admission reads this field
+    # (never source evidence), so an audit-only evidence trim cannot change behavior.
+    caster_card_scope: dict[str, JSONValue] = field(default_factory=dict)
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     schema_version: str = "p1_3_summon_monster_intent_v1"
@@ -4992,6 +4995,7 @@ class SummonMonsterIntentIR:
             "entries": [entry.to_json() for entry in self.entries],
             "source_event": self.source_event,
             "source": self.source.to_json(),
+            "caster_card_scope": self.caster_card_scope,
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
         }

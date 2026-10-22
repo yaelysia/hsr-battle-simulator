@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..core.model import GameEvent
 
+from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..unit_eligibility import (
     runtime_unit_is_dark_team,
     runtime_unit_is_light_team,
@@ -114,6 +115,7 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByCheckModifierCallBackIsSelf",
     "ByCheckModifierCallBackName",
     "ByCheckModifierCallBackStatusType",
+    "ByCheckCustomValueBool",
     "ByCompareAbilityProperty",
     "ByCompareCharacterID",
     "ByCompareDynamicValue",
@@ -138,6 +140,7 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByIsDamageCritical",
     "ByIsPropertyValueMinOrMax",
     "ByIsTargetValid",
+    "ByIsTeamLocationIndexType",
     "ByIsTopActionDelayTarget",
     "ByRandomChance",
     "ByRankActivated",
@@ -210,6 +213,12 @@ CONTEXTUAL_CONDITION_OPCODES = frozenset(
 EXECUTABLE_CONDITION_OPCODES = frozenset(
     _PRE_P9_EXECUTABLE_CONDITION_OPCODES
 ) | COMMITTED_STATE_CONDITION_OPCODES | CONTEXTUAL_CONDITION_OPCODES
+
+_TEAM_LOCATION_INDEX_TEAM_SIDES = MappingProxyType({
+    "TeamLight": "ally",
+    "TeamDark": "enemy",
+})
+_TEAM_LOCATION_INDEX_TYPES = frozenset({"Left", "Right", "Medium", "Max"})
 
 
 class RuleEvaluator:
@@ -1056,6 +1065,214 @@ def _evaluate_condition_payload(
             opcode,
             "target_team_compared",
             {"expected": expected, "targets": checked},
+            source_trace,
+        )
+    if opcode == "ByCheckCustomValueBool":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_alias_unresolved",
+                target_details,
+                source_trace,
+            )
+        unit = _state_unit(context, target_id)
+        if unit is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_unit_missing",
+                {"target_id": target_id},
+                source_trace,
+            )
+        key = payload.get("Key")
+        hash_value = key.get("Hash") if isinstance(key, dict) else None
+        if isinstance(hash_value, bool) or not isinstance(hash_value, int):
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "custom_value_key_hash_missing",
+                {"target_id": target_id, "key": key},
+                source_trace,
+            )
+        flags = getattr(unit, "flags", None)
+        raw_tags = flags.get("custom_value_tags") if isinstance(flags, dict) else None
+        if not isinstance(raw_tags, (list, tuple)):
+            # The unit's formal card kind never declared a tag list, or the
+            # declaration was not admitted into the birth template.
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "custom_value_tag_source_missing",
+                {"target_id": target_id},
+                source_trace,
+            )
+        tag_hashes: list[tuple[str, int]] = []
+        invalid_tags: list[object] = []
+        for tag in raw_tags:
+            if not isinstance(tag, str) or not tag:
+                invalid_tags.append(tag)
+                continue
+            tag_hashes.append((tag, tbgd_dynamic_key_hash(tag)))
+        if invalid_tags:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "custom_value_tag_entry_invalid",
+                {"target_id": target_id, "invalid_tags": invalid_tags},
+                source_trace,
+            )
+        matched = hash_value in {value for _, value in tag_hashes}
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "custom_value_tag_checked",
+            {
+                "target_id": target_id,
+                "key_hash": hash_value,
+                "declared_tags": [tag for tag, _ in tag_hashes],
+                "matched_tag": next(
+                    (tag for tag, value in tag_hashes if value == hash_value), ""
+                ),
+                "tag_source": (
+                    flags.get("custom_value_tag_source_trace")
+                    if isinstance(flags, dict)
+                    else None
+                ),
+            },
+            source_trace,
+        )
+    if opcode == "ByIsTeamLocationIndexType":
+        team_type = payload.get("TeamType")
+        index_type = payload.get("Type")
+        if index_type is None:
+            index_type = "Left"
+        details: dict[str, Any] = {
+            "team_type": team_type,
+            "index_type": index_type,
+            "target_position": None,
+            "team_positions": [],
+            "team_member_ids": [],
+        }
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_alias_unresolved",
+                {**details, "target_resolution": target_details},
+                source_trace,
+            )
+        details["target_id"] = target_id
+        target = _state_unit(context, target_id)
+        if target is None:
+            return _condition_blocked(condition_id, opcode, "target_unit_missing", details, source_trace)
+        expected_side = (
+            _TEAM_LOCATION_INDEX_TEAM_SIDES.get(team_type)
+            if isinstance(team_type, str)
+            else None
+        )
+        if expected_side is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"team_type_not_admitted:{team_type}",
+                {**details, "admitted_team_types": sorted(_TEAM_LOCATION_INDEX_TEAM_SIDES)},
+                source_trace,
+            )
+        if not isinstance(index_type, str) or index_type not in _TEAM_LOCATION_INDEX_TYPES:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"team_location_index_type_not_admitted:{index_type}",
+                {**details, "admitted_index_types": sorted(_TEAM_LOCATION_INDEX_TYPES)},
+                source_trace,
+            )
+        target_side = getattr(target, "side", None)
+        if target_side != expected_side:
+            return _condition_result(
+                False,
+                condition_id,
+                opcode,
+                "team_location_target_side_mismatch",
+                {**details, "expected_side": expected_side, "target_side": target_side},
+                source_trace,
+            )
+        units = getattr(getattr(context, "state", None), "units", None)
+        if not isinstance(units, dict):
+            return _condition_blocked(
+                condition_id, opcode, "team_location_state_units_missing", details, source_trace
+            )
+        target_position = _team_location_position(target)
+        details["target_position"] = target_position
+        if target_position is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "team_location_position_missing",
+                {**details, "missing_position_unit_ids": [target_id]},
+                source_trace,
+            )
+        member_ids: list[str] = []
+        member_positions: dict[str, int] = {}
+        missing_position_ids: list[str] = []
+        for unit_id in sorted(units):
+            unit = units[unit_id]
+            if getattr(unit, "side", None) != expected_side:
+                continue
+            if not _unit_is_alive(unit):
+                continue
+            hp = getattr(unit, "hp", None)
+            if not _finite_number(hp) or float(hp) <= 0:
+                continue
+            position = _team_location_position(unit)
+            if position is None:
+                missing_position_ids.append(unit_id)
+                continue
+            member_ids.append(unit_id)
+            member_positions[unit_id] = position
+        details["team_member_ids"] = list(member_ids)
+        details["team_positions"] = [member_positions[unit_id] for unit_id in member_ids]
+        if missing_position_ids:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "team_location_position_missing",
+                {**details, "missing_position_unit_ids": missing_position_ids},
+                source_trace,
+            )
+        if target_id not in member_positions:
+            return _condition_result(
+                False,
+                condition_id,
+                opcode,
+                "team_location_target_not_alive_in_team",
+                {**details, "target_side": target_side},
+                source_trace,
+            )
+        team_positions = details["team_positions"]
+        minimum = min(team_positions)
+        maximum = max(team_positions)
+        if index_type == "Left":
+            matched = target_position == minimum
+        elif index_type in {"Right", "Max"}:
+            matched = target_position == maximum
+        else:
+            matched = minimum < target_position < maximum
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "team_location_index_checked",
+            {
+                **details,
+                "expected_side": expected_side,
+                "target_side": target_side,
+                "team_min_position": minimum,
+                "team_max_position": maximum,
+            },
             source_trace,
         )
     if opcode == "ByIsContainModifier":
@@ -3139,6 +3356,16 @@ def _unit_is_alive(unit: Any | None) -> bool:
     if unit is None:
         return False
     return getattr(unit, "lifecycle_status", None) == "active"
+
+
+def _team_location_position(unit: Any) -> int | None:
+    flags = getattr(unit, "flags", None)
+    if not isinstance(flags, dict):
+        return None
+    position = flags.get("position")
+    if isinstance(position, int) and not isinstance(position, bool):
+        return position
+    return None
 
 
 def _team_matches(unit: Any, expected: object) -> tuple[bool | None, str]:

@@ -2535,6 +2535,15 @@ def _formal_character_activation(
     flags: dict[str, Any] = {
         "build_mode": "assembled_character_build",
         "character_data_card_id": unit.character_build.character_card_id,
+        # AvatarConfig / CharacterConfig declare no CustomValueTags field, so the
+        # formal declaration for an avatar unit is an empty tag list.
+        "custom_value_tags": [],
+        "custom_value_tag_source_trace": {
+            "admission_status": "executable",
+            "kind": "avatar_config_declares_no_custom_value_tags",
+            "character_data_card_id": unit.character_build.character_card_id,
+            "raw_path": "AvatarConfig",
+        },
         "character_build_id": assembly.build_id,
         "character_build_input_fingerprint": assembly.input_fingerprint,
         "character_build_result_fingerprint": assembly.result_fingerprint,

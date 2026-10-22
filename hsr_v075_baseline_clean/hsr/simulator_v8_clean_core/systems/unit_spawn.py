@@ -27,6 +27,10 @@ class UnitSpawnRequest:
     stage_id: str = ""
     wave_index: int | None = None
     position: int | None = None
+    # Formation positions already present on the owner's team when this request
+    # was planned. Relative First/Last/BeforeCaster/AfterCaster bindings allocate
+    # the next free slot from these facts instead of reusing an occupied slot.
+    formation_positions: tuple[int, ...] = ()
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     entry_source_trace: dict[str, JSONValue] = field(default_factory=dict)
 
@@ -47,6 +51,7 @@ class UnitSpawnRequest:
             "stage_id": self.stage_id,
             "wave_index": self.wave_index,
             "position": self.position,
+            "formation_positions": list(self.formation_positions),
             "source_trace": self.source_trace,
             "entry_source_trace": self.entry_source_trace,
         }
@@ -70,6 +75,7 @@ class UnitSpawnRequest:
             stage_id=str(raw.get("stage_id") or ""),
             wave_index=_optional_request_int(raw.get("wave_index")),
             position=_optional_request_int(raw.get("position")),
+            formation_positions=_optional_position_tuple(raw.get("formation_positions")),
             source_trace=dict(raw.get("source_trace") or {}) if isinstance(raw.get("source_trace"), dict) else {},
             entry_source_trace=dict(raw.get("entry_source_trace") or {})
             if isinstance(raw.get("entry_source_trace"), dict)
@@ -428,14 +434,25 @@ def _resolve_spec(
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("unit_birth_binding_position_offset_invalid")
         owner_position = _unit_position(owner)
-        if location_type == "BeforeCaster" and owner_position is not None:
-            return owner_position - (offset + 1)
-        if location_type == "AfterCaster" and owner_position is not None:
-            return owner_position + (offset + 1)
+        occupied = frozenset(request.formation_positions)
+        # First/Last are formation endpoints, not merely the historical +-1000
+        # anchors: when a present formation already reaches past the anchor
+        # (multi-copy spawn_index growth, or a gap left by a departed sibling),
+        # scanning from the anchor would land inside the formation. The result
+        # is computed outside [min(occupied), max(occupied)] directly, so no
+        # free-slot scan is needed on these two paths.
         if location_type in {"First", "KeepOnFirst"}:
-            return -1000 + offset
+            return min(-1000, min(occupied, default=0) - 1) - offset
         if location_type in {"Last", "KeepOnLast"}:
-            return 1000 + offset
+            return max(1000, max(occupied, default=0) + 1) + offset
+        if location_type == "BeforeCaster" and owner_position is not None:
+            return _first_free_relative_position(
+                owner_position - (offset + 1), -1, occupied
+            )
+        if location_type == "AfterCaster" and owner_position is not None:
+            return _first_free_relative_position(
+                owner_position + (offset + 1), 1, occupied
+            )
         raise ValueError("unit_birth_binding_position_not_resolved")
     if kind == "owner_position":
         return _unit_position(owner)
@@ -659,6 +676,27 @@ def _finite_decimal_number(value: str | None) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _first_free_relative_position(
+    start: int,
+    step: int,
+    occupied: frozenset[int],
+) -> int:
+    """Return the nearest free formation slot from the anchor direction.
+
+    Siblings in one plan are planned sequentially, so each request receives the
+    formation facts that already include the earlier allocations. Reusing an
+    occupied slot would make EntityRelationResolver's formation adjacency
+    ambiguous (a duplicate position), so allocation stays unique instead.
+    """
+
+    candidate = start
+    for _ in range(4096):
+        if candidate not in occupied:
+            return candidate
+        candidate += step
+    raise ValueError("unit_birth_binding_position_allocation_exhausted")
+
+
 def _request_field(request: UnitSpawnRequest, field_name: str) -> JSONValue:
     values = request.to_json()
     if field_name not in values:
@@ -693,6 +731,15 @@ def _validate_spawn_request_complete(request: UnitSpawnRequest) -> None:
             value = getattr(request, field_name)
             if not isinstance(value, int) or value < 0:
                 raise ValueError(f"unit_spawn_request_{field_name}_missing")
+    positions = request.formation_positions
+    if not isinstance(positions, tuple):
+        raise ValueError("unit_spawn_request_formation_positions_not_tuple")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) for value in positions
+    ):
+        raise ValueError("unit_spawn_request_formation_position_not_integer")
+    if len(positions) != len(set(positions)):
+        raise ValueError("unit_spawn_request_formation_position_duplicate")
     if request.spawn_kind == "wave_enemy":
         if not request.wave_definition_id or not request.stage_id:
             raise ValueError("unit_spawn_request_wave_identity_missing")
@@ -969,6 +1016,7 @@ def _spawn_request_identity(request: UnitSpawnRequest) -> tuple[JSONValue, ...]:
         request.stage_id,
         request.wave_index,
         request.position,
+        tuple(request.formation_positions),
     )
 
 
@@ -984,6 +1032,17 @@ def _required_flag_int(flags: dict[str, JSONValue], key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"unit_spawn_plan_{key}_missing")
     return value
+
+
+def _optional_position_tuple(value: JSONValue) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    positions: list[int] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int):
+            continue
+        positions.append(item)
+    return tuple(positions)
 
 
 def _optional_request_int(value: JSONValue) -> int | None:

@@ -226,15 +226,9 @@ class WaveSystem:
                 spawn_entries=entries,
                 source_trace=definition.source.to_json(),
             )
-        blocking = _blocking_active_enemies(state, self.lifecycle, current_wave_index)
-        if blocking:
-            return self._blocked(
-                wave_definition_id,
-                current_wave_index,
-                str(blocking[0]["reason"]),
-                blocking_unit_ids=tuple(str(item["unit_id"]) for item in blocking),
-                source_trace=definition.source.to_json(),
-            )
+        # A living member of the current wave keeps the wave running. Summons and
+        # other transition blockers only matter once the wave's own members are
+        # gone, otherwise an admitted enemy summon would freeze every decision.
         active_current = tuple(
             unit_id
             for unit_id in current_ids
@@ -247,6 +241,15 @@ class WaveSystem:
                 wave_definition_id=wave_definition_id,
                 current_wave_index=current_wave_index,
                 blocking_unit_ids=active_current,
+                source_trace=definition.source.to_json(),
+            )
+        blocking = _blocking_active_enemies(state, self.lifecycle, current_wave_index)
+        if blocking:
+            return self._blocked(
+                wave_definition_id,
+                current_wave_index,
+                str(blocking[0]["reason"]),
+                blocking_unit_ids=tuple(str(item["unit_id"]) for item in blocking),
                 source_trace=definition.source.to_json(),
             )
         missing_current = tuple(unit_id for unit_id in current_ids if unit_id not in state.units)

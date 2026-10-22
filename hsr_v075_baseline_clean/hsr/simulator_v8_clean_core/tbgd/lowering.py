@@ -72,6 +72,7 @@ from ..equipment.models import (
     RelicSetThresholdIR,
     make_equipment_source,
 )
+from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
 from ..resource_event_contract import (
     resource_callback_runtime_sources,
@@ -100,6 +101,7 @@ from ..rules.expression_ir import (
     NUMERIC_EXPRESSION_SCHEMA,
     TARGET_EXPRESSION_NODE_SCHEMA,
     is_typed_numeric_expression,
+    numeric_dynamic_hash,
     numeric_dynamic_hashes,
     numeric_fixed,
     numeric_fixed_value,
@@ -2358,6 +2360,7 @@ class TBGDLowering:
             ability_tasks=ability_tasks,
             effects=effects,
             triggers=triggers,
+            conditions=conditions,
         )
         status_callback_blocked_reasons = {
             callback.callback_id: (
@@ -10944,12 +10947,19 @@ def _summoned_monster_birth_template(
         "monster_data_card_source_trace": card_source,
         "monster_rank": monster_rank,
         "monster_rank_score": monster_rank_score,
-        "monster_rank_source_trace": {
-            "source_path": "Config/GlobalConfig/GameCoreConstValue.json",
-            "raw_type": "MonsterRankScore",
-            "raw_id": monster_rank,
-        },
+        "monster_rank_source_trace": IRSource(
+            source_path="Config/GlobalConfig/GameCoreConstValue.json",
+            raw_type="MonsterRankScore",
+            raw_id=monster_rank,
+            evidence={
+                "raw_path": f"MonsterRankScore.{monster_rank}.Value",
+                "rank": monster_rank,
+                "value": monster_rank_score,
+            },
+        ).to_json(),
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
+        "custom_value_tags": _monster_custom_value_tags(card),
+        "custom_value_tag_source_trace": _monster_custom_value_tag_source_trace(card),
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
         "toughness_profile_source_trace": profile_source,
@@ -11107,6 +11117,15 @@ def _servant_birth_template(
         },
         "servant_definition_id": {"binding_kind": "request_field", "field": "source_id"},
         "servant_ref": definition.servant_ref,
+        # AvatarServantConfig declares no CustomValueTags field, so the formal
+        # declaration for a servant is an empty tag list rather than a guess.
+        "custom_value_tags": [],
+        "custom_value_tag_source_trace": {
+            "admission_status": "executable",
+            "kind": "servant_config_declares_no_custom_value_tags",
+            "servant_ref": definition.servant_ref,
+            "raw_path": "AvatarServantConfig",
+        },
         "owned_combatant_build_result": {
             "binding_kind": "owner_owned_combatant_build",
             "servant_definition_id": definition.servant_definition_id,
@@ -11305,6 +11324,8 @@ def _wave_enemy_birth_template(
             },
         ).to_json(),
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
+        "custom_value_tags": _monster_custom_value_tags(card),
+        "custom_value_tag_source_trace": _monster_custom_value_tag_source_trace(card),
         "weaknesses": list(profile.weaknesses) if profile is not None else [],
         "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
         "initial_action_value_source_trace": {
@@ -11340,6 +11361,33 @@ def _wave_enemy_birth_template(
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
     )
+
+
+def _monster_custom_value_tags(card: MonsterDataCardIR | None) -> list[str]:
+    """Project the card's declared CustomValueTags as immutable birth input."""
+
+    if card is None:
+        return []
+    blocks = card.raw_parameter_blocks.get("monster_config")
+    raw_tags = blocks.get("custom_value_tags") if isinstance(blocks, Mapping) else None
+    if not isinstance(raw_tags, (list, tuple)):
+        return []
+    return [str(tag) for tag in raw_tags if isinstance(tag, str) and tag]
+
+
+def _monster_custom_value_tag_source_trace(card: MonsterDataCardIR | None) -> dict[str, JSONValue]:
+    if card is None:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "monster_custom_value_tag_card_missing",
+        }
+    return {
+        "admission_status": "executable",
+        "kind": "monster_config_custom_value_tags",
+        "raw_path": "MonsterConfig.CustomValueTags",
+        "monster_data_card_id": card.card_id,
+        "source": card.source.to_json(),
+    }
 
 
 def _birth_profile_values(profile: CombatantProfileIR | None) -> tuple[dict[str, float], list[str]]:
@@ -11502,6 +11550,7 @@ def _admit_passive_startup_slots(
     ability_tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
     triggers: list[TriggerIR],
+    conditions: list[ConditionIR],
 ) -> list[PassiveMechanismSlotIR]:
     graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
     for graph in standalone_graphs:
@@ -11510,6 +11559,7 @@ def _admit_passive_startup_slots(
     for task in ability_tasks:
         tasks_by_phase.setdefault(task.phase_id, []).append(task)
     effects_by_id = {effect.effect_id: effect for effect in effects}
+    conditions_by_id = {condition.condition_id: condition for condition in conditions}
     modifiers_with_triggers = _modifier_names_with_triggers(triggers)
     admitted: list[PassiveMechanismSlotIR] = []
     for slot in slots:
@@ -11523,6 +11573,7 @@ def _admit_passive_startup_slots(
                 tasks_by_phase=tasks_by_phase,
                 effects_by_id=effects_by_id,
                 modifiers_with_triggers=modifiers_with_triggers,
+                conditions_by_id=conditions_by_id,
             )
         )
     return admitted
@@ -11535,6 +11586,7 @@ def _admit_passive_startup_slot(
     tasks_by_phase: dict[str, list[AbilityTaskIR]],
     effects_by_id: dict[str, EffectIR],
     modifiers_with_triggers: set[str],
+    conditions_by_id: dict[str, ConditionIR] | None = None,
 ) -> PassiveMechanismSlotIR:
     semantics = dict(slot.semantics)
     ability_name = str(semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
@@ -11598,7 +11650,7 @@ def _admit_passive_startup_slot(
     unadmitted_root_tasks = tuple(
         task for task in root_on_start_tasks
         if task not in presentation_tasks
-        and (task.opcode not in {"AddModifier", "DefineDynamicValue"} or not task.effect_id)
+        and not _passive_startup_root_task_admitted(task)
     )
     if unadmitted_root_tasks:
         reason = "monster_passive_startup_root_on_start_has_unadmitted_tasks"
@@ -11625,9 +11677,7 @@ def _admit_passive_startup_slot(
         )
 
     candidate_tasks = tuple(
-        task
-        for task in root_on_start_tasks
-        if task.opcode in {"AddModifier", "DefineDynamicValue"} and task.effect_id
+        task for task in root_on_start_tasks if task not in presentation_tasks
     )
     if not candidate_tasks:
         return _passive_startup_blocked_slot(
@@ -11642,26 +11692,61 @@ def _admit_passive_startup_slot(
                 },
             },
         )
+    phase_tasks_by_id = {
+        task.task_id: task
+        for phase_id in graph.phase_ids
+        for task in tasks_by_phase.get(phase_id, ())
+    }
 
     admitted_tasks: list[dict[str, JSONValue]] = []
     blocked_tasks: list[dict[str, JSONValue]] = []
     for task in candidate_tasks:
-        effect = effects_by_id.get(task.effect_id)
-        if effect is None:
-            blocked_tasks.append({"task_id": task.task_id, "blocked_reason": "monster_passive_startup_effect_missing"})
+        if task.opcode in {"AddModifier", "DefineDynamicValue"}:
+            effect = effects_by_id.get(task.effect_id)
+            if effect is None:
+                blocked_tasks.append({"task_id": task.task_id, "blocked_reason": "monster_passive_startup_effect_missing"})
+                continue
+            effect_reason = _passive_startup_effect_blocked_reason(effect, modifiers_with_triggers)
+            if effect_reason:
+                blocked_tasks.append(
+                    {
+                        "task_id": task.task_id,
+                        "effect_id": effect.effect_id,
+                        "blocked_reason": effect_reason,
+                        "effect_coverage_status": effect.coverage_status,
+                    }
+                )
+                continue
+            descriptor: dict[str, JSONValue] = {
+                "task_id": task.task_id,
+                "effect_id": effect.effect_id,
+            }
+            if effect.opcode == "DefineDynamicValue":
+                descriptor["dynamic_value_reset_policy"] = (
+                    _passive_startup_dynamic_reset_policy(effect)
+                )
+            admitted_tasks.append(descriptor)
             continue
-        effect_reason = _passive_startup_effect_blocked_reason(effect, modifiers_with_triggers)
-        if effect_reason:
+        descriptor, predicate_reason, predicate_detail = (
+            _passive_startup_predicate_root_admission(
+                task,
+                phase_tasks_by_id=phase_tasks_by_id,
+                effects_by_id=effects_by_id,
+                modifiers_with_triggers=modifiers_with_triggers,
+                conditions_by_id=conditions_by_id or {},
+            )
+        )
+        if predicate_reason:
             blocked_tasks.append(
                 {
                     "task_id": task.task_id,
-                    "effect_id": effect.effect_id,
-                    "blocked_reason": effect_reason,
-                    "effect_coverage_status": effect.coverage_status,
+                    "opcode": task.opcode,
+                    **predicate_detail,
+                    "blocked_reason": predicate_reason,
                 }
             )
             continue
-        admitted_tasks.append({"task_id": task.task_id, "effect_id": effect.effect_id})
+        admitted_tasks.append(descriptor)
     if blocked_tasks or not admitted_tasks:
         return _passive_startup_blocked_slot(
             slot,
@@ -11682,7 +11767,11 @@ def _admit_passive_startup_slot(
             **slot.linked_ir_ids,
             "standalone_ability_graph_id": graph.standalone_ability_graph_id,
             "admitted_task_ids": [str(item["task_id"]) for item in admitted_tasks],
-            "admitted_effect_ids": [str(item["effect_id"]) for item in admitted_tasks],
+            "admitted_effect_ids": [
+                str(item["effect_id"])
+                for item in admitted_tasks
+                if item.get("effect_id")
+            ],
         },
         semantics={
             **semantics,
@@ -11717,24 +11806,163 @@ def _passive_startup_blocked_slot(
     return replace(slot, semantics=semantics, coverage_status="blocked", blocked_reason=reason)
 
 
+def _passive_startup_root_task_admitted(task: AbilityTaskIR) -> bool:
+    if task.opcode in {"AddModifier", "DefineDynamicValue"}:
+        return bool(task.effect_id)
+    if task.opcode == "PredicateTaskList":
+        return bool(task.condition_id)
+    return False
+
+
+def _passive_startup_dynamic_reset_policy(effect: EffectIR) -> str:
+    if "ResetValue" in effect.payload:
+        return "explicit_reset_value"
+    return "initialize_zero_only_when_absent"
+
+
+def _passive_startup_predicate_root_admission(
+    task: AbilityTaskIR,
+    *,
+    phase_tasks_by_id: dict[str, AbilityTaskIR],
+    effects_by_id: dict[str, EffectIR],
+    modifiers_with_triggers: set[str],
+    conditions_by_id: dict[str, ConditionIR],
+) -> tuple[dict[str, JSONValue], str, dict[str, JSONValue]]:
+    """Admit a source-proven conditional passive initializer.
+
+    Only comparisons against the caster's own formal monster identity are admitted;
+    unsupported predicates, nested branch tasks and unbound identities fail closed.
+    """
+
+    if not task.condition_id:
+        return {}, "monster_passive_startup_predicate_condition_missing", {}
+    condition = conditions_by_id.get(task.condition_id)
+    if condition is None:
+        return (
+            {},
+            "monster_passive_startup_predicate_condition_not_found",
+            {"condition_id": task.condition_id},
+        )
+    if condition.coverage_status != "executable":
+        return (
+            {},
+            f"monster_passive_startup_predicate_condition_not_executable:{condition.coverage_status}",
+            {"condition_id": task.condition_id},
+        )
+    if condition.opcode != "ByCompareMonsterID":
+        return (
+            {},
+            f"monster_passive_startup_predicate_opcode_not_admitted:{condition.opcode}",
+            {"condition_id": task.condition_id, "condition_opcode": condition.opcode},
+        )
+    target_alias = _target_alias(condition.payload.get("TargetType"))
+    if target_alias not in {"Caster", "ModifierOwnerEntity"}:
+        return (
+            {},
+            f"monster_passive_startup_predicate_target_not_admitted:{target_alias or 'missing'}",
+            {"condition_id": task.condition_id, "target_alias": target_alias},
+        )
+    if not _numeric_expr_can_be_runtime_bound(condition.payload.get("TargetMonsterID")):
+        return (
+            {},
+            "monster_passive_startup_predicate_monster_id_not_bound",
+            {"condition_id": task.condition_id},
+        )
+    branch_task_ids = (*task.success_task_ids, *task.failed_task_ids)
+    if not branch_task_ids:
+        return {}, "monster_passive_startup_predicate_branch_missing", {}
+    branch_tasks: list[dict[str, JSONValue]] = []
+    for branch_task_id in branch_task_ids:
+        child = phase_tasks_by_id.get(branch_task_id)
+        if child is None or child.parent_task_id != task.task_id:
+            return (
+                {},
+                f"monster_passive_startup_predicate_branch_task_missing:{branch_task_id}",
+                {},
+            )
+        if child.opcode != "AddModifier":
+            return (
+                {},
+                f"monster_passive_startup_predicate_branch_task_not_admitted:{child.opcode}",
+                {"task_id": child.task_id},
+            )
+        if child.child_task_ids:
+            return (
+                {},
+                "monster_passive_startup_predicate_branch_nested",
+                {"task_id": child.task_id},
+            )
+        effect = effects_by_id.get(child.effect_id) if child.effect_id else None
+        if effect is None:
+            return (
+                {},
+                "monster_passive_startup_predicate_branch_effect_missing",
+                {"task_id": child.task_id},
+            )
+        effect_reason = _passive_startup_effect_blocked_reason(
+            effect, modifiers_with_triggers
+        )
+        if effect_reason:
+            return (
+                {},
+                effect_reason,
+                {"task_id": child.task_id, "effect_id": effect.effect_id},
+            )
+        branch_tasks.append({"task_id": child.task_id, "effect_id": effect.effect_id})
+    return (
+        {
+            "task_id": task.task_id,
+            "kind": "predicate_branch",
+            "condition_id": condition.condition_id,
+            "condition_opcode": condition.opcode,
+            "success_task_ids": list(task.success_task_ids),
+            "failed_task_ids": list(task.failed_task_ids),
+            "branch_tasks": branch_tasks,
+        },
+        "",
+        {},
+    )
+
+
 def _passive_startup_effect_blocked_reason(effect: EffectIR, modifiers_with_triggers: set[str]) -> str:
     if effect.opcode == "DefineDynamicValue":
         payload = effect.payload
         standard = payload.get("standard")
-        if (
+        base_keys = set(payload) - {"target_expression_refs"}
+        common_shape = (
             effect.coverage_status == "executable"
-            and set(payload) - {"target_expression_refs"} == {"TargetType", "DynamicKey", "ResetValue", "ContextScope", "standard"}
+            and isinstance(payload.get("TargetType"), dict)
             and payload.get("TargetType") == {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"}
             and payload.get("ContextScope") == "TargetEntity"
-            and isinstance(payload.get("DynamicKey"), dict) and set(payload["DynamicKey"]) == {"Value"}
+            and isinstance(payload.get("DynamicKey"), dict)
+            and set(payload["DynamicKey"]) == {"Value"}
+            and isinstance(standard, dict)
+        )
+        if not common_shape:
+            return "monster_passive_startup_dynamic_initializer_not_admitted"
+        if (
+            base_keys == {"TargetType", "DynamicKey", "ResetValue", "ContextScope", "standard"}
             and isinstance(payload.get("ResetValue"), dict) and set(payload["ResetValue"]) == {"IsDynamic", "FixedValue"}
             and payload["ResetValue"].get("IsDynamic") is False
             and isinstance(payload["ResetValue"].get("FixedValue"), dict)
             and set(payload["ResetValue"]["FixedValue"]) == {"Value"}
             and type(payload["ResetValue"]["FixedValue"]["Value"]) in {int, float}
-            and isinstance(standard, dict)
             and standard.get("value_source_basis") == "explicit_tbgd_field"
             and _fixed_expr_value(standard.get("value_expr")) is not None
+        ):
+            return ""
+        # An omitted ResetValue is only admitted as an initializer for an absent
+        # value. The runtime refuses to redefine an existing value, so no reset
+        # semantics are invented. The zero projection itself stays in the lowering
+        # payload with its source basis.
+        raw_fields = standard.get("raw_formula_fields")
+        if (
+            base_keys == {"TargetType", "DynamicKey", "ContextScope", "standard"}
+            and standard.get("value_source_basis")
+            == "tbgd_define_dynamic_value_missing_reset_defaults_to_zero"
+            and _fixed_expr_value(standard.get("value_expr")) == 0.0
+            and isinstance(raw_fields, dict)
+            and raw_fields.get("ResetValue") is None
         ):
             return ""
         return "monster_passive_startup_dynamic_initializer_not_admitted"
@@ -22248,11 +22476,21 @@ def _lower_summon_monster_intents(
                     )
                 )
         source_admitted = _mainline_monster_ability_source(task.source.source_path)
+        caster_card_scope = _summon_monster_caster_card_scope(task)
         blocked_reasons: list[str] = []
         if not source_admitted:
             blocked_reasons.append("summon_monster_source_mode_not_admitted")
         if not entries:
             blocked_reasons.append("summon_monster_entries_missing")
+        elif not caster_card_scope.get("monster_id") and any(
+            entry.coverage_status == "executable" for entry in entries
+        ):
+            blocked_reasons.append(
+                str(
+                    caster_card_scope.get("blocked_reason")
+                    or "summon_monster_caster_card_identity_missing"
+                )
+            )
         if delay_policy.get("admission_status") != "executable":
             blocked_reasons.append(str(delay_policy.get("blocked_reason") or "summon_monster_delay_ratio_not_admitted"))
         for entry in entries:
@@ -22282,11 +22520,77 @@ def _lower_summon_monster_intents(
                 entries=tuple(entries),
                 source_event=task.callback_kind,
                 source=source,
+                caster_card_scope=caster_card_scope,
                 coverage_status="blocked" if blocked_reason else "executable",
                 blocked_reason=blocked_reason,
             )
         )
     return intents
+
+
+def _summon_monster_caster_card_scope(task: AbilityTaskIR) -> dict[str, Any]:
+    """Keep the formal caster card identity next to each summon intent.
+
+    Ability files can be shared by several monster cards. The runtime therefore
+    checks the actual caster's card against this stamped scope instead of trusting
+    the first card that happened to lower the file.
+    """
+
+    evidence = task.source.evidence
+    source_context = (
+        evidence.get("ability_source_context")
+        if isinstance(evidence, dict)
+        else None
+    )
+    binding_scope: dict[str, Any] = {}
+    config_source: dict[str, Any] = {}
+    character_config_path = ""
+    if isinstance(source_context, dict):
+        binding_sources = source_context.get("numeric_binding_sources")
+        if isinstance(binding_sources, list):
+            for binding_source in binding_sources:
+                if (
+                    isinstance(binding_source, dict)
+                    and binding_source.get("source_type") == "monster_config_custom_value"
+                ):
+                    scope = binding_source.get("scope")
+                    if isinstance(scope, dict):
+                        binding_scope = dict(scope)
+                    break
+        raw_config_source = source_context.get("config_source")
+        if isinstance(raw_config_source, dict):
+            config_source = dict(raw_config_source)
+        character_config_path = str(source_context.get("character_config_path") or "")
+    monster_id = (
+        binding_scope.get("monster_id")
+        if binding_scope.get("monster_id") is not None
+        else config_source.get("monster_id")
+    )
+    template_id = (
+        binding_scope.get("template_id")
+        if binding_scope.get("template_id") is not None
+        else config_source.get("template_id")
+    )
+    if not character_config_path:
+        character_config_path = str(binding_scope.get("character_config_path") or "")
+    scope_payload: dict[str, Any] = {
+        "source_mode": (
+            str(source_context.get("source_mode") or "")
+            if isinstance(source_context, dict)
+            else ""
+        ),
+        "monster_id": _json_safe(monster_id),
+        "template_id": _json_safe(template_id),
+        "character_config_path": character_config_path,
+        "config_source_path": str(config_source.get("relative_path") or ""),
+        "config_row_index": _json_safe(config_source.get("row_index")),
+        "custom_value_binding_scope": binding_scope,
+    }
+    if scope_payload["monster_id"] is None or str(scope_payload["monster_id"]) == "":
+        scope_payload["blocked_reason"] = "summon_monster_caster_card_identity_missing"
+    elif binding_scope and str(binding_scope.get("monster_id")) != str(scope_payload["monster_id"]):
+        scope_payload["blocked_reason"] = "summon_monster_caster_card_binding_scope_mismatch"
+    return scope_payload
 
 
 def _admit_summon_monster_ability_tasks(
@@ -22569,13 +22873,10 @@ def _summon_monster_id_expr(raw_entry: dict[str, Any]) -> dict[str, Any]:
         return expr
     custom_value = raw_entry.get("MonsterIDFromCustomValue")
     if isinstance(custom_value, dict) and isinstance(custom_value.get("Hash"), int):
-        return {
-            "kind": "dynamic_hash",
-            "hash": int(custom_value["Hash"]),
-            "supported": True,
-            "source_field": "SummonMonsterDataList.MonsterIDFromCustomValue.Hash",
-            "raw": _json_safe(custom_value),
-        }
+        expression = numeric_dynamic_hash(int(custom_value["Hash"]))
+        expression["source_field"] = "SummonMonsterDataList.MonsterIDFromCustomValue.Hash"
+        expression["raw"] = _json_safe(custom_value)
+        return expression
     expr = _numeric_expr_summary(custom_value)
     expr["source_field"] = "SummonMonsterDataList.MonsterIDFromCustomValue"
     return expr
@@ -24411,6 +24712,31 @@ def _condition_payload_executable(
             and _condition_target_node_executable(target_node)
             and _numeric_expr_can_be_runtime_bound(payload.get("CompareNumber"))
         )
+    if opcode == "ByCheckCustomValueBool":
+        key = payload.get("Key")
+        return (
+            _condition_target_value_executable(payload.get("TargetType"))
+            and isinstance(key, dict)
+            and set(key) == {"Hash"}
+            and isinstance(key.get("Hash"), int)
+            and not isinstance(key.get("Hash"), bool)
+            and set(payload) - {"TargetType", "Key"} == set()
+        )
+    if opcode == "ByIsTeamLocationIndexType":
+        # The team-location class is decided at runtime from the committed battle
+        # order of the target's living team (see the engine location-index rule).
+        # Only the source-declared class names are admitted here; exact-index
+        # variants such as Pos2/Pos3 have no adopted index basis yet.
+        index_type = payload.get("Type")
+        return (
+            _condition_target_value_executable(payload.get("TargetType"))
+            and payload.get("TeamType") in {"TeamLight", "TeamDark"}
+            and (
+                index_type is None
+                or index_type in {"Left", "Right", "Medium", "Max"}
+            )
+            and set(payload) - {"TargetType", "TeamType", "Type"} == set()
+        )
     if opcode == "ByCompareModifierValue":
         return (
             payload.get("default_target_alias", "ModifierOwnerEntity") in {"Caster", "ModifierOwnerEntity"}
@@ -25606,6 +25932,20 @@ def _ability_graph_source_context(
         skill_rows_by_trigger_key=skill_rows_by_trigger_key,
         allowed_dynamic_hashes=allowed_dynamic_hashes,
     )
+    custom_value_binding = (
+        _monster_custom_value_binding_source(
+            config_source=config_source,
+            character_config=character_config,
+            character_path=character_path,
+        )
+        if config_kind == "monster_config"
+        else None
+    )
+    numeric_binding_sources = (
+        [skill_param_binding_source] if skill_param_binding_source.get("by_hash") else []
+    )
+    if custom_value_binding is not None and custom_value_binding.get("by_hash"):
+        numeric_binding_sources.append(custom_value_binding)
     custom_values = character_config.get("CustomValues")
     context: dict[str, Any] = {
         "source_mode": source_mode,
@@ -25619,9 +25959,11 @@ def _ability_graph_source_context(
         "config_source": _compact_ability_config_source(config_source),
         "ability_paths": [path for path in ability_paths if path],
         "skill_param_dynamic_bindings": skill_param_summary,
-        "numeric_binding_sources": [skill_param_binding_source] if skill_param_binding_source.get("by_hash") else [],
+        "numeric_binding_sources": numeric_binding_sources,
         "custom_value_keys": sorted(str(key) for key in custom_values.keys())[:80] if isinstance(custom_values, dict) else [],
-        "custom_value_bindings": _custom_value_binding_summary(config_source, character_config),
+        "custom_value_bindings": _custom_value_binding_summary(
+            config_source, character_config, custom_value_binding
+        ),
         "override_skill_params": _json_safe(config_source.get("override_skill_params") or []),
     }
     return freeze_json(_json_safe(context))
@@ -25644,10 +25986,254 @@ def _compact_ability_config_source(config_source: dict[str, Any]) -> dict[str, A
     return {key: _json_safe(config_source.get(key)) for key in keys if key in config_source}
 
 
-def _custom_value_binding_summary(config_source: dict[str, Any], character_config: dict[str, Any]) -> dict[str, Any]:
+def _custom_value_entry_name_value(item: Any) -> tuple[str, Any]:
+    if not isinstance(item, dict):
+        return "", None
+    name = ""
+    for field_name in ("BFLIFKBEOPJ", "Name", "Key"):
+        candidate = item.get(field_name)
+        if isinstance(candidate, str) and candidate:
+            name = candidate
+            break
+    return name, item.get("MNDFOPKBHKP", item.get("Value"))
+
+
+def _custom_value_finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _monster_custom_value_binding_source(
+    *,
+    config_source: dict[str, Any],
+    character_config: dict[str, Any],
+    character_path: str,
+) -> dict[str, Any]:
+    """Bind one monster card's CustomValues to their hashed runtime identities.
+
+    Both the MonsterConfig table row and the per-monster character config are
+    formal inputs. A name is admitted only when both sources carry the same
+    finite numeric value, so an ability file shared by several cards can never
+    inherit another card's table row or serialized default.
+    """
+
+    table_source_path = str(config_source.get("relative_path") or "")
+    table_row_index = config_source.get("row_index")
+    table_entries: dict[str, dict[str, Any]] = {}
+    table_issues: list[dict[str, Any]] = []
+    raw_table = config_source.get("custom_values")
+    if isinstance(raw_table, list):
+        for index, item in enumerate(raw_table):
+            name, raw_value = _custom_value_entry_name_value(item)
+            value = _custom_value_finite_number(raw_value)
+            if not name:
+                table_issues.append(
+                    {"index": index, "reason": "custom_value_name_missing", "raw": _json_safe(item)}
+                )
+                continue
+            if value is None:
+                table_issues.append(
+                    {
+                        "index": index,
+                        "name": name,
+                        "reason": "custom_value_value_not_numeric",
+                        "raw": _json_safe(item),
+                    }
+                )
+                continue
+            if name in table_entries:
+                table_issues.append(
+                    {"index": index, "name": name, "reason": "custom_value_name_duplicate"}
+                )
+                continue
+            table_entries[name] = {
+                "name": name,
+                "value": value,
+                "raw_path": f"CustomValues[{index}]",
+            }
+    elif isinstance(raw_table, dict):
+        for index, (raw_name, raw_value) in enumerate(
+            sorted(raw_table.items(), key=lambda pair: str(pair[0]))
+        ):
+            name = str(raw_name)
+            value = _custom_value_finite_number(raw_value)
+            if not name or value is None:
+                table_issues.append(
+                    {
+                        "index": index,
+                        "name": name,
+                        "reason": "custom_value_table_entry_invalid",
+                        "raw": _json_safe(raw_value),
+                    }
+                )
+                continue
+            table_entries[name] = {
+                "name": name,
+                "value": value,
+                "raw_path": f"CustomValues[{name}]",
+            }
+
+    character_entries: dict[str, dict[str, Any]] = {}
+    character_issues: list[dict[str, Any]] = []
+    raw_character = (
+        character_config.get("CustomValues") if isinstance(character_config, dict) else None
+    )
+    if isinstance(raw_character, dict):
+        for raw_name, raw_value in sorted(raw_character.items(), key=lambda pair: str(pair[0])):
+            name = str(raw_name)
+            value = _custom_value_finite_number(raw_value)
+            if not name or value is None:
+                character_issues.append(
+                    {"name": name, "reason": "custom_value_character_config_entry_invalid"}
+                )
+                continue
+            character_entries[name] = {
+                "name": name,
+                "value": value,
+                "raw_path": f"CustomValues[{name}]",
+            }
+
+    entries: dict[str, dict[str, Any]] = {}
+    conflicts: list[dict[str, Any]] = []
+    unbound: list[dict[str, Any]] = []
+    for name in sorted(set(table_entries) | set(character_entries)):
+        table_entry = table_entries.get(name)
+        character_entry = character_entries.get(name)
+        if table_entry is None or character_entry is None:
+            # A name declared by only one formal source stays unbound; the missing
+            # side is recorded instead of being filled from the other source.
+            unbound.append(
+                {
+                    "name": name,
+                    "reasons": [
+                        "custom_value_table_row_missing"
+                        if table_entry is None
+                        else "custom_value_character_config_missing"
+                    ],
+                    "table_value": table_entry["value"] if table_entry is not None else None,
+                    "character_config_value": (
+                        character_entry["value"] if character_entry is not None else None
+                    ),
+                }
+            )
+            continue
+        if table_entry["value"] != character_entry["value"]:
+            conflicts.append(
+                {
+                    "name": name,
+                    "reasons": ["custom_value_table_and_character_config_conflict"],
+                    "table_value": table_entry["value"],
+                    "character_config_value": character_entry["value"],
+                    "table_raw_path": table_entry["raw_path"],
+                    "character_config_raw_path": character_entry["raw_path"],
+                }
+            )
+            continue
+        hash_value = tbgd_dynamic_key_hash(name)
+        entry_key = f"custom_value:{name}"
+        scope = {
+            "character_config_path": character_path,
+            "monster_id": _json_safe(config_source.get("monster_id")),
+            "template_id": _json_safe(config_source.get("template_id")),
+            "config_source_path": table_source_path,
+            "config_row_index": _json_safe(table_row_index),
+        }
+        entries[entry_key] = {
+            "entry_key": entry_key,
+            "name": name,
+            "hash": hash_value,
+            "value": character_entry["value"],
+            "source_type": "monster_config_custom_value",
+            "source_path": character_path,
+            "config_source_path": table_source_path,
+            "config_row_index": _json_safe(table_row_index),
+            "raw_paths": {
+                "table_row": table_entry["raw_path"],
+                "character_config": character_entry["raw_path"],
+            },
+            "binding_scope": scope,
+            "hash_algorithm": "tbgd_dynamic_key_hash_utf16le",
+        }
+
+    raw_by_hash: dict[str, list[str]] = {}
+    for entry_key, entry in entries.items():
+        raw_by_hash.setdefault(str(entry["hash"]), []).append(entry_key)
+    by_hash = {
+        hash_key: entry_keys[0] if len(entry_keys) == 1 else entry_keys
+        for hash_key, entry_keys in sorted(raw_by_hash.items())
+    }
+    by_name = {entry["name"]: entry_key for entry_key, entry in entries.items()}
+    return {
+        "source_type": "monster_config_custom_value",
+        "scope": {
+            "character_config_path": character_path,
+            "monster_id": _json_safe(config_source.get("monster_id")),
+            "template_id": _json_safe(config_source.get("template_id")),
+            "config_source_path": table_source_path,
+            "config_row_index": _json_safe(table_row_index),
+        },
+        "entries": entries,
+        "by_hash": by_hash,
+        "by_name": by_name,
+        "conflict_count": len(conflicts),
+        "conflicts": conflicts[:24],
+        "unbound_count": len(unbound),
+        "unbound": unbound[:24],
+        "table_issues": table_issues[:8],
+        "character_config_issues": character_issues[:8],
+        "admission_status": "executable" if entries else "blocked",
+        "blocked_reason": "" if entries else "monster_custom_value_binding_source_missing",
+        "hash_algorithm": "tbgd_dynamic_key_hash_utf16le",
+        "hash_to_name_admitted": True,
+        "admission_policy": "per_card_table_row_and_character_config_must_agree",
+    }
+
+
+def _custom_value_binding_summary(
+    config_source: dict[str, Any],
+    character_config: dict[str, Any],
+    binding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     raw_custom_values = config_source.get("custom_values")
     character_values = character_config.get("CustomValues") if isinstance(character_config, dict) else None
     character_values = character_values if isinstance(character_values, dict) else {}
+    formal_entries = binding.get("entries") if isinstance(binding, dict) else None
+    formal_by_name = {
+        str(entry.get("name")): entry
+        for entry in (formal_entries or {}).values()
+        if isinstance(entry, dict)
+    }
+    formal_conflicts = {
+        str(item.get("name")): item
+        for item in (binding or {}).get("conflicts", ())
+        if isinstance(item, dict)
+    }
+    formal_unbound = {
+        str(item.get("name")): item
+        for item in (binding or {}).get("unbound", ())
+        if isinstance(item, dict)
+    }
+
+    def annotate(entry: dict[str, Any]) -> dict[str, Any]:
+        name = str(entry.get("name") or "")
+        formal = formal_by_name.get(name)
+        conflict = formal_conflicts.get(name)
+        unbound = formal_unbound.get(name)
+        entry["formal_binding_status"] = "admitted" if formal is not None else "rejected"
+        entry["formal_hash"] = formal.get("hash") if formal is not None else None
+        entry["formal_binding_reason"] = (
+            ""
+            if formal is not None
+            else ";".join(conflict.get("reasons", ()))
+            if conflict is not None
+            else ";".join(unbound.get("reasons", ()))
+            if unbound is not None
+            else "custom_value_hash_to_name_binding_missing"
+        )
+        return entry
+
     entries: list[dict[str, Any]] = []
     if isinstance(raw_custom_values, list):
         for index, item in enumerate(raw_custom_values):
@@ -25665,27 +26251,41 @@ def _custom_value_binding_summary(config_source: dict[str, Any], character_confi
                 "character_config_value": _json_safe(character_values.get(str(name))) if name is not None else None,
                 "character_config_hit": str(name) in character_values if name is not None else False,
             }
-            entries.append(entry)
+            entries.append(annotate(entry))
     elif isinstance(raw_custom_values, dict):
         for index, (name, raw_value) in enumerate(sorted(raw_custom_values.items(), key=lambda pair: str(pair[0]))):
             entries.append(
-                {
-                    "index": index,
-                    "name": str(name),
-                    "raw_path": f"CustomValues[{name}]",
-                    "raw_name_field": "dict_key",
-                    "raw_value_field": "dict_value",
-                    "value": _json_safe(raw_value),
-                    "character_config_value": _json_safe(character_values.get(str(name))),
-                    "character_config_hit": str(name) in character_values,
-                }
+                annotate(
+                    {
+                        "index": index,
+                        "name": str(name),
+                        "raw_path": f"CustomValues[{name}]",
+                        "raw_name_field": "dict_key",
+                        "raw_value_field": "dict_value",
+                        "value": _json_safe(raw_value),
+                        "character_config_value": _json_safe(character_values.get(str(name))),
+                        "character_config_hit": str(name) in character_values,
+                    }
+                )
             )
+    admitted = bool(
+        binding is not None
+        and binding.get("admission_status") == "executable"
+        and not binding.get("conflict_count")
+    )
     return {
         "source_type": "monster_config_custom_values",
         "entry_count": len(entries),
         "entries": _json_safe(entries[:24]),
-        "hash_to_name_admitted": False,
-        "blocked_reason": "custom_value_hash_to_name_binding_missing",
+        "entries_truncated": len(entries) > 24,
+        "hash_to_name_admitted": admitted,
+        "formal_binding_source_type": "monster_config_custom_value",
+        "formal_conflict_count": int((binding or {}).get("conflict_count") or 0),
+        "formal_conflicts": _json_safe((binding or {}).get("conflicts") or []),
+        "formal_unbound_count": int((binding or {}).get("unbound_count") or 0),
+        "formal_unbound": _json_safe((binding or {}).get("unbound") or []),
+        "blocked_reason": "" if admitted else "custom_value_hash_to_name_binding_missing",
+        "note": "audit summary only; runtime numeric values come from numeric_binding_sources",
     }
 
 

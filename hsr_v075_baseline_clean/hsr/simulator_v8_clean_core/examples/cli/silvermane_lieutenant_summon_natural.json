@@ -1,0 +1,80 @@
+{
+  "scenario_id": "ordinary:silvermane-lieutenant-summon-natural",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "multiwave:arlan",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "empty",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "9aa8f0345f608fb28d7b2cdb314b78ba969bf08bd8723426389e7ea760546416"
+        },
+        "input_fingerprint": "f4abd7eda49d56cc26ef79bbb05edd65105c602026fc838df35d1af8718c7eb6"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+        },
+        "input_fingerprint": "22608c41813fb531bf28ac3ad4e71f657caf306d4465e966c755a8f3b05c5c66"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "307311",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Source wave only: Stage 307311 wave 0, one Lv44 Silvermane Lieutenant monster:1003010. Arlan avatar:1008 E0/Lv80/P6 and Natasha avatar:1105 E0/Lv80/P6 use the already assembled empty-equipment builds from the verified ordinary routes; the ally level and promotion are the existing formal build identities, kept so the players survive the lieutenant's real attacks while a summoned soldier can be defeated naturally. The public sequence selects the source summon skill monster_skill:100301004, lets both summoned soldiers act, defeats one of them, summons again while the lieutenant is alive, and continues with public actions. No injected HP, AV, status, timeline or queue values."
+    }
+  }
+}

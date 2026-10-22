@@ -3000,6 +3000,18 @@ class AbilityTaskSystem:
             return state, [], [], [], [
                 _task_process_record(task, ok=False, blocked_reason="summon_monster_intent_task_binding_mismatch")
             ]
+        actor = state.units.get(actor_id)
+        if actor is None:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason="summon_monster_caster_missing")
+            ]
+        caster_card_reason = _summon_monster_intent_caster_card_blocked_reason(
+            self.rules, intent, actor
+        )
+        if caster_card_reason:
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason=caster_card_reason)
+            ]
         plan = self.summons.plan_spawn_from_intent(state, intent, owner_id=actor_id)
         result = self.summons.apply_spawn(state, plan)
         if not result.plan.ok:
@@ -3793,6 +3805,46 @@ class AbilityTaskSystem:
             rng_events.extend(child_rng_events)
             records.extend(child_records)
         return current, mutations, events, rng_events, records
+
+
+def _summon_monster_intent_caster_card_blocked_reason(
+    rules: RuleBook,
+    intent: object,
+    actor: object,
+) -> str:
+    """Verify the actual caster card owns the intent's CustomValues scope.
+
+    Summon intents are lowered per card, but ability files are shared by several
+    monster cards. The real actor must therefore be the same card whose formal
+    CustomValues produced the resolved monster id. The scope is a formal IR field;
+    source evidence is audit-only and trimming it must not change this decision.
+    """
+
+    scope = getattr(intent, "caster_card_scope", None)
+    if not isinstance(scope, Mapping) or not scope:
+        return "summon_monster_intent_caster_card_scope_missing"
+    expected_monster_id = scope.get("monster_id")
+    if expected_monster_id is None or str(expected_monster_id) == "":
+        return str(
+            scope.get("blocked_reason") or "summon_monster_caster_card_identity_missing"
+        )
+    template_id = str(getattr(actor, "template_id", "") or "")
+    card = rules.monster_data_card_for_entity(template_id) if template_id else None
+    flags = getattr(actor, "flags", None)
+    card_id = str(flags.get("monster_data_card_id") or "") if isinstance(flags, Mapping) else ""
+    if card is None or not card_id or card_id != card.card_id:
+        return "summon_monster_caster_card_missing"
+    if str(card.monster_id) != str(expected_monster_id):
+        return "summon_monster_intent_caster_card_mismatch"
+    binding_scope = scope.get("custom_value_binding_scope")
+    if isinstance(binding_scope, Mapping) and binding_scope:
+        if str(binding_scope.get("monster_id")) != str(expected_monster_id):
+            return "summon_monster_intent_caster_card_binding_scope_mismatch"
+        expected_path = str(scope.get("character_config_path") or "")
+        bound_path = str(binding_scope.get("character_config_path") or "")
+        if expected_path and bound_path and expected_path != bound_path:
+            return "summon_monster_intent_caster_card_config_mismatch"
+    return ""
 
 
 def _task_graph_target_resolution(

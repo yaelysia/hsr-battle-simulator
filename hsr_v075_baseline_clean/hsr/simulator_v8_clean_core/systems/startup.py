@@ -7,7 +7,7 @@ from typing import Any
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.ir import AbilityPhaseIR, AbilityTaskIR
+from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ConditionIR
 from ..rules.engine_rule_registry import EngineRuleRegistry, engine_numeric_binding_source
 from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
@@ -16,7 +16,13 @@ from .ability import AbilityTaskSystem, CharacterStartupInvocation, CharacterBui
 from .effect import EffectExecutionContext, EffectRegistry
 from .event_dispatch import EventDispatchSystem
 from .status import StatusSystem
-from .dynamic_values import store_from_state, upsert_dynamic_value
+from .dynamic_values import (
+    binding_source_from_store,
+    status_binding_sources,
+    store_from_state,
+    upsert_dynamic_value,
+)
+from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
 
 @dataclass(frozen=True)
@@ -66,10 +72,11 @@ def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[st
             )
             continue
         ability_name = str(slot.semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
+        admitted_tasks = tuple(
+            dict(item) for item in _dict_items(startup_admission.get("admitted_tasks"))
+        )
         admitted_task_ids = tuple(
-            str(item.get("task_id"))
-            for item in _dict_items(startup_admission.get("admitted_tasks"))
-            if item.get("task_id")
+            str(item.get("task_id")) for item in admitted_tasks if item.get("task_id")
         )
         enabled_slot_ids.append(slot.passive_slot_id)
         startup_specs.append(
@@ -83,6 +90,9 @@ def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[st
                 "dynamic_value_bindings": {},
                 "dynamic_value_binding_mode": "no_dynamic_values_admitted",
                 "admitted_task_ids": admitted_task_ids,
+                # Runtime admission ledger for conditional roots and the
+                # initialize-zero-only dynamic value leaves.
+                "admitted_tasks": admitted_tasks,
             }
         )
     expected_slot_ids = set(getattr(card, "passive_mechanism_slot_ids", ()))
@@ -288,11 +298,502 @@ def _apply_startup_ability_effects(
     rng_events: list[RNGEvent] = []
     dispatched_event_ids: set[str] = set()
     blocked: list[dict[str, JSONValue]] = []
+    # Rollback anchors for the fail-closed startup paths that must keep the
+    # whole spec atomic.  Earlier specs are committed effects and stay intact.
+    spec_aborted = False
+    spec_start_state = state
+    mutation_start = 0
+    record_start = 0
+    event_start = 0
+    rng_start = 0
+    dispatched_before: set[str] = set()
+
+    def abort_spec(
+        trace: dict[str, JSONValue],
+        record: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Fail the current startup spec without keeping any of its changes."""
+        nonlocal current, spec_aborted
+        current = spec_start_state
+        del mutations[mutation_start:]
+        del records[record_start:]
+        del events[event_start:]
+        del rng_events[rng_start:]
+        dispatched_event_ids.clear()
+        dispatched_event_ids.update(dispatched_before)
+        if record is not None:
+            records.append(record)
+        traces.append(trace)
+        blocked.append(trace)
+        spec_aborted = True
+
+    def execute_leaf(
+        task: AbilityTaskIR,
+        admission: dict[str, Any] | None,
+        graph: object,
+    ) -> None:
+        """Apply one admitted AddModifier / DefineDynamicValue startup leaf."""
+        nonlocal current
+        effect = rules.effect(task.effect_id)
+        if effect is None:
+            trace = _startup_blocked_trace(
+                kind,
+                unit_id,
+                ability_name,
+                slot_id,
+                slot_id_field,
+                trace_node_id,
+                graph,
+                task.task_id,
+                "startup_effect_missing",
+            )
+            traces.append(trace)
+            blocked.append(trace)
+            return
+        coverage = effect_registry.coverage(effect)
+        if coverage != "executable":
+            trace = _startup_blocked_trace(
+                kind,
+                unit_id,
+                ability_name,
+                slot_id,
+                slot_id_field,
+                trace_node_id,
+                graph,
+                task.task_id,
+                f"startup_effect_not_executable:{coverage}",
+            )
+            traces.append(trace)
+            blocked.append(trace)
+            return
+        if (
+            task.opcode == "DefineDynamicValue"
+            and isinstance(admission, dict)
+            and admission.get("dynamic_value_reset_policy")
+            == "initialize_zero_only_when_absent"
+        ):
+            redefinition_reason, collision = _startup_dynamic_value_redefinition(
+                current, unit_id, effect,
+            )
+            if redefinition_reason:
+                abort_spec(
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="blocked",
+                        reason=redefinition_reason,
+                        extra={
+                            "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                            "task_id": task.task_id,
+                            "effect_id": effect.effect_id,
+                            "dynamic_value_reset_policy": "initialize_zero_only_when_absent",
+                            "existing_dynamic_value": collision,
+                            "state_unchanged": True,
+                            "source": (
+                                getattr(slot, "source", None).to_json()
+                                if getattr(slot, "source", None)
+                                else {}
+                            ),
+                        },
+                    ),
+                    SettlementRecord(
+                        record_type="startup_ability_blocked",
+                        source="scenario_state_builder",
+                        process_only=True,
+                        payload={
+                            "reason": redefinition_reason,
+                            "unit_id": unit_id,
+                            "ability_name": ability_name,
+                            "task_id": task.task_id,
+                            "state_unchanged": True,
+                        },
+                        trace={
+                            "ability_graph_source": graph.source.to_json(),
+                            "task_source": task.source.to_json(),
+                            "effect_source": effect.source.to_json(),
+                        },
+                    ).to_json(),
+                )
+                return
+        dynamic_values, binding_trace = _startup_dynamic_values(
+            effect.payload.get("standard"),
+            spec,
+            rules.engine_rule_registry(),
+        )
+        if binding_trace.get("admission_status") == "blocked":
+            trace = _startup_blocked_trace(
+                kind,
+                unit_id,
+                ability_name,
+                slot_id,
+                slot_id_field,
+                trace_node_id,
+                graph,
+                task.task_id,
+                str(binding_trace.get("blocked_reason") or "startup_dynamic_value_binding_blocked"),
+                binding_trace=binding_trace,
+            )
+            traces.append(trace)
+            blocked.append(trace)
+            return
+        before_task = current
+        if task.opcode == "DefineDynamicValue":
+            result = effect_registry.execute(effect, EffectExecutionContext(
+                state=before_task, caster_id=unit_id, owner_id=unit_id,
+                source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
+                param_entity_id=unit_id, current_action_target_id=unit_id,
+                dynamic_values=dynamic_values, include_ambient_status_bindings=False,
+                event_payload={"operation_event_id": f"startup:{before_task.event_index}:{unit_id}:{slot_id}:{task.task_id}"},
+            ))
+            effect_ok = not result.unsupported
+        else:
+            result = status_system.apply_add_modifier(
+                before_task,
+                effect,
+                application_instance_id=(
+                    f"startup:{before_task.event_index}:{unit_id}:{slot_id}:{ability_name}:{task.task_id}"
+                ),
+                caster_id=unit_id,
+                source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
+                owner_id=unit_id,
+                param_entity_id=unit_id,
+                current_action_target_id=unit_id,
+                dynamic_values=dynamic_values,
+                binding_sources=(),
+                retained_runtime_hashes=tuple(
+                    sorted(
+                        {
+                            str(binding["hash"])
+                            for binding in binding_trace.get("bindings", ())
+                            if isinstance(binding, dict)
+                            and isinstance(binding.get("hash"), (str, int))
+                            and str(binding["hash"]) in dynamic_values
+                        }
+                    )
+                ),
+            )
+            effect_ok = result.ok
+        candidate_state = reducer.apply_all(before_task, result.mutations)
+        task_mutations: list[Mutation] = list(result.mutations)
+        task_records: list[dict[str, JSONValue]] = list(result.records)
+        task_events: list[GameEvent] = []  # The dispatcher returns the normalized lifecycle events.
+        task_rng_events: list[RNGEvent] = list(result.rng_events)
+        listener_mutation_count = 0
+        listener_record_count = 0
+        listener_dispatch_count = 0
+        listener_errors: list[str] = []
+        task_dispatched_event_ids: set[str] = set()
+        if effect_ok:
+            for lifecycle_event in result.events:
+                listener_dispatch_count += 1
+                dispatch_result = event_dispatch.dispatch_event(
+                    candidate_state,
+                    event=lifecycle_event,
+                )
+                candidate_state = dispatch_result.after_state
+                task_mutations.extend(dispatch_result.mutations)
+                task_records.extend(dispatch_result.records)
+                task_events.extend(dispatch_result.events)
+                task_rng_events.extend(dispatch_result.rng_events)
+                task_dispatched_event_ids.update(dispatch_result.dispatched_event_ids)
+                task_dispatched_event_ids.update(str(event.to_json()["event_id"]) for event in dispatch_result.events
+                                                 if event.event_type == "status.callback")
+                listener_mutation_count += len(dispatch_result.mutations)
+                listener_record_count += len(dispatch_result.records)
+                listener_errors.extend(dispatch_result.errors)
+        startup_ok = effect_ok and not listener_errors
+        current = candidate_state if startup_ok else before_task
+        if startup_ok:
+            mutations.extend(task_mutations)
+            records.extend(task_records)
+            events.extend(task_events)
+            rng_events.extend(task_rng_events)
+            dispatched_event_ids.update(task_dispatched_event_ids)
+        trace = _startup_trace_payload(
+            kind=kind,
+            unit_id=unit_id,
+            ability_name=ability_name,
+            slot_id=slot_id,
+            slot_id_field=slot_id_field,
+            trace_node_id=trace_node_id,
+            status="applied" if startup_ok else "blocked",
+            reason=(
+                ";".join(listener_errors)
+                if listener_errors
+                else (
+                    ";".join(result.unsupported)
+                    if not effect_ok
+                    else ""
+                )
+            ),
+            extra={
+                "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                "task_id": task.task_id,
+                "effect_id": effect.effect_id,
+                "mutation_count": len(result.mutations),
+                "listener_mutation_count": listener_mutation_count,
+                "listener_record_count": listener_record_count,
+                "listener_dispatch_count": listener_dispatch_count,
+                "listener_errors": listener_errors,
+                "unsupported": list(result.unsupported),
+                "dynamic_value_binding": binding_trace,
+                "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
+            },
+        )
+        traces.append(trace)
+        if not startup_ok:
+            blocked.append(trace)
+            reason = str(trace.get("reason") or "startup_ability_atomic_rollback")
+            records.append(
+                SettlementRecord(
+                    record_type="startup_ability_blocked",
+                    source="scenario_state_builder",
+                    process_only=True,
+                    payload={
+                        "reason": reason,
+                        "unit_id": unit_id,
+                        "ability_name": ability_name,
+                        "task_id": task.task_id,
+                        "state_unchanged": True,
+                    },
+                    trace={
+                        "ability_graph_source": graph.source.to_json(),
+                        "task_source": task.source.to_json(),
+                        "effect_source": effect.source.to_json(),
+                    },
+                ).to_json()
+            )
+
+    def execute_condition_root(
+        task: AbilityTaskIR,
+        admission: dict[str, Any],
+        graph: object,
+        graph_tasks_by_id: dict[str, AbilityTaskIR],
+    ) -> None:
+        """Evaluate one admitted predicate root and run only its chosen branch."""
+        source = getattr(slot, "source", None)
+        condition_id = str(admission.get("condition_id") or task.condition_id)
+        branch_task_ids = {
+            "success": _startup_branch_task_ids(admission, task, success=True),
+            "failed": _startup_branch_task_ids(admission, task, success=False),
+        }
+        base_extra: dict[str, object] = {
+            "standalone_ability_graph_id": str(
+                getattr(graph, "standalone_ability_graph_id", "")
+            ),
+            "task_id": task.task_id,
+            "condition_id": condition_id,
+            "condition_opcode": str(admission.get("condition_opcode") or ""),
+            "success_task_ids": list(branch_task_ids["success"]),
+            "failed_task_ids": list(branch_task_ids["failed"]),
+            "source": source.to_json() if source is not None else {},
+        }
+        if task.opcode != "PredicateTaskList":
+            abort_spec(
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason=f"startup_condition_root_opcode_not_admitted:{task.opcode}",
+                    extra=base_extra,
+                )
+            )
+            return
+        condition = rules.condition(condition_id) if condition_id else None
+        if condition is None:
+            abort_spec(
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason="startup_condition_missing",
+                    extra={**base_extra, "missing_condition_id": condition_id},
+                )
+            )
+            return
+        admitted_opcode = str(admission.get("condition_opcode") or condition.opcode)
+        if condition.opcode != admitted_opcode:
+            abort_spec(
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason="startup_condition_opcode_mismatch",
+                    extra={
+                        **base_extra,
+                        "condition_opcode": condition.opcode,
+                        "admitted_condition_opcode": admitted_opcode,
+                    },
+                )
+            )
+            return
+        result, evaluation_reason = _evaluate_startup_condition(
+            ability_tasks, current, unit_id, condition,
+        )
+        evidence = (
+            result.to_json()
+            if result is not None
+            else {"ok": False, "result": None, "reason": evaluation_reason}
+        )
+        branch_extra = {**base_extra, "condition_evaluation": evidence}
+        if result is None or not result.ok or result.result is None:
+            blocked_reason = evaluation_reason
+            if result is not None and result.reason:
+                blocked_reason = f"{blocked_reason or 'evaluation_blocked'}:{result.reason}"
+            abort_spec(
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason=f"blocked_condition:{condition_id}:{blocked_reason}",
+                    extra={**branch_extra, "state_unchanged": True},
+                )
+            )
+            return
+        taken = "success" if result.result is True else "failed"
+        wants_success = taken == "success"
+        admitted_child_ids, expected_effects = _startup_branch_admission(
+            admission, admitted_task_ids,
+        )
+        children: list[AbilityTaskIR] = []
+        for child_id in branch_task_ids[taken]:
+            if admitted_child_ids is not None and child_id not in admitted_child_ids:
+                continue
+            child = graph_tasks_by_id.get(child_id)
+            if child is None:
+                abort_spec(
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="blocked",
+                        reason=f"startup_condition_branch_task_missing:{child_id}",
+                        extra=branch_extra,
+                    )
+                )
+                return
+            if child.opcode != "AddModifier":
+                abort_spec(
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="blocked",
+                        reason=f"startup_condition_branch_opcode_not_admitted:{child.opcode}",
+                        extra=branch_extra,
+                    )
+                )
+                return
+            if child.parent_task_id != task.task_id:
+                abort_spec(
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="blocked",
+                        reason=f"startup_condition_branch_parent_mismatch:{child_id}",
+                        extra=branch_extra,
+                    )
+                )
+                return
+            expected_effect = expected_effects.get(child_id, "")
+            if expected_effect and expected_effect != child.effect_id:
+                abort_spec(
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="blocked",
+                        reason=f"startup_condition_branch_effect_mismatch:{child_id}",
+                        extra=branch_extra,
+                    )
+                )
+                return
+            children.append(child)
+        branch_trace_index = len(traces)
+        applied_task_ids: list[str] = []
+        applied_branch_reason = ""
+        for child in children:
+            blocked_before = len(blocked)
+            execute_leaf(child, None, graph)
+            if spec_aborted:
+                return
+            if len(blocked) > blocked_before:
+                applied_branch_reason = str(
+                    blocked[-1].get("reason") or "startup_condition_branch_leaf_blocked"
+                )
+                break
+            applied_task_ids.append(child.task_id)
+        trace = _startup_trace_payload(
+            kind=kind,
+            unit_id=unit_id,
+            ability_name=ability_name,
+            slot_id=slot_id,
+            slot_id_field=slot_id_field,
+            trace_node_id=trace_node_id,
+            status="blocked" if applied_branch_reason else "applied",
+            reason=applied_branch_reason,
+            extra={
+                **branch_extra,
+                "condition_branch": taken,
+                "condition_result": wants_success,
+                "applied_task_ids": applied_task_ids,
+            },
+        )
+        traces.insert(branch_trace_index, trace)
+        if applied_branch_reason:
+            blocked.append(trace)
+
     for spec in startup_specs:
+        spec_aborted = False
+        spec_start_state = current
+        mutation_start = len(mutations)
+        record_start = len(records)
+        event_start = len(events)
+        rng_start = len(rng_events)
+        dispatched_before = set(dispatched_event_ids)
         unit_id = str(spec.get("unit_id") or "")
         ability_name = str(spec.get("ability_name") or "")
         slot = spec.get("slot")
         kind = str(spec.get("kind") or "startup_ability")
+        admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
+        admitted_entries_by_task_id = {
+            str(entry.get("task_id")): entry
+            for entry in _dict_items(spec.get("admitted_tasks"))
+            if entry.get("task_id")
+        }
         if kind in {"formal_character_passive", "formal_character_build", "formal_servant_passive", "formal_stage"}:
             if kind == "formal_stage":
                 result = ability_tasks.execute_stage_startup(
@@ -355,23 +856,30 @@ def _apply_startup_ability_effects(
             )
         if len(graphs) != 1:
             trace = _startup_trace_payload(
-                    kind=kind,
-                    unit_id=unit_id,
-                    ability_name=ability_name,
-                    slot_id=slot_id,
-                    slot_id_field=slot_id_field,
-                    trace_node_id=trace_node_id,
-                    status="blocked",
-                    reason="startup_ability_graph_missing_or_ambiguous",
-                    extra={"graph_count": len(graphs)},
-                )
+                kind=kind,
+                unit_id=unit_id,
+                ability_name=ability_name,
+                slot_id=slot_id,
+                slot_id_field=slot_id_field,
+                trace_node_id=trace_node_id,
+                status="blocked",
+                reason="startup_ability_graph_missing_or_ambiguous",
+                extra={"graph_count": len(graphs)},
+            )
             traces.append(trace)
             blocked.append(trace)
             continue
         graph = graphs[0]
-        admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
+        graph_tasks_by_id = {
+            task_candidate.task_id: task_candidate
+            for phase_id in graph.phase_ids
+            for task_candidate in rules.ability_tasks_for_phase(phase_id)
+            if task_candidate.callback_kind == "OnStart"
+        }
         candidate_task_count = 0
         for phase_id in graph.phase_ids:
+            if spec_aborted:
+                break
             phase = rules.ability_phase(phase_id)
             phase_tasks = tuple(
                 task
@@ -411,203 +919,60 @@ def _apply_startup_ability_effects(
                 blocked.append(trace)
                 continue
             for task in root_tasks:
+                if spec_aborted:
+                    break
+                admission = admitted_entries_by_task_id.get(task.task_id)
+                if (
+                    kind == "monster_passive_startup_ability"
+                    and isinstance(admission, dict)
+                    and admission.get("kind") == "predicate_branch"
+                ):
+                    candidate_task_count += 1
+                    execute_condition_root(task, admission, graph, graph_tasks_by_id)
+                    continue
+                if (
+                    kind == "monster_passive_startup_ability"
+                    and task.opcode == "PredicateTaskList"
+                ):
+                    candidate_task_count += 1
+                    abort_spec(
+                        _startup_trace_payload(
+                            kind=kind,
+                            unit_id=unit_id,
+                            ability_name=ability_name,
+                            slot_id=slot_id,
+                            slot_id_field=slot_id_field,
+                            trace_node_id=trace_node_id,
+                            status="blocked",
+                            reason="startup_condition_root_admission_missing",
+                            extra={
+                                "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                                "task_id": task.task_id,
+                                "condition_id": task.condition_id,
+                            },
+                        )
+                    )
+                    continue
                 if (task.opcode != "AddModifier" and not (
                     kind == "monster_passive_startup_ability" and task.opcode == "DefineDynamicValue"
                 )) or not task.effect_id:
                     continue
                 candidate_task_count += 1
-                effect = rules.effect(task.effect_id)
-                if effect is None:
-                    trace = _startup_blocked_trace(
-                            kind,
-                            unit_id,
-                            ability_name,
-                            slot_id,
-                            slot_id_field,
-                            trace_node_id,
-                            graph,
-                            task.task_id,
-                            "startup_effect_missing",
-                        )
-                    traces.append(trace)
-                    blocked.append(trace)
-                    continue
-                coverage = effect_registry.coverage(effect)
-                if coverage != "executable":
-                    trace = _startup_blocked_trace(
-                            kind,
-                            unit_id,
-                            ability_name,
-                            slot_id,
-                            slot_id_field,
-                            trace_node_id,
-                            graph,
-                            task.task_id,
-                            f"startup_effect_not_executable:{coverage}",
-                        )
-                    traces.append(trace)
-                    blocked.append(trace)
-                    continue
-                dynamic_values, binding_trace = _startup_dynamic_values(
-                    effect.payload.get("standard"),
-                    spec,
-                    rules.engine_rule_registry(),
-                )
-                if binding_trace.get("admission_status") == "blocked":
-                    trace = _startup_blocked_trace(
-                            kind,
-                            unit_id,
-                            ability_name,
-                            slot_id,
-                            slot_id_field,
-                            trace_node_id,
-                            graph,
-                            task.task_id,
-                            str(binding_trace.get("blocked_reason") or "startup_dynamic_value_binding_blocked"),
-                            binding_trace=binding_trace,
-                        )
-                    traces.append(trace)
-                    blocked.append(trace)
-                    continue
-                before_task = current
-                if task.opcode == "DefineDynamicValue":
-                    result = effect_registry.execute(effect, EffectExecutionContext(
-                        state=before_task, caster_id=unit_id, owner_id=unit_id,
-                        source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
-                        param_entity_id=unit_id, current_action_target_id=unit_id,
-                        dynamic_values=dynamic_values, include_ambient_status_bindings=False,
-                        event_payload={"operation_event_id": f"startup:{before_task.event_index}:{unit_id}:{slot_id}:{task.task_id}"},
-                    ))
-                    effect_ok = not result.unsupported
-                else:
-                    result = status_system.apply_add_modifier(
-                        before_task,
-                        effect,
-                        application_instance_id=(
-                            f"startup:{before_task.event_index}:{unit_id}:{slot_id}:{ability_name}:{task.task_id}"
-                        ),
-                        caster_id=unit_id,
-                        source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
-                        owner_id=unit_id,
-                        param_entity_id=unit_id,
-                        current_action_target_id=unit_id,
-                        dynamic_values=dynamic_values,
-                        binding_sources=(),
-                        retained_runtime_hashes=tuple(
-                            sorted(
-                                {
-                                    str(binding["hash"])
-                                    for binding in binding_trace.get("bindings", ())
-                                    if isinstance(binding, dict)
-                                    and isinstance(binding.get("hash"), (str, int))
-                                    and str(binding["hash"]) in dynamic_values
-                                }
-                            )
-                        ),
-                    )
-                    effect_ok = result.ok
-                candidate_state = reducer.apply_all(before_task, result.mutations)
-                task_mutations: list[Mutation] = list(result.mutations)
-                task_records: list[dict[str, JSONValue]] = list(result.records)
-                task_events: list[GameEvent] = []  # The dispatcher returns the normalized lifecycle events.
-                task_rng_events: list[RNGEvent] = list(result.rng_events)
-                listener_mutation_count = 0
-                listener_record_count = 0
-                listener_dispatch_count = 0
-                listener_errors: list[str] = []
-                task_dispatched_event_ids: set[str] = set()
-                if effect_ok:
-                    for lifecycle_event in result.events:
-                        listener_dispatch_count += 1
-                        dispatch_result = event_dispatch.dispatch_event(
-                            candidate_state,
-                            event=lifecycle_event,
-                        )
-                        candidate_state = dispatch_result.after_state
-                        task_mutations.extend(dispatch_result.mutations)
-                        task_records.extend(dispatch_result.records)
-                        task_events.extend(dispatch_result.events)
-                        task_rng_events.extend(dispatch_result.rng_events)
-                        task_dispatched_event_ids.update(dispatch_result.dispatched_event_ids)
-                        task_dispatched_event_ids.update(str(event.to_json()["event_id"]) for event in dispatch_result.events
-                                                         if event.event_type == "status.callback")
-                        listener_mutation_count += len(dispatch_result.mutations)
-                        listener_record_count += len(dispatch_result.records)
-                        listener_errors.extend(dispatch_result.errors)
-                startup_ok = effect_ok and not listener_errors
-                current = candidate_state if startup_ok else before_task
-                if startup_ok:
-                    mutations.extend(task_mutations)
-                    records.extend(task_records)
-                    events.extend(task_events)
-                    rng_events.extend(task_rng_events)
-                    dispatched_event_ids.update(task_dispatched_event_ids)
-                trace = _startup_trace_payload(
-                        kind=kind,
-                        unit_id=unit_id,
-                        ability_name=ability_name,
-                        slot_id=slot_id,
-                        slot_id_field=slot_id_field,
-                        trace_node_id=trace_node_id,
-                        status="applied" if startup_ok else "blocked",
-                        reason=(
-                            ";".join(listener_errors)
-                            if listener_errors
-                            else (
-                                ";".join(result.unsupported)
-                                if not effect_ok
-                                else ""
-                            )
-                        ),
-                        extra={
-                            "standalone_ability_graph_id": graph.standalone_ability_graph_id,
-                            "task_id": task.task_id,
-                            "effect_id": effect.effect_id,
-                            "mutation_count": len(result.mutations),
-                            "listener_mutation_count": listener_mutation_count,
-                            "listener_record_count": listener_record_count,
-                            "listener_dispatch_count": listener_dispatch_count,
-                            "listener_errors": listener_errors,
-                            "unsupported": list(result.unsupported),
-                            "dynamic_value_binding": binding_trace,
-                            "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
-                        },
-                    )
-                traces.append(trace)
-                if not startup_ok:
-                    blocked.append(trace)
-                    reason = str(trace.get("reason") or "startup_ability_atomic_rollback")
-                    records.append(
-                        SettlementRecord(
-                            record_type="startup_ability_blocked",
-                            source="scenario_state_builder",
-                            process_only=True,
-                            payload={
-                                "reason": reason,
-                                "unit_id": unit_id,
-                                "ability_name": ability_name,
-                                "task_id": task.task_id,
-                                "state_unchanged": True,
-                            },
-                            trace={
-                                "ability_graph_source": graph.source.to_json(),
-                                "task_source": task.source.to_json(),
-                                "effect_source": effect.source.to_json(),
-                            },
-                        ).to_json()
-                    )
+                execute_leaf(task, admission, graph)
+        if spec_aborted:
+            continue
         if candidate_task_count == 0:
             trace = _startup_trace_payload(
-                    kind=kind,
-                    unit_id=unit_id,
-                    ability_name=ability_name,
-                    slot_id=slot_id,
-                    slot_id_field=slot_id_field,
-                    trace_node_id=trace_node_id,
-                    status="blocked",
-                    reason="startup_ability_has_no_admitted_on_start_effect",
-                    extra={"standalone_ability_graph_id": graph.standalone_ability_graph_id},
-                )
+                kind=kind,
+                unit_id=unit_id,
+                ability_name=ability_name,
+                slot_id=slot_id,
+                slot_id_field=slot_id_field,
+                trace_node_id=trace_node_id,
+                status="blocked",
+                reason="startup_ability_has_no_admitted_on_start_effect",
+                extra={"standalone_ability_graph_id": graph.standalone_ability_graph_id},
+            )
             traces.append(trace)
             blocked.append(trace)
     return _SetupApplyResult(
@@ -620,6 +985,159 @@ def _apply_startup_ability_effects(
         source_traces=tuple(traces),
         dispatched_event_ids=frozenset(dispatched_event_ids),
     )
+
+
+def _startup_branch_task_ids(
+    admission: dict[str, Any],
+    task: AbilityTaskIR,
+    *,
+    success: bool,
+) -> tuple[str, ...]:
+    key = "success_task_ids" if success else "failed_task_ids"
+    if key in admission:
+        return tuple(str(item) for item in _string_items(admission.get(key)))
+    return task.success_task_ids if success else task.failed_task_ids
+
+
+def _startup_branch_admission(
+    admission: dict[str, Any],
+    admitted_task_ids: set[str],
+) -> tuple[frozenset[str] | None, dict[str, str]]:
+    """Return the admitted branch leaf identities for one predicate root."""
+
+    branch_tasks = admission.get("branch_tasks")
+    if isinstance(branch_tasks, (list, tuple)) and branch_tasks:
+        rows = _dict_items(branch_tasks)
+        return (
+            frozenset(str(row["task_id"]) for row in rows if row.get("task_id")),
+            {
+                str(row["task_id"]): str(row.get("effect_id") or "")
+                for row in rows
+                if row.get("task_id")
+            },
+        )
+    if admitted_task_ids:
+        return frozenset(admitted_task_ids), {}
+    return None, {}
+
+
+def _startup_dynamic_value_redefinition(
+    state: BattleState,
+    unit_id: str,
+    effect: object,
+) -> tuple[str, dict[str, JSONValue]]:
+    """Refuse to redefine a unit dynamic value admitted as initialize-zero-only."""
+
+    standard = getattr(effect, "payload", {}).get("standard")
+    value_name = standard.get("value_name") if isinstance(standard, dict) else None
+    if not isinstance(value_name, str) or not value_name:
+        return "startup_dynamic_value_name_missing", {}
+    store = store_from_state(state)
+    entries = store.get("entries")
+    if not isinstance(entries, dict):
+        return "", {}
+    for entry_key in sorted(entries):
+        entry = entries[entry_key]
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("name") or "") != value_name:
+            continue
+        if str(entry.get("scope_kind") or entry.get("scope") or "") != "unit":
+            continue
+        if str(entry.get("owner_id") or "") != unit_id:
+            continue
+        return "startup_dynamic_value_redefinition_not_admitted", {
+            "entry_key": entry_key,
+            "name": value_name,
+            "hash": entry.get("hash"),
+            "scope_kind": "unit",
+            "owner_id": unit_id,
+            "target_id": entry.get("target_id"),
+            "value": entry.get("value"),
+        }
+    return "", {}
+
+
+def _startup_condition_dynamic_values(
+    state: BattleState,
+    unit_id: str,
+) -> dict[str, float]:
+    """Expose the unit's committed dynamic values under both name and hash keys."""
+
+    store = store_from_state(state)
+    entries = store.get("entries")
+    raw_values: dict[str, float] = {}
+    conflicts: set[str] = set()
+    if isinstance(entries, dict):
+        for entry in entries.values():
+            if not isinstance(entry, dict):
+                continue
+            if unit_id not in {
+                str(entry.get("target_id") or ""),
+                str(entry.get("owner_id") or ""),
+            }:
+                continue
+            value = entry.get("value")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            numeric = float(value)
+            for key in (entry.get("name"), entry.get("hash")):
+                if not isinstance(key, str) or not key:
+                    continue
+                previous = raw_values.get(key)
+                if previous is not None and previous != numeric:
+                    conflicts.add(key)
+                raw_values[key] = numeric
+    for key in conflicts:
+        raw_values.pop(key, None)
+    return raw_values
+
+
+def _startup_condition_binding_sources(
+    state: BattleState,
+    unit_id: str,
+) -> tuple[dict[str, JSONValue], ...]:
+    store = store_from_state(state)
+    return (
+        *status_binding_sources(state, (unit_id,)),
+        binding_source_from_store(
+            store,
+            excluded_scopes=("status",),
+            visible_scope={"target_id": unit_id, "ability_instance_id": ""},
+        ),
+    )
+
+
+def _evaluate_startup_condition(
+    ability_tasks: AbilityTaskSystem,
+    state: BattleState,
+    unit_id: str,
+    condition: ConditionIR,
+) -> tuple[object | None, str]:
+    """Evaluate one startup predicate through the shared formal evaluator."""
+
+    try:
+        context = ability_tasks.targets.condition_evaluation_context(
+            state,
+            condition,
+            context=TargetEvaluationContext(
+                caster_id=unit_id,
+                effect_owner_id=unit_id,
+                parameter_entity_ids=(unit_id,),
+                selected_target_ids=(unit_id,),
+                current_target_id=unit_id,
+                turn_owner_id=committed_turn_owner_id(state),
+            ),
+            condition_event_payload={
+                "unit_id": unit_id,
+                "startup_kind": "monster_passive_startup_ability",
+            },
+            dynamic_values=_startup_condition_dynamic_values(state, unit_id),
+            binding_sources=_startup_condition_binding_sources(state, unit_id),
+        )
+        return ability_tasks.evaluator.evaluate_condition_result(condition, context), ""
+    except (TypeError, ValueError) as exc:
+        return None, f"startup_condition_context_invalid:{exc}"
 
 
 def _startup_dynamic_values(
