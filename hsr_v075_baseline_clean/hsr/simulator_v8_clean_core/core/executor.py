@@ -2356,9 +2356,26 @@ def _summon_damage_stat_blocked_reason(
         return ""
     summon_kind = str(actor.flags.get("summon_kind") or "")
     if summon_kind == "summoned_monster":
-        if actor.flags.get("combatant_profile_coverage_status") == "executable":
-            return ""
-        return "summon_damage_stat_source_not_admitted"
+        if actor.flags.get("combatant_profile_coverage_status") != "executable":
+            return "summon_damage_stat_source_not_admitted"
+        # An archive-only profile is not proof that this instance already took
+        # the battle level/difficulty panel. Damage needs the effective context
+        # that produced its max HP, attack and defense.
+        level_context = actor.flags.get("summon_level_context")
+        if not isinstance(level_context, dict) or level_context.get("admission_status") != "executable":
+            return "summon_damage_stat_level_scaling_not_admitted"
+        ratios = level_context.get("ratios")
+        if not isinstance(ratios, dict):
+            return "summon_damage_stat_level_scaling_not_admitted"
+        for field_name in ("max_hp", "attack", "defense", "speed", "max_toughness"):
+            ratio = ratios.get(field_name)
+            if (
+                isinstance(ratio, bool)
+                or not isinstance(ratio, (int, float))
+                or float(ratio) <= 0
+            ):
+                return "summon_damage_stat_level_scaling_not_admitted"
+        return ""
     admission = actor.flags.get("summon_damage_stat_admission")
     if not isinstance(admission, dict):
         admission = actor.flags.get("servant_damage_stat_admission")

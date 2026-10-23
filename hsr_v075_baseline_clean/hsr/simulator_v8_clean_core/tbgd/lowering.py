@@ -10898,16 +10898,16 @@ def _summoned_monster_birth_template(
     unit_field_specs: dict[str, JSONValue] = {
         "side": "enemy",
         "template_id": entry.monster_entity_ref,
-        "level": {"binding_kind": "owner_field", "field": "level"},
-        "max_hp": profile_values.get("max_hp"),
+        "level": {"binding_kind": "level_context_field", "field": "level"},
+        "max_hp": _battle_level_scaled_stat("max_hp", profile_values),
         "hp": {"binding_kind": "copy_unit_field", "field": "max_hp"},
-        "attack": profile_values.get("attack"),
-        "defense": profile_values.get("defense"),
-        "speed": profile_values.get("speed"),
+        "attack": _battle_level_scaled_stat("attack", profile_values),
+        "defense": _battle_level_scaled_stat("defense", profile_values),
+        "speed": _battle_level_scaled_stat("speed", profile_values),
         "energy": 0.0,
         "max_energy": 0.0,
-        "toughness": profile_values.get("current_toughness"),
-        "max_toughness": profile_values.get("max_toughness"),
+        "max_toughness": _battle_level_scaled_stat("max_toughness", profile_values),
+        "toughness": {"binding_kind": "copy_unit_field", "field": "max_toughness"},
         "action_value": {
             "binding_kind": "timeline_action_value",
             "speed_field": "speed",
@@ -10938,7 +10938,11 @@ def _summoned_monster_birth_template(
         "summon_position_policy": entry.position_policy,
         "summon_level_policy": entry.level_policy,
         "summon_value_resolutions": stat_resolutions,
-        "summon_level_source_trace": profile_source,
+        "stage_id": {"binding_kind": "level_context_field", "field": "stage_id"},
+        "hard_level_group": {"binding_kind": "level_context_field", "field": "hard_level_group"},
+        "summon_level_context": {"binding_kind": "request_field", "field": "level_context"},
+        "summon_stat_scaling": {"binding_kind": "level_context_scaling_summary"},
+        "summon_level_source_trace": {"binding_kind": "level_context_field", "field": "source_trace"},
         "summon_delay_policy": intent.delay_policy,
         "combatant_profile_id": profile.profile_id if profile is not None else "",
         "combatant_profile_source_trace": profile_source,
@@ -11023,6 +11027,7 @@ def _summoned_monster_birth_template(
             "owner_required": True,
             "summoner_matches_owner": True,
             "template_source_role": "entry",
+            "battle_level_context_required": True,
         },
         source=entry.source,
         coverage_status="blocked" if blocked_reason else "executable",
@@ -11375,6 +11380,25 @@ def _monster_custom_value_tags(card: MonsterDataCardIR | None) -> list[str]:
     return [str(tag) for tag in raw_tags if isinstance(tag, str) and tag]
 
 
+def _monster_card_difficulty_defaults(card: MonsterDataCardIR | None) -> dict[str, JSONValue]:
+    """Record the card's own difficulty declarations as audit-only defaults.
+
+    A summoned monster does not replace the battle's effective level or hard
+    level group with its card default. Every MonsterConfig row in the fixed
+    source declares HardLevelGroup 1 while the stage carries the real
+    difficulty (VerseSimulation 2, Challenge 3, ...), and every summonable card
+    declares a neutral EliteGroup. Promoting the card field to an override would
+    therefore select a weaker row than the battle actually runs.
+    """
+
+    blocks = card.raw_parameter_blocks.get("monster_config") if card is not None else None
+    return {
+        "hard_level_group": _json_safe(blocks.get("hard_level_group")) if isinstance(blocks, Mapping) else None,
+        "elite_group": _json_safe(blocks.get("elite_group")) if isinstance(blocks, Mapping) else None,
+        "policy": "card_difficulty_defaults_are_not_the_summon_effective_battle_context",
+    }
+
+
 def _monster_custom_value_tag_source_trace(card: MonsterDataCardIR | None) -> dict[str, JSONValue]:
     if card is None:
         return {
@@ -11423,36 +11447,70 @@ def _birth_profile_resources(profile: CombatantProfileIR | None) -> dict[str, JS
     return resources
 
 
+def _battle_level_scaled_stat(
+    field_name: str,
+    profile_values: dict[str, float],
+) -> dict[str, JSONValue]:
+    """Bind one birth stat to the profile base scaled by the battle level policy.
+
+    The ratio is not frozen at compile time: every spawn resolves the effective
+    level and hard level group from the current battle's stage level policy, so
+    two battles, two cards or two level contexts cannot reuse one cached panel.
+    """
+
+    return {
+        "binding_kind": "level_context_scaled_stat",
+        "field_name": field_name,
+        "base_value": profile_values.get(field_name),
+    }
+
+
 def _birth_profile_stat_resolutions(
     entry: SummonMonsterEntryIR,
     profile: CombatantProfileIR | None,
     values: dict[str, float],
 ) -> dict[str, JSONValue]:
+    """Record the profile base panel each birth stat starts from.
+
+    MonsterConfig modify ratios are already folded into the profile base. The
+    only remaining multiplier is the effective battle level/difficulty row,
+    which is selected per spawn; the native spawn mutation and audit carry the
+    selected row, its ratios and the final values.
+    """
+
     profile_source = profile.source.to_json() if profile is not None else {}
     source_trace = {"summon_entry": entry.source.to_json(), "combatant_profile": profile_source}
     result: dict[str, JSONValue] = {}
-    for field_name in ("max_hp", "attack", "defense", "speed"):
+    for field_name in ("max_hp", "attack", "defense", "speed", "max_toughness"):
         value = values.get(field_name)
+        base_source = (
+            f"CombatantProfileIR.toughness_profile.{field_name}"
+            if field_name == "max_toughness"
+            else f"CombatantProfileIR.base_stats.{field_name}"
+        )
         result[field_name] = {
             "ok": value is not None,
-            "value": value,
-            "binding_kind": "combatant_profile_base_stat",
+            "binding_kind": "combatant_profile_base_stat_times_battle_level_ratio",
+            "base_value": value,
+            "ratio_field": field_name,
+            "resolved_at": "unit_spawn_from_current_battle_stage_level_policy",
             "source_trace": source_trace,
             "context_trace": {
                 "combatant_profile_id": profile.profile_id if profile is not None else "",
-                "available_keys": ["combatant_profile"] if profile is not None else [],
+                "available_keys": ["combatant_profile", "battle_level_context"],
             },
             "blocked_reason": "" if value is not None else f"combatant_profile_base_stat_missing:{field_name}",
             "request": {
-                "binding_kind": "combatant_profile_base_stat",
+                "binding_kind": "combatant_profile_base_stat_times_battle_level_ratio",
                 "field_name": field_name,
-                "required_context_keys": ["combatant_profile"],
+                "required_context_keys": ["combatant_profile", "battle_level_context"],
             },
             "delegate_resolution": {
-                "value_source": f"CombatantProfileIR.base_stats.{field_name}",
+                "value_source": base_source,
+                "ratio_source": "battle stage level policy ratios",
                 "profile_id": profile.profile_id if profile is not None else "",
             },
-            "context_keys": ["combatant_profile"] if profile is not None else [],
+            "context_keys": ["combatant_profile", "battle_level_context"],
         }
     return result
 
@@ -22785,11 +22843,19 @@ def _summon_monster_entry_from_raw(
         "value": 1,
         "reason": "current raw SummonMonsterDataList entries have no Count field; each list item lowers to one spawn instance.",
     }
+    # The summon task carries no level or difficulty field; a summoned unit runs
+    # in the battle's own level context. The card's MonsterConfig
+    # HardLevelGroup/EliteGroup stay audit-only defaults recorded in the policy,
+    # never a runtime override. The effective context is resolved per spawn from
+    # the current battle stage level policy, so no compile-time level is frozen
+    # into every instance.
     level_policy = {
-        "kind": "profile_base_stats_no_runtime_level_scaling",
+        "kind": "battle_stage_level_hard_level_group_inherited_from_summoner",
         "admission_status": "executable" if profile is not None and profile.coverage_status == "executable" else "blocked",
-        "source_basis": "CombatantProfileIR.base_stats",
+        "source_basis": "CombatantProfileIR.base_stats_times_battle_stage_level_policy",
         "profile_id": profile.profile_id if profile is not None else "",
+        "effective_context": "resolved_per_spawn_from_current_battle_stage_level_policy",
+        "card_difficulty_defaults": _monster_card_difficulty_defaults(card),
     }
     if level_policy["admission_status"] != "executable":
         if monster_entity_ref:

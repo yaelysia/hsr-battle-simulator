@@ -1,33 +1,40 @@
 # v8 当前交接
 
-更新：2026-10-22。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
+更新：2026-10-23。只维护当前状态、已验收基线、阻断和下一步；更新时替换对应条目。
 
 ## 当前状态
 
 - 主线：`simulator_v8_clean_core`；实现固定交给 dsh / DeepSeek，Codex 负责范围、约束与验收。
-- 最近已提交基线：本次 V3 怪物自然召唤提交；父提交 `255f153`，含已验收性能优化 `b1f42db`。
+- 最近已提交基线：本次召唤出生数值提交；父提交 `7ff13e3`，含已验收性能优化 `b1f42db`。
 - TBGD 固定指针：`14c1d18f91a8101d610e6c523447a7517de3fae1`；本批未新增依赖或环境。
-- 当前主线：V3 怪物自然召唤已验收并随本提交收口；下一批尚未开工。
+- 当前主线：召唤单位有效等级/难度属性已通过 Codex 集中验收，随本提交收口；下一批待准备。
 
-## 最近收口：V3 战斗中自然召唤（已验收并提交）
+## 本批交付（已验收，随本提交收口）
 
-范围与一次性约束见[自然召唤执行说明](simulator_v8_clean_core/docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)，
-实现内容、实际来源、公开操作、审计/回放与剩余依赖见该文末「本批交付」。
-固定来源 Stage 307311 wave 0、银鬃尉官 1003010 与召唤技能 100301004：被动初始化按来源根执行，
-外部选择召唤技能后走真实 Failed 分支出生两个 `1002040`，子单位各自行动一次，玩家自然击败一个后
-尉官存活时再次召唤，新实例行动并继续公开操作。卡片级 CustomValues 绑定（含 1003011 冲突拒绝，
-施法者作用域为正式 intent 字段而非审计证据）、省略 ResetValue 语义、`ByCompareMonsterID`、
-`ByIsTeamLocationIndexType`、`ByCheckCustomValueBool`（`W1_Soldier` 标签）、出生位置按当前
-阵型唯一分配、First/Last 端点顺序、波次清场顺序与死亡子单位的目标过滤一并收口。
-示例为 `examples/cli/silvermane_lieutenant_summon_natural{,.commands}.json`；integration 模块
-`tests/test_monster_summon_natural_route.py` 的自然链、来源审计及独立进程 replay 已通过。
-Codex 本轮复验 52 项快测通过（含两个原始端点复现）；复用上一轮自然路线与回放证据。
-仅选无配置分歧的父卡；不并入其它首领、主人死亡政策或完整 Rogue 环境。
+范围、来源口径、实现与验证见
+[召唤出生属性任务](simulator_v8_clean_core/docs/MONSTER_SUMMON_STAT_BINDING.md#本批交付)。
+要点：召唤任务未声明独立难度，卡片 `MonsterConfig.HardLevelGroup` 全表默认为 1；
+有效等级、HardLevelGroup 与 EliteGroup 改为从当前战斗的关卡波次策略解析，卡片默认值只留证据。
+Lv44 子单位出生面板由 120.9/18/210/83/60 修正为 2629.437174/231.759936/639.99999/83/60，
+AV 仍为 10000/83；缺上下文或召唤者等级不一致时整笔召唤 fail-closed。
+出生记录含有效等级/难度、选中行、倍率、profile base 与结果；Codex 两轮复查共 6 处 P2 已加固：
+出生审计由实际 spawn 与正式 `intent → entry → 模板` 驱动（标签缺失/不一致拒绝，servant 必须解析到
+可执行的 ServantDefinitionIR），按元数据、单位 flags 与原生结算计划逐项核对，来源行与上下文副本
+按嵌套路径比较，结算计划必须来自 `summon_transition`/`summon_system` 生产者。伤害门禁要求可执行
+等级缩放。10 个篡改反例已迁入仓库测试。
+示例与 16 步公开自然链已更新，独立 replay 0 错误。
+Codex 本轮完成审计差异与生产者/消费者复查，出生属性模块 14 项（含 10 个入库反例）、
+合法结算重关联与 servant 出生 2 项通过；自然链与独立 replay 复用本批已有证据。
+交付的基线对照记录保留：非集成回归 637 通过、28 项 `_build_graph()` 缺参失败；另有 4 项
+字符/编译集成失败，均已在 `7ff13e3` 复现，本轮未重复全量检查。
+剩余：非中性卡片 EliteGroup 的叠加口径、无 stage/wave 身份战场的 fail-closed、
+召唤者死亡后的 `MCommon_Servant → Common_Servant_Forcekill` 与清场仍待后续批次。
 
 ## 已验收基线
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
+| V3 自然召唤与出生数值 | Stage 307311 的召唤、子行动、子死亡后再召唤与后续提交已接通；卡片作用域及位置不变量已修。出生面板按战斗等级上下文缩放，数值、来源副本及原生结算审计已验收，见[路线说明](simulator_v8_clean_core/docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)与[出生属性任务](simulator_v8_clean_core/docs/MONSTER_SUMMON_STAT_BINDING.md)。 |
 | 第二轮性能优化 | 冻结子树共享、内部只读摘要、来源证据容量与目录哈希编码已验收；九步约 27 s，Codex 四项集成 48.88 s、88 项快测及 1205 组旧新对照通过。证据与范围见[优化说明](simulator_v8_clean_core/docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。 |
 | 自动插入行动 | 真实监听阈值→入队→自动战技→清理→后续公开操作已验收；开始/终结 tag 事实、实际等级、BP 免扣与 SPBase 单一回能生产者、取消和晚期回滚受原子边界保护。九步归档独立 replay 19 步 0 错误；限定构筑、命令和剩余边界见[路线说明](simulator_v8_clean_core/docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。 |
 | 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；Codex 89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](simulator_v8_clean_core/docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支见上行。 |
@@ -59,7 +66,7 @@ Codex 本轮复验 52 项快测通过（含两个原始端点复现）；复用�
 | I10 | battle_event/servant 双 mute 退场之外的 ForceKill 形态。 |
 | I11 余项 | 其它/组合 StatusTypeMask、寿命 Set/减少、其它 InfectModifier 变体及尚未接通的精准实例操作。 |
 | V1 | 工作台真实浏览器点击、布局、导入/下载；已有 HTTP/客户端检查不代替浏览器验收。 |
-| V3 | 自然召唤主路线已验收；余下为主人死亡清理、评分/成就事件族、`ByIsTeamLocationIndexType` 的 Pos2/Pos3 等未采纳类型、灰熊等配置分歧与完整 Rogue 环境。 |
+| V3 | 出生数值批次已验收并随本提交收口；后续为召唤者死亡监听/强制退场队列/清场、非中性卡片 EliteGroup 口径、评分与成就、未采纳位置类型、灰熊等配置分歧及完整 Rogue 环境。 |
 
 ## 规则待定与待归因
 

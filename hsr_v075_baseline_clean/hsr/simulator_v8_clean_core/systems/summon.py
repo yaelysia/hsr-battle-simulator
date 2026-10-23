@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -186,6 +188,22 @@ class SummonSystem:
                 intent_id=intent.summon_intent_id,
                 source_trace=intent.source.to_json(),
             )
+        # One battle level context serves every entry of this intent: entries are
+        # spawned by the same caster in the same battle, so a missing or invalid
+        # context blocks the whole parent action before any unit is planned.
+        level_context, level_context_reason = _summoned_monster_level_context(
+            self.rules,
+            state,
+            owner,
+        )
+        if level_context_reason:
+            return self._blocked(
+                "spawn_summoned_monster",
+                level_context_reason,
+                owner_id=owner_id,
+                intent_id=intent.summon_intent_id,
+                source_trace=intent.source.to_json(),
+            )
         unit_ids: list[str] = []
         unit_spawn_plans: list[dict[str, JSONValue]] = []
         spawn_requests: list[UnitSpawnRequest] = []
@@ -229,6 +247,7 @@ class SummonSystem:
                     formation_positions=tuple(sorted(formation_positions)),
                     source_trace=intent.source.to_json(),
                     entry_source_trace=entry.source.to_json(),
+                    level_context=level_context,
                 )
                 spawn_plan = self.unit_spawn.plan(template, spawn_request, owner=owner)
                 if not spawn_plan.ok:
@@ -267,6 +286,7 @@ class SummonSystem:
                 "spawn_instance_count": len(unit_ids),
                 "entry_counts": {entry.entry_id: entry.count for entry in intent.entries},
                 "entry_value_resolutions": _entry_value_resolutions_from_spawn_plans(unit_spawn_plans),
+                "summon_level_context": level_context,
             },
         )
 
@@ -552,6 +572,17 @@ class SummonSystem:
                     "monster_data_card_source_trace": unit.flags.get("monster_data_card_source_trace")
                     if isinstance(unit.flags.get("monster_data_card_source_trace"), dict)
                     else {},
+                    "summon_level_context": unit.flags.get("summon_level_context")
+                    if isinstance(unit.flags.get("summon_level_context"), dict)
+                    else {},
+                    "summon_level_source_trace": unit.flags.get("summon_level_source_trace")
+                    if isinstance(unit.flags.get("summon_level_source_trace"), dict)
+                    else {},
+                    "summon_stat_scaling": unit.flags.get("summon_stat_scaling")
+                    if isinstance(unit.flags.get("summon_stat_scaling"), dict)
+                    else {},
+                    "stage_id": unit.flags.get("stage_id"),
+                    "hard_level_group": unit.flags.get("hard_level_group"),
                 },
             )
             for unit in units
@@ -1618,6 +1649,95 @@ def _spawn_plan_position(spawn_plan: UnitSpawnPlan) -> int | None:
     if isinstance(position, bool) or not isinstance(position, int):
         return None
     return position
+
+
+def _strict_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _summoned_monster_level_context(
+    rules: RuleBook,
+    state: BattleState,
+    owner: UnitState,
+) -> tuple[dict[str, JSONValue], str]:
+    """Resolve a summoned monster's effective battle level and difficulty.
+
+    A SummonMonster task declares only MonsterID, LocationType and its own
+    DelayRatio; it carries no level or difficulty override. In-battle summons
+    therefore run in the battle's own level context, and the current stage level
+    policy (compiled from StageConfig, HardLevelGroup and EliteGroup) is the
+    single source for display level, hard level group and stat ratios. The card's
+    MonsterConfig HardLevelGroup/EliteGroup are recorded as defaults only and
+    never replace this context.
+    """
+
+    runtime = state.global_flags.get("wave_runtime")
+    if not isinstance(runtime, Mapping):
+        return {}, "summon_monster_battle_wave_runtime_missing"
+    wave_definition_id = runtime.get("wave_definition_id")
+    stage_id = runtime.get("stage_id")
+    if not isinstance(wave_definition_id, str) or not wave_definition_id:
+        return {}, "summon_monster_battle_wave_definition_identity_missing"
+    if not isinstance(stage_id, str) or not stage_id:
+        return {}, "summon_monster_battle_stage_identity_missing"
+    definition = rules.wave_definition(wave_definition_id)
+    if definition is None or str(definition.stage_id) != stage_id:
+        return {}, "summon_monster_battle_wave_definition_missing"
+    policy = definition.level_policy if isinstance(definition.level_policy, dict) else {}
+    if policy.get("admission_status") != "executable":
+        return {}, str(
+            policy.get("blocked_reason") or "summon_monster_battle_level_policy_blocked"
+        )
+    level = policy.get("level")
+    hard_level_group = policy.get("hard_level_group")
+    if isinstance(level, bool) or not isinstance(level, int) or level <= 0:
+        return {}, "summon_monster_battle_level_missing"
+    if (
+        isinstance(hard_level_group, bool)
+        or not isinstance(hard_level_group, int)
+        or hard_level_group <= 0
+    ):
+        return {}, "summon_monster_battle_hard_level_group_missing"
+    owner_level = owner.level
+    if isinstance(owner_level, bool) or not isinstance(owner_level, int) or owner_level != level:
+        # Displayed level, selected ratio row and the scaled panel must share one
+        # source; a summoner outside the battle level context cannot be scaled.
+        return {}, "summon_monster_battle_level_owner_mismatch"
+    elite_group = policy.get("elite_group")
+    if elite_group is not None and (
+        isinstance(elite_group, bool)
+        or not isinstance(elite_group, int)
+        or elite_group <= 0
+    ):
+        return {}, "summon_monster_battle_elite_group_invalid"
+    ratios = policy.get("ratios")
+    if not isinstance(ratios, Mapping):
+        return {}, "summon_monster_battle_level_ratios_missing"
+    resolved_ratios: dict[str, JSONValue] = {}
+    for field_name in ("max_hp", "attack", "defense", "speed", "max_toughness"):
+        ratio = _strict_number(ratios.get(field_name))
+        if ratio is None or ratio <= 0:
+            return {}, f"summon_monster_battle_level_ratio_missing:{field_name}"
+        resolved_ratios[field_name] = ratio
+    source_trace = policy.get("source_trace")
+    if not isinstance(source_trace, Mapping):
+        return {}, "summon_monster_battle_level_source_trace_missing"
+    return {
+        "kind": "battle_stage_level_hard_level_group_inherited_from_summoner",
+        "admission_status": "executable",
+        "source_basis": "CombatantProfileIR.base_stats_times_battle_stage_level_policy",
+        "effective_context": "resolved_from_current_battle_stage_level_policy",
+        "stage_id": stage_id,
+        "wave_definition_id": wave_definition_id,
+        "level": level,
+        "hard_level_group": hard_level_group,
+        "elite_group": elite_group,
+        "ratios": resolved_ratios,
+        "source_trace": dict(source_trace),
+    }, ""
 
 
 def _summoned_monster_unit_id(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import math
 from typing import Any
@@ -1241,6 +1242,66 @@ class RuntimeSourceAuditor:
                                 details={"operation": operation, "admission": admission},
                             )
                         )
+        is_unit_spawn = (
+            mutation.op == "spawn"
+            and len(mutation.path) == 2
+            and mutation.path[0] == "units"
+        )
+        if is_unit_spawn:
+            if not isinstance(mutation.after, Mapping):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "summon_spawn_payload_invalid",
+                        missing_field="mutation.after",
+                        details={"payload_type": type(mutation.after).__name__},
+                    )
+                )
+            else:
+                unit_spawn_after = mutation.after
+                unit_spawn_flags = unit_spawn_after.get("flags")
+                if not isinstance(unit_spawn_flags, Mapping):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "summon_spawn_payload_flags_missing",
+                            missing_field="mutation.after.flags",
+                        )
+                    )
+                    unit_spawn_flags = {}
+                unit_summon_kind = str(unit_spawn_flags.get("summon_kind") or "")
+                if unit_summon_kind == "summoned_monster":
+                    if operation != "spawn_summoned_monster":
+                        violations.append(
+                            _violation(
+                                mutation,
+                                "summon_spawn_operation_label_missing_or_mismatched",
+                                details={"summon_operation": operation},
+                            )
+                        )
+                    # The birth audit is driven by the actual spawned unit and the
+                    # formal summon definition, never by a metadata label.
+                    self._audit_summoned_monster_birth_stats(mutation, records, violations)
+                elif unit_summon_kind == "servant":
+                    if operation != "servant_spawn":
+                        violations.append(
+                            _violation(
+                                mutation,
+                                "summon_spawn_operation_label_missing_or_mismatched",
+                                details={"summon_operation": operation, "summon_kind": unit_summon_kind},
+                            )
+                        )
+                    self._audit_servant_spawn_mutation(mutation, records, violations)
+                else:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "summon_spawn_unit_kind_missing_or_unrecognized",
+                            details={
+                                "summon_kind": _deep_json_copy(unit_spawn_flags.get("summon_kind")),
+                            },
+                        )
+                    )
         return _trace(
             mutation,
             records,
@@ -1253,6 +1314,839 @@ class RuntimeSourceAuditor:
                 "turn_owner_cleanup_operation": str(metadata.get("turn_owner_cleanup_operation") or ""),
             },
         )
+
+    def _audit_summoned_monster_birth_stats(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> None:
+        """Rebuild a summoned monster's birth panel from the formal summon chain.
+
+        Accepted authorities are the compiled intent -> entry -> birth template
+        chain, the battle stage level policy it was resolved against and the
+        native settlement plan recorded for this mutation. Metadata labels, unit
+        flags and recorded numbers are compared against those facts instead of
+        being trusted as their own source.
+        """
+
+        metadata = mutation.metadata
+        after = mutation.after if isinstance(mutation.after, Mapping) else None
+        if not isinstance(after, Mapping):
+            violations.append(_violation(mutation, "summon_birth_payload_missing", missing_field="mutation.after"))
+            return
+        flags = after.get("flags") if isinstance(after.get("flags"), Mapping) else {}
+        intent_id = _first_str(
+            flags.get("summon_intent_id"),
+            metadata.get("summon_intent_id"),
+        )
+        intent = self.rules.summon_monster_intent(intent_id) if intent_id else None
+        if intent is None or intent.coverage_status != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_intent_missing_or_blocked",
+                    details={"summon_intent_id": intent_id},
+                )
+            )
+            return
+        entry_id = _first_str(flags.get("summon_entry_id"), metadata.get("summon_entry_id"))
+        entries = tuple(entry for entry in intent.entries if entry.entry_id == entry_id)
+        if len(entries) != 1:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_entry_missing_or_ambiguous",
+                    details={"summon_entry_id": entry_id},
+                )
+            )
+            return
+        entry = entries[0]
+        template = self.rules.unit_birth_template(entry.birth_template_id)
+        if template is None or template.coverage_status != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_template_missing_or_blocked",
+                    details={"birth_template_id": entry.birth_template_id},
+                )
+            )
+            return
+        expected_profile_id = _first_str(template.flag_specs.get("combatant_profile_id"))
+        policy_profile_id = _first_str(entry.level_policy.get("profile_id"))
+        if not expected_profile_id or expected_profile_id != policy_profile_id:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_profile_binding_mismatch",
+                    details={"template_profile_id": expected_profile_id, "entry_policy_profile_id": policy_profile_id},
+                )
+            )
+        if (
+            _first_str(flags.get("combatant_profile_id")) != expected_profile_id
+            or _first_str(metadata.get("combatant_profile_id")) != expected_profile_id
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_profile_identity_mismatch",
+                    details={
+                        "template_profile_id": expected_profile_id,
+                        "unit_profile_id": _deep_json_copy(flags.get("combatant_profile_id")),
+                        "record_profile_id": _deep_json_copy(metadata.get("combatant_profile_id")),
+                    },
+                )
+            )
+        if after.get("template_id") != entry.monster_entity_ref or after.get("unit_id") != mutation.path[1]:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_unit_identity_mismatch",
+                    details={
+                        "entry_entity_ref": entry.monster_entity_ref,
+                        "unit_template_id": _deep_json_copy(after.get("template_id")),
+                        "mutation_unit_id": _deep_json_copy(after.get("unit_id")),
+                        "path_unit_id": str(mutation.path[1]),
+                    },
+                )
+            )
+        if (
+            _first_str(flags.get("summon_intent_id")) != intent.summon_intent_id
+            or _first_str(metadata.get("summon_intent_id")) != intent.summon_intent_id
+            or _first_str(flags.get("summon_entry_id")) != entry.entry_id
+            or _first_str(metadata.get("summon_entry_id")) != entry.entry_id
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_intent_identity_mismatch",
+                    details={"summon_intent_id": intent.summon_intent_id, "summon_entry_id": entry.entry_id},
+                )
+            )
+        context = metadata.get("summon_level_context")
+        if not isinstance(context, Mapping) or context.get("admission_status") != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_context_missing",
+                    missing_field="summon_level_context",
+                )
+            )
+            return
+        context_identity = _audit_level_context_identity(context)
+        carried_context = flags.get("summon_level_context")
+        if (
+            not isinstance(carried_context, Mapping)
+            or _audit_level_context_identity(carried_context) != context_identity
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_context_carried_mismatch",
+                    details={
+                        "record": _deep_json_copy(context),
+                        "unit_flags": _deep_json_copy(carried_context),
+                    },
+                )
+            )
+        wave_definition_id = str(context.get("wave_definition_id") or "")
+        definition = self.rules.wave_definition(wave_definition_id) if wave_definition_id else None
+        if definition is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_context_wave_definition_missing",
+                    details={"wave_definition_id": wave_definition_id},
+                )
+            )
+            return
+        policy = definition.level_policy if isinstance(definition.level_policy, Mapping) else {}
+        if policy.get("admission_status") != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_battle_level_policy_not_executable",
+                    details={"level_policy": _deep_json_copy(policy)},
+                )
+            )
+            return
+        if str(context.get("stage_id") or "") != str(definition.stage_id):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_context_stage_mismatch",
+                    details={
+                        "context_stage_id": _deep_json_copy(context.get("stage_id")),
+                        "wave_stage_id": definition.stage_id,
+                    },
+                )
+            )
+        for field_name in ("level", "hard_level_group", "elite_group"):
+            if context.get(field_name) != policy.get(field_name):
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summon_level_context_{field_name}_mismatch",
+                        details={
+                            "context": _deep_json_copy(context.get(field_name)),
+                            "level_policy": _deep_json_copy(policy.get(field_name)),
+                        },
+                    )
+                )
+        if after.get("level") != context.get("level"):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_context_unit_level_mismatch",
+                    details={
+                        "unit_level": _deep_json_copy(after.get("level")),
+                        "context_level": _deep_json_copy(context.get("level")),
+                    },
+                )
+            )
+        policy_ratios = policy.get("ratios") if isinstance(policy.get("ratios"), Mapping) else {}
+        context_ratios = context.get("ratios") if isinstance(context.get("ratios"), Mapping) else {}
+        scaling = flags.get("summon_stat_scaling")
+        scaling_ratios = (
+            scaling.get("ratios")
+            if isinstance(scaling, Mapping) and isinstance(scaling.get("ratios"), Mapping)
+            else {}
+        )
+        resolved_ratios: dict[str, float] = {}
+        for field_name in _SUMMON_BIRTH_STAT_FIELDS:
+            expected_ratio = _audit_number(policy_ratios.get(field_name))
+            if expected_ratio is None:
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summon_level_ratio_missing:{field_name}",
+                        details={"level_policy_ratio": None},
+                    )
+                )
+                continue
+            resolved_ratios[field_name] = expected_ratio
+            for label, candidate in (
+                ("context", _audit_number(context_ratios.get(field_name))),
+                ("unit_flags", _audit_number(scaling_ratios.get(field_name))),
+            ):
+                if candidate is None or not math.isclose(
+                    candidate, expected_ratio, rel_tol=1e-9, abs_tol=1e-9
+                ):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"summon_level_ratio_mismatch:{field_name}:{label}",
+                            details={
+                                "level_policy_ratio": expected_ratio,
+                                "recorded_ratio": candidate,
+                            },
+                        )
+                    )
+        expected_source_tree = _audit_source_tree(policy.get("source_trace"))
+        if not expected_source_tree:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_level_source_trace_missing",
+                    missing_field="level_policy.source_trace",
+                )
+            )
+        for label, candidate in (
+            ("context", context.get("source_trace")),
+            (
+                "carried_context",
+                carried_context.get("source_trace")
+                if isinstance(carried_context, Mapping)
+                else None,
+            ),
+            ("unit_flags", flags.get("summon_level_source_trace")),
+            ("record", metadata.get("summon_level_source_trace")),
+            ("unit_scaling", scaling.get("source_trace") if isinstance(scaling, Mapping) else None),
+        ):
+            actual_tree = _audit_source_tree(candidate)
+            if actual_tree != expected_source_tree:
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summon_level_source_trace_mismatch:{label}",
+                        details={
+                            "expected_tree": _deep_json_copy(expected_source_tree),
+                            "actual_tree": _deep_json_copy(actual_tree),
+                        },
+                    )
+                )
+        expected_context_identity = context_identity
+        if (
+            not isinstance(scaling, Mapping)
+            or _audit_scaling_summary_identity(scaling) != expected_context_identity
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_stat_scaling_summary_mismatch:unit_flags",
+                    details={
+                        "unit_scaling": _deep_json_copy(scaling),
+                        "expected_context": _deep_json_copy(context),
+                    },
+                )
+            )
+        profile = (
+            self.rules.combatant_profile_by_profile_id(expected_profile_id)
+            if expected_profile_id
+            else None
+        )
+        if profile is None or profile.coverage_status != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_combatant_profile_missing_or_blocked",
+                    details={"combatant_profile_id": expected_profile_id},
+                )
+            )
+            return
+        base_values = {
+            "max_hp": _audit_number(profile.base_stats.get("max_hp")),
+            "attack": _audit_number(profile.base_stats.get("attack")),
+            "defense": _audit_number(profile.base_stats.get("defense")),
+            "speed": _audit_number(profile.base_stats.get("speed")),
+            "max_toughness": _audit_number(profile.toughness_profile.get("max_toughness")),
+        }
+        expected_panel: dict[str, float] = {}
+        for field_name in _SUMMON_BIRTH_STAT_FIELDS:
+            spec = template.unit_field_specs.get(field_name)
+            template_base = _audit_number(spec.get("base_value")) if isinstance(spec, Mapping) else None
+            if (
+                not isinstance(spec, Mapping)
+                or spec.get("binding_kind") != "level_context_scaled_stat"
+                or spec.get("field_name") != field_name
+                or template_base is None
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summon_birth_template_scaling_binding_invalid:{field_name}",
+                        details={"spec": _deep_json_copy(spec)},
+                    )
+                )
+            base_value = base_values[field_name]
+            ratio = resolved_ratios.get(field_name)
+            if (
+                template_base is None
+                or base_value is None
+                or not math.isclose(template_base, base_value, rel_tol=1e-9, abs_tol=1e-9)
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summon_birth_template_base_mismatch:{field_name}",
+                        details={"template_base": template_base, "profile_base": base_value},
+                    )
+                )
+            if base_value is None or ratio is None:
+                continue
+            expected_panel[field_name] = base_value * ratio
+            actual_value = _audit_number(after.get(field_name))
+            if actual_value is None or not math.isclose(
+                actual_value, expected_panel[field_name], rel_tol=1e-9, abs_tol=1e-9
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        f"summoned_monster_birth_stat_mismatch:{field_name}",
+                        details={
+                            "base_value": base_value,
+                            "ratio": ratio,
+                            "expected_value": expected_panel[field_name],
+                            "actual_value": actual_value,
+                        },
+                    )
+                )
+        max_hp = _audit_number(after.get("max_hp"))
+        hp = _audit_number(after.get("hp"))
+        if max_hp is None or hp is None or not math.isclose(hp, max_hp, rel_tol=1e-9, abs_tol=1e-9):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summoned_monster_birth_hp_not_full",
+                    details={"hp": hp, "max_hp": max_hp},
+                )
+            )
+        max_toughness = _audit_number(after.get("max_toughness"))
+        toughness = _audit_number(after.get("toughness"))
+        if (
+            max_toughness is None
+            or toughness is None
+            or not math.isclose(toughness, max_toughness, rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summoned_monster_birth_toughness_not_full",
+                    details={"toughness": toughness, "max_toughness": max_toughness},
+                )
+            )
+        action_spec = template.unit_field_specs.get("action_value")
+        template_gauge = _audit_number(action_spec.get("base_action_gauge")) if isinstance(action_spec, Mapping) else None
+        template_multiplier = _audit_number(action_spec.get("multiplier")) if isinstance(action_spec, Mapping) else None
+        timeline_rule = next(
+            (
+                rule
+                for rule in self.rules.ir.timeline_rules
+                if rule.coverage_status == "executable"
+            ),
+            None,
+        )
+        timeline_gauge = _audit_number(timeline_rule.base_action_gauge) if timeline_rule is not None else None
+        if (
+            not isinstance(action_spec, Mapping)
+            or action_spec.get("binding_kind") != "timeline_action_value"
+            or action_spec.get("speed_field") != "speed"
+            or template_gauge is None
+            or timeline_gauge is None
+            or not math.isclose(template_gauge, timeline_gauge, rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_action_value_binding_invalid",
+                    details={
+                        "action_value_spec": _deep_json_copy(action_spec),
+                        "timeline_base_action_gauge": timeline_gauge,
+                    },
+                )
+            )
+            return
+        intent_delay = intent.delay_policy if isinstance(intent.delay_policy, Mapping) else {}
+        recorded_delay = (
+            metadata.get("summon_delay_policy")
+            if isinstance(metadata.get("summon_delay_policy"), Mapping)
+            else {}
+        )
+        if intent_delay.get("admission_status") != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_delay_policy_not_admitted",
+                    details={"delay_policy": _deep_json_copy(intent_delay)},
+                )
+            )
+            return
+        if not _audit_value_equal(recorded_delay, intent_delay):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_delay_policy_mismatch",
+                    details={
+                        "recorded": _deep_json_copy(recorded_delay),
+                        "intent": _deep_json_copy(intent_delay),
+                    },
+                )
+            )
+        intent_multiplier = _audit_number(intent_delay.get("value"))
+        if (
+            template_multiplier is None
+            or intent_multiplier is None
+            or not math.isclose(template_multiplier, intent_multiplier, rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_delay_ratio_binding_mismatch",
+                    details={
+                        "template_multiplier": template_multiplier,
+                        "intent_value": intent_multiplier,
+                    },
+                )
+            )
+        expected_speed = expected_panel.get("speed")
+        action_value = _audit_number(after.get("action_value"))
+        expected_action_value = (
+            timeline_gauge / expected_speed * template_multiplier
+            if expected_speed is not None
+            and expected_speed > 0
+            and template_multiplier is not None
+            else None
+        )
+        if (
+            expected_action_value is None
+            or action_value is None
+            or not math.isclose(
+                action_value, expected_action_value, rel_tol=1e-9, abs_tol=1e-9
+            )
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summoned_monster_birth_action_value_mismatch",
+                    details={
+                        "expected_speed": expected_speed,
+                        "delay_ratio": template_multiplier,
+                        "expected_action_value": expected_action_value,
+                        "actual_action_value": action_value,
+                    },
+                )
+            )
+        unit_id = str(mutation.path[1])
+        plan = _audit_summon_spawn_plan(records, mutation)
+        if not isinstance(plan, Mapping):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_plan_missing",
+                    missing_field="summon_plan",
+                )
+            )
+            return
+        plan_unit_ids = plan.get("unit_ids")
+        if (
+            not isinstance(plan_unit_ids, (list, tuple))
+            or unit_id not in plan_unit_ids
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_plan_unit_ids_mismatch",
+                    details={"unit_id": unit_id, "plan_unit_ids": _deep_json_copy(plan_unit_ids)},
+                )
+            )
+        if plan.get("operation") != "spawn_summoned_monster" or plan.get("ok") is not True:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_plan_invalid",
+                    details={
+                        "operation": _deep_json_copy(plan.get("operation")),
+                        "ok": _deep_json_copy(plan.get("ok")),
+                    },
+                )
+            )
+        plan_metadata = plan.get("metadata") if isinstance(plan.get("metadata"), Mapping) else {}
+        plan_context = plan_metadata.get("summon_level_context")
+        if (
+            not isinstance(plan_context, Mapping)
+            or _audit_level_context_identity(plan_context) != expected_context_identity
+            or _audit_source_tree(plan_context.get("source_trace")) != expected_source_tree
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_context_mismatch",
+                    details={
+                        "plan_context": _deep_json_copy(plan_context),
+                        "record": _deep_json_copy(context),
+                    },
+                )
+            )
+        plan_unit = _audit_plan_list_item(plan_metadata.get("unit_spawn_plans"), unit_id)
+        if plan_unit is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_unit_missing",
+                    details={"unit_id": unit_id},
+                )
+            )
+        else:
+            plan_payload = plan_unit.get("unit") if isinstance(plan_unit.get("unit"), Mapping) else {}
+            for key in (
+                "unit_id",
+                "template_id",
+                "side",
+                "level",
+                "max_hp",
+                "hp",
+                "attack",
+                "defense",
+                "speed",
+                "energy",
+                "max_energy",
+                "toughness",
+                "max_toughness",
+                "action_value",
+            ):
+                if not _audit_value_equal(plan_payload.get(key), after.get(key)):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"summon_birth_settlement_unit_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_payload.get(key)),
+                                "unit": _deep_json_copy(after.get(key)),
+                            },
+                        )
+                    )
+            plan_flags = (
+                plan_payload.get("flags")
+                if isinstance(plan_payload.get("flags"), Mapping)
+                else {}
+            )
+            for key in (
+                "summon_kind",
+                "owner_id",
+                "summoner_id",
+                "summon_intent_id",
+                "summon_entry_id",
+                "combatant_profile_id",
+                "stage_id",
+                "hard_level_group",
+            ):
+                if not _audit_value_equal(plan_flags.get(key), flags.get(key)):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"summon_birth_settlement_flag_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_flags.get(key)),
+                                "unit": _deep_json_copy(flags.get(key)),
+                            },
+                        )
+                    )
+            plan_flag_context = plan_flags.get("summon_level_context")
+            if (
+                not isinstance(plan_flag_context, Mapping)
+                or _audit_level_context_identity(plan_flag_context) != expected_context_identity
+                or _audit_source_tree(plan_flag_context.get("source_trace")) != expected_source_tree
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "summon_birth_settlement_flag_context_mismatch",
+                        details={"settlement_context": _deep_json_copy(plan_flag_context)},
+                    )
+                )
+            plan_scaling = plan_flags.get("summon_stat_scaling")
+            if (
+                not isinstance(plan_scaling, Mapping)
+                or _audit_scaling_summary_identity(plan_scaling) != expected_context_identity
+                or _audit_source_tree(plan_scaling.get("source_trace")) != expected_source_tree
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "summon_birth_settlement_scaling_mismatch",
+                        details={"settlement_scaling": _deep_json_copy(plan_scaling)},
+                    )
+                )
+        plan_request = _audit_plan_list_item(plan_metadata.get("unit_spawn_requests"), unit_id)
+        if plan_request is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_birth_settlement_request_missing",
+                    details={"unit_id": unit_id},
+                )
+            )
+        else:
+            plan_request_context = plan_request.get("level_context")
+            if (
+                not isinstance(plan_request_context, Mapping)
+                or _audit_level_context_identity(plan_request_context) != expected_context_identity
+                or _audit_source_tree(plan_request_context.get("source_trace")) != expected_source_tree
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "summon_birth_settlement_request_context_mismatch",
+                        details={"request_level_context": _deep_json_copy(plan_request.get("level_context"))},
+                    )
+                )
+            request_expectations = {
+                "spawn_kind": "summoned_monster",
+                "unit_id": unit_id,
+                "owner_id": _first_str(flags.get("owner_id")),
+                "summoner_id": _first_str(flags.get("summoner_id")),
+                "source_id": intent.summon_intent_id,
+                "entry_id": entry.entry_id,
+                "birth_template_id": template.birth_template_id,
+                "entity_ref": entry.monster_entity_ref,
+                "entry_index": flags.get("summon_entry_index"),
+                "copy_index": flags.get("summon_entry_copy_index"),
+                "spawn_index": flags.get("summon_spawn_index"),
+            }
+            for key, expected in request_expectations.items():
+                if not _audit_value_equal(plan_request.get(key), expected):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"summon_birth_settlement_request_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_request.get(key)),
+                                "expected": _deep_json_copy(expected),
+                            },
+                        )
+                    )
+
+    def _audit_servant_spawn_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> None:
+        """A servant birth must resolve a formal ServantDefinitionIR and plan.
+
+        The spawn kind alone is not evidence: the unit must carry an admitted
+        servant definition identity, and the native settlement plan of this very
+        mutation must agree with the born payload.
+        """
+
+        metadata = mutation.metadata
+        after = mutation.after if isinstance(mutation.after, Mapping) else {}
+        flags = after.get("flags") if isinstance(after.get("flags"), Mapping) else {}
+        definition_id = _first_str(
+            flags.get("servant_definition_id"),
+            metadata.get("servant_definition_id"),
+            metadata.get("intent_id"),
+        )
+        definition = self.rules.servant_definition(definition_id) if definition_id else None
+        if definition is None or definition.coverage_status != "executable":
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_definition_missing_or_blocked",
+                    details={"servant_definition_id": definition_id},
+                )
+            )
+            return
+        _audit_source(definition.source, definition.coverage_status, mutation, violations, executable_required=True)
+        if (
+            _first_str(flags.get("servant_ref")) != definition.servant_ref
+            or after.get("template_id") != definition.servant_ref
+            or _first_str(flags.get("summon_intent_id")) != definition.servant_definition_id
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_definition_identity_mismatch",
+                    details={
+                        "servant_definition_id": definition.servant_definition_id,
+                        "servant_ref": definition.servant_ref,
+                        "unit_servant_ref": _deep_json_copy(flags.get("servant_ref")),
+                        "unit_template_id": _deep_json_copy(after.get("template_id")),
+                        "unit_summon_intent_id": _deep_json_copy(flags.get("summon_intent_id")),
+                    },
+                )
+            )
+        unit_id = str(mutation.path[1])
+        plan = _audit_summon_spawn_plan(records, mutation)
+        if not isinstance(plan, Mapping):
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_settlement_plan_missing",
+                    missing_field="summon_plan",
+                )
+            )
+            return
+        plan_unit_ids = plan.get("unit_ids")
+        if not isinstance(plan_unit_ids, (list, tuple)) or unit_id not in plan_unit_ids:
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_settlement_plan_unit_ids_mismatch",
+                    details={"unit_id": unit_id, "plan_unit_ids": _deep_json_copy(plan_unit_ids)},
+                )
+            )
+        if plan.get("operation") != "servant_spawn" or plan.get("ok") is not True:
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_settlement_plan_invalid",
+                    details={
+                        "operation": _deep_json_copy(plan.get("operation")),
+                        "ok": _deep_json_copy(plan.get("ok")),
+                    },
+                )
+            )
+        plan_metadata = plan.get("metadata") if isinstance(plan.get("metadata"), Mapping) else {}
+        plan_unit = _audit_plan_list_item(plan_metadata.get("unit_spawn_plans"), unit_id)
+        if plan_unit is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_settlement_unit_missing",
+                    details={"unit_id": unit_id},
+                )
+            )
+        else:
+            plan_payload = plan_unit.get("unit") if isinstance(plan_unit.get("unit"), Mapping) else {}
+            for key in (
+                "unit_id",
+                "template_id",
+                "side",
+                "level",
+                "max_hp",
+                "hp",
+                "attack",
+                "defense",
+                "speed",
+                "energy",
+                "max_energy",
+                "max_toughness",
+                "toughness",
+                "action_value",
+            ):
+                if not _audit_value_equal(plan_payload.get(key), after.get(key)):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"servant_spawn_settlement_unit_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_payload.get(key)),
+                                "unit": _deep_json_copy(after.get(key)),
+                            },
+                        )
+                    )
+            plan_flags = plan_payload.get("flags") if isinstance(plan_payload.get("flags"), Mapping) else {}
+            for key in (
+                "summon_kind",
+                "owner_id",
+                "summoner_id",
+                "servant_definition_id",
+                "servant_ref",
+                "summon_intent_id",
+            ):
+                if not _audit_value_equal(plan_flags.get(key), flags.get(key)):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"servant_spawn_settlement_flag_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_flags.get(key)),
+                                "unit": _deep_json_copy(flags.get(key)),
+                            },
+                        )
+                    )
+        plan_request = _audit_plan_list_item(plan_metadata.get("unit_spawn_requests"), unit_id)
+        if plan_request is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "servant_spawn_settlement_request_missing",
+                    details={"unit_id": unit_id},
+                )
+            )
+        else:
+            expectations = {
+                "spawn_kind": "servant",
+                "unit_id": unit_id,
+                "owner_id": _first_str(flags.get("owner_id")),
+                "summoner_id": _first_str(flags.get("summoner_id")),
+                "source_id": definition.servant_definition_id,
+                "entry_id": definition.servant_definition_id,
+                "entity_ref": definition.servant_ref,
+            }
+            for key, expected in expectations.items():
+                if not _audit_value_equal(plan_request.get(key), expected):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            f"servant_spawn_settlement_request_mismatch:{key}",
+                            details={
+                                "settlement": _deep_json_copy(plan_request.get(key)),
+                                "expected": _deep_json_copy(expected),
+                            },
+                        )
+                    )
 
     def _audit_damage_mutation(
         self,
@@ -3027,6 +3921,162 @@ def _records_by_mutation_id(
         if isinstance(mutation_id, str) and mutation_id:
             by_id.setdefault(mutation_id, []).append(record)
     return {key: tuple(value) for key, value in by_id.items()}
+
+
+_SUMMON_BIRTH_STAT_FIELDS = ("max_hp", "attack", "defense", "speed", "max_toughness")
+
+
+def _audit_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _deep_json_copy(value: object) -> JSONValue:
+    if isinstance(value, Mapping):
+        return {str(key): _deep_json_copy(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_deep_json_copy(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _audit_level_context_identity(context: object) -> tuple[JSONValue, ...]:
+    """Behavioral identity of a level context; source traces compare separately."""
+
+    if not isinstance(context, Mapping) or not context:
+        return ()
+    ratios = context.get("ratios") if isinstance(context.get("ratios"), Mapping) else {}
+    return (
+        str(context.get("kind") or ""),
+        str(context.get("admission_status") or ""),
+        str(context.get("stage_id") or ""),
+        str(context.get("wave_definition_id") or ""),
+        context.get("level"),
+        context.get("hard_level_group"),
+        context.get("elite_group"),
+        tuple(
+            (name, _audit_number(ratios.get(name)))
+            for name in _SUMMON_BIRTH_STAT_FIELDS
+        ),
+    )
+
+
+def _audit_scaling_summary_identity(scaling: object) -> tuple[JSONValue, ...]:
+    """Project the recorded scaling summary onto the level context identity."""
+
+    if not isinstance(scaling, Mapping):
+        return ()
+    return _audit_level_context_identity(
+        {
+            "kind": scaling.get("level_context_kind"),
+            "admission_status": "executable",
+            "stage_id": scaling.get("stage_id"),
+            "wave_definition_id": scaling.get("wave_definition_id"),
+            "level": scaling.get("level"),
+            "hard_level_group": scaling.get("hard_level_group"),
+            "elite_group": scaling.get("elite_group"),
+            "ratios": scaling.get("ratios"),
+        }
+    )
+
+
+def _audit_plan_list_item(values: object, unit_id: str) -> Mapping | None:
+    if not isinstance(values, (list, tuple)):
+        return None
+    for item in values:
+        if isinstance(item, Mapping) and item.get("unit_id") == unit_id:
+            return item
+    return None
+
+
+def _audit_value_equal(left: object, right: object) -> bool:
+    return _deep_json_copy(left) == _deep_json_copy(right)
+
+
+def _audit_source_tree(
+    source: object,
+    *,
+    path: str = "",
+) -> dict[str, tuple[JSONValue, ...]]:
+    """Flatten a nested source trace into path -> identity plus evidence.
+
+    The battle level policy references a stage node and one difficulty row node
+    (and the elite node when declared). Comparing only top-level identity would
+    silently treat both sides as empty, so every node keeps its own path and the
+    evidence it was selected from.
+    """
+
+    result: dict[str, tuple[JSONValue, ...]] = {}
+    if not isinstance(source, Mapping):
+        return result
+    identity_keys = ("source_path", "raw_type", "raw_id")
+    if all(
+        isinstance(source.get(key), str) and str(source.get(key)).strip()
+        for key in identity_keys
+    ):
+        result[path or "~"] = (
+            str(source.get("source_path")),
+            str(source.get("raw_type")),
+            str(source.get("raw_id")),
+            _deep_json_copy(source.get("evidence")),
+        )
+        return result
+    for key, value in source.items():
+        child = f"{path}/{key}" if path else str(key)
+        if isinstance(value, Mapping):
+            result.update(_audit_source_tree(value, path=child))
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                result.update(_audit_source_tree(item, path=f"{child}[{index}]"))
+    return result
+
+
+def _audit_summon_spawn_plan(
+    records: tuple[dict[str, JSONValue], ...],
+    mutation: Mutation,
+) -> Mapping | None:
+    """Return the native summon settlement plan of this mutation, if any.
+
+    The plan is only accepted from the producer that actually emitted it: the
+    settlement record must be a `summon_transition` from `summon_system`, carry
+    this mutation id in its own plan identity, and agree with its operation and
+    ok flag. An arbitrary record that merely contains a plan is not proof.
+    """
+
+    mutation_id = mutation.stable_id()
+    for record in records:
+        if not isinstance(record, Mapping):
+            return None
+        if record.get("mutation_id") != mutation_id:
+            return None
+        if record.get("record_type") != "summon_transition":
+            return None
+        if record.get("source") != "summon_system":
+            return None
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            return None
+        plan = payload.get("plan")
+        if not isinstance(plan, Mapping):
+            return None
+        payload_mutation_ids = payload.get("mutation_ids")
+        if (
+            not isinstance(payload_mutation_ids, (list, tuple))
+            or mutation_id not in payload_mutation_ids
+        ):
+            return None
+        if payload.get("operation") != plan.get("operation"):
+            return None
+        if payload.get("ok") is not plan.get("ok"):
+            return None
+        trace = record.get("trace")
+        if not isinstance(trace, Mapping):
+            return None
+        return plan
+    return None
 
 
 def _audit_source(

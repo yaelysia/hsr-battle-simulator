@@ -3,12 +3,43 @@
   "version": "v0_200",
   "units": [
     {
+      "unit_id": "seele",
+      "side": "ally",
+      "entity_ref": "avatar:1102",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "seele:build",
+        "character_card_id": "character_data_card:avatar:1102",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "seele:equipment",
+          "character_card_id": "character_data_card:avatar:1102",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "2a27e79a5a65a0e94f7f89effbcd96aa461d3a58de7e2bdf4fad08f3cd1e3859"
+        },
+        "input_fingerprint": "761367040f20c79870677d66d4c53d28118cb9b015f7e5889f281527ffd04e19"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
       "unit_id": "arlan",
       "side": "ally",
       "entity_ref": "avatar:1008",
       "level": 80,
       "eidolon_level": 0,
-      "position": 0,
+      "position": 1,
       "build_mode": "assembled_character_build",
       "character_build": {
         "build_id": "multiwave:arlan",
@@ -39,7 +70,7 @@
       "entity_ref": "avatar:1105",
       "level": 80,
       "eidolon_level": 0,
-      "position": 1,
+      "position": 2,
       "build_mode": "assembled_character_build",
       "character_build": {
         "build_id": "natasha:build",
@@ -74,7 +105,7 @@
     },
     "metadata": {
       "stage_scope": "wave_only",
-      "scope": "Source wave only: Stage 307311 wave 0, one Lv44 Silvermane Lieutenant monster:1003010. Arlan avatar:1008 E0/Lv80/P6 and Natasha avatar:1105 E0/Lv80/P6 use the already assembled empty-equipment builds from the verified ordinary routes; the ally level and promotion are the existing formal build identities, kept so the players survive the lieutenant's real attacks while a summoned soldier can be defeated naturally. The public sequence selects the source summon skill monster_skill:100301004, lets both summoned soldiers act, defeats one of them, summons again while the lieutenant is alive, and continues with public actions. No injected HP, AV, status, timeline or queue values."
+      "scope": "Source wave only: Stage 307311 wave 0, one Lv44 Silvermane Lieutenant monster:1003010 whose published wave panel already hides 20226.44 HP, 231.76 ATK, 640 DEF, 120 SPD and 240 toughness. The correct summon birth panel for monster:1002040 is base 120.9/18/210/83/60 times the Lv44 HardLevelGroup 2 row (21.74886/12.875552/3.047619/1/1) = 2629.44 HP, 231.76 ATK, 640 DEF, 83 SPD, 60 toughness, so the ally side keeps the verified Lv80 E0 empty-equipment Arlan and Natasha and adds a formal Lv80 E0 empty-equipment Seele (avatar:1102). Seele breaks the Quantum weakness of the summoned soldier and defeats it with a real skill hit; the lieutenant then summons again while alive, both new instances act, and public submissions continue. No injected HP, AV, status, timeline or queue values."
     }
   }
 }

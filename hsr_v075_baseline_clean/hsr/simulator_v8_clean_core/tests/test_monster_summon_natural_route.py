@@ -1,12 +1,16 @@
-"""Silvermane Lieutenant source summon: natural summon, child actions, defeat and re-summon.
+"""Silvermane Lieutenant source summon: natural summon with the correct birth panel.
 
 Source route: StageConfig 307311 wave 0, one Lv44 monster:1003010 (Silvermane
-Lieutenant). The public summon skill monster_skill:100301004 runs
+Lieutenant) whose wave entry already carries the Lv44 HardLevelGroup 2 panel. Its
+public summon skill monster_skill:100301004 runs
 Monster_W1_Soldier03_00_Skill08_Phase02, whose ByCompareMonsterID predicate is false
 for this card. The failed branch's SummonMonster entries read
-MonsterIDFromCustomValue.Hash against the card's own CustomValues row, summon two
-monster:1002040 soldiers at First/Last, start their source passives, let them act,
-defeat one, and summon again while the lieutenant is alive.
+MonsterIDFromCustomValue.Hash against the card's own CustomValues row and summon two
+monster:1002040 soldiers, whose birth panel is the card base times the battle's own
+Lv44 group 2 row (2629.44 HP / 231.76 ATK / 640 DEF / 83 SPD / 60 toughness).
+Seele breaks the Quantum weakness, the soldier is defeated by a real skill hit while
+the Lieutenant is alive, the Lieutenant summons again, both new instances act, and
+public submissions continue.
 
 Every step below is an external advance/submit decision on the shipped example inputs;
 no HP, AV, status, timeline or queue value is injected.
@@ -47,12 +51,58 @@ _LIEUT = "enemy:stage:307311:wave:0:pos:0"
 _SUMMON_SKILL = "monster_skill:100301004"
 _CHILD_SKILL = "monster_skill:100204001"
 _CHILD_TEMPLATE = "monster:1002040"
+_SEELE_KILL_SKILL = "avatar_skill:1110202"
 _STARTUP_STATUSES = {
     "modifier:Local_ListenRedStance",
     "modifier:Local_ListenStanceBreak",
     "modifier:MonsterAllDamageReduce",
     "modifier:TriggerStanceCountDown_Monster",
 }
+
+
+def _raw_rows(name: str):
+    return json.loads(
+        (_ROOT / "turnbasedgamedata-main" / f"ExcelOutput/{name}.json").read_text(encoding="utf-8")
+    )
+
+
+def _expected_child_panel():
+    """Read the selected source rows and compute the panel independently.
+
+    Deliberately does not call the lowering/scaling helpers under test.
+    """
+
+    stage = next(row for row in _raw_rows("StageConfig") if str(row.get("StageID")) == "307311")
+    level = stage["Level"]
+    hard_group = stage["HardLevelGroup"]
+    hard = next(
+        row
+        for row in _raw_rows("HardLevelGroup")
+        if row["HardLevelGroup"] == hard_group and row["Level"] == level
+    )
+    ratios = {
+        "max_hp": hard["HPRatio"]["Value"],
+        "attack": hard["AttackRatio"]["Value"],
+        "defense": hard["DefenceRatio"]["Value"],
+        "speed": hard["SpeedRatio"]["Value"],
+        "max_toughness": hard["StanceRatio"]["Value"],
+    }
+    assert stage.get("EliteGroup") is None  # no elite multiplier for this stage
+    monster = next(row for row in _raw_rows("MonsterConfig") if row["MonsterID"] == 1002040)
+    template = next(
+        row
+        for row in _raw_rows("MonsterTemplateConfig")
+        if row["MonsterTemplateID"] == monster["MonsterTemplateID"]
+    )
+    base = {
+        "max_hp": template["HPBase"]["Value"] * monster["HPModifyRatio"]["Value"],
+        "attack": template["AttackBase"]["Value"] * monster["AttackModifyRatio"]["Value"],
+        "defense": template["DefenceBase"]["Value"] * monster["DefenceModifyRatio"]["Value"],
+        "speed": template["SpeedBase"]["Value"] * monster["SpeedModifyRatio"]["Value"],
+        "max_toughness": template["StanceBase"]["Value"] * monster["StanceModifyRatio"]["Value"],
+    }
+    expected = {field: base[field] * ratios[field] for field in base}
+    return level, hard_group, base, ratios, expected
 
 
 def _records(transition):
@@ -127,6 +177,31 @@ def _owned_dynamic_values(state, unit_id):
     }
 
 
+def _assert_child_panel(unit, expected, level, hard_group, ratios, gauge):
+    assert unit.template_id == _CHILD_TEMPLATE
+    assert unit.level == level
+    assert unit.max_hp == pytest.approx(expected["max_hp"])
+    assert unit.hp == pytest.approx(unit.max_hp)
+    assert unit.attack == pytest.approx(expected["attack"])
+    assert unit.defense == pytest.approx(expected["defense"])
+    assert unit.speed == pytest.approx(expected["speed"])
+    assert unit.max_toughness == pytest.approx(expected["max_toughness"])
+    assert unit.toughness == pytest.approx(unit.max_toughness)
+    # The initial action value uses the final speed and the declared DelayRatio
+    # (the executed failed branch omits DelayRatio, i.e. the full action value).
+    assert unit.action_value == pytest.approx(gauge / unit.speed)
+    context = unit.flags["summon_level_context"]
+    assert context["level"] == level
+    assert context["hard_level_group"] == hard_group
+    assert context["admission_status"] == "executable"
+    assert context["ratios"] == pytest.approx(ratios)
+    scaling = unit.flags["summon_stat_scaling"]
+    assert scaling["level"] == level and scaling["binding_kind"] == (
+        "combatant_profile_base_stat_times_battle_level_ratio"
+    )
+    return context
+
+
 def test_silvermane_lieutenant_natural_summon_route(tmp_path):
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
@@ -134,6 +209,7 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
     session = BattleSession(rules, scenario)
     auditor = RuntimeSourceAuditor(rules)
     gauge = _base_action_gauge(rules)
+    level, hard_group, base, ratios, expected = _expected_child_panel()
 
     # The caster card scope is a formal intent field; source evidence stays
     # audit-only and trimming it must not change admission.
@@ -148,6 +224,15 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
         "character_config_path"
     ].endswith("Monster_W1_Soldier03_00_Config.json")
     assert "caster_card_scope" not in summon_intent.source.evidence
+    for entry in summon_intent.entries:
+        assert entry.level_policy["kind"] == (
+            "battle_stage_level_hard_level_group_inherited_from_summoner"
+        )
+        assert entry.level_policy["admission_status"] == "executable"
+        # Card defaults stay audit-only; they never override the battle context.
+        assert entry.level_policy["card_difficulty_defaults"]["hard_level_group"] == 1
+        assert entry.level_policy["card_difficulty_defaults"]["elite_group"] == 1
+
     lieutenant_actor = session.state.units[_LIEUT]
     stripped_intent = replace(
         summon_intent,
@@ -185,6 +270,8 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
     # initializers ran (SummonCounter omitted ResetValue, AICounter explicit).
     lieutenant = session.state.units[_LIEUT]
     assert lieutenant.flags["enabled_passive_mechanism_slot_ids"]
+    assert lieutenant.flags["stage_level_policy"]["level"] == level
+    assert lieutenant.flags["hard_level_group"] == hard_group
     assert _owned_dynamic_values(session.state, _LIEUT) == {
         "W1_Soldier03_00_BattleScore2_Flag": 0.0,
         "W1_Soldier03_00_SummonCounter": 0.0,
@@ -278,8 +365,15 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
                 first_children = dict(current)
                 first_child_birth_statuses = tuple(sorted(next(iter(current.values())).statuses))
                 for unit_id, unit in first_children.items():
-                    assert unit.template_id == _CHILD_TEMPLATE
-                    assert unit.level == 44  # owner level binding
+                    context = _assert_child_panel(
+                        unit, expected, level, hard_group, ratios, gauge
+                    )
+                    assert context["stage_id"] == "307311"
+                    # The birth panel uses the child card's own profile base.
+                    assert unit.max_hp == pytest.approx(base["max_hp"] * ratios["max_hp"])
+                    assert unit.max_hp != pytest.approx(
+                        session.state.units[_LIEUT].max_hp
+                    )
                     assert unit.flags["owner_id"] == _LIEUT
                     assert unit.flags["summoner_id"] == _LIEUT
                     assert unit.flags["team_side"] == "enemy"
@@ -287,9 +381,6 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
                     assert unit.flags["custom_value_tags"] == ["W1_Soldier"]
                     assert unit.flags["timeline_admitted"] is True
                     assert _STARTUP_STATUSES.issubset(set(unit.statuses)), unit.statuses
-                    # The executed failed branch declares no DelayRatio, so the
-                    # initial action value is the full source action value.
-                    assert unit.action_value == pytest.approx(gauge / unit.speed)
                     assert _owned_dynamic_values(session.state, unit_id) == {}
                 first_positions = {
                     unit.flags["position"] for unit in first_children.values()
@@ -306,7 +397,8 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
                 assert adjacent.target_ids
             else:
                 # Re-summon while the lieutenant is alive: the defeated instance
-                # stays defeated and a fresh pair enters the timeline.
+                # stays defeated and a fresh pair enters the timeline with the
+                # same correct panel.
                 assert set(first_children).issubset(set(current))
                 new_ids = set(current) - set(first_children)
                 assert len(new_ids) == 2
@@ -319,10 +411,9 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
                 }
                 for unit_id, unit in second_children.items():
                     assert unit.lifecycle_status == "active"
-                    assert unit.template_id == _CHILD_TEMPLATE
+                    _assert_child_panel(unit, expected, level, hard_group, ratios, gauge)
                     assert unit.flags["owner_id"] == _LIEUT
                     assert isinstance(unit.flags["position"], int)
-                    assert unit.action_value == pytest.approx(gauge / unit.speed)
                     assert tuple(sorted(unit.statuses)) == first_child_birth_statuses
                     assert _owned_dynamic_values(session.state, unit_id) == {}
                 # Re-summon must not reuse a living (or present) unit's position.
@@ -335,11 +426,10 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
                 assert session.state.units[defeated_id].lifecycle_status == "defeated"
 
         if actor_id.startswith("enemy:summon:") and action_id == _CHILD_SKILL:
-            assert command["target_ids"] == ["natasha"]
-            if not second_children:
-                first_child_actions.append(actor_id)
-            else:
+            if actor_id in second_children:
                 second_child_actions.append(actor_id)
+            elif actor_id in first_children:
+                first_child_actions.append(actor_id)
 
         for mutation in transition.transaction.mutations:
             if (
@@ -358,8 +448,12 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
     assert defeat_step >= 0 and summon_steps[1] > defeat_step
     assert defeated_id in first_children
     assert set(second_children).isdisjoint(set(first_children))
-    assert set(first_child_actions) >= set(first_children), (first_child_actions, first_children)
-    assert set(second_child_actions) >= set(second_children), (second_child_actions, second_children)
+    # The defeated first instance never acted; the surviving first instance did,
+    # and both new instances acted after the second summon.
+    assert set(first_child_actions) == set(first_children) - {defeated_id}, first_child_actions
+    assert set(second_child_actions) == set(second_children), second_child_actions
+    # The killing blow is the public Seele skill on the broken Quantum weakness.
+    assert commands[defeat_step]["action_id"] == _SEELE_KILL_SKILL
     assert audited_transitions >= 4
     assert all(count == 1 for count in spawn_mutations.values()), spawn_mutations
     assert spawn_mutations[defeated_id] == 1

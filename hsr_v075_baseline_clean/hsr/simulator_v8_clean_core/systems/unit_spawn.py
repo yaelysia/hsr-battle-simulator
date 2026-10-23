@@ -33,6 +33,10 @@ class UnitSpawnRequest:
     formation_positions: tuple[int, ...] = ()
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     entry_source_trace: dict[str, JSONValue] = field(default_factory=dict)
+    # Effective battle level/difficulty context for a summoned monster. It is
+    # resolved from the current battle's stage level policy at spawn time, so a
+    # compiled template never freezes one level into every instance.
+    level_context: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -54,6 +58,7 @@ class UnitSpawnRequest:
             "formation_positions": list(self.formation_positions),
             "source_trace": self.source_trace,
             "entry_source_trace": self.entry_source_trace,
+            "level_context": self.level_context,
         }
 
     @classmethod
@@ -79,6 +84,11 @@ class UnitSpawnRequest:
             source_trace=dict(raw.get("source_trace") or {}) if isinstance(raw.get("source_trace"), dict) else {},
             entry_source_trace=dict(raw.get("entry_source_trace") or {})
             if isinstance(raw.get("entry_source_trace"), dict)
+            else {},
+            # A malformed context collapses to an empty map so request validation
+            # rejects it; it never becomes a valid default context.
+            level_context=dict(raw.get("level_context") or {})
+            if isinstance(raw.get("level_context"), dict)
             else {},
         )
 
@@ -258,6 +268,80 @@ def spawn_requests_from_metadata(metadata: dict[str, JSONValue]) -> tuple[UnitSp
     return tuple(UnitSpawnRequest.from_json(item) for item in raw)
 
 
+_LEVEL_CONTEXT_KIND = "battle_stage_level_hard_level_group_inherited_from_summoner"
+_LEVEL_CONTEXT_STAT_FIELDS = ("max_hp", "attack", "defense", "speed", "max_toughness")
+_LEVEL_CONTEXT_FIELD_NAMES = frozenset(
+    {"level", "stage_id", "hard_level_group", "elite_group", "source_trace"}
+)
+
+
+def _level_context_ratios(context: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    ratios = context.get("ratios")
+    return dict(ratios) if isinstance(ratios, dict) else {}
+
+
+def _required_level_context(request: UnitSpawnRequest) -> dict[str, JSONValue]:
+    """Validate the effective battle level context carried by a spawn request.
+
+    This context is the only authority allowed to scale a summoned monster's
+    profile base panel. A missing, malformed or non-executable context blocks the
+    spawn; it never falls back to base stats, level 1 or an owner panel.
+    """
+
+    context = request.level_context
+    if not isinstance(context, dict) or not context:
+        raise ValueError("unit_spawn_request_level_context_missing")
+    if str(context.get("kind") or "") != _LEVEL_CONTEXT_KIND:
+        raise ValueError("unit_spawn_request_level_context_kind_unsupported")
+    if context.get("admission_status") != "executable":
+        raise ValueError("unit_spawn_request_level_context_not_admitted")
+    for key in ("stage_id", "wave_definition_id"):
+        value = context.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"unit_spawn_request_level_context_{key}_missing")
+    for key in ("level", "hard_level_group"):
+        value = context.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"unit_spawn_request_level_context_{key}_missing")
+    elite_group = context.get("elite_group")
+    if elite_group is not None and (
+        isinstance(elite_group, bool)
+        or not isinstance(elite_group, int)
+        or elite_group <= 0
+    ):
+        raise ValueError("unit_spawn_request_level_context_elite_group_invalid")
+    ratios = _level_context_ratios(context)
+    for field_name in _LEVEL_CONTEXT_STAT_FIELDS:
+        ratio = _strict_number(ratios.get(field_name))
+        if ratio is None or ratio <= 0 or not math.isfinite(ratio):
+            raise ValueError(
+                f"unit_spawn_request_level_context_ratio_invalid:{field_name}"
+            )
+    _required_source_trace_identity(
+        context.get("source_trace"),
+        "request_level_context_source_trace",
+    )
+    return dict(context)
+
+
+def _level_context_identity(context: dict[str, JSONValue]) -> tuple[JSONValue, ...]:
+    """Behavioral identity of the level context; source traces stay audit-only."""
+
+    if not isinstance(context, dict) or not context:
+        return ()
+    ratios = _level_context_ratios(context)
+    return (
+        str(context.get("kind") or ""),
+        str(context.get("admission_status") or ""),
+        str(context.get("stage_id") or ""),
+        str(context.get("wave_definition_id") or ""),
+        context.get("level"),
+        context.get("hard_level_group"),
+        context.get("elite_group"),
+        tuple((name, _strict_number(ratios.get(name))) for name in _LEVEL_CONTEXT_STAT_FIELDS),
+    )
+
+
 def _template_request_blocked_reason(
     template: UnitBirthTemplateIR,
     request: UnitSpawnRequest,
@@ -334,8 +418,8 @@ def _materialize_unit_payload(
         "speed",
         "energy",
         "max_energy",
-        "toughness",
         "max_toughness",
+        "toughness",
         "action_value",
     ):
         if field_name not in template.unit_field_specs:
@@ -421,6 +505,48 @@ def _resolve_spec(
             raise ValueError(f"unit_birth_binding_owner_linear_source_missing:{owner_field}")
         value = owner_value * scale + offset
         return max(value, minimum) if minimum is not None else value
+    if kind == "level_context_field":
+        context = _required_level_context(request)
+        field_name = str(spec.get("field") or "")
+        if field_name not in _LEVEL_CONTEXT_FIELD_NAMES:
+            raise ValueError(
+                f"unit_birth_binding_level_context_field_unsupported:{field_name}"
+            )
+        return _json_copy(context.get(field_name))
+    if kind == "level_context_scaled_stat":
+        context = _required_level_context(request)
+        field_name = str(spec.get("field_name") or "")
+        if field_name not in _LEVEL_CONTEXT_STAT_FIELDS:
+            raise ValueError(
+                f"unit_birth_binding_level_context_stat_unsupported:{field_name}"
+            )
+        base_value = _strict_number(spec.get("base_value"))
+        ratio = _strict_number(_level_context_ratios(context).get(field_name))
+        if (
+            base_value is None
+            or base_value < 0
+            or not math.isfinite(base_value)
+            or ratio is None
+            or not math.isfinite(ratio)
+        ):
+            raise ValueError(
+                f"unit_birth_binding_level_context_scaled_stat_invalid:{field_name}"
+            )
+        return base_value * ratio
+    if kind == "level_context_scaling_summary":
+        context = _required_level_context(request)
+        return {
+            "binding_kind": "combatant_profile_base_stat_times_battle_level_ratio",
+            "level_context_kind": str(context.get("kind") or ""),
+            "stage_id": str(context.get("stage_id") or ""),
+            "wave_definition_id": str(context.get("wave_definition_id") or ""),
+            "level": context.get("level"),
+            "hard_level_group": context.get("hard_level_group"),
+            "elite_group": context.get("elite_group"),
+            "ratios": _json_copy(_level_context_ratios(context)),
+            "source_trace": _json_copy(context.get("source_trace")),
+            "resolved_at": "unit_spawn_from_current_battle_stage_level_policy",
+        }
     if kind == "timeline_action_value":
         speed = _strict_number(fields.get(str(spec.get("speed_field") or "")))
         gauge = _strict_number(spec.get("base_action_gauge"))
@@ -731,6 +857,7 @@ def _validate_spawn_request_complete(request: UnitSpawnRequest) -> None:
             value = getattr(request, field_name)
             if not isinstance(value, int) or value < 0:
                 raise ValueError(f"unit_spawn_request_{field_name}_missing")
+        _required_level_context(request)
     positions = request.formation_positions
     if not isinstance(positions, tuple):
         raise ValueError("unit_spawn_request_formation_positions_not_tuple")
@@ -795,6 +922,46 @@ def _validate_unit_request_binding(
             raise ValueError(f"unit_spawn_plan_request_flag_mismatch:{key}")
     if request.spawn_kind == "wave_enemy" and data.get("level") != flags.get("stage_level"):
         raise ValueError("unit_spawn_plan_request_stage_level_mismatch")
+    if request.spawn_kind == "summoned_monster":
+        _validate_summoned_monster_level_context(data, flags, request)
+
+
+def _validate_summoned_monster_level_context(
+    data: dict[str, JSONValue],
+    flags: dict[str, JSONValue],
+    request: UnitSpawnRequest,
+) -> None:
+    """The born unit must carry exactly the level context the request declared."""
+
+    context = _required_level_context(request)
+    if flags.get("stage_id") != context["stage_id"]:
+        raise ValueError("unit_spawn_plan_request_level_context_stage_mismatch")
+    if flags.get("hard_level_group") != context["hard_level_group"]:
+        raise ValueError("unit_spawn_plan_request_level_context_group_mismatch")
+    carried = flags.get("summon_level_context")
+    if not isinstance(carried, Mapping) or _level_context_identity(dict(carried)) != _level_context_identity(context):
+        raise ValueError("unit_spawn_plan_request_level_context_mismatch")
+    _require_matching_flag_source(
+        flags,
+        "summon_level_source_trace",
+        _required_source_trace_identity(
+            context.get("source_trace"),
+            "request_level_context_source_trace",
+        ),
+    )
+    if data.get("level") != context["level"]:
+        raise ValueError("unit_spawn_plan_request_level_context_level_mismatch")
+    scaling = flags.get("summon_stat_scaling")
+    if not isinstance(scaling, Mapping) or scaling.get("level") != context["level"]:
+        raise ValueError("unit_spawn_plan_request_level_context_scaling_missing")
+    max_hp = _strict_number(data.get("max_hp"))
+    hp = _strict_number(data.get("hp"))
+    max_toughness = _strict_number(data.get("max_toughness"))
+    toughness = _strict_number(data.get("toughness"))
+    if max_hp is None or hp != max_hp:
+        raise ValueError("unit_spawn_plan_request_birth_hp_not_full")
+    if max_toughness is None or toughness != max_toughness:
+        raise ValueError("unit_spawn_plan_request_birth_toughness_not_full")
 
 
 def _validate_birth_plan_source_fields(
@@ -1017,6 +1184,7 @@ def _spawn_request_identity(request: UnitSpawnRequest) -> tuple[JSONValue, ...]:
         request.wave_index,
         request.position,
         tuple(request.formation_positions),
+        _level_context_identity(request.level_context),
     )
 
 

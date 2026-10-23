@@ -1006,6 +1006,7 @@ def _raw_parameter_blocks(monster_row: dict[str, Any], template_row: dict[str, A
     return {
         "monster_config": {
             "hard_level_group": _json_safe(monster_row.get("HardLevelGroup")),
+            "elite_group": _json_safe(monster_row.get("EliteGroup")),
             "attack_modify_ratio": _json_safe(monster_row.get("AttackModifyRatio")),
             "defense_modify_ratio": _json_safe(monster_row.get("DefenceModifyRatio")),
             "hp_modify_ratio": _json_safe(monster_row.get("HPModifyRatio")),

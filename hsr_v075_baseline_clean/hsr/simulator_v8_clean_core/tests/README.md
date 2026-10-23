@@ -32,12 +32,16 @@ V2 五元素普通击破自然路线集中在 `test_ordinary_element_break_natur
 怪物自然召唤路线使用 `test_monster_summon_natural_route.py`（显式 `integration`）：一次规则
 构建、一次正式入场后由公开 advance/submit 完成召唤、子单位行动、自然击败、再召唤与新实例行动，
 对召唤及子单位 action 的 transition 执行 `RuntimeSourceAuditor`，并保存归档交给独立进程
-`cli replay` 复跑。配套最小组件检查为 `test_monster_custom_value_binding.py`（卡片上下文
-隔离/冲突）、`test_monster_passive_conditional_startup.py`（条件根与省略 ResetValue）、
+`cli replay` 复跑。出生面板的来源、两项上下文与篡改拒绝另用
+`test_monster_summon_birth_stats.py`（同一子卡两个关卡等级/难度上下文、异卡隔离、
+缺上下文整笔阻断、出生数值或倍率行篡改被原生审计拒绝）。配套最小组件检查为
+`test_monster_custom_value_binding.py`（卡片上下文隔离/冲突）、
+`test_monster_passive_conditional_startup.py`（条件根与省略 ResetValue）、
 `test_team_location_index_condition.py`（位置分类）、`test_monster_spawn_position_endpoints.py`
 （First/Last 端点位置）和 `test_monster_summon_atomicity.py`（第二只启动失败整段回滚、
 出生事件只派发一次）。示例、来源与剩余依赖见
-[自然召唤执行说明](../docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)。
+[自然召唤执行说明](../docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)；等级/
+难度口径与出生数值见[召唤出生属性任务](../docs/MONSTER_SUMMON_STAT_BINDING.md)。
 
 路线说明、示例与五行结果见 [V2 执行说明](../docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。
 
