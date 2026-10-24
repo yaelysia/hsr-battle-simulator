@@ -1901,6 +1901,86 @@ def monster_skill_param_binding_sources(
     return ({"source_type": "monster_skill_param", "unit_id": unit_id, **_reindex({"entries": entries})},) if entries else ()
 
 
+def monster_standalone_skill_param_binding_sources(
+    rules: RuleBook, state: BattleState, unit_id: str, action_id: str,
+) -> tuple[dict[str, JSONValue], ...]:
+    """Bind card-declared skill params for a monster standalone ability.
+
+    Monster cards declare DynamicValues ReadInfo bindings against their own skill
+    rows. The monster_skill_param source keys off a skill action row, which an
+    inserted standalone ability does not own; the emitted standalone action
+    bindings carry the same card-scoped hash/value pairs.
+    """
+
+    unit = state.units.get(unit_id)
+    card = rules.monster_data_card_for_entity(unit.template_id) if unit else None
+    if card is None or unit.flags.get("monster_data_card_id") != card.card_id:
+        return ()
+    action_ref = action_id
+    if action_id.startswith("standalone_ability_graph:"):
+        graph = rules.standalone_ability_graph(action_id)
+        if graph is None:
+            return ()
+        action_ref = f"standalone_ability:{graph.ability_name}"
+    elif not action_id.startswith("standalone_ability:"):
+        return ()
+    entries: dict[str, JSONValue] = {}
+    hashes: dict[str, float] = {}
+    for binding in rules.skill_formula_bindings_for_action(action_ref, 0):
+        if (
+            binding.data_card_kind != "monster"
+            or binding.data_card_id != card.card_id
+            or binding.owner_entity_ref != unit.template_id
+            or binding.coverage_status != "executable"
+            or not isinstance(binding.scaling_basis_expr, dict)
+        ):
+            continue
+        raw_hash = binding.scaling_basis_expr.get("dynamic_hash")
+        value = (
+            binding.param_value.get("Value")
+            if isinstance(binding.param_value, dict)
+            else binding.param_value
+        )
+        if (
+            type(raw_hash) not in (str, int)
+            or not str(raw_hash)
+            or type(value) not in (int, float)
+            or not math.isfinite(value)
+        ):
+            continue
+        # The same card parameter can reach this action through more than one
+        # formal projection (for example a damage task binding and the card
+        # declaration). Identical hash/value pairs are one declaration; a
+        # conflicting value for the same hash stays unbound.
+        previous = hashes.get(str(raw_hash))
+        if previous is not None:
+            if previous != float(value):
+                return ()
+            continue
+        hashes[str(raw_hash)] = float(value)
+        entry = {
+            "scope": "monster_standalone_skill_param",
+            "owner_id": unit_id,
+            "hash": str(raw_hash),
+            "name": None,
+            "value": float(value),
+            "source_trace": {
+                "skill_formula_binding_id": binding.binding_id,
+                "binding_source": binding.source.to_json(),
+            },
+        }
+        entries[_entry_key(entry)] = entry
+    if not entries:
+        return ()
+    return (
+        {
+            "source_type": "monster_standalone_skill_param",
+            "unit_id": unit_id,
+            **_reindex({"entries": entries}),
+        },
+    )
+
+
 def character_declared_dynamic_binding_source(
     rules: RuleBook, state: BattleState, unit_id: str,
     *, ability_instance_id: str = "", excluded_hashes: tuple[str, ...] = (),

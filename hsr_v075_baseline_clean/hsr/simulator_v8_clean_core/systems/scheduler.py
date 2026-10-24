@@ -36,7 +36,15 @@ from .action_selection import ActionTargetSelectionContext, ActionTargetSelectio
 from .effect import EffectRegistry
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .event_dispatch import EventDispatchResult, EventDispatchSystem
-from .queue import QUEUE_DRAIN_STEP_BUDGET, QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
+from .queue import (
+    QUEUE_DRAIN_STEP_BUDGET,
+    QUEUE_WINDOW_FAMILY_ORDER,
+    DeathrattleQueueAdmission,
+    QueueDrainPlan,
+    QueueEntry,
+    QueueSystem,
+    deathrattle_admission_from_entry,
+)
 from .phase_machine import (
     ACTION_EXECUTION,
     AWAITING_DECISION,
@@ -2121,6 +2129,13 @@ class CombatScheduler:
                     "queue_standalone_target_resolution_mismatch",
                     plan,
                 )
+            death_instance_id, death_authority_reason = (
+                _standalone_death_instance_id(plan.queue_entry, resolution)
+            )
+            if death_authority_reason:
+                return self._terminalize_queue_entry(
+                    state, death_authority_reason, plan
+                )
             try:
                 standalone_invocation = StandaloneAbilityInvocation(
                     graph_id=graph_id,
@@ -2130,6 +2145,7 @@ class CombatScheduler:
                     queue_entry_id=str(plan.queue_entry.get("entry_id") or ""),
                     queue_intent_id=plan.queue_intent_id,
                     queue_resolution_id=resolution.queue_resolution_id,
+                    death_instance_id=death_instance_id,
                 )
             except (TypeError, ValueError) as exc:
                 return self._terminalize_queue_entry(
@@ -3304,6 +3320,36 @@ def queue_plan_requires_external_command(plan: QueueDrainPlan, resolution: Queue
     if window_family == "ultimate":
         return True
     return _is_extra_turn_action_choice_plan(plan, resolution)
+
+
+def _standalone_death_instance_id(
+    entry: dict[str, JSONValue], resolution: QueueResolutionIR
+) -> tuple[str, str]:
+    """Resolve the formal death authority carried into one standalone body.
+
+    The identity comes only from the typed queue admission already carried by
+    this exact entry, re-bound to this entry's actor, formal intent and actual
+    ability. An audit trace or ordinary payload can never supply it.
+    """
+
+    try:
+        admission = deathrattle_admission_from_entry(entry)
+    except ValueError as exc:
+        return "", f"queue_standalone_deathrattle_admission_invalid:{exc}"
+    if not isinstance(admission, DeathrattleQueueAdmission):
+        return "", ""
+    contract_reason = admission.entry_contract_blocked_reason(entry)
+    if contract_reason:
+        return "", contract_reason
+    if (
+        admission.unit_id != str(entry.get("actor_id") or "")
+        or admission.queue_intent_id != str(entry.get("queue_intent_id") or "")
+        or admission.ability_name != resolution.action_or_ability_ref
+    ):
+        return "", (
+            f"queue_standalone_deathrattle_binding_mismatch:{admission.unit_id}"
+        )
+    return admission.death_instance_id, ""
 
 
 def _queue_plan_sort_key(plan: QueueDrainPlan) -> tuple[int, float, int, str]:

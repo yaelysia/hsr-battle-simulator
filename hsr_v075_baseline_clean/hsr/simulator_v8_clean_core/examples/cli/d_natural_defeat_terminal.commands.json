@@ -1,0 +1,26 @@
+{
+ "commands": [
+  {
+   "actor_id": "enemy:stage:307311:wave:0:pos:0",
+   "action_id": "monster_skill:100301004",
+   "action_level": 1,
+   "target_ids": []
+  },
+  {
+   "actor_id": "seele",
+   "action_id": "avatar_skill:1110201",
+   "action_level": 1,
+   "target_ids": [
+    "enemy:stage:307311:wave:0:pos:0"
+   ]
+  },
+  {
+   "actor_id": "enemy:stage:307311:wave:0:pos:0",
+   "action_id": "monster_skill:100301001",
+   "action_level": 1,
+   "target_ids": [
+    "seele"
+   ]
+  }
+ ]
+}

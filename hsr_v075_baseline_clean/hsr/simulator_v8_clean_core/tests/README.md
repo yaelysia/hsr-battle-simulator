@@ -108,6 +108,16 @@ I11 三个真实来源用例分别使用：
 limbo、救回、最终死亡、完整性和原子回滚；救援 HP 是明确组件输入，正式救援队列尚未
 贯通。队列生命范围字段的来源归一化使用 `test_queue_battle_state_transition.py -k queue_life_scope`。
 
+终止队列移除与未准入 Revivable 分支的共享边界使用
+`test_queue_terminal_remove_boundaries.py`：普通确认死亡取消在 alive_only 与
+alive_or_revivable 两种 mask 下继续通过完整差分和原生结算审计；剥离清理标签后篡改保留
+条目、联合改写 operation/disposition/record_type 退出正式生产者或 ForceKill 因果契约
+被拒；取消结论只按实际失败身份判定，其它身份的合法 limbo 不牵连；waiting_window/retargeted
+由完整预期条目严格校验（夹带 actor_id 等改写被拒）且原生过渡继续通过；原生 limbo 上的
+未准入 Revivable 条目阻断并保零 mutation；dequeue 豁免仅在接受正式准入计划、窗口与
+RuleBook resolution 后生效（缺失、空或阻断计划不放行），原生 dequeue 结算的
+payload.queue_resolution 必须与正式 resolution.to_json() 完整严格相等。
+
 ## 按需战斗与独立回放
 
 仅在需要整场行为证据时运行受影响路线。独立回放另按归档/恢复/确定性风险决定，不与整场

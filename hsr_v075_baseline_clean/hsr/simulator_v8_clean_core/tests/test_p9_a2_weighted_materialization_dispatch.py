@@ -110,6 +110,7 @@ def _compiled_graph(
         occurrences={task.task_id: task_graph_source_occurrence_id(source, task.family)},
         controls={task.task_id: control}, template_by_id={}, refs_by_node={},
         definitions=_DefinitionIndexes({}, {}, effects, {}),
+        admitted_insert_action_task_ids=frozenset(),
     )
 
 

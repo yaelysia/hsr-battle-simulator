@@ -1,0 +1,111 @@
+{
+ "scenario_id": "ordinary:silvermane-lieutenant-owner-death",
+ "version": "v0_200",
+ "units": [
+  {
+   "unit_id": "seele",
+   "side": "ally",
+   "entity_ref": "avatar:1102",
+   "level": 80,
+   "eidolon_level": 0,
+   "position": 0,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "seele:build",
+    "character_card_id": "character_data_card:avatar:1102",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 0,
+    "unlocked_trace_node_ids": [],
+    "equipment_build": {
+     "build_id": "seele:equipment",
+     "character_card_id": "character_data_card:avatar:1102",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "2a27e79a5a65a0e94f7f89effbcd96aa461d3a58de7e2bdf4fad08f3cd1e3859"
+    },
+    "input_fingerprint": "761367040f20c79870677d66d4c53d28118cb9b015f7e5889f281527ffd04e19"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  },
+  {
+   "unit_id": "arlan",
+   "side": "ally",
+   "entity_ref": "avatar:1008",
+   "level": 80,
+   "eidolon_level": 0,
+   "position": 1,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "multiwave:arlan",
+    "character_card_id": "character_data_card:avatar:1008",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 0,
+    "unlocked_trace_node_ids": [],
+    "equipment_build": {
+     "build_id": "empty",
+     "character_card_id": "character_data_card:avatar:1008",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "9aa8f0345f608fb28d7b2cdb314b78ba969bf08bd8723426389e7ea760546416"
+    },
+    "input_fingerprint": "f4abd7eda49d56cc26ef79bbb05edd65105c602026fc838df35d1af8718c7eb6"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  },
+  {
+   "unit_id": "natasha",
+   "side": "ally",
+   "entity_ref": "avatar:1105",
+   "level": 80,
+   "eidolon_level": 0,
+   "position": 2,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "natasha:build",
+    "character_card_id": "character_data_card:avatar:1105",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 0,
+    "unlocked_trace_node_ids": [],
+    "equipment_build": {
+     "build_id": "natasha:equipment",
+     "character_card_id": "character_data_card:avatar:1105",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+    },
+    "input_fingerprint": "22608c41813fb531bf28ac3ad4e71f657caf306d4465e966c755a8f3b05c5c66"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  }
+ ],
+ "stage_ref": "307311",
+ "wave_index": 0,
+ "route": [],
+ "battle_setup": {
+  "timeline": {
+   "mode": "runtime_initialize"
+  },
+  "metadata": {
+   "stage_scope": "wave_only",
+   "scope": "Source wave only: Stage 307311 wave 0, one Lv44 Silvermane Lieutenant monster:1003010. The Lieutenant summons its two monster:1002040 soldiers through the failed ByCompareMonsterID branch. Seele breaks the Lieutenant's Quantum weakness; the native quantum break-DOT tick defeats the summoner while both soldiers are still alive. Each live soldier's MCommon_Servant OnListenCharacterDie listener matches ByHasSummonRelation and enqueues Common_Servant_Forcekill at MonsterForceKill priority; each inserted ability performs a formal forced death (no hit, damage packet or kill credit) with AbortUnusedInsertAbility. The wave clears only after both soldiers retire, then the battle ends in victory. No HP, AV, status, timeline, queue or outcome value is injected."
+  }
+ }
+}

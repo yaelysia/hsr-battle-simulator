@@ -86,6 +86,9 @@ def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[st
                 "slot_id": slot.passive_slot_id,
                 "slot_id_field": "passive_slot_id",
                 "ability_name": ability_name,
+                "startup_callback_kind": str(
+                    startup_admission.get("startup_callback_kind") or "OnStart"
+                ),
                 "param_values": (),
                 "dynamic_value_bindings": {},
                 "dynamic_value_binding_mode": "no_dynamic_values_admitted",
@@ -243,6 +246,8 @@ def _startup_root_tasks(
     rules: RuleBook,
     phase: AbilityPhaseIR,
     tasks: tuple[AbilityTaskIR, ...],
+    *,
+    callback_kind: str = "OnStart",
 ) -> tuple[tuple[AbilityTaskIR, ...], str]:
     if phase.invocation_role == "external_legacy":
         return _legacy_startup_root_tasks(tasks), ""
@@ -257,7 +262,7 @@ def _startup_root_tasks(
     graph_result = rules.query_formal_task_graph(
         "ability_phase_callback",
         phase.phase_id,
-        "OnStart",
+        callback_kind,
         (task.task_id for task in tasks),
     )
     graph = graph_result.value
@@ -870,11 +875,12 @@ def _apply_startup_ability_effects(
             blocked.append(trace)
             continue
         graph = graphs[0]
+        startup_callback_kind = str(spec.get("startup_callback_kind") or "OnStart")
         graph_tasks_by_id = {
             task_candidate.task_id: task_candidate
             for phase_id in graph.phase_ids
             for task_candidate in rules.ability_tasks_for_phase(phase_id)
-            if task_candidate.callback_kind == "OnStart"
+            if task_candidate.callback_kind == startup_callback_kind
         }
         candidate_task_count = 0
         for phase_id in graph.phase_ids:
@@ -884,7 +890,7 @@ def _apply_startup_ability_effects(
             phase_tasks = tuple(
                 task
                 for task in rules.ability_tasks_for_phase(phase_id)
-                if task.callback_kind == "OnStart"
+                if task.callback_kind == startup_callback_kind
             )
             if phase is None:
                 topology_reason = "startup_ability_phase_missing"
@@ -896,6 +902,7 @@ def _apply_startup_ability_effects(
                     rules,
                     phase,
                     phase_tasks,
+                    callback_kind=startup_callback_kind,
                 )
                 if admitted_task_ids:
                     root_tasks = tuple(

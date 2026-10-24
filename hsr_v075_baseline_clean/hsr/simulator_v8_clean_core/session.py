@@ -90,6 +90,12 @@ class BattleSession:
         )
 
     def advance(self) -> CurrentDecision:
+        decision, _ = self.advance_with_transitions()
+        return decision
+
+    def advance_with_transitions(self) -> tuple[CurrentDecision, tuple[Any, ...]]:
+        """Advance and expose the typed internal transitions for native audit."""
+
         result = self.decisions.advance_to_decision(self.state)
         self.state = result.after_state
         self.operations.append({
@@ -98,7 +104,7 @@ class BattleSession:
             "blocked_reason": result.blocked_reason,
             "transitions": [transition.to_json(detach=False) for transition in result.transitions],
         })
-        return result.decision
+        return result.decision, tuple(result.transitions)
 
     def submit(self, command: ActionCommand) -> SchedulerStepResult:
         decision = self.decisions.current_decision(self.state)

@@ -19,6 +19,7 @@ from .status_callbacks import StatusCallbackSystem
 from .target import TargetSystem
 from .toughness import ToughnessApplicationResult, ToughnessPacket, ToughnessSystem
 from .toughness_state import read_toughness_segments
+from .unit_lifecycle import unit_behavior_flags, unit_protected_weakness_types
 from .unit_relation import TargetEvaluationContext
 
 
@@ -33,6 +34,211 @@ class BreakApplicationResult:
     rng_events: tuple[RNGEvent, ...] = ()
     dispatched_event_ids: frozenset[str] = frozenset()
     event_normalizations: tuple[EventNormalization, ...] = ()
+
+
+def clear_death_break_state(
+    rules: RuleBook,
+    state: BattleState,
+    *,
+    unit_id: str,
+    effect_id: str,
+    death_instance_id: str,
+    reducer: MutationReducer | None = None,
+) -> BreakApplicationResult:
+    """Exit the break state of one formally finalized death instance.
+
+    OnDeathrattle's inserted animation starts with ExitBreakState. Only a unit
+    that has already committed its final defeat record for this death instance
+    may run the corpse cleanup; a still-revivable limbo or pending defeat is not
+    a corpse. The cleared flags keep their original break provenance so the
+    audit can reconstruct the exact before image. The runtime never accepts a
+    caller-provided audit trace as a precondition: the recorded source is
+    rebuilt from the formal EffectIR this helper resolved.
+    """
+
+    target = state.units.get(unit_id)
+
+    def blocked(reason: str) -> BreakApplicationResult:
+        return BreakApplicationResult(
+            ok=False,
+            after_state=state,
+            records=(
+                SettlementRecord(
+                    record_type="break_death_exit_blocked",
+                    source="break_system",
+                    process_only=True,
+                    payload={
+                        "target_id": unit_id,
+                        "death_instance_id": death_instance_id,
+                        "reason": reason,
+                    },
+                    trace={},
+                ).to_json(),
+            ),
+            errors=(reason,),
+        )
+
+    if target is None:
+        return blocked("death_break_exit_target_missing")
+    if target.lifecycle_status != "defeated" or float(target.hp) != 0.0:
+        return blocked("death_break_exit_target_not_finalized")
+    if not target.flags.get("broken", False):
+        return blocked("death_break_exit_target_not_broken")
+    if not isinstance(death_instance_id, str) or not death_instance_id:
+        return blocked("death_break_exit_death_instance_missing")
+    record = target.flags.get("defeat_record")
+    if not isinstance(record, dict):
+        return blocked("death_break_exit_defeat_record_missing")
+    hp_mutation_id = str(record.get("hp_mutation_id") or "")
+    if (
+        str(record.get("lifecycle_mutation_id") or "") != death_instance_id
+        or str(record.get("target_id") or "") != unit_id
+        or str(record.get("defeated_unit_id") or "") != unit_id
+        or not hp_mutation_id
+    ):
+        return blocked("death_break_exit_death_instance_mismatch")
+    effect = rules.effect(effect_id)
+    standard = effect.payload.get("standard") if effect is not None else None
+    if (
+        effect is None
+        or effect.opcode != "ExitBreakState"
+        or effect.coverage_status != "executable"
+        or not isinstance(standard, dict)
+        or standard.get("operation") != "exit_break_state"
+        or standard.get("target_alias") != "Caster"
+        or standard.get("blocked_reason")
+        or type(standard.get("cancel_recover_anim")) is not bool
+    ):
+        return blocked("death_break_exit_effect_not_admitted")
+    effect_source_trace = effect.source.to_json()
+    source = target.flags.get("break_source")
+    if not isinstance(source, dict):
+        return blocked("death_break_exit_source_missing")
+    template_id = source.get("break_template_id")
+    emission_id = source.get("toughness_emission_id")
+    task_id = source.get("source_task_id")
+    profile_id = source.get("hit_profile_id")
+    template = (
+        rules.break_template(template_id)
+        if isinstance(template_id, str) else None
+    )
+    emission = (
+        rules.toughness_emission(emission_id)
+        if isinstance(emission_id, str) else None
+    )
+    break_element = target.flags.get("break_element")
+    if (
+        template is None
+        or template.coverage_status != "executable"
+        or emission is None
+        or emission.coverage_status != "executable"
+        or not isinstance(task_id, str)
+        or not task_id
+        or not isinstance(profile_id, str)
+        or not profile_id
+        or emission.source_task_id != task_id
+        or emission.hit_profile_id != profile_id
+        or not isinstance(source.get("source_trace"), dict)
+        or source.get("break_template_source") != template.source.to_json()
+        or not isinstance(source.get("attacker_id"), str)
+        or not isinstance(break_element, str)
+        or not break_element
+        or template.element_type != break_element
+    ):
+        return blocked("death_break_exit_source_missing")
+    original_break_state: dict[str, JSONValue] = {
+        "broken": target.flags.get("broken"),
+        "break_element": break_element,
+        "break_source": source,
+    }
+    trace: dict[str, JSONValue] = {
+        "death_instance_id": death_instance_id,
+        "defeat_record": record,
+        "break_template_source": template.source.to_json(),
+        "toughness_source": emission.source.to_json(),
+        "original_break_source": source,
+        "original_break_state": original_break_state,
+        "exit_break_state_effect_id": effect_id,
+        "effect_source_trace": effect_source_trace,
+    }
+    metadata: dict[str, JSONValue] = {
+        "target_id": unit_id,
+        "death_instance_id": death_instance_id,
+        "defeat_record": record,
+        "break_template_id": template_id,
+        "toughness_emission_id": emission_id,
+        "source_task_id": task_id,
+        "hit_profile_id": profile_id,
+        "source_trace": trace,
+        "break_lifecycle": {
+            "operation": "recover",
+            "target_id": unit_id,
+            "trigger_kind": "deathrattle_exit_break_state",
+        },
+        "break_recovery": {
+            "kind": "deathrattle_exit_break_state",
+            "trigger_kind": "death_rattle_exit_break_state",
+            "effect_id": effect_id,
+        },
+    }
+    mutations: list[Mutation] = [
+        Mutation(
+            op="set",
+            path=("units", unit_id, "flags", "broken"),
+            before=True,
+            after=False,
+            reason="exit the weakness break state of a finalized death",
+            source="break_system",
+            before_exists=True,
+            metadata=metadata,
+        ),
+        Mutation(
+            op="delete",
+            path=("units", unit_id, "flags", "break_element"),
+            before=break_element,
+            after=None,
+            after_exists=False,
+            reason="clear the finalized death's weakness break element",
+            source="break_system",
+            metadata=metadata,
+        ),
+        Mutation(
+            op="delete",
+            path=("units", unit_id, "flags", "break_source"),
+            before=source,
+            after=None,
+            after_exists=False,
+            reason="clear the finalized death's weakness break source",
+            source="break_system",
+            metadata=metadata,
+        ),
+    ]
+    reduction = (reducer or MutationReducer()).apply_all_result(state, tuple(mutations))
+    if not reduction.ok:
+        return blocked("death_break_exit_mutation_conflict")
+    records = tuple(
+        SettlementRecord(
+            record_type="break_recovery",
+            source="break_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={
+                "target_id": unit_id,
+                "death_instance_id": death_instance_id,
+                "field": mutation.path[-1],
+                "trigger_kind": "deathrattle_exit_break_state",
+                "break_template_id": template_id,
+            },
+            trace=trace,
+        ).to_json()
+        for mutation in mutations
+    )
+    return BreakApplicationResult(
+        ok=True,
+        after_state=reduction.after_state,
+        mutations=tuple(mutations),
+        records=records,
+    )
 
 
 class BreakSystem:
@@ -145,7 +351,9 @@ class BreakSystem:
         segments = read_toughness_segments(target)
         if (segments.remaining_segments <= 1 or target.toughness != 0
                 or target.flags.get("broken", False)
-                or target.flags.get("weakness_locked", False) or target.flags.get("mute_break", False)):
+                or target.flags.get("weakness_locked", False)
+                or target.flags.get("mute_break", False)
+                or "MuteBreak" in unit_behavior_flags(target)):
             return _blocked(state, packet, "stance_count_down_state_invalid")
         template = self.rules.break_template_for_element(packet.element_type, trigger_kind="stance_count_down")
         if (template is None or template.coverage_status != "executable"
@@ -380,8 +588,22 @@ class BreakSystem:
             return _skipped(state, packet, "target_already_broken")
         if bool(target.flags.get("weakness_locked", False)):
             return _skipped(state, packet, "target_weakness_locked")
-        if bool(target.flags.get("mute_break", False)):
+        if (
+            bool(target.flags.get("mute_break", False))
+            or "MuteBreak" in unit_behavior_flags(target)
+        ):
             return _skipped(state, packet, "target_mute_break")
+        protected_weaknesses = unit_protected_weakness_types(target)
+        if packet.element_type and (
+            packet.element_type in protected_weaknesses
+            or "AllType" in protected_weaknesses
+        ):
+            return _skipped(
+                state,
+                packet,
+                "target_weakness_protected",
+                extra={"protected_weaknesses": sorted(protected_weaknesses)},
+            )
         try:
             segments = read_toughness_segments(target)
         except ValueError as exc:

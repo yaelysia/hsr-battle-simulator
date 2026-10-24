@@ -47,6 +47,38 @@ def test_listing_and_empty_read_do_not_compile(monkeypatch):
         battle.prepare_builds({})
 
 
+def test_resume_accepts_exact_archive_text_and_preserves_numeric_types(monkeypatch):
+    from types import SimpleNamespace
+
+    battle = LiveBattle(Path('unused'))
+    captured = {}
+    candidate = SimpleNamespace(operations=[{'kind': 'advance'}], advance=lambda: None)
+
+    def fake_restore(archive, rules):
+        captured['archive'] = archive
+        return candidate
+
+    monkeypatch.setattr('simulator_v8_ui.live.build_battle_rulebook', lambda *_: object())
+    monkeypatch.setattr('simulator_v8_ui.live.restore_session', fake_restore)
+    monkeypatch.setattr(battle, 'view', lambda: {'ok': True})
+    archive = {'scenario': {'units': []}, 'value': 1.0, 'count': 1}
+    text = json.dumps(encode_archive_json(archive), ensure_ascii=False)
+    assert '1.0' in text
+    with pytest.raises(ValueError, match='其中一种'):
+        battle.resume({'archive': {}, 'archive_text': text})
+    with pytest.raises(ValueError, match='有效 JSON'):
+        battle.resume({'archive_text': '{'})
+    assert battle.resume({'archive_text': text}) == {'ok': True}
+    resumed = captured['archive']
+    assert type(resumed['value']) is float and resumed['value'] == 1.0
+    assert type(resumed['count']) is int and resumed['count'] == 1
+    assert battle.restored_operation_count == 1 and battle.session is candidate
+    battle.session = None
+    battle.session_id = None
+    assert battle.resume({'archive': json.loads(text)}) == {'ok': True}
+    assert captured['archive'] == resumed
+
+
 def test_full_support_inventory_is_lazy_cached_and_keeps_unknown_formal_admission(monkeypatch):
     calls = []
     catalog = {'rows': [{'kind': 'character_action', 'content_id': 'fixture:action',
@@ -95,6 +127,33 @@ def test_view_keeps_the_automatic_advance_error_on_refresh():
         assert view['content_support']['status'] == 'blocked'
         assert view['content_support']['blocked_reasons'] == ['fixture:expiry_callback_blocked']
     assert pending['blocked_reason'].startswith('operation_not_allowed_in_phase:')
+
+
+def test_view_marks_ended_battle_as_no_pending_choice():
+    from types import SimpleNamespace
+    from simulator_v8_clean_core.core.model import BattleState
+    from simulator_v8_clean_core.rules.ir import CanonicalIR
+    from simulator_v8_clean_core.rules.rulebook import RuleBook
+
+    pending = {'ready': False, 'blocked_reason': 'operation_not_allowed_in_phase:query_decision:ended',
+               'availability': {'choices': []}}
+    battle = LiveBattle(Path('unused'))
+    battle.session = SimpleNamespace(
+        state=BattleState(), rules=RuleBook(CanonicalIR('fixture:ended-view')),
+        scenario=SimpleNamespace(scenario_id='fixture:ended-view'), scenario_data={'units': []},
+        outcome='victory', operations=[],
+        decisions=SimpleNamespace(current_decision=lambda state: SimpleNamespace(to_json=lambda: dict(pending))),
+    )
+    battle.steps = [{
+        'route_index': 0, 'input_command': {'actor_id': 'ally', 'action_id': 'fixture:attack'},
+        'transition': {'mutation_count': 0, 'event_count': 0},
+        'transition_outcome': {'successor_eligible': True, 'reason_codes': []},
+        'damage_records': [], 'blocked_records': [],
+    }]
+    view = battle.view()
+    assert view['content_support']['status'] == 'unchecked'
+    decision = next(check for check in view['content_support']['checks'] if check['kind'] == 'decision')
+    assert decision['status'] == 'unchecked' and '战斗已结束' in decision['reasons'][0]
 
 
 def test_support_summary_keeps_build_admission_separate_from_action_execution(monkeypatch):

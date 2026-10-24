@@ -62,8 +62,14 @@ from .effect import (
     PreHealDispatchResult,
     _resolve_target_alias,
 )
-from .mutation_events import events_for_mutation
-from .queue import QueueEntry, QueueSystem, QueueTargetResolver
+from .mutation_events import events_for_mutation, mutation_backed_event_id
+from .queue import (
+    DeathrattleQueueAdmission,
+    QueueEntry,
+    QueueSystem,
+    QueueTargetResolver,
+    unit_alive_state_blocked_reason,
+)
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -5541,6 +5547,17 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
+            deathrattle_admission, deathrattle_admission_reason = (
+                _deathrattle_queue_admission(
+                    current_state, callback, task, detail, trigger_event, intent
+                )
+            )
+            if deathrattle_admission_reason:
+                records.append(_queue_intent_blocked_record(
+                    callback, task, detail, intent, deathrattle_admission_reason
+                ))
+                errors.append(deathrattle_admission_reason)
+                continue
             target_resolution = self.queue_targets.resolve(
                 current_state,
                 detail=detail,
@@ -5551,11 +5568,26 @@ class StatusCallbackSystem:
                     "queue_window_source": window.source.to_json(),
                     "queue_intent_source": intent.source.to_json(),
                 },
+                allow_unselectable_target=intent.can_run_on_unselectable_target,
+                deathrattle_admission=deathrattle_admission,
             )
             if not target_resolution.ok:
                 reason = target_resolution.blocked_reason or "queue_target_resolution_failed"
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
+                continue
+            alive_state_reason = (
+                ""
+                if deathrattle_admission is not None
+                else _queue_intent_alive_state_blocked_reason(
+                    current_state, intent, target_resolution
+                )
+            )
+            if alive_state_reason:
+                records.append(_queue_intent_blocked_record(
+                    callback, task, detail, intent, alive_state_reason
+                ))
+                errors.append(alive_state_reason)
                 continue
             precheck_reason = _queue_insert_precheck_blocked(current_state, intent)
             if precheck_reason:
@@ -5648,6 +5680,14 @@ class StatusCallbackSystem:
                 drain_status="not_admitted",
                 elation_override_points=elation_override_points,
                 custom_tag=intent.custom_tag,
+                owner_alive_state=intent.owner_alive_state,
+                target_alive_state=intent.target_alive_state,
+                can_run_on_unselectable_target=intent.can_run_on_unselectable_target,
+                deathrattle_admission=(
+                    deathrattle_admission.to_json()
+                    if deathrattle_admission is not None
+                    else None
+                ),
                 insert_abort=self._queue_insert_abort_binding(
                     callback, task, detail, task_graph_continuation, intent
                 ),
@@ -5907,6 +5947,131 @@ def _queue_priority_value_resolution(
 _INSERT_ACTION_LEGAL_CANCEL_REASONS = frozenset({
     "queue_insert_precheck_same_tag_pending",
 })
+
+
+def _deathrattle_queue_admission(
+    state: BattleState,
+    callback: StatusCallbackIR,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    trigger_event: GameEvent | None,
+    intent: QueueIntentIR,
+) -> tuple[DeathrattleQueueAdmission | None, str]:
+    """Bind one OnDeathrattle insert to the death instance that produced it.
+
+    Only the unit's own just-recorded death can carry the limited Mask_AliveOrLimbo
+    queue authority; the exact source modifier instance, the formal callback and
+    its executable OnDeathrattle task, the lethal HP mutation and the death event
+    identity all have to agree with the written death record.
+    """
+
+    if callback.event != "OnDeathrattle":
+        return None, ""
+    if (
+        not isinstance(task, StatusCallbackTaskIR)
+        or task.callback_id != callback.callback_id
+        or task.event != "OnDeathrattle"
+        or task.task_id not in callback.task_ids
+        or task.task_id != intent.source_task_id
+        or task.modifier_name != callback.modifier_name
+        or callback.coverage_status != "executable"
+        or callback.blocked_reason
+        or task.coverage_status != "executable"
+        or task.blocked_reason
+    ):
+        return None, "deathrattle_admission_source_callback_not_admitted"
+    if trigger_event is None or trigger_event.event_type != "unit.defeated":
+        return None, "deathrattle_admission_trigger_event_missing"
+    unit_id = str(detail.get("owner_id") or "")
+    payload = trigger_event.payload
+    defeated_unit_id = str(
+        payload.get("defeated_unit_id") or payload.get("target_id") or ""
+    )
+    death_instance_id = str(payload.get("lifecycle_mutation_id") or "")
+    if not unit_id or defeated_unit_id != unit_id or not death_instance_id:
+        return None, "deathrattle_admission_death_identity_missing"
+    unit = state.units.get(unit_id)
+    record = unit.flags.get("defeat_record") if unit is not None else None
+    if not isinstance(record, dict):
+        return None, "deathrattle_admission_defeat_record_missing"
+    if str(record.get("lifecycle_mutation_id") or "") != death_instance_id:
+        return None, "deathrattle_admission_death_instance_mismatch"
+    event_hp_mutation_id = str(payload.get("hp_mutation_id") or "")
+    record_hp_mutation_id = str(record.get("hp_mutation_id") or "")
+    if not record_hp_mutation_id or (
+        event_hp_mutation_id and event_hp_mutation_id != record_hp_mutation_id
+    ):
+        return None, "deathrattle_admission_hp_mutation_mismatch"
+    if (
+        str(record.get("target_id") or "") != unit_id
+        or str(record.get("defeated_unit_id") or "") != unit_id
+    ):
+        return None, "deathrattle_admission_defeat_record_mismatch"
+    if trigger_event.event_id != mutation_backed_event_id(
+        death_instance_id, "unit.defeated"
+    ):
+        return None, "deathrattle_admission_source_event_mismatch"
+    instance_id = str(detail.get("instance_id") or "")
+    modifier_name = str(detail.get("modifier_name") or "")
+    if (
+        not instance_id
+        or not modifier_name
+        or str(detail.get("owner_id") or "") != unit_id
+    ):
+        return None, "deathrattle_admission_source_status_missing"
+    if "Deathrattle" not in tuple(detail.get("behavior_flags") or ()):
+        return None, "deathrattle_admission_source_flag_missing"
+    if modifier_name != callback.modifier_name or modifier_name != task.modifier_name:
+        return None, "deathrattle_admission_source_modifier_mismatch"
+    if (
+        intent.owner_alive_state != "alive_or_limbo"
+        or intent.target_alive_state != "alive_or_limbo"
+        or intent.can_run_on_unselectable_target is not True
+        or not intent.action_ref_or_ability_name
+        or intent.coverage_status != "executable"
+        or intent.blocked_reason
+        or intent.callback_id != callback.callback_id
+        or intent.source_task_id != task.task_id
+    ):
+        return None, "deathrattle_admission_queue_contract_not_admitted"
+    return (
+        DeathrattleQueueAdmission(
+            unit_id=unit_id,
+            death_instance_id=death_instance_id,
+            hp_mutation_id=record_hp_mutation_id,
+            source_event_id=str(trigger_event.event_id or ""),
+            source_status_instance_id=instance_id,
+            source_modifier_name=modifier_name,
+            ability_name=intent.action_ref_or_ability_name,
+            queue_intent_id=intent.queue_intent_id,
+            queue_kind=intent.queue_kind,
+            source_task_id=intent.source_task_id,
+        ),
+        "",
+    )
+
+
+def _queue_intent_alive_state_blocked_reason(
+    state: BattleState,
+    intent: QueueIntentIR,
+    target_resolution: object,
+) -> str:
+    """Re-verify the source alive-state masks before the entry is created."""
+
+    actor_id = str(getattr(target_resolution, "actor_id", "") or "")
+    target_ids = tuple(getattr(target_resolution, "target_ids", ()) or ())
+    reason = unit_alive_state_blocked_reason(
+        state, actor_id, intent.owner_alive_state, role="owner"
+    )
+    if reason:
+        return reason
+    for target_id in target_ids:
+        reason = unit_alive_state_blocked_reason(
+            state, target_id, intent.target_alive_state, role="target"
+        )
+        if reason:
+            return reason
+    return ""
 
 
 def _queue_insert_precheck_blocked(state: BattleState, intent: QueueIntentIR) -> str:
@@ -6925,6 +7090,11 @@ def _effect_context(
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
         event_payload=payload,
+        death_instance_id=(
+            str(event.payload.get("lifecycle_mutation_id") or "")
+            if event is not None and event.event_type == "unit.defeated"
+            else ""
+        ),
         dynamic_values=None,
         binding_sources=with_template_binding_sources(callback_binding_sources, template_binding_sources),
         include_ambient_status_bindings=False,

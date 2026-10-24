@@ -384,6 +384,11 @@ input, textarea { caret-color: var(--teal); }
   margin-bottom: 6px;
 }
 
+.eventTitle > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .pill {
   display: inline-block;
   border-radius: 999px;

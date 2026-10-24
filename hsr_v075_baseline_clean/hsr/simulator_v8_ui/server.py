@@ -170,7 +170,10 @@ class V8UIRequestHandler(BaseHTTPRequestHandler):
             return {}
         if length > 10_000_000:
             raise ValueError("请求内容过大")
-        data = json.loads(self.rfile.read(length).decode("utf-8"))
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"请求 JSON 无法解析：{exc.msg}（第 {exc.lineno} 行第 {exc.colno} 列）") from exc
         if not isinstance(data, dict):
             raise ValueError("请求 JSON 根节点必须是对象")
         return data

@@ -13,6 +13,7 @@ from .dynamic_values import binding_source_from_store, status_binding_sources, s
 from .mutation_events import enrich_event_with_mutation_payload
 from .damage_pipeline import DamagePipelineResult, DamageStagePipeline
 from .toughness_state import read_toughness_segments
+from .unit_lifecycle import unit_behavior_flags, unit_protected_weakness_types
 
 
 _TOUGHNESS_OVERFLOW_PRODUCER = object()
@@ -115,8 +116,21 @@ class ToughnessSystem:
             return _skipped(packet, "target_toughness_already_depleted")
         if bool(target.flags.get("weakness_locked", False)):
             return _skipped(packet, "target_weakness_locked")
-        if bool(target.flags.get("mute_break", False)):
+        if (
+            bool(target.flags.get("mute_break", False))
+            or "MuteBreak" in unit_behavior_flags(target)
+        ):
             return _skipped(packet, "target_mute_break")
+        protected_weaknesses = unit_protected_weakness_types(target)
+        if packet.element_type and (
+            packet.element_type in protected_weaknesses
+            or "AllType" in protected_weaknesses
+        ):
+            return _skipped(
+                packet,
+                "target_weakness_protected",
+                extra={"protected_weaknesses": sorted(protected_weaknesses)},
+            )
         weaknesses = tuple(str(item) for item in target.flags.get("weaknesses", ()) if isinstance(item, str))
         force_stance_damage = bool(target.flags.get("force_stance_damage", False))
         if packet.element_type and packet.element_type not in weaknesses and not force_stance_damage:

@@ -117,6 +117,7 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByCheckModifierCallBackStatusType",
     "ByCheckCustomValueBool",
     "ByCompareAbilityProperty",
+    "ByCompareAliveEnemyNumber",
     "ByCompareCharacterID",
     "ByCompareDynamicValue",
     "ByCompareCharacterNumber",
@@ -1522,6 +1523,45 @@ def _evaluate_condition_payload(
             {"target_id": target_id, "alive_enemy_ids": alive_enemies, "inverse": payload.get("Inverse") is True},
             source_trace,
         )
+    if opcode == "ByCompareAliveEnemyNumber":
+        target_id, target_details = _resolve_condition_target(
+            payload.get("TargetType"), context
+        )
+        if target_id is None:
+            return _condition_blocked(
+                condition_id, opcode, "target_alias_unresolved", target_details, source_trace
+            )
+        operand = _condition_operand(
+            context,
+            "relation.alive_opposing_count",
+            subject_ids=(target_id,),
+        )
+        if operand.status != "resolved" or operand.value_type != "number":
+            return _condition_operand_blocked(condition_id, opcode, operand, source_trace)
+        compare_value = evaluator.evaluate_numeric(
+            payload.get("CompareValue"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not compare_value.ok or compare_value.value is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"compare_value_blocked:{compare_value.blocked_reason}",
+                {"numeric_evaluation": compare_value.to_json()},
+                source_trace,
+            )
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(operand.value),
+            payload.get("CompareType"),
+            compare_value.value,
+            source_trace,
+        )
     if opcode == "ByCompareCharacterNumber":
         target_ids, target_details = _condition_target_ids(
             payload.get("TargetType"),
@@ -1591,22 +1631,61 @@ def _evaluate_condition_payload(
         key = _value_field(payload.get("DynamicKey"))
         if not isinstance(key, str) or not key:
             return _condition_blocked(condition_id, opcode, "dynamic_key_missing", {"payload": payload}, source_trace)
-        actual = evaluator.evaluate_numeric(
-            numeric_dynamic_hash(key),
-            NumericEvaluationContext(
-                dynamic_values=context.dynamic_values,
-                binding_sources=context.binding_sources,
-                source_trace=source_trace,
-            ),
-        )
-        if not actual.ok or actual.value is None:
-            return _condition_blocked(
-                condition_id,
-                opcode,
-                f"dynamic_value_blocked:{actual.blocked_reason}",
-                {"dynamic_key": key, "numeric_evaluation": actual.to_json()},
-                source_trace,
+        if str(payload.get("ContextScope") or "") == "TargetEntity":
+            # TargetEntity names one formal unit scope.  An explicitly present
+            # target that cannot resolve to exactly one entity is not a licence
+            # to read the owner, a status instance, or ambient dynamic values.
+            # An omitted TargetType keeps the formal modifier-owner default
+            # already used by ByCompareModifierValue (the owner in status
+            # scopes, the caster in action/startup scopes).
+            target_type = payload.get("TargetType")
+            if target_type is None:
+                target_id = context.owner_id or context.actor_id
+                target_details = {
+                    "alias": "ModifierOwnerEntity",
+                    "source": "tbgd_condition_default",
+                }
+            else:
+                target_id, target_details = _condition_single_target(
+                    target_type, context
+                )
+            if target_id is None:
+                return _condition_blocked(
+                    condition_id,
+                    opcode,
+                    "condition_fact_target_requires_singleton",
+                    target_details,
+                    source_trace,
+                )
+            operand = _condition_operand(
+                context,
+                "unit.dynamic_value",
+                subject_ids=(target_id,),
+                parameters={"name": key},
             )
+            if operand.status != "resolved" or operand.value_type != "number":
+                return _condition_operand_blocked(
+                    condition_id, opcode, operand, source_trace
+                )
+            actual_value = float(operand.value)
+        else:
+            actual = evaluator.evaluate_numeric(
+                numeric_dynamic_hash(key),
+                NumericEvaluationContext(
+                    dynamic_values=context.dynamic_values,
+                    binding_sources=context.binding_sources,
+                    source_trace=source_trace,
+                ),
+            )
+            if not actual.ok or actual.value is None:
+                return _condition_blocked(
+                    condition_id,
+                    opcode,
+                    f"dynamic_value_blocked:{actual.blocked_reason}",
+                    {"dynamic_key": key, "numeric_evaluation": actual.to_json()},
+                    source_trace,
+                )
+            actual_value = float(actual.value)
         compare_value = evaluator.evaluate_numeric(
             payload.get("CompareValue"),
             NumericEvaluationContext(
@@ -1623,7 +1702,7 @@ def _evaluate_condition_payload(
                 {"numeric_evaluation": compare_value.to_json()},
                 source_trace,
             )
-        return _comparison_condition(condition_id, opcode, actual.value, payload.get("CompareType"), compare_value.value, source_trace)
+        return _comparison_condition(condition_id, opcode, actual_value, payload.get("CompareType"), compare_value.value, source_trace)
     if opcode == "ByCompareModifierValue":
         if payload.get("TargetType") is None:
             alias = payload.get("default_target_alias", "ModifierOwnerEntity")

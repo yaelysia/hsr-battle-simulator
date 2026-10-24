@@ -978,10 +978,20 @@ class EventDispatchSystem:
                 # Global listeners receive the actual attacker. Actor-local
                 # OnBeforeHitAll retains the current victim as its ParamEntity.
                 listener_event = replace(event, payload={**event.payload, "param_entity_id": event.source_id})
-            if status_nested_ability_provider is not None:
-                if match.callback is None:
-                    errors.append("action_window_formal_root_callback_missing")
-                    continue
+            formal_action_window_callback = (
+                status_nested_ability_provider is not None
+                and match.callback is not None
+                and match.callback.source_mode
+                in {
+                    "mainline_avatar_ability",
+                    "mainline_servant_ability",
+                    "mainline_stage_ability",
+                }
+            )
+            if status_nested_ability_provider is not None and match.callback is None:
+                errors.append("action_window_formal_root_callback_missing")
+                continue
+            if formal_action_window_callback:
                 result = self.status_callbacks.execute_action_window_formal_root(
                     current_state,
                     callback_id=match.callback.callback_id,
@@ -1499,6 +1509,7 @@ SCOPE_PRIORITY = {
     "per_hit_target_local": 40,
     "being_hit_target_local": 50,
     "owner_local": 60,
+    "summoner_relation_local": 65,
     "global_listener": 90,
 }
 
@@ -1648,6 +1659,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 
 CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
     "unit.before_dying",
+    "unit.defeated",
     "custom.event",
     "status.lifecycle",
     "summon.spawned",
@@ -1999,6 +2011,23 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
                     runtime_event_source=event.event_type,
                 )
             )
+    if event.event_type == "unit.defeated":
+        relation_alias = next(
+            (
+                alias
+                for alias in aliases
+                if alias.callback_event == "OnListenCharacterDie"
+                and alias.scope_kind == "owner_local"
+            ),
+            None,
+        )
+        if relation_alias is not None:
+            # Death observers reach the summoner's servants in addition to the
+            # kill-credit owner; the callback's own ByHasSummonRelation predicate
+            # still decides the final relation.
+            aliases.append(
+                replace(relation_alias, scope_kind="summoner_relation_local")
+            )
     deduped: list[EventAlias] = []
     seen: set[tuple[str, str]] = set()
     for alias in aliases:
@@ -2313,7 +2342,9 @@ def _match_callback_to_event(
     }:
         scope_kind = alias.scope_kind
     status_instance_id = str(detail.get("instance_id") or "")
-    scope_ok, scope_reason = _scope_matches(event, scope_kind, detail, explicit=explicit)
+    scope_ok, scope_reason = _scope_matches(
+        event, scope_kind, detail, explicit=explicit, state=state
+    )
     status = "matched"
     reason = ""
     if not scope_ok:
@@ -2369,7 +2400,33 @@ def _scope_matches(
     detail: dict[str, JSONValue],
     *,
     explicit: bool,
+    state: BattleState | None = None,
 ) -> tuple[bool, str]:
+    if scope_kind == "summoner_relation_local":
+        # Formal summoner relation: the listener's owner must be a unit whose
+        # summoner is the defeated unit. The caller's ByHasSummonRelation task
+        # remains the authority for the final predicate result.
+        if event.event_type != "unit.defeated" or state is None:
+            return False, "summoner_relation_scope_event_or_state_missing"
+        owner_id = str(detail.get("owner_id") or "")
+        defeated_id = str(event.target_id or "")
+        if owner_id not in state.units or not defeated_id:
+            return False, "summoner_relation_scope_owner_missing"
+        from .unit_relation import EntityRelationResolver, TargetEvaluationContext
+
+        relation = EntityRelationResolver().resolve(
+            state,
+            "summon.summoner",
+            TargetEvaluationContext(caster_id=owner_id, effect_owner_id=owner_id),
+            subject_ids=(owner_id,),
+            options={"allow_defeated": True},
+        )
+        if relation.blocked:
+            return False, f"summoner_relation_scope_blocked:{relation.blocked_reason}"
+        return (
+            defeated_id in tuple(relation.target_ids),
+            "scope_summoner_relation_mismatch",
+        )
     if event.event_type in {item[0] for item in LIMBO_CALLBACKS}:
         plan = event.pending_defeat_plan
         if type(plan) is not PendingDefeatPlan:

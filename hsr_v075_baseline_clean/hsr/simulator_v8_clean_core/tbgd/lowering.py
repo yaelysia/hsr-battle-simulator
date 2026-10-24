@@ -2169,6 +2169,27 @@ class TBGDLowering:
             action_delay_emissions.extend(lowered.action_delay_emissions)
             queue_intents.extend(lowered.queue_intents)
             skill_continuations.extend(lowered.skill_continuations)
+        referenced_ability_sources = self._referenced_ability_source_paths(
+            [
+                intent.action_ref_or_ability_name
+                for intent in queue_intents
+                if intent.opcode in {"TurnInsertAbility", "TurnInsertAssistantAbility"}
+            ],
+            [
+                str(effect.payload.get("standard", {}).get("ability_name") or "")
+                for effect in effects
+                if effect.opcode == "OwnerEntityAddAbility"
+                and isinstance(effect.payload.get("standard"), dict)
+            ],
+        )
+        if referenced_ability_sources:
+            selected_ability_files = sorted(
+                set(selected_ability_files)
+                | {self.tbgd_root / relative for relative in referenced_ability_sources}
+            )
+        standalone_ability_source_contexts = (
+            _standalone_ability_source_contexts_from_ability_tasks(ability_tasks)
+        )
         (
             standalone_ability_graphs,
             standalone_phases,
@@ -2178,7 +2199,10 @@ class TBGDLowering:
             standalone_formulas,
             standalone_target_expressions,
             standalone_root_task_ids_by_graph,
-        ) = self._lower_standalone_ability_graphs(selected_ability_files)
+        ) = self._lower_standalone_ability_graphs(
+            selected_ability_files,
+            ability_source_contexts=standalone_ability_source_contexts,
+        )
         stage_graphs, stage_phases, stage_lowered = self._lower_stage_startup_abilities()
         standalone_ability_graphs.extend(stage_graphs)
         standalone_phases.extend(stage_phases)
@@ -2361,6 +2385,7 @@ class TBGDLowering:
             effects=effects,
             triggers=triggers,
             conditions=conditions,
+            status_callbacks=status_callbacks,
         )
         status_callback_blocked_reasons = {
             callback.callback_id: (
@@ -4520,6 +4545,8 @@ class TBGDLowering:
     def _lower_standalone_ability_graphs(
         self,
         ability_files: list[Path],
+        *,
+        ability_source_contexts: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> tuple[
         list[StandaloneAbilityGraphIR],
         list[AbilityPhaseIR],
@@ -4579,6 +4606,9 @@ class TBGDLowering:
                         "blocked", "character_ability_source_outside_formal_catalog",
                     ))
                     continue
+                source_context = None
+                if ability_source_contexts is not None and source_mode == "mainline_monster":
+                    source_context = ability_source_contexts.get((relative, ability_name))
                 definition = _StandaloneActionRef(action_id=action_id, level=0)
                 lowered = self._lower_ability_phase_tasks(
                     definition=definition,  # type: ignore[arg-type]
@@ -4591,6 +4621,12 @@ class TBGDLowering:
                         data.get("GlobalTargetAlias")
                         if isinstance(data.get("GlobalTargetAlias"), dict)
                         else {}
+                    ),
+                    source_context=source_context,
+                    callback_kinds=(
+                        (*ABILITY_TASK_CALLBACKS, "OnAdd")
+                        if source_mode == "mainline_monster"
+                        else ABILITY_TASK_CALLBACKS
                     ),
                     formal_source_context=formal_context,
                 )
@@ -6029,6 +6065,7 @@ class TBGDLowering:
         source_context: dict[str, Any] | None = None,
         target_alias_registry: dict[str, Any] | None = None,
         formal_source_context: _AbilityFormalTaskSourceContext | None = None,
+        callback_kinds: tuple[str, ...] | None = None,
     ) -> "_LoweredAbility":
         if (
             formal_source_context is not None
@@ -6037,7 +6074,9 @@ class TBGDLowering:
             raise ValueError("formal ability task source context is not authoritative")
         lowered = _LoweredAbility()
         callback_kinds = (
-            _ability_task_callback_kinds(ability)
+            tuple(callback_kinds)
+            if callback_kinds is not None
+            else _ability_task_callback_kinds(ability)
             if formal_source_context is not None
             else ABILITY_TASK_CALLBACKS
         )
@@ -6074,6 +6113,111 @@ class TBGDLowering:
                     )
                 lowered.merge(task_lowered)
         return lowered
+
+    def _lower_anim_wrapper_task_children(
+        self,
+        task: dict[str, Any],
+        *,
+        definition: ActionDefinitionIR,
+        phase_id: str,
+        ability_name: str,
+        ability_path: str,
+        ability_index: int | None,
+        callback_kind: str,
+        task_path: str,
+        parent_task_id: str,
+        source_context: dict[str, Any] | None = None,
+        target_alias_registry: dict[str, Any] | None = None,
+    ) -> tuple["_LoweredAbility", str] | None:
+        """Lower the animation EventList into ordered formal child tasks.
+
+        Returns None when the wrapper holds no gameplay child (the caller keeps
+        the admitted process-only shape). Returns an empty lowering plus a
+        blocked reason when the non-EventList proof or the schema-fixed timeline
+        cannot be admitted; a structural failure never publishes a partially
+        lowered child ledger.
+        """
+
+        lowered = _LoweredAbility()
+        raw_events = task.get("EventList")
+        if raw_events is None:
+            # The source may omit the timeline entirely; that shape stays the
+            # admitted process-only animation task.
+            return None
+        if not isinstance(raw_events, list):
+            return _LoweredAbility(), "trigger_anim_state_with_move_event_list_invalid"
+        child_blocked = ""
+        gameplay_child_count = 0
+        for event_index, event in enumerate(raw_events):
+            if (
+                not isinstance(event, dict)
+                or set(event) - {"NormalizedTime", "TaskList"}
+                or not isinstance(event.get("TaskList"), list)
+                or not event["TaskList"]
+            ):
+                child_blocked = (
+                    "trigger_anim_state_with_move_nested_event_shape_not_admitted"
+                )
+                break
+            for child_index, child in enumerate(event["TaskList"]):
+                if not isinstance(child, dict):
+                    child_blocked = "trigger_anim_state_with_move_nested_child_invalid"
+                    break
+                child_lowered = self._lower_ability_task_tree(
+                    child,
+                    definition=definition,
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability_path=ability_path,
+                    ability_index=ability_index,
+                    callback_kind=callback_kind,
+                    task_index=child_index,
+                    task_path=(
+                        f"{task_path}.EventList[{event_index}]"
+                        f".TaskList[{child_index}]"
+                    ),
+                    branch="anim_event",
+                    parent_task_id=parent_task_id,
+                    source_context=source_context,
+                    target_alias_registry=target_alias_registry,
+                )
+                lowered.merge(child_lowered)
+                child_ids = [
+                    item.task_id
+                    for item in child_lowered.ability_tasks
+                    if item.parent_task_id == parent_task_id
+                ]
+                if not child_ids:
+                    child_blocked = (
+                        "trigger_anim_state_with_move_nested_child_unlowered"
+                    )
+                    break
+            if child_blocked:
+                break
+        gameplay_child_count = sum(
+            1
+            for item in lowered.ability_tasks
+            if item.parent_task_id == parent_task_id
+            and item.execution_mode != "process_only"
+        )
+        if child_blocked:
+            # The wrapper is one fail-closed unit: a structure failure discards
+            # the partially lowered children instead of leaking them into IR.
+            return _LoweredAbility(), child_blocked
+        if gameplay_child_count <= 0:
+            # Pure presentation keeps the shared strict process-only shape.
+            return None
+        # Gameplay children make this a runtime control node. Its non-EventList
+        # fields must satisfy the same strict presentation proof, and its source
+        # timeline is limited to finite, fixed, monotonic source times.
+        source_blocked = (
+            _anim_wrapper_field_contract_blocked_reason(task)
+            or _anim_wrapper_non_event_list_payload_blocked_reason(task)
+            or _anim_wrapper_fixed_timeline_blocked_reason(task)
+        )
+        if source_blocked:
+            return _LoweredAbility(), source_blocked
+        return lowered, ""
 
     def _lower_ability_task_tree(
         self,
@@ -6323,6 +6467,199 @@ class TBGDLowering:
                 ),
             )
             return lowered
+
+        if opcode == "Retarget" and lower_children:
+            expression = _target_expression_from_raw(
+                task,
+                field_name="$self",
+                expression_id=f"target_expression:{task_id}:Retarget",
+                source=source,
+            )
+            if expression is not None:
+                from .target_source import close_target_expression_language
+
+                definitions = self._strict_target_language_definitions()
+                if definitions:
+                    expression = close_target_expression_language(
+                        expression, definitions
+                    )
+            child_ids: list[str] = []
+            raw_children = task.get("TaskList")
+            child_blocked = ""
+            if isinstance(raw_children, list) and raw_children:
+                for child_index, child in enumerate(raw_children):
+                    child_lowered = self._lower_ability_task_tree(
+                        child,
+                        definition=definition,
+                        phase_id=phase_id,
+                        ability_name=ability_name,
+                        ability_path=ability_path,
+                        ability_index=ability_index,
+                        callback_kind=callback_kind,
+                        task_index=child_index,
+                        task_path=f"{task_path}.TaskList[{child_index}]",
+                        branch="param",
+                        parent_task_id=task_id,
+                        source_context=source_context,
+                        target_alias_registry=target_alias_registry,
+                    )
+                    lowered.merge(child_lowered)
+                    child_ids.extend(
+                        item.task_id
+                        for item in child_lowered.ability_tasks
+                        if item.parent_task_id == task_id
+                    )
+                if len(child_ids) != len(raw_children):
+                    child_blocked = "retarget_task_list_contains_unlowered_child"
+                else:
+                    for item in lowered.ability_tasks:
+                        if item.task_id in child_ids and (
+                            item.coverage_status == "blocked"
+                            or bool(item.blocked_reason)
+                        ):
+                            child_blocked = (
+                                "retarget_child_task_blocked:"
+                                f"{item.opcode}:{item.blocked_reason or item.coverage_status}"
+                            )
+                            break
+            else:
+                child_blocked = "retarget_task_list_missing_or_empty"
+            expression_blocked = ""
+            if expression is None:
+                expression_blocked = "retarget_target_expression_missing"
+            else:
+                lowered.target_expressions.append(expression)
+                if expression.coverage_status != "executable":
+                    expression_blocked = (
+                        expression.blocked_reason
+                        or "retarget_target_expression_not_executable"
+                    )
+            blocked_reason = expression_blocked or child_blocked
+            effect_id = f"effect:{task_id}"
+            lowered.effects.append(
+                EffectIR(
+                    effect_id=effect_id,
+                    opcode=opcode,
+                    payload={
+                        "standard": {
+                            "operation": "retarget_task_list",
+                            "target_expression_id": (
+                                expression.target_expression_id
+                                if expression is not None else ""
+                            ),
+                            "blocked_reason": blocked_reason,
+                        }
+                    },
+                    source=source,
+                    coverage_status="executable" if not blocked_reason else "blocked",
+                )
+            )
+            lowered.ability_tasks.insert(
+                0,
+                AbilityTaskIR(
+                    task_id=task_id,
+                    phase_id=phase_id,
+                    action_id=definition.action_id,
+                    level=definition.level,
+                    ability_name=ability_name,
+                    callback_kind=callback_kind,
+                    task_index=task_index,
+                    task_path=task_path,
+                    branch=branch,
+                    opcode=opcode,
+                    effect_id=effect_id,
+                    parent_task_id=parent_task_id,
+                    child_task_ids=tuple(child_ids),
+                    source=source,
+                    coverage_status="executable" if not blocked_reason else "blocked",
+                    blocked_reason=blocked_reason,
+                ),
+            )
+            return lowered
+
+        if opcode == "TriggerAnimStateWithMove" and lower_children:
+            # The death animation timeline is presentation, but its EventList can
+            # carry formal gameplay leaves (damage, status application). Lower
+            # those leaves as ordered children of the wrapper so the animation
+            # node is never admitted as a pure presentation skip while a real
+            # gameplay task is hiding inside it.
+            wrapped = self._lower_anim_wrapper_task_children(
+                task,
+                definition=definition,
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability_path=ability_path,
+                ability_index=ability_index,
+                callback_kind=callback_kind,
+                task_path=task_path,
+                parent_task_id=task_id,
+                source_context=source_context,
+                target_alias_registry=target_alias_registry,
+            )
+            if wrapped is not None:
+                child_lowered, child_blocked = wrapped
+                lowered.merge(child_lowered)
+                child_ids = tuple(
+                    item.task_id
+                    for item in child_lowered.ability_tasks
+                    if item.parent_task_id == task_id
+                )
+                gameplay_child_count = sum(
+                    1
+                    for item in child_lowered.ability_tasks
+                    if item.parent_task_id == task_id
+                    and item.execution_mode != "process_only"
+                )
+                # Child admission is finalized by the shared task-admission
+                # passes (for example damage leaves need their emission first).
+                # The runtime walker proves the whole unit before executing any
+                # child, so the wrapper itself only records structural blockage.
+                blocked_reason = child_blocked
+                effect_id = f"effect:{task_id}"
+                lowered.effects.append(
+                    EffectIR(
+                        effect_id=effect_id,
+                        opcode=opcode,
+                        payload={
+                            "standard": {
+                                "operation": "anim_wrapper_task_list",
+                                "event_list_child_count": len(child_ids),
+                                "gameplay_child_count": gameplay_child_count,
+                                "source_shape": "animation_timeline_with_gameplay_leaves",
+                                "blocked_reason": blocked_reason,
+                            }
+                        },
+                        source=source,
+                        coverage_status=(
+                            "executable" if not blocked_reason else "blocked"
+                        ),
+                    )
+                )
+                lowered.ability_tasks.insert(
+                    0,
+                    AbilityTaskIR(
+                        task_id=task_id,
+                        phase_id=phase_id,
+                        action_id=definition.action_id,
+                        level=definition.level,
+                        ability_name=ability_name,
+                        callback_kind=callback_kind,
+                        task_index=task_index,
+                        task_path=task_path,
+                        branch=branch,
+                        opcode=opcode,
+                        effect_id=effect_id,
+                        parent_task_id=parent_task_id,
+                        child_task_ids=child_ids,
+                        execution_mode="runtime_effect",
+                        source=source,
+                        coverage_status=(
+                            "executable" if not blocked_reason else "blocked"
+                        ),
+                        blocked_reason=blocked_reason,
+                    ),
+                )
+                return lowered
 
         effect_id = f"effect:{task_id}"
         remodifier_condition = self._lower_ability_task_condition(
@@ -7512,6 +7849,51 @@ class TBGDLowering:
             files.extend(path for path in root.rglob("*.json") if not path.name.endswith(".layout.json"))
         return sorted(files)
 
+    def _ability_name_source_index(self) -> dict[str, tuple[str, ...]]:
+        """Map a formal AbilityList name to the ability files that define it."""
+
+        cached = getattr(self, "_ability_name_source_index_cache", None)
+        if cached is not None:
+            return cached
+        indexed: dict[str, list[str]] = {}
+        for path in self._ability_files():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            relative = relative_source_path(self.tbgd_root, path)
+            for ability_name in _ability_map(data):
+                indexed.setdefault(ability_name, []).append(relative)
+        index = {name: tuple(paths) for name, paths in indexed.items()}
+        self._ability_name_source_index_cache = index
+        return index
+
+    def _referenced_ability_source_paths(
+        self, *name_groups: "Iterable[object]",
+    ) -> frozenset[str]:
+        """Resolve ability names referenced by admitted formal consumers.
+
+        A status callback or ability task may insert or attach an ability that
+        is defined in a shared formal ability file outside the selected content
+        slice. Those definitions must be compiled into the same rulebook instead
+        of silently dropping the reference.
+        """
+
+        names = {
+            name
+            for group in name_groups
+            for name in group
+            if isinstance(name, str) and name
+        }
+        if not names:
+            return frozenset()
+        index = self._ability_name_source_index()
+        return frozenset(
+            path for name in sorted(names) for path in index.get(name, ())
+        )
+
     def _lower_servant_definitions(
         self,
         combatant_action_sets: list[CombatantActionSetIR],
@@ -7897,6 +8279,14 @@ class TBGDLowering:
                     equipment_source_admitted=equipment_source_admitted,
                 ) or shared_elation_echo or source_context["stage_ability_source_admitted"]
                 scope_kind = _status_callback_scope_kind(event)
+                if event == "OnListenCharacterDie" and any(
+                    str(getattr(condition, "opcode", "") or "") == "ByHasSummonRelation"
+                    for condition in callback_lowered.conditions
+                ):
+                    # A death observer that filters with ByHasSummonRelation is
+                    # dispatched to the owner's summoned units as well as to the
+                    # kill-credit owner; it is not a killer-local callback.
+                    scope_kind = "summoner_relation_local"
                 has_executable_queue_intent = any(
                     intent.coverage_status == "executable"
                     for intent in callback_lowered.queue_intents
@@ -7998,6 +8388,18 @@ class TBGDLowering:
                 if callback_shape_reason:
                     status = "blocked"
                     blocked_reason = blocking_dependency = callback_shape_reason
+                if _status_callback_tasks_are_non_gameplay_scoring(
+                    callback_lowered.status_callback_tasks
+                ):
+                    # Battle score and achievement callbacks are outside the
+                    # battle-result scope. Their score-context conditions are not
+                    # bound in this runtime, so the whole listener is excluded as
+                    # source-proven non-gameplay instead of failing the death
+                    # transaction it observes.
+                    status = "blocked"
+                    blocked_reason = blocking_dependency = (
+                        "source_proven_presentation_only"
+                    )
                 lowered.status_callbacks.append(
                     StatusCallbackIR(
                         callback_id=callback_id,
@@ -11609,6 +12011,7 @@ def _admit_passive_startup_slots(
     effects: list[EffectIR],
     triggers: list[TriggerIR],
     conditions: list[ConditionIR],
+    status_callbacks: list[StatusCallbackIR] | None = None,
 ) -> list[PassiveMechanismSlotIR]:
     graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
     for graph in standalone_graphs:
@@ -11632,6 +12035,7 @@ def _admit_passive_startup_slots(
                 effects_by_id=effects_by_id,
                 modifiers_with_triggers=modifiers_with_triggers,
                 conditions_by_id=conditions_by_id,
+                status_callbacks=status_callbacks,
             )
         )
     return admitted
@@ -11645,6 +12049,7 @@ def _admit_passive_startup_slot(
     effects_by_id: dict[str, EffectIR],
     modifiers_with_triggers: set[str],
     conditions_by_id: dict[str, ConditionIR] | None = None,
+    status_callbacks: list[StatusCallbackIR] | None = None,
 ) -> PassiveMechanismSlotIR:
     semantics = dict(slot.semantics)
     ability_name = str(semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
@@ -11692,18 +12097,50 @@ def _admit_passive_startup_slot(
             },
         )
     graph = executable_graphs[0]
-    root_on_start_tasks = tuple(
-        task
-        for phase_id in graph.phase_ids
-        for task in tasks_by_phase.get(phase_id, ())
-        if task.callback_kind == "OnStart" and not task.parent_task_id
+    callbacks_by_modifier: dict[str, tuple[StatusCallbackIR, ...]] = {}
+    for callback in status_callbacks or ():
+        callbacks_by_modifier.setdefault(callback.modifier_name, ())
+        callbacks_by_modifier[callback.modifier_name] = (
+            *callbacks_by_modifier[callback.modifier_name],
+            callback,
+        )
+    # A passive skill enters the battle because it is mounted on its owner.
+    # The source callback that fires on mount is OnAdd; OnStart only exists for
+    # abilities that are actually invoked.  Prefer OnStart when the source
+    # declares root OnStart tasks so previously admitted passives keep their
+    # exact startup semantics, and fall back to OnAdd otherwise.
+    root_tasks_by_callback: dict[str, list[AbilityTaskIR]] = {}
+    for phase_id in graph.phase_ids:
+        for task in tasks_by_phase.get(phase_id, ()):
+            if task.parent_task_id or task.callback_kind not in {"OnStart", "OnAdd"}:
+                continue
+            root_tasks_by_callback.setdefault(task.callback_kind, []).append(task)
+    startup_callback_kind = (
+        "OnStart"
+        if root_tasks_by_callback.get("OnStart")
+        else "OnAdd"
+        if root_tasks_by_callback.get("OnAdd")
+        else ""
     )
+    if not startup_callback_kind:
+        return _passive_startup_blocked_slot(
+            slot,
+            "monster_passive_startup_on_start_effect_missing",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "monster_passive_startup_on_start_effect_missing",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                },
+            },
+        )
+    root_on_start_tasks = tuple(root_tasks_by_callback[startup_callback_kind])
     presentation_tasks = tuple(
         task for task in root_on_start_tasks
-        if task.opcode == "ShowBossInfoBar" and task.execution_mode == "process_only"
-        and task.coverage_status == "audit_only" and not task.blocked_reason
-        and task.effect_id in effects_by_id and effects_by_id[task.effect_id].coverage_status == "audit_only"
-        and effects_by_id[task.effect_id].payload.get("process_only_contract", {}).get("source_shape_status") == "admitted"
+        if _passive_startup_presentation_root_task(
+            task, effects_by_id, callbacks_by_modifier,
+        )
     )
     unadmitted_root_tasks = tuple(
         task for task in root_on_start_tasks
@@ -11835,7 +12272,12 @@ def _admit_passive_startup_slot(
             **semantics,
             "startup_admission": {
                 "admission_status": "executable",
-                "startup_kind": "monster_passive_on_start_effects",
+                "startup_kind": (
+                    "monster_passive_on_start_effects"
+                    if startup_callback_kind == "OnStart"
+                    else "monster_passive_on_add_effects"
+                ),
+                "startup_callback_kind": startup_callback_kind,
                 "standalone_ability_graph_id": graph.standalone_ability_graph_id,
                 "admitted_tasks": admitted_tasks,
                 "presentation_tasks": [
@@ -11853,6 +12295,52 @@ def _admit_passive_startup_slot(
         },
         coverage_status="executable",
         blocked_reason="",
+    )
+
+
+def _passive_startup_presentation_root_task(
+    task: AbilityTaskIR,
+    effects_by_id: dict[str, EffectIR],
+    callbacks_by_modifier: dict[str, tuple[StatusCallbackIR, ...]],
+) -> bool:
+    """Identify a source-proven presentation-only startup root.
+
+    Mounting a modifier whose whole callback ledger is already classified as
+    source-proven presentation cannot change any battle rule; it is recorded as
+    a presentation task instead of being executed.  A modifier without any
+    callbacks is never skipped, because its stat or lifecycle effect could be
+    gameplay-relevant.
+    """
+
+    if task.opcode == "ShowBossInfoBar" and task.execution_mode == "process_only":
+        effect = effects_by_id.get(task.effect_id)
+        return bool(
+            task.coverage_status == "audit_only"
+            and not task.blocked_reason
+            and effect is not None
+            and effect.coverage_status == "audit_only"
+            and effect.payload.get("process_only_contract", {}).get(
+                "source_shape_status"
+            ) == "admitted"
+        )
+    if task.opcode != "AddModifier" or not task.effect_id:
+        return False
+    effect = effects_by_id.get(task.effect_id)
+    if effect is None or effect.opcode != "AddModifier":
+        return False
+    standard = effect.payload.get("standard")
+    modifier_name = (
+        str(standard.get("modifier_name") or "")
+        if isinstance(standard, dict)
+        else ""
+    )
+    callbacks = callbacks_by_modifier.get(modifier_name, ())
+    if not modifier_name or not callbacks:
+        return False
+    return all(
+        callback.coverage_status == "blocked"
+        and callback.blocked_reason == "source_proven_presentation_only"
+        for callback in callbacks
     )
 
 
@@ -16497,6 +16985,28 @@ def _lower_standalone_hit_profiles(
         task_bindings = tuple(binding for binding in bindings_by_action.get((task.action_id, task.level), ())
                               if binding.source.raw_id == task.task_id
                               or binding.source.raw_id.startswith(f"{task.task_id}:"))
+        if not task_bindings:
+            # Monster/servant cards declare their standalone ability SkillParam
+            # reads against the card, not against a concrete damage task. The
+            # task's own DamagePercentage hash still selects exactly one
+            # declaration; conflicting card owners are never merged.
+            effect_hash = _damage_percentage_dynamic_hash(effect)
+            card_bindings = tuple(
+                binding
+                for binding in bindings_by_action.get((task.action_id, task.level), ())
+                if binding.data_card_kind in {"monster", "servant"}
+                and effect_hash is not None
+                and str(binding.scaling_basis_expr.get("dynamic_hash"))
+                == str(effect_hash)
+            )
+            if len(
+                {
+                    (item.data_card_id, item.owner_entity_ref)
+                    for item in card_bindings
+                }
+            ) > 1:
+                card_bindings = ()
+            task_bindings = card_bindings
         binding = _standalone_binding_for_damage_task(task_bindings, effect)
         blocked_reason = ""
         if target_group == "unknown":
@@ -16813,6 +17323,10 @@ def _standalone_target_group(target_alias: str | None) -> str:
         return "selected"
     if target_alias in {"AllEnemy", "AllDarkTeam", "AllLightTeam"}:
         return "selected"
+    if target_alias == "AllTeammate":
+        # Same team as the caster, resolved at execution from the source's own
+        # relative-side alias instead of the queue entry's target list.
+        return "all_teammate"
     return "unknown"
 
 
@@ -17133,6 +17647,31 @@ def _damage_scaling_basis_expr(
         }
     basis_expr = dict(binding.scaling_basis_expr)
     attack = payload.get("AttackProperty", {})
+    formula_type = attack.get("FormulaType")
+    if formula_type in (None, "", "ByAttack"):
+        basis_expr["formula_type"] = "ByAttack"
+    elif formula_type == "ByMaxHP":
+        # Native AttackData ByMaxHP scales from the caster's own Max HP and keeps
+        # the ordinary direct-damage multiplier pipeline. The Illumination
+        # Dragonfish Candle Flame is 40% of the Dragonfish's own Max HP, not the
+        # damaged target's; the 0.61 DamageByAttackProperty source keeps its
+        # ratio from the formal SkillParam binding, so no webpage multiplier is
+        # written here. The caster stat stays separate from its owner's panel
+        # and from the target's Max HP.
+        basis_expr = {
+            **basis_expr,
+            "kind": "unit_stat",
+            "unit_ref": "attacker",
+            "stat": "max_hp",
+            "source_kind": "tbgd_formula_type:ByMaxHP",
+            "formula_type": "ByMaxHP",
+        }
+    else:
+        return {
+            "kind": "missing",
+            "supported": False,
+            "reason": f"damage_formula_type_not_admitted:{formula_type}",
+        }
     if isinstance(attack.get("AttackType"), str) and attack["AttackType"]:
         basis_expr["attack_type"] = attack["AttackType"]
     if "ExtraFormulaType" in attack or "ExtraDamagePercentage" in attack:
@@ -17287,6 +17826,8 @@ def _damage_emission_target_group_blocked_reason(target_alias: str | None, targe
         return "" if target_group == "adjacent" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
     if target_alias in {"AllEnemy", "AllDarkTeam", "AllLightTeam"}:
         return "" if target_group == "selected" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
+    if target_alias == "AllTeammate":
+        return "" if target_group == "all_teammate" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
     return f"unsupported_damage_target_alias:{target_alias}"
 
 
@@ -18288,6 +18829,7 @@ DAMAGE_EMISSION_TARGET_ALIASES = {
     "AllEnemy",
     "AllDarkTeam",
     "AllLightTeam",
+    "AllTeammate",
     "CurrentActionTarget",
     "ParamEntity",
 }
@@ -18397,6 +18939,24 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
                     and _numeric_expr_can_be_runtime_bound(amount))
         payload["standard"] = {"operation": "set_action_value", "target_alias": target,
             "value": amount, "blocked_reason": "" if admitted else "set_action_delay_fields_not_admitted"}
+    if opcode == "SetActionDelay" and "NormalizedValue" in value:
+        target = _target_alias(value.get("TargetType")) or "ModifierOwnerEntity"
+        amount = _numeric_expr_summary(value.get("NormalizedValue"))
+        zero_delay = numeric_fixed_value(amount) == 0.0
+        admitted = (
+            not set(value) - {"$type", "TargetType", "NormalizedValue"}
+            and ("TargetType" not in value or isinstance(value["TargetType"], dict)
+                 and set(value["TargetType"]) == {"$type", "Alias"}
+                 and value["TargetType"].get("$type") == "RPG.GameCore.TargetAlias")
+            and target == "Caster"
+            and zero_delay
+        )
+        payload["standard"] = {
+            "operation": "set_action_delay_zero",
+            "target_alias": target,
+            "normalized_value": amount,
+            "blocked_reason": "" if admitted else "set_action_delay_normalized_value_not_admitted",
+        }
     if opcode == "ModifyCurrentSkillDelayCost":
         operation = value.get("ModifyFunction")
         amount = _numeric_expr_summary(value.get("NormalizedValue"))
@@ -18519,7 +19079,9 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
     elif opcode in REMOVE_MODIFIER_OPCODES:
         payload["standard"] = _standard_remove_modifier_payload(value, opcode, source_modifier_name)
     elif opcode in DISPEL_STATUS_OPCODES:
-        payload["standard"] = _standard_dispel_status_payload(value)
+        payload["standard"] = _standard_dispel_status_payload(
+            value, status_callback_event=status_callback_event
+        )
     elif opcode in HEAL_OPCODES:
         payload["standard"] = _standard_heal_payload(value)
     elif opcode in SHIELD_OPCODES:
@@ -18572,18 +19134,82 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             "blocked_reason": "" if admitted else "battle_event_create_source_shape_not_admitted",
         }
     elif opcode == "ForceKill":
-        admitted = (not set(value) - {"$type", "TargetType", "MuteHpChange", "MuteAllTriggerDeath"}
-                    and value.get("MuteHpChange") is True and value.get("MuteAllTriggerDeath") is True)
-        payload["standard"] = {
-            "operation": "muted_unit_retirement", "target_alias": _target_alias(value.get("TargetType")),
-            "blocked_reason": "" if admitted else "force_kill_death_semantics_not_admitted",
+        alias = _target_alias(value.get("TargetType"))
+        abort_declared = "AbortUnusedInsertAbility" in value
+        abort_unused_insert = value.get("AbortUnusedInsertAbility")
+        mute_hp_declared = "MuteHpChange" in value
+        mute_death_declared = "MuteAllTriggerDeath" in value
+        mute_hp_change = value.get("MuteHpChange")
+        mute_all_trigger_death = value.get("MuteAllTriggerDeath")
+        unknown = set(value) - {
+            "$type", "TargetType", "MuteHpChange", "MuteAllTriggerDeath",
+            "AbortUnusedInsertAbility",
         }
+        # Absent is not False and an integer is not a bool: only an explicit
+        # JSON bool may carry mute/abort intent.
+        flags_are_bool = (
+            (not abort_declared or type(abort_unused_insert) is bool)
+            and (not mute_hp_declared or type(mute_hp_change) is bool)
+            and (not mute_death_declared or type(mute_all_trigger_death) is bool)
+        )
+        # A non-muted ForceKill is a real forced death: the target's own lethal
+        # HP/lifecycle facts are produced by the shared lifecycle boundary, with
+        # no hit, damage packet or kill credit. Admit only the complete shape:
+        # both mute flags absent or explicitly false, abort explicitly true, and
+        # one of the two aliases actually used by this shape in TBGD.
+        forced_admitted = (
+            not unknown
+            and flags_are_bool
+            and (not mute_hp_declared or mute_hp_change is False)
+            and (not mute_death_declared or mute_all_trigger_death is False)
+            and abort_unused_insert is True
+            and alias in {"AbilityTargetEntity", "Caster"}
+        )
+        # The retired muted shape keeps both mute flags explicitly true and
+        # never asks for the unimplemented abort cleanup; omitting abort stays
+        # equivalent to explicit false.
+        muted_admitted = (
+            not unknown
+            and flags_are_bool
+            and mute_hp_change is True
+            and mute_all_trigger_death is True
+            and (not abort_declared or abort_unused_insert is False)
+        )
+        if forced_admitted:
+            payload["standard"] = {
+                "operation": "formal_forced_death",
+                "target_alias": alias,
+                "abort_unused_insert_ability": True,
+                "mute_hp_change": False,
+                "mute_all_trigger_death": False,
+                "source_shape_admitted": True,
+                "blocked_reason": "",
+            }
+        else:
+            payload["standard"] = {
+                "operation": "muted_unit_retirement", "target_alias": alias,
+                "abort_unused_insert_ability": (
+                    abort_unused_insert
+                    if type(abort_unused_insert) is bool
+                    else (False if not abort_declared else None)
+                ),
+                "blocked_reason": "" if muted_admitted else "force_kill_death_semantics_not_admitted",
+            }
     elif opcode == "SetDieImmediately":
-        admitted = (set(value) == {"$type", "TargetType"}
-                    and value.get("TargetType") == {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"})
+        self_target = (
+            set(value) == {"$type", "TargetType"}
+            and value.get("TargetType") == {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"}
+        )
+        omitted_target = set(value) == {"$type"}
         payload["standard"] = {
-            "operation": "finish_unit_retirement", "target_alias": _target_alias(value.get("TargetType")),
-            "blocked_reason": "" if admitted else "immediate_retirement_shape_not_admitted",
+            "operation": "finish_unit_retirement",
+            "target_alias": _target_alias(value.get("TargetType")) or "Caster",
+            "target_shape": "explicit_caster" if self_target else "omitted_self",
+            "deathrattle_source": status_callback_event == "OnDeathrattle",
+            "blocked_reason": (
+                "" if self_target or omitted_target
+                else "immediate_retirement_shape_not_admitted"
+            ),
         }
     elif opcode == "LockActionDelayChange":
         admitted = (set(value) == {"$type", "LockTargetType", "WhitelistSourceEntity", "WhitelistChangeReason"}
@@ -18593,6 +19219,19 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = {
             "operation": "lock_action_delay_except_turn_advance",
             "blocked_reason": "" if admitted else "action_delay_lock_source_shape_not_admitted",
+        }
+    elif opcode == "ExitBreakState":
+        target = _target_alias(value.get("TargetType"))
+        admitted = (
+            not set(value) - {"$type", "TargetType", "CancelRecoverAnim"}
+            and target == "Caster"
+            and type(value.get("CancelRecoverAnim")) is bool
+        )
+        payload["standard"] = {
+            "operation": "exit_break_state",
+            "target_alias": target or "",
+            "cancel_recover_anim": value.get("CancelRecoverAnim") is True,
+            "blocked_reason": "" if admitted else "exit_break_state_shape_not_admitted",
         }
     elif opcode == "OwnerEntityAddAbility":
         payload["standard"] = _standard_owner_entity_add_ability_payload(value)
@@ -18680,7 +19319,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
     "CharacterPlayVO": {"TargetType": "mapping", "VOType": "string"},
     "TriggerEffect": {
         "TargetType": "mapping", "EffectPath": "string", "AttachPoint": "string",
-        "ForceSimulateImmediately": "bool",
+        "RotationOffset": "mapping", "ForceSimulateImmediately": "bool",
     },
     "StartAim": {"TargetType": "mapping", "TargetAttachPoint": "string", "TransitTime": "number"},
     "StopAim": {"TransitTime": "number"},
@@ -18697,6 +19336,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
     "SetTeamRootOffset": {"Team": "string", "Reset": "bool"},
     "SetSkillTargetFormationByPos": {
         "Team": "string", "CustomTargetType": "mapping", "CustomCenterTargetType": "mapping",
+        "CenterOffset": "mapping",
         "SetBodyPartPos": "bool", "TargetFormation": "mapping_or_empty",
         "LeftSideFormations": "list", "RightSideFormations": "list",
     },
@@ -18851,6 +19491,88 @@ def _process_only_source_field_reason(
             and expression.get("supported") is True
         )
     return "" if valid else f"process_only_task_field_invalid:{field_name}:{expected_type}"
+
+
+def _anim_wrapper_event_shell_blocked_reason(event: Any) -> str:
+    """Validate one animation EventList entry shell.
+
+    The normalised time must be a typed numeric expression; gameplay children
+    additionally require a fixed source time. The reason matches the existing
+    strict presentation proof so both wrapper shapes report the same failure.
+    """
+    if (
+        not isinstance(event, dict)
+        or set(event) - {"NormalizedTime", "TaskList"}
+        or not isinstance(event.get("TaskList"), list)
+        or not event["TaskList"]
+        or _process_only_source_field_reason(
+            "NormalizedTime", event.get("NormalizedTime"), "numeric_expression"
+        )
+    ):
+        return "trigger_anim_state_with_move_nested_event_shape_not_admitted"
+    return ""
+
+
+def _anim_wrapper_non_event_list_payload_blocked_reason(
+    task: dict[str, Any],
+) -> str:
+    """The admitted presentation payload shared by both wrapper shapes."""
+    return (
+        ""
+        if "TargetType" in task
+        and bool(task.get("AnimStateName") or task.get("AnimLogicState"))
+        and isinstance(task.get("MovingRangeList"), list)
+        else "trigger_anim_state_with_move_payload_not_admitted"
+    )
+
+
+def _anim_wrapper_field_contract_blocked_reason(task: dict[str, Any]) -> str:
+    """Reuse the strict presentation field proof for every non-EventList field.
+
+    Unknown top-level gameplay fields and mismatched value shapes block the
+    wrapper before its EventList can become executable children.
+    """
+    field_types = _PROCESS_ONLY_TASK_FIELD_TYPES["TriggerAnimStateWithMove"]
+    unknown_fields = sorted(set(task).difference({"$type", *field_types}))
+    if unknown_fields:
+        return "process_only_task_unknown_fields:" + ",".join(unknown_fields)
+    for field_name, expected_type in field_types.items():
+        if field_name == "EventList" or field_name not in task:
+            continue
+        reason = _process_only_source_field_reason(
+            field_name, task[field_name], expected_type
+        )
+        if reason:
+            return reason
+    return ""
+
+
+def _anim_wrapper_fixed_timeline_blocked_reason(task: dict[str, Any]) -> str:
+    """Admit a gameplay animation timeline only as fixed, monotonic source time.
+
+    Dynamic, unknown or reversed source times are rejected instead of being
+    executed in JSON enumeration order.
+    """
+    events = task.get("EventList")
+    if events is None:
+        return ""
+    if not isinstance(events, list):
+        return "trigger_anim_state_with_move_event_list_invalid"
+    previous_time: float | None = None
+    for event in events:
+        reason = _anim_wrapper_event_shell_blocked_reason(event)
+        if reason:
+            return reason
+        value = _fixed_expr_value(lower_numeric_expression(event["NormalizedTime"]))
+        if value is None or not math.isfinite(value):
+            return "trigger_anim_state_with_move_source_time_not_fixed"
+        if previous_time is not None and value < previous_time:
+            return "trigger_anim_state_with_move_source_time_not_monotonic"
+        previous_time = value
+        for child in event["TaskList"]:
+            if not isinstance(child, dict):
+                return "trigger_anim_state_with_move_nested_child_invalid"
+    return ""
 
 
 def _standard_single_projectile_payload(task: dict[str, Any]) -> dict[str, Any]:
@@ -19047,13 +19769,21 @@ def _process_only_ability_task_source_blocked_reason(
             return "move_to_target_list_presentation_shape_missing"
         fields = {
             "TargetType": "mapping", "OffsetTargetDistance": "numeric_expression",
+            "OffsetCoord": "string", "OffsetForward": "numeric_expression",
             "NormalizedTimeStart": "numeric_expression", "NormalizedTimeEnd": "numeric_expression",
             "IgnoreRadius": "bool",
         }
         for item in task["MovingRangeList"]:
-            if not isinstance(item, dict) or set(item) - set(fields) or not {
-                "TargetType", "NormalizedTimeStart", "NormalizedTimeEnd", "OffsetTargetDistance"
-            }.issubset(item):
+            if (
+                not isinstance(item, dict)
+                or set(item) - set(fields)
+                or not {"TargetType", "NormalizedTimeStart", "NormalizedTimeEnd"}.issubset(item)
+                or not (
+                    "OffsetTargetDistance" in item
+                    or "OffsetCoord" in item
+                    or "OffsetForward" in item
+                )
+            ):
                 return "move_to_target_list_range_shape_not_admitted"
             if any(_process_only_source_field_reason(key, value, fields[key]) for key, value in item.items()):
                 return "move_to_target_list_range_field_invalid"
@@ -19063,7 +19793,24 @@ def _process_only_ability_task_source_blocked_reason(
     if opcode == "SetTeamRootOffset":
         return "" if task.get("Team") and task.get("Reset") is True else "team_root_reset_shape_not_admitted"
     if opcode == "SetSkillTargetFormationByPos":
-        if not all(key in task for key in _PROCESS_ONLY_TASK_FIELD_TYPES[opcode]):
+        center_offset = task.get("CenterOffset")
+        if center_offset is not None:
+            if (
+                not isinstance(center_offset, dict)
+                or set(center_offset) != {"X", "Y", "Z"}
+                or any(
+                    _process_only_source_field_reason(axis, value, "number")
+                    for axis, value in center_offset.items()
+                )
+            ):
+                return "skill_target_formation_center_offset_invalid"
+            required = {
+                "Team", "CenterOffset", "TargetFormation",
+                "LeftSideFormations", "RightSideFormations",
+            }
+        else:
+            required = set(_PROCESS_ONLY_TASK_FIELD_TYPES[opcode]) - {"CenterOffset"}
+        if not required.issubset(task):
             return "skill_target_formation_presentation_shape_missing"
         formation = task["TargetFormation"]
         if formation:
@@ -19171,15 +19918,25 @@ def _process_only_ability_task_source_blocked_reason(
             else "trigger_anim_state_name_missing"
         )
     if opcode == "TriggerAnimStateWithMove":
-        if task.get("EventList"):
-            return "trigger_anim_state_with_move_nested_events_not_admitted"
-        return (
-            ""
-            if "TargetType" in task
-            and bool(task.get("AnimStateName") or task.get("AnimLogicState"))
-            and isinstance(task.get("MovingRangeList"), list)
-            else "trigger_anim_state_with_move_payload_not_admitted"
-        )
+        events = task.get("EventList")
+        if events is None:
+            events = []
+        if not isinstance(events, list):
+            return "trigger_anim_state_with_move_event_list_invalid"
+        for event in events:
+            reason = _anim_wrapper_event_shell_blocked_reason(event)
+            if reason:
+                return reason
+            for child in event["TaskList"]:
+                if not isinstance(child, dict):
+                    return "trigger_anim_state_with_move_nested_child_invalid"
+                family = _short_gamecore_type(child.get("$type"))
+                if (
+                    ability_task_execution_mode(family) != "process_only"
+                    or _process_only_ability_task_source_blocked_reason(child, family)
+                ):
+                    return "trigger_anim_state_with_move_has_gameplay_or_unknown_child"
+        return _anim_wrapper_non_event_list_payload_blocked_reason(task)
     if opcode == "VCameraConfigChange":
         return "" if "CameraConfig" in task else "camera_config_missing"
     if opcode == "WaitAnimState":
@@ -20862,7 +21619,21 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
     if opcode in {"SetActionDelay", "ModifyCurrentSkillDelayCost"}:
         standard = payload.get("standard", {})
         operation = "set_action_value" if opcode == "SetActionDelay" else "current_skill_delay_cost"
+        if standard.get("operation") == "set_action_delay_zero":
+            return "executable" if (
+                not standard.get("blocked_reason")
+                and standard.get("target_alias") == "Caster"
+                and numeric_fixed_value(standard.get("normalized_value")) == 0.0
+            ) else "blocked"
         return "executable" if standard.get("operation") == operation and not standard.get("blocked_reason") else "blocked"
+    if opcode == "ExitBreakState":
+        standard = payload.get("standard", {})
+        return "executable" if (
+            isinstance(standard, dict)
+            and not standard.get("blocked_reason")
+            and standard.get("operation") == "exit_break_state"
+            and standard.get("target_alias") == "Caster"
+        ) else "blocked"
     if opcode == "CreateServant":
         standard = payload.get("standard", {})
         return "executable" if standard.get("operation") == "create_servant" and not standard.get("blocked_reason") else "blocked"
@@ -21142,7 +21913,7 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         standard = payload.get("standard")
         if not isinstance(standard, dict) or standard.get("blocked_reason"):
             return "blocked"
-        if standard.get("operation_type") != "Attach":
+        if standard.get("operation_type") not in {"Attach", "Protected"}:
             return "blocked"
         weaknesses = standard.get("weaknesses")
         if not isinstance(weaknesses, list) or not weaknesses:
@@ -21527,6 +22298,21 @@ def _status_callback_task_admission(
     if ability_task_execution_mode(opcode) == "process_only":
         reason = _process_only_ability_task_source_blocked_reason(task, opcode)
         return "blocked", reason or "source_proven_presentation_only"
+    if event == "OnDeathrattle" and opcode in {"DispelStatus", "SetDieImmediately"}:
+        payload = (
+            source_effect_payload
+            if source_effect_payload is not None
+            else _effect_payload(task, opcode, source_modifier_name)
+        )
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        standard = payload.get("standard") if isinstance(payload, dict) else None
+        return "blocked", (
+            str(standard.get("blocked_reason") or "")
+            if isinstance(standard, dict)
+            else ""
+        ) or _effect_blocked_reason(opcode, payload, coverage)
     if opcode == "SetResilience" and event in {"OnCreate", "OnDestroy"}:
         if (set(task) - {"$type", "DoReset"}
                 or task.get("$type") != "RPG.GameCore.SetResilience"
@@ -22062,6 +22848,32 @@ def _status_callback_presentation_only(
         )
 
     return all(presentation_task(task) for task in tasks)
+
+
+_NON_GAMEPLAY_SCORING_OPCODES = frozenset({
+    "SetBattleAchievement",
+    "SetAdvAchievement",
+    "ToggleScoreCounterShow",
+    "ResetWolfBroAchievementData",
+    "AchievementWaitTime",
+    "OverrideMonsterRankScore",
+})
+
+
+def _status_callback_tasks_are_non_gameplay_scoring(
+    tasks: "list[StatusCallbackTaskIR]",
+) -> bool:
+    """True when every leaf task of one listener only reports scores/achievements."""
+
+    if not tasks:
+        return False
+    parent_ids = {
+        task.parent_task_id for task in tasks if task.parent_task_id
+    }
+    leaves = [task for task in tasks if task.task_id not in parent_ids]
+    return bool(leaves) and all(
+        task.opcode in _NON_GAMEPLAY_SCORING_OPCODES for task in leaves
+    )
 
 
 def _status_callback_scope_kind(event: str) -> str:
@@ -23397,6 +24209,11 @@ def _queue_task_abort_states(
             return "alive_only", ""
         if value == "Mask_AliveOrLimbo":
             return "alive_or_limbo", ""
+        if value == "Mask_AliveOrRevivable":
+            # Alive-or-revivable is not limbo: this batch admits the mask for
+            # live targets and rejects the unsupported revivable branch at
+            # queue admission/consumption instead of reusing limbo semantics.
+            return "alive_or_revivable", ""
         return "alive_only", f"queue_{field.lower()}_not_admitted:{value!r}"
 
     owner_state, owner_reason = alive_state("OwnerAliveState")
@@ -24638,6 +25455,12 @@ def _condition_payload_executable(
             and isinstance(payload.get("DamageType"), str)
             and bool(payload.get("DamageType"))
         )
+    if opcode == "ByCompareAliveEnemyNumber":
+        return (
+            _condition_target_value_executable(payload.get("TargetType"))
+            and payload.get("CompareType") in _CONDITION_COMPARE_TYPES
+            and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
+        )
     if opcode in {"ByCompareChangeValue", "ByCompareParamValue", "ByCompareWaveCount"}:
         return (
             isinstance(payload.get("CompareType"), str)
@@ -25183,11 +26006,26 @@ def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source
     return payload
 
 
-def _standard_dispel_status_payload(value: dict[str, Any]) -> dict[str, Any]:
+def _standard_dispel_status_payload(
+    value: dict[str, Any], *, status_callback_event: str | None = None,
+) -> dict[str, Any]:
     count_expr = _numeric_expr_summary(value.get("Numbers"))
     order = _value_field(value.get("Order"))
+    # The death cleanup is source-identified by its OnDeathrattle callback and
+    # the exact silent, dead-capable self-dispel shape. The same field shape on
+    # any other callback stays a regular dispel status request.
+    deathrattle_cleanup = (
+        status_callback_event == "OnDeathrattle"
+        and set(value) == {"$type", "TargetType", "OnlyAlive", "IsSilentDispel"}
+        and _target_alias(value.get("TargetType")) == "Caster"
+        and value.get("OnlyAlive") is False
+        and value.get("IsSilentDispel") is True
+    )
     payload = {
         "kind": "status_dispel",
+        "operation": (
+            "deathrattle_status_cleanup" if deathrattle_cleanup else "dispel_status"
+        ),
         "target_alias": _target_alias(value.get("TargetType")),
         "buff_type": _value_field(value.get("BuffType")),
         "numbers": count_expr,
@@ -25199,6 +26037,8 @@ def _standard_dispel_status_payload(value: dict[str, Any]) -> dict[str, Any]:
         "behavior_flags": _list_json_values(value.get("BehaviorFlags")),
         "dispel_count_key": _value_field(value.get("DispelCountKey")),
     }
+    if deathrattle_cleanup:
+        return payload
     if not _numeric_expr_can_be_runtime_bound(count_expr):
         payload["blocked_reason"] = f"dispel_count_not_executable:{count_expr.get('kind') or 'unknown'}"
     elif order not in {"LastAdded", "Random"}:
@@ -25627,7 +26467,7 @@ def _standard_stack_weakness_payload(value: dict[str, Any]) -> dict[str, Any]:
             "WeakList": _json_safe(raw_weaknesses),
         },
     }
-    if operation_type != "Attach":
+    if operation_type not in {"Attach", "Protected"}:
         payload["blocked_reason"] = (
             f"stack_weakness_operation_not_admitted:{operation_type or 'missing'}"
         )
@@ -26033,6 +26873,36 @@ def _ability_graph_source_context(
         "override_skill_params": _json_safe(config_source.get("override_skill_params") or []),
     }
     return freeze_json(_json_safe(context))
+
+
+def _standalone_ability_source_contexts_from_ability_tasks(
+    ability_tasks: list[AbilityTaskIR],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Reuse formal monster action-binding contexts for standalone graphs.
+
+    A queue-inserted or passive ability has no action row of its own.  When the
+    same ability identity was already lowered through its monster skill
+    binding, that binding's source context (skill params, custom values and
+    character config) is the authoritative owner context for the ability.
+    Identities carrying more than one distinct context stay unbound so a
+    shared ability file can never inherit another monster's binding.
+    """
+
+    contexts: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for task in ability_tasks:
+        source_context = task.source.evidence.get("ability_source_context")
+        if not isinstance(source_context, dict):
+            continue
+        key = (task.source.source_path, task.ability_name)
+        canonical = json.dumps(
+            source_context, sort_keys=True, ensure_ascii=False, default=str,
+        )
+        contexts.setdefault(key, {})[canonical] = source_context
+    return {
+        key: next(iter(by_canonical.values()))
+        for key, by_canonical in contexts.items()
+        if len(by_canonical) == 1
+    }
 
 
 def _compact_ability_config_source(config_source: dict[str, Any]) -> dict[str, Any]:

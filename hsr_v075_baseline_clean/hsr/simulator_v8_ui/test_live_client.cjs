@@ -23,7 +23,7 @@ const context = vm.createContext({
     calls.push({url, options});
     return respond(url, options);
   },
-  URLSearchParams, Response, Blob, ReadableStream, setTimeout, clearTimeout,
+  URLSearchParams, Response, Blob, ReadableStream, DecompressionStream, setTimeout, clearTimeout,
 });
 const source = fs.readFileSync(path.join(__dirname, 'static/app.js'), 'utf8');
 vm.runInContext(source.replace(/\ninit\(\);\s*$/, '\n'), context);
@@ -72,14 +72,76 @@ const deadline = setTimeout(() => {
   await pending;
 
   // Stale pages refresh; their rejected command is never retried automatically.
+  // The draft belongs to saved-A while the refreshed battle belongs to saved-B;
+  // refreshing the battle must not rename the retained draft's save target.
+  state.cases = [{case_id: 'saved-A', scenario_id: 'scenario-A'},
+                 {case_id: 'saved-B', scenario_id: 'scenario-B'}];
+  node('caseSelect').value = 'saved-A';
+  node('caseId').value = 'saved-A';
+  const draftA = JSON.stringify({scenario_id: 'scenario-A', units: []});
+  node('scenarioEditor').value = draftA;
   respond = async (url) => url.endsWith('/submit')
     ? {ok: false, status: 409, json: async () => ({error: 'stale'})}
-    : ok({...view, revision: 8});
+    : ok({...view, revision: 8, scenario_id: 'scenario-B', scenario: {scenario_id: 'scenario-B', units: []}});
   await context.appendRouteStepWithTargets(slot, [], '');
   assert.equal(calls.at(-1).url, '/api/battle');
   assert.equal(state.session.revision, 8);
+  assert.equal(state.report.scenario_id, 'scenario-B');
+  assert.equal(node('caseId').value, 'saved-A');
+  assert.equal(node('caseSelect').value, 'saved-A');
+  assert.equal(node('scenarioEditor').value, draftA);
   assert.equal(state.busy, false);
   assert.equal(node('message').textContent, 'stale');
+
+  // A malformed HTTP 200 body is a failed request, not a successful battle report.
+  respond = async () => ({ok: true, status: 200, json: async () => { throw new SyntaxError('HTML body'); }});
+  const malformedSuccessCalls = calls.length;
+  await context.battleRequest('/api/battle/submit', {}, 'malformed success');
+  assert.equal(calls.length, malformedSuccessCalls + 1); // Neither refresh nor retry.
+  assert.equal(state.session.session_id, 'battle');
+  assert.equal(state.session.revision, 8);
+  assert.equal(state.report.session_id, 'battle');
+  assert.equal(node('caseId').value, 'saved-A');
+  assert.equal(node('scenarioEditor').value, draftA);
+  assert.match(node('message').textContent, /无法解析.*HTTP 200/);
+  assert.equal(state.busy, false);
+
+  // A malformed 409 body still carries the conflict status: refresh once, never retry.
+  respond = async (url) => url.endsWith('/submit')
+    ? {ok: false, status: 409, json: async () => { throw new SyntaxError('HTML conflict'); }}
+    : ok({...view, revision: 8, scenario_id: 'scenario-B', scenario: {scenario_id: 'scenario-B', units: []}});
+  const malformedConflictCalls = calls.length;
+  await context.battleRequest('/api/battle/submit', {}, 'malformed conflict');
+  assert.equal(calls.length, malformedConflictCalls + 2);
+  assert.equal(calls.at(-2).url, '/api/battle/submit');
+  assert.equal(calls.at(-1).url, '/api/battle');
+  assert.equal(state.session.revision, 8);
+  assert.equal(state.report.scenario_id, 'scenario-B');
+  assert.equal(node('caseId').value, 'saved-A');
+  assert.equal(node('caseSelect').value, 'saved-A');
+  assert.equal(node('scenarioEditor').value, draftA);
+  assert.match(node('message').textContent, /战斗已更新或页面已过期.*409/);
+  assert.equal(state.busy, false);
+
+  // A failed refresh must not replace the 409 conflict message or the last visible battle.
+  respond = async (url) => url.endsWith('/submit')
+    ? {ok: false, status: 409, json: async () => ({error: 'stale again'})}
+    : {ok: false, status: 500, json: async () => ({error: 'refresh failed'})};
+  await context.battleRequest('/api/battle/submit', {}, 'conflict then refresh failure');
+  assert.equal(node('message').textContent, 'stale again');
+  assert.equal(state.session.revision, 8);
+  assert.equal(state.report.scenario_id, 'scenario-B');
+  assert.equal(state.busy, false);
+
+  // Saved copies may share one scenario_id; with no unique match, keep the draft target.
+  state.cases = [{case_id: 'saved-A', scenario_id: 'scenario-A'},
+                 {case_id: 'copy-A', scenario_id: 'scenario-A'},
+                 {case_id: 'saved-B', scenario_id: 'scenario-B'}];
+  node('caseSelect').value = 'saved-B';
+  node('caseId').value = 'saved-B';
+  context.syncCaseIdentity('scenario-A');
+  assert.equal(node('caseSelect').value, 'saved-B');
+  assert.equal(node('caseId').value, 'saved-B');
 
   // A rejected startup must not erase the last usable battle from the screen.
   respond = async () => ({ok: false, status: 400, json: async () => ({error: 'blocked build'})});
@@ -88,17 +150,25 @@ const deadline = setTimeout(() => {
   assert.equal(node('message').textContent, 'blocked build');
   assert.equal(context.passText(undefined), '未检查');
 
-  const file = {name: 'battle.json', stream: () => new Blob(['{"format":"test"}']).stream()};
+  // The archive's number spelling must reach the server unchanged: JSON.parse/stringify
+  // would rewrite 1.0 as 1 and make a restored session fail its initial-snapshot check.
+  const archiveText = '{"format":"test","value":1.0}';
+  const file = {name: 'battle.json', stream: () => new Blob([archiveText]).stream()};
+  state.cases = [{case_id: 'example:restored', scenario: {scenario_id: 'restored-scenario'}}];
   const restored = {...view, session_id: 'restored', revision: 11, restored_operation_count: 10,
-                    scenario: {units: []}, decision: {ready: true, token: {decision_id: 'next'}}};
+                    scenario_id: 'restored-scenario', scenario: {units: []},
+                    decision: {ready: true, token: {decision_id: 'next'}}};
   respond = async () => ok(restored);
   await context.importBattleArchive(file, true);
   assert.equal(calls.at(-1).url, '/api/battle/resume');
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), {
-    session_id: 'battle', revision: 8, archive: {format: 'test'},
+    session_id: 'battle', revision: 8, archive_text: archiveText,
   });
+  assert.equal('archive' in JSON.parse(calls.at(-1).options.body), false);
   assert.equal(state.session.session_id, 'restored');
   assert.equal(node('battleMode').value, 'live');
+  assert.equal(node('caseSelect').value, 'example:restored');
+  assert.equal(node('caseId').value, 'restored');
   assert.match(node('eventReplay').innerHTML, /恢复前的完整历史/);
   assert.equal(state.busy, false);
 
@@ -119,7 +189,7 @@ const deadline = setTimeout(() => {
   await assert.rejects(context.readBattleArchive({name: 'huge.json', stream: () => new ReadableStream({
     start(controller) { controller.enqueue(new Uint8Array(9_900_001)); controller.close(); },
   })}), /10 MB/);
-  await assert.rejects(context.readBattleArchive({name: 'battle.gz', stream: () => file.stream()}), /解压/);
+  await assert.rejects(context.readBattleArchive({name: 'battle.gz', stream: () => file.stream()}), /归档解压失败/);
 
   // Formal trace selection replaces one logical trace level, preserving all others.
   const build = {character_card_id: 'card', input_fingerprint: 'old', level: 80,
@@ -378,6 +448,9 @@ const deadline = setTimeout(() => {
   assert.deepEqual(JSON.parse(node('scenarioEditor').value), switched);
   assert.equal(state.busy, false);
 
+  node('caseSelect').value = 'example:demo';
+  node('caseSelect').listeners.change();
+  assert.equal(node('caseId').value, 'demo');
   node('caseSelect').value = 'custom';
   respond = (url) => url === '/api/cases/custom' ? new Promise((resolve) => { finish = resolve; }) : ok({});
   const loading = context.loadSelectedCase();
@@ -499,6 +572,34 @@ const deadline = setTimeout(() => {
   await context.compareObservation();
   assert.match(node('message').textContent, /必须是记录数组/);
   assert.equal(calls.length, staleObservationCalls + 2);
+
+  // Multi-target selection is capped by the kernel query and stays visible on the battlefield.
+  const multiSlot = {slot: 'multi', label: '多目标', display_label: '多目标', actor_id: 'ally', action_ref: 'skill',
+    action_level: 1, available: true, target_query: {selection_mode: 'explicit', selection_min: 1, selection_max: 2,
+    candidate_ids: ['enemy-a', 'enemy-b', 'enemy-c']}};
+  const multiUnits = [
+    {unit_id: 'enemy-a', display_name: 'A', side: 'enemy'},
+    {unit_id: 'enemy-b', display_name: 'B', side: 'enemy'},
+    {unit_id: 'enemy-c', display_name: 'C', side: 'enemy'},
+  ];
+  state.report = {...view, battlefield_view: {units: multiUnits, enemy_units: multiUnits},
+    action_prompt: {slots: [multiSlot]}, decision: {ready: true, token: {decision_id: 'multi'}}, steps: []};
+  state.busy = false;
+  // An unselected skill is a boolean accessibility state, not the string "null".
+  const unselectedSkill = context.skillButton({available: true, slot: 'basic', action_ref: 'example'}, null);
+  assert.match(unselectedSkill, /aria-pressed="false"/);
+  assert.doesNotMatch(unselectedSkill, /aria-pressed="null"/);
+  await context.selectSkill('multi');
+  await context.handleUnitClick('enemy-a');
+  await context.handleUnitClick('enemy-b');
+  assert.deepEqual(Array.from(state.selectedTargets), ['enemy-a', 'enemy-b']);
+  assert.match(node('enemyRow').innerHTML, /aria-pressed="true"/);
+  assert.match(node('enemyRow').innerHTML, /class="unitCard enemy  targetable selected"/);
+  await context.handleUnitClick('enemy-c');
+  assert.deepEqual(Array.from(state.selectedTargets), ['enemy-a', 'enemy-b']);
+  assert.match(node('message').textContent, /最多选择 2/);
+  await context.handleUnitClick('enemy-a');
+  assert.deepEqual(Array.from(state.selectedTargets), ['enemy-b']);
 
   // The retained route entry must carry the same queue/control metadata too.
   node('battleMode').value = 'route';

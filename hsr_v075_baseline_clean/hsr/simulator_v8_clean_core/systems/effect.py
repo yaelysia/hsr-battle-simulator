@@ -83,6 +83,10 @@ class EffectExecutionContext:
     current_action_target_id: str | None = None
     target_resolution: TargetResolution | None = None
     event_payload: dict[str, JSONValue] | None = None
+    # Formal final-death identity travelling with a Deathrattle consumer. Only
+    # the producer of the committed unit.defeated fact may populate it; a
+    # generic event payload or audit trace is not a substitute.
+    death_instance_id: str = ""
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, JSONValue], ...] = ()
     include_ambient_status_bindings: bool = True
@@ -163,6 +167,7 @@ class EffectRegistry:
         self.register("LockActionDelayChange", self._execute_action_delay_lock)
         self.register("SetControlSkillMapping", self._execute_control_skill_mapping)
         self.register("SetActionDelay", self._execute_set_action_delay)
+        self.register("ExitBreakState", self._execute_exit_break_state)
         self.register("ModifyCurrentSkillDelayCost", self._execute_current_skill_delay_cost)
         self.register("ElationOperation", self._execute_elation_operation)
 
@@ -370,10 +375,141 @@ class EffectRegistry:
             ),
         )
 
+    def _execute_exit_break_state(
+        self, effect: EffectIR, context: EffectExecutionContext | None
+    ) -> EffectResult:
+        """Formal ExitBreakState: an unbroken target is a no-op.
+
+        A broken live target keeps the ordinary recovery branch fail-closed.
+        A broken unit runs the corpse cleanup only when it already committed the
+        final death instance carried by this effect context; limbo and pending
+        defeats stay blocked.
+        """
+
+        if context is None:
+            return _unsupported_effect(effect, "exit_break_state_context_missing")
+        standard = effect.payload.get("standard")
+        if (
+            not isinstance(standard, dict)
+            or standard.get("operation") != "exit_break_state"
+            or standard.get("blocked_reason")
+            or standard.get("target_alias") != "Caster"
+        ):
+            return _unsupported_effect(effect, "exit_break_state_contract_missing")
+        target_id = _resolve_target_alias(
+            "Caster",
+            caster_id=context.caster_id,
+            owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+        )
+        unit = context.state.units.get(target_id)
+        if unit is None:
+            return _unsupported_effect(effect, "exit_break_state_target_missing")
+        if unit.flags.get("broken") is True:
+            # A unit that dies while broken runs the same source task from its
+            # inserted death animation. Only the committed final death instance
+            # carried by the callback may run the corpse cleanup; a limbo that
+            # can still be rescued is not a corpse. A live broken unit keeps the
+            # ordinary recovery branch fail-closed.
+            death_instance_id = context.death_instance_id
+            if (
+                unit.lifecycle_status != "defeated"
+                or float(unit.hp) != 0.0
+                or not death_instance_id
+                or self.status_system is None
+            ):
+                return _unsupported_effect(
+                    effect, "exit_break_state_broken_target_branch_not_admitted"
+                )
+            from .break_system import clear_death_break_state
+
+            cleared = clear_death_break_state(
+                self.status_system.rules,
+                context.state,
+                unit_id=target_id,
+                effect_id=effect.effect_id,
+                death_instance_id=death_instance_id,
+            )
+            if not cleared.ok:
+                return _unsupported_effect(
+                    effect, ",".join(cleared.errors) or "exit_break_state_death_cleanup_blocked"
+                )
+            records = (
+                *cleared.records,
+                SettlementRecord(
+                    record_type="exit_break_state",
+                    source="effect_system",
+                    process_only=True,
+                    payload={
+                        "target_id": target_id,
+                        "death_instance_id": death_instance_id,
+                        "applied": True,
+                        "reason": "deathrattle_exit_break_state",
+                        "cancel_recover_anim": standard.get("cancel_recover_anim") is True,
+                    },
+                    trace=effect.source.to_json(),
+                ).to_json(),
+            )
+            return EffectResult(
+                events=cleared.events,
+                mutations=cleared.mutations,
+                rng_events=cleared.rng_events,
+                records=records,
+            )
+        payload = {
+            "target_id": target_id,
+            "applied": False,
+            "reason": "target_not_broken",
+            "cancel_recover_anim": standard.get("cancel_recover_anim") is True,
+        }
+        return EffectResult(
+            records=(
+                SettlementRecord(
+                    record_type="exit_break_state",
+                    source="effect_system",
+                    process_only=True,
+                    payload=payload,
+                    trace=effect.source.to_json(),
+                ).to_json(),
+            )
+        )
+
     def _execute_set_action_delay(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         if context is None:
             return _unsupported_effect(effect, "action_delay_context_missing")
         standard = effect.payload["standard"]
+        if isinstance(standard, dict) and standard.get("operation") == "set_action_delay_zero":
+            normalized = standard.get("normalized_value")
+            if (
+                standard.get("target_alias") != "Caster"
+                or not isinstance(normalized, dict)
+                or normalized.get("value") != 0.0
+            ):
+                return _unsupported_effect(effect, "set_action_delay_zero_shape_invalid")
+            target_id = _resolve_target_alias(
+                "Caster",
+                caster_id=context.caster_id,
+                owner_id=context.owner_id,
+                param_entity_id=context.param_entity_id,
+                current_action_target_id=context.current_action_target_id,
+            )
+            return EffectResult(
+                records=(
+                    SettlementRecord(
+                        record_type="set_action_delay_zero",
+                        source="effect_system",
+                        process_only=True,
+                        payload={
+                            "target_id": target_id,
+                            "normalized_value": 0.0,
+                            "applied": False,
+                            "reason": "zero_delay_is_noop",
+                        },
+                        trace=effect.source.to_json(),
+                    ).to_json(),
+                )
+            )
         target_id = _resolve_target_alias(standard["target_alias"], caster_id=context.caster_id,
             owner_id=context.owner_id, param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id)
@@ -437,6 +573,8 @@ class EffectRegistry:
         if context is None or self.status_system is None or self.targets is None:
             return _unsupported_effect(effect, "force_kill_context_missing")
         standard = effect.payload.get("standard", {})
+        if standard.get("operation") == "formal_forced_death":
+            return self._execute_formal_forced_death(effect, context, standard)
         expression = self.status_system.rules.target_expression(str(standard.get("target_expression_id") or ""))
         if standard.get("operation") != "muted_unit_retirement" or expression is None:
             return _unsupported_effect(effect, "force_kill_contract_missing")
@@ -488,6 +626,138 @@ class EffectRegistry:
                         for mutation in mutations)
         return EffectResult(mutations=tuple(mutations), events=tuple(events), records=records, rng_events=result.rng_events)
 
+    def _execute_formal_forced_death(
+        self,
+        effect: EffectIR,
+        context: EffectExecutionContext,
+        standard: dict[str, JSONValue],
+    ) -> EffectResult:
+        """Kill one active unit without a hit, damage packet or kill credit."""
+
+        from .mutation_events import mutation_backed_event_id
+        from .queue import QueueSystem
+
+        alias = str(standard.get("target_alias") or "")
+        if alias == "AbilityTargetEntity":
+            selected = (
+                tuple(context.target_resolution.selected)
+                if context.target_resolution is not None
+                else ()
+            )
+            target_ids = selected
+        elif alias == "Caster":
+            target_ids = (context.caster_id,)
+        else:
+            return _unsupported_effect(effect, "formal_forced_death_target_alias_not_admitted")
+        if len(target_ids) != 1:
+            return _unsupported_effect(effect, "formal_forced_death_requires_single_target")
+        unit_id = target_ids[0]
+        lifecycle = UnitLifecycleSystem()
+        source_trace = effect.source.to_json()
+        try:
+            mutations, record = lifecycle.forced_death_mutations(
+                context.state,
+                unit_id,
+                effect_id=effect.effect_id,
+                effect_source=source_trace,
+                source_trace=source_trace,
+                target_alias=alias,
+            )
+        except ValueError as exc:
+            return _unsupported_effect(effect, str(exc))
+        mutations = list(mutations)
+        lifecycle_mutation = mutations[1]
+        events: list[GameEvent] = [
+            GameEvent(
+                "unit.defeated",
+                source_id="",
+                target_id=unit_id,
+                event_id=mutation_backed_event_id(
+                    lifecycle_mutation.stable_id(), "unit.defeated"
+                ),
+                window="unit.defeated",
+                process_only=True,
+                payload={
+                    "record_type": "formal_forced_death",
+                    "target_id": unit_id,
+                    "defeated_unit_id": unit_id,
+                    "param_entity_id": unit_id,
+                    "lifecycle_mutation_id": lifecycle_mutation.stable_id(),
+                    "hp_mutation_id": record["hp_mutation_id"],
+                    "target_before_hp": record["target_before_hp"],
+                    "target_after_hp": record["target_after_hp"],
+                    "forced_death_kind": record["forced_death_kind"],
+                    "forced_death_target_alias": alias,
+                    "effect_id": effect.effect_id,
+                    "effect_source": source_trace,
+                    "source_trace": source_trace,
+                    "kill_credit_owner_id": "",
+                    "damage_event_id": "",
+                    "per_hit_target_context_available": False,
+                },
+            )
+        ]
+        death_payload: dict[str, JSONValue] = {
+            "unit_id": unit_id,
+            "target_alias": alias,
+            "forced_death_kind": record["forced_death_kind"],
+            "before_hp": record["target_before_hp"],
+            "after_hp": record["target_after_hp"],
+            "lifecycle_mutation_id": lifecycle_mutation.stable_id(),
+            "hp_mutation_id": record["hp_mutation_id"],
+            "kill_credit": None,
+            "damage": None,
+            "effect_id": effect.effect_id,
+        }
+        hp_mutation = mutations[0]
+        record_mutation = mutations[2]
+        records: list[dict[str, JSONValue]] = [
+            SettlementRecord(
+                record_type="unit_forced_death_hp",
+                source="effect_system",
+                mutation_id=hp_mutation.stable_id(),
+                process_only=False,
+                payload=death_payload,
+                trace=source_trace,
+            ).to_json(),
+            SettlementRecord(
+                record_type="unit_forced_death",
+                source="effect_system",
+                mutation_id=lifecycle_mutation.stable_id(),
+                process_only=False,
+                payload=death_payload,
+                trace=source_trace,
+            ).to_json(),
+            SettlementRecord(
+                record_type="unit_forced_death_record",
+                source="effect_system",
+                mutation_id=record_mutation.stable_id(),
+                process_only=False,
+                payload=death_payload,
+                trace=source_trace,
+            ).to_json(),
+        ]
+        if standard.get("abort_unused_insert_ability") is True:
+            queue_mutations, queue_events, queue_records = (
+                QueueSystem().abort_unused_insert_entries_for_unit(
+                    context.state,
+                    unit_id,
+                    reason="queue_action_actor_unit_defeated",
+                    source_trace={
+                        "forced_death_effect_id": effect.effect_id,
+                        "forced_death_source": source_trace,
+                    },
+                )
+            )
+            mutations.extend(queue_mutations)
+            events.extend(queue_events)
+            records.extend(queue_records)
+        return EffectResult(
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=tuple(records),
+        )
+
     def _execute_finish_retirement(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         from .summon import SummonSystem
         if context is None or self.status_system is None:
@@ -498,6 +768,71 @@ class EffectRegistry:
         if standard.get("operation") != "finish_unit_retirement" or standard.get("target_alias") != "Caster":
             return _unsupported_effect(effect, "immediate_retirement_target_not_admitted")
         unit = context.state.units.get(context.caster_id)
+        if standard.get("deathrattle_source") is True:
+            # SetDieImmediately inside OnDeathrattle confirms the death instance
+            # that the lethal producer already committed. A unit that is still
+            # in limbo has an unfinished death and must not be relabeled here;
+            # the deathrattle insert itself is paced by its admitted queue entry.
+            payload = (
+                context.event_payload
+                if isinstance(context.event_payload, dict)
+                else {}
+            )
+            death_instance_id = str(payload.get("lifecycle_mutation_id") or "")
+            record = unit.flags.get("defeat_record") if unit is not None else None
+            if (
+                unit is None
+                or unit.hp > 0
+                or unit.lifecycle_status not in {"defeated", "retiring"}
+                or not isinstance(record, dict)
+                or not death_instance_id
+                or str(record.get("lifecycle_mutation_id") or "")
+                != death_instance_id
+            ):
+                return _unsupported_effect(
+                    effect,
+                    "deathrattle_immediate_requires_finalized_death_instance",
+                )
+            return EffectResult(
+                records=(
+                    SettlementRecord(
+                        record_type="deathrattle_immediate_retirement",
+                        source="effect_system",
+                        process_only=True,
+                        payload={
+                            "target_id": context.caster_id,
+                            "effect_id": effect.effect_id,
+                            "death_instance_id": death_instance_id,
+                            "lifecycle_status": unit.lifecycle_status,
+                            "lifecycle_operation": "deathrattle_die_immediately",
+                            "death_already_final": True,
+                            "deathrattle_insert_pending": True,
+                        },
+                        trace=effect.source.to_json(),
+                    ).to_json(),
+                )
+            )
+        if (
+            unit is not None
+            and unit.flags.get("summon_kind") == "summoned_monster"
+            and unit.hp <= 0
+            and unit.lifecycle_status in {"defeated", "retiring"}
+        ):
+            return EffectResult(
+                records=(
+                    SettlementRecord(
+                        record_type="immediate_retirement",
+                        source="effect_system",
+                        process_only=True,
+                        payload={
+                            "target_id": context.caster_id,
+                            "applied": False,
+                            "reason": "death_already_settled",
+                        },
+                        trace=effect.source.to_json(),
+                    ).to_json(),
+                )
+            )
         if (unit is None or unit.flags.get("summon_kind") != "servant" or unit.hp != 0
                 or unit.lifecycle_status != "defeated" or unit.flags.get("forced_retirement") is not True):
             return _unsupported_effect(effect, "immediate_retirement_requires_forced_servant_departure")
@@ -647,7 +982,20 @@ class EffectRegistry:
         if effect.opcode in {"SetActionDelay", "ModifyCurrentSkillDelayCost"}:
             standard = effect.payload.get("standard")
             setting = effect.opcode == "SetActionDelay"
-            if (not isinstance(standard, dict) or standard.get("blocked_reason")
+            if (
+                setting
+                and isinstance(standard, dict)
+                and standard.get("operation") == "set_action_delay_zero"
+            ):
+                normalized = standard.get("normalized_value")
+                if (
+                    standard.get("blocked_reason")
+                    or standard.get("target_alias") != "Caster"
+                    or not isinstance(normalized, dict)
+                    or normalized.get("value") != 0.0
+                ):
+                    return "blocked"
+            elif (not isinstance(standard, dict) or standard.get("blocked_reason")
                     or standard.get("operation") != ("set_action_value" if setting else "current_skill_delay_cost")
                     or not _runtime_numeric_payload_is_executable(standard.get("value" if setting else "normalized_value"))
                     or (setting and standard.get("target_alias") not in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"})
@@ -866,6 +1214,30 @@ class EffectRegistry:
             return _unsupported_effect(effect, "DispelStatus requires StatusSystem")
         if context is None:
             return _unsupported_effect(effect, "DispelStatus requires EffectExecutionContext")
+        standard = effect.payload.get("standard")
+        if (
+            isinstance(standard, dict)
+            and standard.get("operation") == "deathrattle_status_cleanup"
+        ):
+            # The OnDeathrattle cleanup is a real lifecycle transaction: the
+            # dying unit's statuses are removed (KeepOnDeathrattle and the
+            # callback's own status survive) instead of being relabeled as
+            # already settled by an unrelated retirement path.
+            cleanup = self.status_system.apply_deathrattle_status_cleanup(
+                context.state,
+                effect,
+                caster_id=context.caster_id,
+                source_id=context.source_id,
+                owner_id=context.owner_id,
+                event_payload=context.event_payload,
+            )
+            return EffectResult(
+                events=cleanup.events,
+                mutations=cleanup.mutations,
+                rng_events=cleanup.rng_events,
+                records=cleanup.records,
+                unsupported=cleanup.unsupported,
+            )
         result = self.status_system.apply_dispel_status(
             context.state,
             effect,
@@ -1233,6 +1605,14 @@ class EffectRegistry:
         context: EffectExecutionContext | None,
     ) -> EffectResult:
         rules = self.status_system.rules if self.status_system is not None else None
+        standard = effect.payload.get("standard")
+        if (
+            isinstance(standard, dict)
+            and standard.get("operation_type") == "Protected"
+        ):
+            return _execute_protected_weakness(
+                effect, context, rules=rules, status_system=self.status_system
+            )
         return _execute_stack_weakness(
             effect, context, rules=rules, targets=self.targets
         )
@@ -1432,7 +1812,7 @@ def _stack_weakness_payload_is_executable(effect: EffectIR) -> bool:
     return bool(
         isinstance(standard, dict)
         and not standard.get("blocked_reason")
-        and standard.get("operation_type") == "Attach"
+        and standard.get("operation_type") in {"Attach", "Protected"}
         and isinstance(weaknesses, list)
         and weaknesses
         and len(weaknesses) == len(set(weaknesses))
@@ -2611,6 +2991,76 @@ def _execute_trigger_modifier_custom_event(
         events=tuple(events),
         rng_events=target_result.rng_events,
         records=tuple(records),
+    )
+
+
+def _execute_protected_weakness(
+    effect: EffectIR,
+    context: EffectExecutionContext | None,
+    *,
+    rules: RuleBook | None,
+    status_system: StatusSystem | None,
+) -> EffectResult:
+    """Record the source-declared protected weakness types on its own status.
+
+    OPType Protected marks existing weakness types as protected through the
+    status that declares them; it is not a weakness attachment. The exact
+    ModifierOwnerEntity source instance has to match the callback's own status
+    detail, so no other unit or status can borrow the protection.
+    """
+
+    if context is None or status_system is None or rules is None:
+        return _unsupported_effect(
+            effect, "stack_weakness_protected_context_missing"
+        )
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return _unsupported_effect(
+            effect, "stack_weakness_protected_payload_missing"
+        )
+    if standard.get("target_alias") != "ModifierOwnerEntity":
+        return _unsupported_effect(
+            effect, "stack_weakness_protected_target_not_admitted"
+        )
+    weaknesses = standard.get("weaknesses")
+    if (
+        not isinstance(weaknesses, list)
+        or not weaknesses
+        or not all(isinstance(item, str) and item for item in weaknesses)
+        or len(weaknesses) != len(set(weaknesses))
+    ):
+        return _unsupported_effect(
+            effect, "stack_weakness_protected_list_invalid"
+        )
+    payload = context.event_payload if isinstance(context.event_payload, dict) else {}
+    status_instance_id = str(payload.get("status_instance_id") or "")
+    owner_id = str(context.owner_id or "")
+    if not status_instance_id or not owner_id:
+        return _unsupported_effect(
+            effect, "stack_weakness_protected_source_status_missing"
+        )
+    source_trace = {
+        "effect_id": effect.effect_id,
+        "effect_source": effect.source.to_json(),
+        "status_instance_id": status_instance_id,
+        "modifier_name": str(payload.get("modifier_name") or ""),
+        "operation_type": str(standard.get("operation_type") or ""),
+        "weaknesses": list(weaknesses),
+    }
+    result = status_system.apply_weakness_protection(
+        context.state,
+        unit_id=owner_id,
+        status_instance_id=status_instance_id,
+        elements=tuple(weaknesses),
+        effect_id=effect.effect_id,
+        source_trace=source_trace,
+    )
+    return EffectResult(
+        events=result.events,
+        mutations=result.mutations,
+        rng_events=result.rng_events,
+        records=result.records,
+        unsupported=result.unsupported,
     )
 
 

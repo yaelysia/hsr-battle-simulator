@@ -47,6 +47,28 @@ class SessionConflict(ValueError):
     pass
 
 
+def _request_archive(request: dict[str, Any]) -> Any:
+    """Accept the archive object or its exact JSON text.
+
+    Browser JSON.parse/stringify rewrites ``1.0`` as ``1``; the archive graph
+    distinguishes float and integer scalars, so a round-tripped object no longer
+    matches the session it was exported from. The text form keeps the original
+    number spelling and is decoded here, once, by Python's JSON parser.
+    """
+    archive = request.get('archive')
+    text = request.get('archive_text')
+    if archive is not None and text is not None:
+        raise ValueError('归档只能以对象或原文提供其中一种。')
+    if text is not None:
+        if not isinstance(text, str) or not text:
+            raise ValueError('归档原文必须是非空 JSON 文本。')
+        try:
+            archive = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'归档原文不是有效 JSON：{exc.msg}（第 {exc.lineno} 行第 {exc.colno} 列）') from exc
+    return archive
+
+
 class LiveBattle:
     def __init__(self, tbgd_root: Path):
         self.tbgd_root = tbgd_root
@@ -465,7 +487,7 @@ class LiveBattle:
                 self._check(request)
             elif request.get('session_id') is not None:
                 raise SessionConflict('服务已重启，请刷新后重新载入归档。')
-            archive = decode_archive_json(request.get('archive'))
+            archive = decode_archive_json(_request_archive(request))
             scenario = archive.get('scenario')
             if not isinstance(scenario, dict):
                 raise ValueError('归档缺少战斗配置。')
@@ -555,6 +577,11 @@ class LiveBattle:
             if not prompt['available'] and not session.outcome:
                 checks.append({'kind': 'decision', 'unit_id': '', 'ref_id': '', 'status': 'blocked',
                                'reasons': [prompt['reason']]})
+            elif not prompt['available']:
+                # The battle ended: no action choice exists, but the last submission
+                # was successful. Do not report the current decision as continuable.
+                checks.append({'kind': 'decision', 'unit_id': '', 'ref_id': '', 'status': 'unchecked',
+                               'reasons': [f'战斗已结束：{session.outcome}']})
             if self.steps:
                 last_step = self.steps[-1]
                 outcome = last_step['transition_outcome']

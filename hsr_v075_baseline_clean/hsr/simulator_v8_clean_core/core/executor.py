@@ -1529,6 +1529,12 @@ class CombatExecutor:
                         "selected_target_ids": list(target_result.resolution.selected),
                         "target_ids": list(target_result.resolution.selected),
                         "attack_type": action_definition.attack_type,
+                        "AttackType": action_definition.attack_type,
+                        # Post-action listeners evaluate the current skill type
+                        # through the same action definition that produced the
+                        # notice; do not make them re-read another event.
+                        "skill_type": _condition_skill_type(action_definition),
+                        "SkillType": _condition_skill_type(action_definition),
                         "skill_effect": action_definition.skill_effect,
                         "is_critical": target_hit_sequence_is_critical.get(
                             hit_target_id,

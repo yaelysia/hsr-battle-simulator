@@ -58,6 +58,7 @@ TRANSIENT_CONDITION_FACT_KINDS = frozenset(TRANSIENT_CONDITION_FACT_SPECS)
 COMMITTED_CONDITION_FACT_KINDS = frozenset(
     {
         "battle.skill_points",
+        "relation.alive_opposing_count",
         "relation.body_part",
         "relation.hp_shared_group",
         "relation.opposing",
@@ -65,6 +66,7 @@ COMMITTED_CONDITION_FACT_KINDS = frozenset(
         "unit.avatar_base_type",
         "unit.build_selector",
         "unit.battle_event_id",
+        "unit.dynamic_value",
         "unit.hp",
         "unit.is_battle_event_entity",
         "unit.lifecycle_mask",

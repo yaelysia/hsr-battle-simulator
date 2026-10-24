@@ -10,7 +10,11 @@ from ..rules.condition_state import (
     ConditionOperandResolution,
 )
 from ..rules.rulebook import RuleBook
-from ..unit_eligibility import runtime_units_are_opposing_combat_teams
+from ..unit_eligibility import (
+    runtime_unit_is_active,
+    runtime_unit_is_on_field,
+    runtime_units_are_opposing_combat_teams,
+)
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext
 from .unit_stats import (
     control_kind_from_behavior_flags,
@@ -24,7 +28,6 @@ _EXTERNAL_FACT_PRODUCERS = {
     "relation.hp_shared_group": "p9_s11",
     "unit.red_stance": "p9_s15",
     "unit.battle_event_id": "p9_s17",
-    "unit.is_battle_event_entity": "p9_s17",
     "unit.stance_current": "p9_s15",
     "unit.stance_ratio": "p9_s15",
     "unit.stance_weak": "p9_s15",
@@ -32,6 +35,7 @@ _EXTERNAL_FACT_PRODUCERS = {
 
 _FACT_AUTHORITIES = {
     "battle.skill_points": "battle_state",
+    "relation.alive_opposing_count": "battle_state",
     "relation.body_part": "entity_relation",
     "relation.hp_shared_group": "entity_relation",
     "relation.opposing": "entity_relation",
@@ -39,6 +43,7 @@ _FACT_AUTHORITIES = {
     "unit.avatar_base_type": "rulebook_character_definition",
     "unit.build_selector": "character_build_selection",
     "unit.battle_event_id": "unit_definition",
+    "unit.dynamic_value": "dynamic_value_store",
     "unit.hp": "battle_state",
     "unit.is_battle_event_entity": "unit_definition",
     "unit.lifecycle_mask": "unit_lifecycle",
@@ -55,6 +60,7 @@ _FACT_AUTHORITIES = {
 
 _FACT_PARAMETER_KEYS = {
     "battle.skill_points": frozenset(),
+    "relation.alive_opposing_count": frozenset(),
     "relation.body_part": frozenset(),
     "relation.hp_shared_group": frozenset(),
     "relation.opposing": frozenset(),
@@ -62,6 +68,7 @@ _FACT_PARAMETER_KEYS = {
     "unit.avatar_base_type": frozenset(),
     "unit.build_selector": frozenset({"selector_kind", "selector_key", "selector_hash"}),
     "unit.battle_event_id": frozenset(),
+    "unit.dynamic_value": frozenset({"name"}),
     "unit.hp": frozenset(),
     "unit.is_battle_event_entity": frozenset({"expect_sub_type"}),
     "unit.lifecycle_mask": frozenset({"mask"}),
@@ -78,6 +85,7 @@ _FACT_PARAMETER_KEYS = {
 
 _FACT_SUBJECT_COUNTS = {
     "battle.skill_points": 0,
+    "relation.alive_opposing_count": 1,
     "relation.body_part": 1,
     "relation.hp_shared_group": 1,
     "relation.opposing": 2,
@@ -85,6 +93,7 @@ _FACT_SUBJECT_COUNTS = {
     "unit.avatar_base_type": 1,
     "unit.build_selector": 1,
     "unit.battle_event_id": 1,
+    "unit.dynamic_value": 1,
     "unit.hp": 1,
     "unit.is_battle_event_entity": 1,
     "unit.lifecycle_mask": 1,
@@ -174,6 +183,10 @@ class CommittedConditionFactProvider:
             except ValueError as exc:
                 return self._blocked(request, str(exc))
             return self._number(request, segments.remaining_segments, f"unit:{unit_id}:toughness_segments")
+        if request.fact_kind == "unit.is_battle_event_entity":
+            return self._battle_event_entity(state, request)
+        if request.fact_kind == "unit.dynamic_value":
+            return self._unit_dynamic_value(state, request)
         if request.fact_kind == "unit.lifecycle_mask":
             return self._lifecycle(state, request)
         if request.fact_kind == "unit.avatar_base_type":
@@ -186,6 +199,8 @@ class CommittedConditionFactProvider:
             return self._special_resource_ratio(state, request)
         if request.fact_kind == "unit.status_resist_chance":
             return self._status_resist_chance(state, request)
+        if request.fact_kind == "relation.alive_opposing_count":
+            return self._alive_opposing_count(state, request)
         if request.fact_kind == "relation.summoner":
             return self._relation(state, request, "summon.summoner")
         if request.fact_kind == "relation.opposing":
@@ -194,6 +209,43 @@ class CommittedConditionFactProvider:
             return self._target_unselectable(state, request)
         return self._blocked(
             request, f"condition_fact_provider_missing:{request.fact_kind}"
+        )
+
+    def _battle_event_entity(
+        self, state: BattleState, request: ConditionOperandRequest
+    ) -> ConditionOperandResolution:
+        """Read whether the subject is a committed battle-event container.
+
+        Battle-event containers are the only units created with the formal
+        entity_type=battle_event definition and carry their event definition
+        in the same unit flags.  A subject that carries an event definition
+        without the entity type is inconsistent and stays blocked.
+        """
+
+        unit_id = self._single_subject(request)
+        if unit_id is None:
+            return self._blocked(
+                request, "battle_event_entity_requires_one_subject"
+            )
+        expected = (request.parameters or {}).get("expect_sub_type")
+        if isinstance(expected, str) and expected:
+            return self._blocked(request, "battle_event_sub_type_not_admitted")
+        unit = state.units[unit_id]
+        entity_type = unit.flags.get("entity_type")
+        definition = unit.flags.get("battle_event_definition")
+        if entity_type is None and definition is not None:
+            return self._blocked(
+                request, "battle_event_entity_identity_inconsistent"
+            )
+        is_battle_event = entity_type == "battle_event"
+        if is_battle_event and not isinstance(definition, dict):
+            return self._blocked(request, "battle_event_definition_missing")
+        return ConditionOperandResolution.resolved(
+            "boolean",
+            is_battle_event,
+            fact_kind=request.fact_kind,
+            authority=_FACT_AUTHORITIES[request.fact_kind],
+            source_identity=f"unit:{unit_id}:entity_type:{entity_type or 'combatant'}",
         )
 
     def _build_selector(
@@ -442,6 +494,78 @@ class CommittedConditionFactProvider:
         ):
             return "target_unselectable_source_invalid"
         return ""
+
+    def _alive_opposing_count(
+        self, state: BattleState, request: ConditionOperandRequest
+    ) -> ConditionOperandResolution:
+        """Count alive on-field combat teams opposing the subject entity.
+
+        The formal combat allegiance is the same one used by every relation
+        consumer: an ally servant remains on the ally team through team_side,
+        an enemy summon remains on the enemy team, and a neutral battle-event
+        container never becomes an opponent.  Being alive here is lifecycle
+        active plus on-field presence plus positive HP; targetability is a
+        separate gate, so an alive-but-unselectable enemy still counts.
+        """
+
+        unit_id = self._single_subject(request)
+        if unit_id is None:
+            return self._blocked(request, "alive_opposing_count_requires_one_subject")
+        subject = state.units.get(unit_id)
+        if subject is None:
+            return self._blocked(request, "alive_opposing_count_subject_missing")
+        count = sum(
+            1
+            for unit in state.units.values()
+            if runtime_units_are_opposing_combat_teams(subject, unit)
+            and runtime_unit_is_active(unit)
+            and runtime_unit_is_on_field(unit)
+            and unit.hp > 0
+        )
+        return self._number(
+            request, count, f"battle:alive_opposing_count:{unit_id}"
+        )
+
+    def _unit_dynamic_value(
+        self, state: BattleState, request: ConditionOperandRequest
+    ) -> ConditionOperandResolution:
+        """Read a unit-scoped dynamic value from the committed store.
+
+        A status-listener condition with ContextScope=TargetEntity reads the
+        value owned by the target entity itself; the status instance copy is a
+        separate scope and must not shadow it.
+        """
+
+        unit_id = self._single_subject(request)
+        name = (request.parameters or {}).get("name")
+        if unit_id is None:
+            return self._blocked(request, "unit_dynamic_value_requires_one_subject")
+        if not isinstance(name, str) or not name:
+            return self._blocked(request, "unit_dynamic_value_name_invalid")
+        store = state.global_flags.get("dynamic_value_store")
+        entries = store.get("entries") if isinstance(store, dict) else None
+        if not isinstance(entries, dict):
+            return self._blocked(request, f"unit_dynamic_value_missing:{name}")
+        values: list[float] = []
+        for entry in entries.values():
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("name") or "") != name:
+                continue
+            if str(entry.get("scope") or "") != "unit":
+                continue
+            if str(entry.get("lifecycle") or "combat") != "combat":
+                continue
+            if unit_id not in (entry.get("owner_id"), entry.get("target_id")):
+                continue
+            value = entry.get("value")
+            if self._finite(value):
+                values.append(float(value))
+        if not values:
+            return self._blocked(request, f"unit_dynamic_value_missing:{name}")
+        if len(set(values)) > 1:
+            return self._blocked(request, f"unit_dynamic_value_ambiguous:{name}")
+        return self._number(request, values[-1], f"unit:{unit_id}:dynamic:{name}")
 
     def _lifecycle(
         self, state: BattleState, request: ConditionOperandRequest

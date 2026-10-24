@@ -10,6 +10,7 @@ from ..core.model import (
 )
 from ..core.settlement import SettlementRecord
 from ..rules.ir import QueueResolutionIR
+from .mutation_events import mutation_backed_event_id
 from .unit_relation import is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
 
@@ -38,6 +39,219 @@ class QueueTargetResolution:
             "blocked_reason": self.blocked_reason,
             "source_trace": self.source_trace or {},
         }
+
+
+DEATHRATTLE_ADMISSION_FIELDS = frozenset({
+    "unit_id",
+    "death_instance_id",
+    "hp_mutation_id",
+    "source_event_id",
+    "source_status_instance_id",
+    "source_modifier_name",
+    "ability_name",
+    "queue_intent_id",
+    "queue_kind",
+    "source_task_id",
+})
+
+
+@dataclass(frozen=True)
+class DeathrattleQueueAdmission:
+    """Limited queue authority for one unit's own Deathrattle insert.
+
+    A unit that has just been finally defeated can still enqueue its source
+    Deathrattle animation ability (OwnerAliveState/TargetAliveState
+    Mask_AliveOrLimbo, CanRunOnUnselectableTarget). The permission is bound to
+    the concrete death instance, the lethal HP mutation, the committed death
+    event, the Deathrattle modifier instance and the formal queue intent that
+    produced the callback. It does not admit any other defeated unit, any other
+    queue intent, or a changed death record.
+    """
+
+    unit_id: str
+    death_instance_id: str
+    hp_mutation_id: str
+    source_event_id: str
+    source_status_instance_id: str
+    source_modifier_name: str
+    ability_name: str
+    queue_intent_id: str
+    queue_kind: str
+    source_task_id: str
+
+    def __post_init__(self) -> None:
+        values = (
+            self.unit_id,
+            self.death_instance_id,
+            self.hp_mutation_id,
+            self.source_event_id,
+            self.source_status_instance_id,
+            self.source_modifier_name,
+            self.ability_name,
+            self.queue_intent_id,
+            self.queue_kind,
+            self.source_task_id,
+        )
+        if any(type(value) is not str or not value for value in values):
+            raise ValueError("deathrattle_queue_admission_identity_invalid")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "unit_id": self.unit_id,
+            "death_instance_id": self.death_instance_id,
+            "hp_mutation_id": self.hp_mutation_id,
+            "source_event_id": self.source_event_id,
+            "source_status_instance_id": self.source_status_instance_id,
+            "source_modifier_name": self.source_modifier_name,
+            "ability_name": self.ability_name,
+            "queue_intent_id": self.queue_intent_id,
+            "queue_kind": self.queue_kind,
+            "source_task_id": self.source_task_id,
+        }
+
+    @staticmethod
+    def from_json(raw: object) -> "DeathrattleQueueAdmission":
+        # Queue entries live in the frozen JSON snapshot, so the mapping is a
+        # dict-compatible immutable view rather than a plain dict.
+        if not isinstance(raw, dict) or set(raw) != DEATHRATTLE_ADMISSION_FIELDS:
+            raise ValueError("deathrattle_queue_admission_shape_invalid")
+        return DeathrattleQueueAdmission(
+            **{field: raw[field] for field in DEATHRATTLE_ADMISSION_FIELDS}
+        )
+
+    def entry_contract_blocked_reason(self, entry: dict[str, JSONValue]) -> str:
+        targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
+        if targets is None:
+            return "queue_entry_target_identity_invalid"
+        if (
+            str(entry.get("actor_id") or "") != self.unit_id
+            or str(entry.get("queue_intent_id") or "") != self.queue_intent_id
+            or str(entry.get("action_or_ability_ref") or "") != self.ability_name
+            or str(entry.get("queue_kind") or "") != self.queue_kind
+            or str(entry.get("owner_alive_state") or "") != "alive_or_limbo"
+            or str(entry.get("target_alive_state") or "") != "alive_or_limbo"
+            or entry.get("can_run_on_unselectable_target") is not True
+        ):
+            return f"queue_owner_deathrattle_contract_mismatch:{self.unit_id}"
+        if any(target_id != self.unit_id for target_id in targets):
+            return f"queue_target_deathrattle_target_not_admitted:{self.unit_id}"
+        return ""
+
+    def resolution_blocked_reason(
+        self,
+        entry: dict[str, JSONValue],
+        resolution: QueueResolutionIR | None,
+        rules: "RuleBook | None",
+    ) -> str:
+        """Re-verify the formal intent and resolution body for this authority.
+
+        The queue entry, the RuleBook intent and the resolution object actually
+        passed to the drain must all describe the same ability. A hand-made
+        resolution that merely reuses the admitted ability name is not enough.
+        """
+
+        if rules is None:
+            return f"queue_owner_deathrattle_rulebook_missing:{self.unit_id}"
+        intent = rules.queue_intent(self.queue_intent_id)
+        formal = rules.queue_resolution_for_intent(self.queue_intent_id)
+        if intent is None:
+            return f"queue_owner_deathrattle_intent_missing:{self.queue_intent_id}"
+        if formal is None:
+            return f"queue_owner_deathrattle_resolution_missing:{self.queue_intent_id}"
+        if (
+            intent.action_ref_or_ability_name != self.ability_name
+            or intent.queue_kind != self.queue_kind
+            or intent.source_task_id != self.source_task_id
+            or intent.owner_alive_state != "alive_or_limbo"
+            or intent.target_alive_state != "alive_or_limbo"
+            or intent.can_run_on_unselectable_target is not True
+            or intent.coverage_status != "executable"
+            or intent.blocked_reason
+        ):
+            return f"queue_owner_deathrattle_intent_mismatch:{self.queue_intent_id}"
+        callback = rules.status_callback(intent.callback_id)
+        task = rules.status_callback_task(self.source_task_id)
+        if (
+            callback is None
+            or task is None
+            or callback.event != "OnDeathrattle"
+            or task.event != "OnDeathrattle"
+            or task.callback_id != callback.callback_id
+            or task.task_id not in callback.task_ids
+            or task.modifier_name != self.source_modifier_name
+            or callback.modifier_name != self.source_modifier_name
+            or callback.coverage_status != "executable"
+            or callback.blocked_reason
+            or task.coverage_status != "executable"
+            or task.blocked_reason
+        ):
+            return (
+                "queue_owner_deathrattle_source_callback_not_admitted:"
+                f"{self.queue_intent_id}"
+            )
+        if resolution is None or resolution != formal:
+            return f"queue_owner_deathrattle_resolution_mismatch:{self.queue_intent_id}"
+        if (
+            resolution.queue_intent_id != self.queue_intent_id
+            or resolution.action_or_ability_ref != self.ability_name
+            or resolution.coverage_status != "executable"
+            or resolution.resolved_kind != formal.resolved_kind
+        ):
+            return f"queue_owner_deathrattle_resolution_mismatch:{self.queue_intent_id}"
+        if resolution.resolved_kind == "standalone_ability_graph":
+            executable = resolution.resolved_ids.get("executable_task_ids")
+            if not isinstance(executable, (list, tuple)) or not executable:
+                return f"queue_owner_deathrattle_body_missing:{self.queue_intent_id}"
+        return ""
+
+    def blocked_reason(self, state: BattleState) -> str:
+        unit = state.units.get(self.unit_id)
+        if unit is None:
+            return f"deathrattle_admission_unit_missing:{self.unit_id}"
+        lifecycle_status = UnitLifecycleSystem().status_of(unit)
+        if lifecycle_status == "removed":
+            return f"deathrattle_admission_unit_removed:{self.unit_id}"
+        if lifecycle_status != "defeated":
+            return f"deathrattle_admission_unit_not_defeated:{self.unit_id}"
+        record = unit.flags.get("defeat_record")
+        if not isinstance(record, dict):
+            return f"deathrattle_admission_defeat_record_missing:{self.unit_id}"
+        if str(record.get("lifecycle_mutation_id") or "") != self.death_instance_id:
+            return f"deathrattle_admission_death_instance_mismatch:{self.unit_id}"
+        if (
+            str(record.get("hp_mutation_id") or "") != self.hp_mutation_id
+            or str(record.get("target_id") or "") != self.unit_id
+            or str(record.get("defeated_unit_id") or "") != self.unit_id
+        ):
+            return f"deathrattle_admission_hp_mutation_mismatch:{self.unit_id}"
+        expected_event_id = mutation_backed_event_id(
+            self.death_instance_id, "unit.defeated"
+        )
+        if self.source_event_id != expected_event_id:
+            return f"deathrattle_admission_source_event_mismatch:{self.unit_id}"
+        matching = [
+            detail
+            for detail in unit.flags.get("status_details", ())
+            if isinstance(detail, dict)
+            and str(detail.get("instance_id") or "") == self.source_status_instance_id
+        ]
+        if len(matching) != 1:
+            return f"deathrattle_admission_source_status_missing:{self.unit_id}"
+        detail = matching[0]
+        if (
+            str(detail.get("modifier_name") or "") != self.source_modifier_name
+            or str(detail.get("owner_id") or "") != self.unit_id
+        ):
+            return f"deathrattle_admission_source_modifier_mismatch:{self.unit_id}"
+        if "Deathrattle" not in tuple(detail.get("behavior_flags") or ()):
+            return f"deathrattle_admission_source_flag_missing:{self.unit_id}"
+        if str(detail.get("lifecycle_state") or "active").startswith(
+            ("expired", "removed")
+        ):
+            return f"deathrattle_admission_source_status_inactive:{self.unit_id}"
+        if float(unit.hp) > 0:
+            return f"deathrattle_admission_unit_not_defeated:{self.unit_id}"
+        return ""
 
 
 @dataclass(frozen=True)
@@ -70,11 +284,22 @@ class QueueEntry:
     elation_override_points: float | None = None
     custom_tag: str = ""
     insert_abort: dict[str, JSONValue] | None = None
+    owner_alive_state: str = "alive_only"
+    target_alive_state: str = "alive_only"
+    can_run_on_unselectable_target: bool = False
+    deathrattle_admission: dict[str, JSONValue] | None = None
 
     def __post_init__(self) -> None:
         value = self.elation_override_points
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
             raise ValueError("queue_elation_override_points_invalid")
+        admitted_states = {"alive_only", "alive_or_limbo", "alive_or_revivable"}
+        if self.owner_alive_state not in admitted_states or self.target_alive_state not in admitted_states:
+            raise ValueError("queue_entry_alive_state_not_admitted")
+        if type(self.can_run_on_unselectable_target) is not bool:
+            raise ValueError("queue_entry_unselectable_permission_invalid")
+        if self.deathrattle_admission is not None:
+            DeathrattleQueueAdmission.from_json(self.deathrattle_admission)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -106,6 +331,10 @@ class QueueEntry:
             "elation_override_points": self.elation_override_points,
             "custom_tag": self.custom_tag,
             "insert_abort": self.insert_abort or {},
+            "owner_alive_state": self.owner_alive_state,
+            "target_alive_state": self.target_alive_state,
+            "can_run_on_unselectable_target": self.can_run_on_unselectable_target,
+            "deathrattle_admission": self.deathrattle_admission or {},
         }
 
 
@@ -390,6 +619,8 @@ class QueueTargetResolver:
         actor_alias: str | None,
         target_alias: str | None,
         source_trace: dict[str, JSONValue] | None = None,
+        allow_unselectable_target: bool = False,
+        deathrattle_admission: "DeathrattleQueueAdmission | None" = None,
     ) -> QueueTargetResolution:
         actor_id = self._resolve_single(state, detail, trigger_event, actor_alias, relative_actor_id="")
         if not actor_id:
@@ -412,17 +643,43 @@ class QueueTargetResolver:
                 f"queue_actor_missing:{actor_id}",
                 source_trace,
             )
-        actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
-        if not actor_ok:
-            return QueueTargetResolution(
-                False,
-                actor_id,
-                (),
-                actor_alias or "",
-                target_alias or "",
-                f"queue_actor_{actor_reason}:{actor_id}",
-                source_trace,
-            )
+        if deathrattle_admission is not None:
+            # The admitted death instance carries limited authority for this
+            # unit's own Deathrattle insert; ordinary actor liveness still
+            # applies to every other queue request.
+            if actor_id != deathrattle_admission.unit_id:
+                return QueueTargetResolution(
+                    False,
+                    actor_id,
+                    (),
+                    actor_alias or "",
+                    target_alias or "",
+                    f"queue_actor_deathrattle_unit_mismatch:{actor_id}",
+                    source_trace,
+                )
+            admission_reason = deathrattle_admission.blocked_reason(state)
+            if admission_reason:
+                return QueueTargetResolution(
+                    False,
+                    actor_id,
+                    (),
+                    actor_alias or "",
+                    target_alias or "",
+                    f"queue_actor_{admission_reason}:{actor_id}",
+                    source_trace,
+                )
+        else:
+            actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+            if not actor_ok:
+                return QueueTargetResolution(
+                    False,
+                    actor_id,
+                    (),
+                    actor_alias or "",
+                    target_alias or "",
+                    f"queue_actor_{actor_reason}:{actor_id}",
+                    source_trace,
+                )
         target_ids = self._resolve_many(state, detail, trigger_event, target_alias, relative_actor_id=actor_id)
         if target_alias and not target_ids:
             return QueueTargetResolution(
@@ -448,7 +705,15 @@ class QueueTargetResolver:
         invalid_targets = tuple(
             target_id
             for target_id in target_ids
-            if not self.lifecycle.can_target(state, target_id, allow_defeated=False)[0]
+            if not _queue_target_admitted(
+                self.lifecycle, state, target_id,
+                allow_unselectable=allow_unselectable_target,
+                deathrattle_unit_id=(
+                    deathrattle_admission.unit_id
+                    if deathrattle_admission is not None
+                    else ""
+                ),
+            )
         )
         if invalid_targets:
             reasons = [
@@ -637,8 +902,15 @@ class QueueSystem:
         if not queue_intent_id:
             return QueueDrainPlan(False, "blocked", queue_name, entry, "", "", "queue_entry_missing_intent_id")
         abort_reason = _abort_behavior_blocked_reason(state, entry)
+        alive_state_reason = _entry_alive_state_blocked_reason(state, entry)
+        if alive_state_reason:
+            abort_reason = alive_state_reason
         _, actor_reason = self.lifecycle.can_act(state, str(entry.get("actor_id") or ""))
-        if actor_reason in {"unit_defeated", "unit_removed", "unit_departed"}:
+        if (
+            not alive_state_reason
+            and not _entry_deathrattle_admitted(state, entry)
+            and actor_reason in {"unit_defeated", "unit_removed", "unit_departed"}
+        ):
             abort_reason = f"queue_action_actor_{actor_reason}"
         if abort_reason:
             return QueueDrainPlan(
@@ -708,6 +980,38 @@ class QueueSystem:
                 resolved_kind=resolution.resolved_kind,
                 drain_order=drain_order,
             )
+        try:
+            deathrattle_admission = deathrattle_admission_from_entry(entry)
+        except ValueError as exc:
+            return QueueDrainPlan(
+                False,
+                "blocked",
+                queue_name,
+                entry,
+                queue_intent_id,
+                resolution.queue_resolution_id,
+                f"queue_owner_deathrattle_admission_invalid:{exc}",
+                {"queue_resolution_source": resolution.source.to_json()},
+                resolved_kind=resolution.resolved_kind,
+                drain_order=drain_order,
+            )
+        if deathrattle_admission is not None:
+            formal_reason = deathrattle_admission.resolution_blocked_reason(
+                entry, resolution, rules
+            )
+            if formal_reason:
+                return QueueDrainPlan(
+                    False,
+                    "blocked",
+                    queue_name,
+                    entry,
+                    queue_intent_id,
+                    resolution.queue_resolution_id,
+                    formal_reason,
+                    {"queue_resolution_source": resolution.source.to_json()},
+                    resolved_kind=resolution.resolved_kind,
+                    drain_order=drain_order,
+                )
         priority_source = entry.get("priority_source")
         if not isinstance(priority_source, dict) or priority_source.get("priority_ordering_admitted") is not True:
             return QueueDrainPlan(
@@ -1452,6 +1756,120 @@ class QueueSystem:
         )
         return QueueEntryTerminalResult(terminal, (mutation,), (event, *abort_events), (record,))
 
+    def abort_unused_insert_entries_for_unit(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        reason: str,
+        source_trace: dict[str, JSONValue],
+    ) -> tuple[tuple[Mutation, ...], tuple[GameEvent, ...], tuple[dict[str, JSONValue], ...]]:
+        """Cancel the not-yet-started insert entries owned by one unit.
+
+        ForceKill's AbortUnusedInsertAbility removes the dying unit's own unused
+        inserted abilities. Entries of other units and entries that only target
+        this unit stay in place, in their original order; the currently
+        executing consumer is already dequeued and is not affected.
+        """
+
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        for queue_name in sorted(state.queues):
+            current = tuple(state.queues.get(queue_name, ()))
+            if not current:
+                continue
+            kept = list(current)
+            for entry in current:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("actor_id") or "") != unit_id:
+                    continue
+                entry_id = str(entry.get("entry_id") or "")
+                if not entry_id:
+                    continue
+                index = next(
+                    (position for position, item in enumerate(kept)
+                     if isinstance(item, dict) and item.get("entry_id") == entry_id),
+                    -1,
+                )
+                if index < 0:
+                    continue
+                priority_source = entry.get("priority_source") if isinstance(entry.get("priority_source"), dict) else {}
+                entry_source = entry.get("source_trace") if isinstance(entry.get("source_trace"), dict) else {}
+                terminal = QueueEntryTerminalPlan(
+                    ok=True,
+                    disposition="cancelled",
+                    queue_name=queue_name,
+                    entry_id=entry_id,
+                    blocked_reason=reason,
+                    retained=False,
+                    source_trace={
+                        **source_trace,
+                        "queue_entry_source": entry_source,
+                        "queue_intent_id": str(entry.get("queue_intent_id") or ""),
+                        "queue_resolution_id": str(entry.get("queue_resolution_id") or ""),
+                    },
+                    before_length=len(kept),
+                    after_length=len(kept) - 1,
+                )
+                updated = kept[:index] + kept[index + 1:]
+                mutation = Mutation(
+                    "set",
+                    ("queues", queue_name),
+                    list(kept),
+                    list(updated),
+                    "abort unused insert ability of the force-killed unit",
+                    "queue_system",
+                    before_exists=queue_name in state.queues,
+                    metadata={
+                        "queue_name": queue_name,
+                        "queue_operation": "terminal_remove",
+                        "queue_intent_id": str(entry.get("queue_intent_id") or ""),
+                        "queue_resolution_id": str(entry.get("queue_resolution_id") or ""),
+                        "queue_priority_id": str(entry.get("queue_priority_id") or priority_source.get("queue_priority_id") or ""),
+                        "priority_key": str(entry.get("priority_key") or priority_source.get("priority_key") or ""),
+                        "priority_value": entry.get("priority_value", priority_source.get("priority_value")),
+                        "queue_window_id": str(entry.get("queue_window_id") or ""),
+                        "window_family": str(entry.get("window_family") or ""),
+                        "queue_window_plan": {
+                            "queue_window_id": str(entry.get("queue_window_id") or ""),
+                            "window_family": str(entry.get("window_family") or ""),
+                            "window_policy": entry.get("window_policy") if isinstance(entry.get("window_policy"), dict) else {},
+                        },
+                        "queue_entry": entry,
+                        "queue_terminal_plan": terminal.to_json(),
+                        "queue_terminal_disposition": terminal.disposition,
+                        "queue_cleanup_operation": "abort_unused_insert_ability",
+                        "source_trace": terminal.source_trace,
+                    },
+                )
+                payload = {
+                    "queue_terminal_plan": terminal.to_json(),
+                    "queue_entry": entry,
+                    "mutation_path": list(mutation.path),
+                    "cleanup_operation": "abort_unused_insert_ability",
+                }
+                mutations.append(mutation)
+                events.append(GameEvent(
+                    "queue.entry.terminal",
+                    source_id=unit_id,
+                    event_id=f"event:{state.event_index}:queue_terminal:{entry_id}:cancelled",
+                    window="queue",
+                    process_only=True,
+                    payload=payload,
+                ))
+                records.append(SettlementRecord(
+                    record_type="queue_entry_terminal",
+                    source="queue_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload=payload,
+                    trace=terminal.source_trace,
+                ).to_json())
+                kept = updated
+        return tuple(mutations), tuple(events), tuple(records)
+
     def action_start_event(
         self, state: BattleState, mutation: Mutation, *,
         accepted_command: ActionCommand | None = None,
@@ -1536,6 +1954,124 @@ def _nonempty_tuple(value: Any) -> tuple[str, ...]:
     return ()
 
 
+def unit_alive_state_blocked_reason(
+    state: BattleState,
+    unit_id: str,
+    mask: str,
+    *,
+    role: str,
+) -> str:
+    """Formal queue alive-state gate for one owner or target identity.
+
+    The alive_or_revivable mask admits the live branch only: the revive path has
+    no admitted consumer yet, so a dying/revivable unit is explicitly blocked
+    instead of being treated as limbo.
+    """
+
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return f"queue_{role}_alive_state_unit_missing:{unit_id}"
+    status = UnitLifecycleSystem().status_of(unit)
+    if status == "active":
+        return ""
+    if mask == "alive_or_limbo" and status == "limbo":
+        return ""
+    if mask == "alive_or_revivable":
+        return f"queue_{role}_revivable_branch_not_admitted:{unit_id}"
+    return f"queue_{role}_alive_state_not_met:{unit_id}:{status}"
+
+
+def _queue_target_admitted(
+    lifecycle: UnitLifecycleSystem,
+    state: BattleState,
+    target_id: str,
+    *,
+    allow_unselectable: bool,
+    deathrattle_unit_id: str = "",
+) -> bool:
+    if deathrattle_unit_id and target_id == deathrattle_unit_id:
+        unit = state.units.get(target_id)
+        return unit is not None and lifecycle.status_of(unit) != "removed"
+    if not allow_unselectable:
+        return lifecycle.can_target(state, target_id, allow_defeated=False)[0]
+    view = lifecycle.view(state, target_id)
+    return (
+        not view.is_removed
+        and view.is_present
+        and not view.is_defeated
+        and view.status not in {"removed", "defeated"}
+    )
+
+
+def _entry_deathrattle_admission(
+    entry: dict[str, JSONValue],
+) -> tuple[DeathrattleQueueAdmission | None, str]:
+    raw = entry.get("deathrattle_admission")
+    if raw is None or raw == {}:
+        return None, ""
+    try:
+        return DeathrattleQueueAdmission.from_json(raw), ""
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
+
+
+def deathrattle_admission_from_entry(
+    entry: dict[str, JSONValue],
+) -> DeathrattleQueueAdmission | None:
+    """Return the typed death authority carried by one queue entry.
+
+    A present but malformed authority is an implementation error, never a
+    missing optional field. Callers that already admitted the entry must fail
+    closed instead of silently dropping its authority.
+    """
+
+    admission, reason = _entry_deathrattle_admission(entry)
+    if reason:
+        raise ValueError(reason)
+    return admission
+
+
+def _entry_deathrattle_admitted(state: BattleState, entry: dict[str, JSONValue]) -> bool:
+    admission, reason = _entry_deathrattle_admission(entry)
+    if reason or admission is None:
+        return False
+    return (
+        not admission.entry_contract_blocked_reason(entry)
+        and not admission.blocked_reason(state)
+    )
+
+
+def _entry_alive_state_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
+    actor_id = str(entry.get("actor_id") or "")
+    admission, admission_invalid = _entry_deathrattle_admission(entry)
+    if admission_invalid:
+        return f"queue_owner_deathrattle_admission_invalid:{admission_invalid}"
+    targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
+    if targets is None:
+        return "queue_entry_target_identity_invalid"
+    if admission is not None:
+        # One admitted death instance owns this entry. Every identity check is
+        # re-verified against the record the death producer actually wrote.
+        contract_reason = admission.entry_contract_blocked_reason(entry)
+        if contract_reason:
+            return contract_reason
+        return admission.blocked_reason(state)
+    owner_mask = str(entry.get("owner_alive_state") or "alive_only")
+    reason = unit_alive_state_blocked_reason(
+        state, actor_id, owner_mask, role="owner"
+    )
+    if reason:
+        return reason
+    target_mask = str(entry.get("target_alive_state") or "alive_only")
+    for target_id in targets:
+        reason = unit_alive_state_blocked_reason(
+            state, target_id, target_mask, role="target"
+        )
+        if reason:
+            return reason
+    return ""
+
+
 def _waiting_for_other_window(state: BattleState, entry: dict[str, JSONValue]) -> bool:
     if str(entry.get("status") or "") != "waiting_window":
         return False
@@ -1584,7 +2120,51 @@ def _abort_behavior_blocked_reason(state: BattleState, entry: dict[str, JSONValu
     return ""
 
 
+def _revivable_branch_cancellable(state: BattleState, reason: str) -> bool:
+    """Whether the failed revivable identity is already confirmed defeated/removed.
+
+    Only the identity named by the actual failure selects the branch: another
+    owner/target that is formally admitted for limbo must not keep the entry
+    alive, and a unit still in limbo is the unimplemented revive branch and
+    blocks with the entry retained. An unparsable identity fails closed.
+    """
+
+    unit_id = ""
+    for prefix in (
+        "queue_owner_revivable_branch_not_admitted:",
+        "queue_target_revivable_branch_not_admitted:",
+    ):
+        if reason.startswith(prefix):
+            unit_id = reason[len(prefix):]
+            break
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return False
+    return UnitLifecycleSystem().status_of(unit) != "limbo"
+
+
 def _is_gameplay_abort(state: BattleState, entry: dict[str, JSONValue], reason: str) -> bool:
+    # Only formal alive-state transitions are ordinary queue obsolescence. A
+    # Deathrattle admission defect (shape, missing identity, changed death
+    # record, borrowed ability or non-matching resolution body) is an
+    # implementation failure: it must block with the entry retained, never
+    # masquerade as a successful queue cancellation.
+    if reason.startswith(
+        ("queue_owner_alive_state", "queue_target_alive_state",
+         "queue_owner_revivable", "queue_target_revivable")
+    ):
+        if reason != _entry_alive_state_blocked_reason(state, entry):
+            return False
+        if "revivable_branch_not_admitted" in reason:
+            # The alive_or_revivable mask has no admitted revive consumer yet.
+            # While the failing identity is still in limbo the branch is
+            # unresolved: it must block with the entry retained and produce no
+            # mutation instead of masquerading as a normal cancellation. A
+            # confirmed defeat or removal stays ordinary queue obsolescence;
+            # limbo of a different, formally admitted identity never changes
+            # this decision.
+            return _revivable_branch_cancellable(state, reason)
+        return True
     actor_id = str(entry.get("actor_id") or "")
     targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
     if (actor_id not in state.units or targets is None

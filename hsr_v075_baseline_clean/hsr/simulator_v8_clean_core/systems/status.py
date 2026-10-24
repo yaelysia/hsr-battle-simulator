@@ -179,6 +179,9 @@ class StatusLifecyclePlan:
     partial: bool = False
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     duration_delta: float | None = None
+    # Formal IsSilentDispel admission carried by the lifecycle plan itself. The
+    # audit-only source_trace copy must never decide whether callbacks run.
+    silent_dispel: bool = False
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -193,6 +196,7 @@ class StatusLifecyclePlan:
             "partial": self.partial,
             "source_trace": self.source_trace,
             "duration_delta": self.duration_delta,
+            "silent_dispel": self.silent_dispel,
         }
 
 
@@ -481,8 +485,24 @@ class StatusSystem:
         # already produce their total contribution, separately from this count.
         updated = {**detail, "stacks": value, "max_stacks": None, "stack_policy": "independent_count"}
         after = [updated if entry is detail else entry for entry in before]
+        # The independent count keeps a source-backed status instance alive: the
+        # lifecycle plan records which effect/status identity this count update
+        # belongs to so the runtime source audit can trace the mutation.
+        lifecycle_plan = {
+            "operation": "modify_modifier_count",
+            "target_id": target_id,
+            "status_id": detail["status_id"],
+            "source": "status_system",
+            "existing_detail": detail,
+            "source_trace": trace,
+        }
+        mutation_metadata = {
+            **trace,
+            "lifecycle_plan": lifecycle_plan,
+            "status_instance_id": detail["instance_id"],
+        }
         mutation = Mutation("set", ("units", target_id, "flags", "status_details"), before, after,
-                            "modify independent modifier count", "status_system", metadata=trace)
+                            "modify independent modifier count", "status_system", metadata=mutation_metadata)
         record = SettlementRecord(record_type="status_lifecycle", source="status_system",
             mutation_id=mutation.stable_id(), payload={"operation": "modify_modifier_count",
                 "status_instance_id": detail["instance_id"], "before": old, "after": value}, trace=trace).to_json()
@@ -2369,6 +2389,259 @@ class StatusSystem:
         )
         return self._with_halo_reconciliation(state, base_result)
 
+    def apply_deathrattle_status_cleanup(
+        self,
+        state: BattleState,
+        effect: EffectIR,
+        *,
+        caster_id: str,
+        source_id: str,
+        owner_id: str | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
+    ) -> StatusApplicationResult:
+        """Remove the dying unit's statuses per the OnDeathrattle source shape.
+
+        The source declares a silent, dead-capable self-dispel on the death
+        callback. Retention is source-driven: modifiers declaring
+        KeepOnDeathrattle survive, as does the callback's own status instance
+        (its callbacks are still running). Every other active status goes
+        through the ordinary status lifecycle removal so aura and dynamic-value
+        dependencies are cleaned by their formal owners.
+        """
+
+        if effect.opcode != "DispelStatus":
+            return _unsupported_result(effect, "effect is not DispelStatus")
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            return _unsupported_result(effect, "DispelStatus effect has no standardized payload")
+        if standard.get("operation") != "deathrattle_status_cleanup":
+            return _unsupported_result(effect, "deathrattle_cleanup_operation_missing")
+        if standard.get("blocked_reason"):
+            return _unsupported_result(effect, str(standard.get("blocked_reason")))
+        if (
+            standard.get("target_alias") != "Caster"
+            or standard.get("only_alive") is not False
+            or standard.get("is_silent_dispel") is not True
+        ):
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_source_shape_not_admitted"
+            )
+        unit = state.units.get(caster_id)
+        if unit is None:
+            return _unsupported_result(effect, "deathrattle_cleanup_unit_missing")
+        lifecycle = UnitLifecycleSystem()
+        if lifecycle.status_of(unit) != "defeated" or float(unit.hp) > 0:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_requires_finalized_defeat"
+            )
+        record = unit.flags.get("defeat_record")
+        if not isinstance(record, dict):
+            return _unsupported_result(effect, "deathrattle_cleanup_defeat_record_missing")
+        payload = event_payload if isinstance(event_payload, dict) else {}
+        death_instance_id = str(payload.get("lifecycle_mutation_id") or "")
+        if not death_instance_id or str(record.get("lifecycle_mutation_id") or "") != death_instance_id:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_death_instance_mismatch"
+            )
+        defeated_unit_id = str(
+            payload.get("defeated_unit_id") or payload.get("target_id") or ""
+        )
+        if defeated_unit_id and defeated_unit_id != caster_id:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_defeated_unit_mismatch"
+            )
+        source_instance_id = str(payload.get("status_instance_id") or "")
+        source_modifier_name = str(payload.get("modifier_name") or "")
+        detail = _status_detail_for_instance(unit, source_instance_id)
+        if detail is None:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_source_status_missing"
+            )
+        source_flags = {
+            str(flag) for flag in detail.get("behavior_flags", ())
+            if isinstance(flag, str)
+        }
+        if "Deathrattle" not in source_flags:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_source_status_not_deathrattle"
+            )
+        if (
+            source_modifier_name
+            and str(detail.get("modifier_name") or "") != source_modifier_name
+        ):
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_source_modifier_mismatch"
+            )
+        if str(detail.get("owner_id") or "") != caster_id:
+            return _unsupported_result(
+                effect, "deathrattle_cleanup_source_owner_mismatch"
+            )
+        source_trace: dict[str, JSONValue] = {
+            "effect_id": effect.effect_id,
+            "effect_source": effect.source.to_json(),
+            "source_id": source_id,
+            "status_instance_id": source_instance_id,
+            "modifier_name": source_modifier_name,
+            "death_instance_id": death_instance_id,
+            "hp_mutation_id": str(record.get("hp_mutation_id") or ""),
+            "deathrattle_cleanup": {
+                "operation": "deathrattle_status_cleanup",
+                "only_alive": False,
+                "is_silent_dispel": True,
+            },
+        }
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        removed: list[str] = []
+        kept: list[dict[str, JSONValue]] = []
+        for candidate in _status_details(unit.flags):
+            keep_reason = _deathrattle_cleanup_keep_reason(
+                candidate, source_instance_id=source_instance_id
+            )
+            if keep_reason:
+                kept.append({
+                    "instance_id": str(candidate.get("instance_id") or ""),
+                    "modifier_name": str(candidate.get("modifier_name") or ""),
+                    "reason": keep_reason,
+                })
+                continue
+            current_unit = current.units.get(caster_id)
+            if current_unit is None:
+                return _unsupported_result(
+                    effect, "deathrattle_cleanup_unit_missing"
+                )
+            plan = StatusLifecyclePlan(
+                operation="dispel",
+                target_id=caster_id,
+                status_id=str(candidate.get("status_id") or ""),
+                source="status_system",
+                before_details=tuple(_status_details(current_unit.flags)),
+                existing_detail=candidate,
+                source_trace=source_trace,
+                silent_dispel=True,
+            )
+            result = self._apply_lifecycle_plan(current, plan)
+            if not result.ok:
+                return StatusApplicationResult(
+                    ok=False,
+                    records=(*records, *result.records),
+                    unsupported=result.unsupported
+                    or ("deathrattle_status_cleanup_failed",),
+                )
+            if result.mutations:
+                reduction = MutationReducer().apply_all_result(current, result.mutations)
+                if not reduction.ok:
+                    return _unsupported_result(
+                        effect, "deathrattle_cleanup_mutation_conflict"
+                    )
+                current = reduction.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            records.extend(result.records)
+            removed.append(str(candidate.get("instance_id") or ""))
+        summary = SettlementRecord(
+            record_type="deathrattle_status_cleanup",
+            source="status_system",
+            process_only=True,
+            payload={
+                "target_id": caster_id,
+                "death_instance_id": death_instance_id,
+                "source_status_instance_id": source_instance_id,
+                "removed_instance_ids": removed,
+                "kept": kept,
+                "removed_count": len(removed),
+            },
+            trace=source_trace,
+        ).to_json()
+        base_result = StatusApplicationResult(
+            ok=True,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=(summary, *records),
+        )
+        return self._with_halo_reconciliation(state, base_result)
+
+    def apply_weakness_protection(
+        self,
+        state: BattleState,
+        *,
+        unit_id: str,
+        status_instance_id: str,
+        elements: tuple[str, ...],
+        effect_id: str,
+        source_trace: dict[str, JSONValue],
+    ) -> StatusApplicationResult:
+        """Record the source-declared protected weakness types on one status."""
+
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return StatusApplicationResult(
+                ok=False, unsupported=("weakness_protection_unit_missing",)
+            )
+        detail = _status_detail_for_instance(unit, status_instance_id)
+        if detail is None:
+            return StatusApplicationResult(
+                ok=False, unsupported=("weakness_protection_status_missing",)
+            )
+        if str(detail.get("lifecycle_state") or "active").startswith(
+            ("expired", "removed")
+        ):
+            return StatusApplicationResult(
+                ok=False, unsupported=("weakness_protection_status_inactive",)
+            )
+        if not elements or any(type(item) is not str or not item for item in elements):
+            return StatusApplicationResult(
+                ok=False, unsupported=("weakness_protection_elements_invalid",)
+            )
+        before = list(_status_details(unit.flags))
+        existing = tuple(
+            str(item) for item in detail.get("weakness_protection", ())
+            if isinstance(item, str) and item
+        )
+        merged = tuple(sorted(set(existing).union(elements)))
+        after = [
+            {**item, "weakness_protection": list(merged)}
+            if isinstance(item, dict)
+            and str(item.get("instance_id") or "") == status_instance_id
+            else item
+            for item in before
+        ]
+        mutation = Mutation(
+            "set",
+            ("units", unit_id, "flags", "status_details"),
+            before,
+            after,
+            "record the protected weakness types of one source status",
+            "status_system",
+            metadata={
+                "operation": "status_weakness_protection",
+                "effect_id": effect_id,
+                "status_instance_id": status_instance_id,
+                "weakness_protection": list(merged),
+                "source_trace": source_trace,
+            },
+        )
+        record = SettlementRecord(
+            record_type="status_weakness_protection",
+            source="status_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={
+                "operation": "status_weakness_protection",
+                "unit_id": unit_id,
+                "status_instance_id": status_instance_id,
+                "weakness_protection": list(merged),
+                "before": list(existing),
+                "effect_id": effect_id,
+            },
+            trace=source_trace,
+        ).to_json()
+        return StatusApplicationResult(
+            ok=True, mutations=(mutation,), records=(record,)
+        )
+
     def _with_halo_reconciliation(
         self,
         state: BattleState,
@@ -3254,6 +3527,11 @@ def _status_lifecycle_events(
     *,
     mutation_ids: tuple[str, ...],
 ) -> tuple[GameEvent, ...]:
+    if plan.silent_dispel:
+        # IsSilentDispel: the formal lifecycle plan removes the status without
+        # emitting its lifecycle callbacks. Only this typed admission is read;
+        # changing source_trace must not alter runtime behavior.
+        return ()
     callback_events = _status_lifecycle_callback_events(plan)
     if not callback_events:
         return ()
@@ -4960,6 +5238,36 @@ def _runtime_dispel_count_admission(
     }
 
 
+def _status_detail_for_instance(
+    unit: UnitState, instance_id: str,
+) -> dict[str, JSONValue] | None:
+    if not instance_id:
+        return None
+    for detail in _status_details(unit.flags):
+        if str(detail.get("instance_id") or "") == instance_id:
+            return detail
+    return None
+
+
+def _deathrattle_cleanup_keep_reason(
+    detail: dict[str, JSONValue], *, source_instance_id: str,
+) -> str:
+    state = str(detail.get("lifecycle_state") or "active")
+    if state.startswith(("expired", "removed")):
+        return "already_inactive"
+    flags = {
+        str(flag) for flag in detail.get("behavior_flags", ())
+        if isinstance(flag, str)
+    }
+    if "KeepOnDeathrattle" in flags:
+        return "keep_on_deathrattle"
+    if str(detail.get("instance_id") or "") == source_instance_id:
+        return "source_callback_status"
+    if detail.get("can_dispel") is False:
+        return "can_dispel_false"
+    return ""
+
+
 def _dispel_candidates(
     details: tuple[JSONValue, ...],
     standard: dict[str, JSONValue],
@@ -6509,7 +6817,12 @@ def _application_semantics(
     reasons: list[str] = []
     operation = "add"
     if same_status_other_source is not None and existing_detail is None:
-        return "coexist_blocked", ["coexist_unsupported:different_source_same_status"]
+        # ReplaceByCaster scopes replacement to one caster.  Another caster's
+        # instance is a separate, source-identified status that coexists with
+        # its own lifetime and modifiers; only policies whose namespace is not
+        # per-caster stay fail-closed here.
+        if str(refresh_admission.get("stacking") or "") != "ReplaceByCaster":
+            return "coexist_blocked", ["coexist_unsupported:different_source_same_status"]
     if stack_admission.get("admission_status") == "blocked":
         reasons.append(f"stack_blocked:{stack_admission.get('blocked_reason')}")
     if existing_detail is not None:

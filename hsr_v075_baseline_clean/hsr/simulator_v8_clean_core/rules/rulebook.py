@@ -1512,6 +1512,21 @@ class RuleBook:
                 for key, value in skill_formula_bindings_by_action_param_role.items()
             },
         )
+        skill_formula_bindings_by_action_level: dict[
+            tuple[str, int], list[SkillFormulaBindingIR]
+        ] = {}
+        for binding in self.ir.skill_formula_bindings:
+            skill_formula_bindings_by_action_level.setdefault(
+                (binding.action_id, binding.level), []
+            ).append(binding)
+        object.__setattr__(
+            self,
+            "_skill_formula_bindings_by_action_level",
+            {
+                key: tuple(sorted(value, key=lambda item: item.binding_id))
+                for key, value in skill_formula_bindings_by_action_level.items()
+            },
+        )
         damage_emissions_by_action: dict[tuple[str, int], list[DamageEmissionIR]] = {}
         damage_emissions_by_task: dict[str, list[DamageEmissionIR]] = {}
         for emission in self.ir.damage_emissions:
@@ -3307,6 +3322,16 @@ class RuleBook:
     ) -> tuple[SkillFormulaBindingIR, ...]:
         return self._skill_formula_bindings_by_action_param_role.get(
             (action_id, level, param_index, formula_role),
+            (),
+        )
+
+    def skill_formula_bindings_for_action(
+        self,
+        action_id: str,
+        level: int,
+    ) -> tuple[SkillFormulaBindingIR, ...]:
+        return self._skill_formula_bindings_by_action_level.get(
+            (action_id, level),
             (),
         )
 

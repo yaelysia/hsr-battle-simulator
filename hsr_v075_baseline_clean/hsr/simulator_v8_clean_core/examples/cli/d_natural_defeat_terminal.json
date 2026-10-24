@@ -1,0 +1,49 @@
+{
+ "scenario_id": "ordinary:d-natural-defeat-terminal",
+ "version": "v0_200",
+ "units": [
+  {
+   "unit_id": "seele",
+   "side": "ally",
+   "entity_ref": "avatar:1102",
+   "level": 1,
+   "eidolon_level": 0,
+   "position": 0,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "probe:seele",
+    "character_card_id": "character_data_card:avatar:1102",
+    "level": 1,
+    "promotion": 0,
+    "eidolon_level": 0,
+    "unlocked_trace_node_ids": [],
+    "equipment_build": {
+     "build_id": "probe:seele:empty",
+     "character_card_id": "character_data_card:avatar:1102",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "9334c131d0ce1317a21e3eee8485b94719cc63ca5ef46289cb9456187021aba3"
+    },
+    "input_fingerprint": "731055ea4edfe1178643b29855b63388cd4d7da201c3124fb7aff3a59fb01c3c"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  }
+ ],
+ "stage_ref": "307311",
+ "wave_index": 0,
+ "route": [],
+ "battle_setup": {
+  "timeline": {
+   "mode": "runtime_initialize"
+  },
+  "metadata": {
+   "stage_scope": "wave_only",
+   "scope": "StageConfig 307311 wave 0. The Lieutenant summons two soldiers with its public skill and then defeats the only Lv1 Seele with its own attack. Live enemy summons must not block the native defeat, and both terminal outcomes must reject further decisions. No outcome value is injected."
+  }
+ }
+}

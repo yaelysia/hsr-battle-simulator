@@ -1,0 +1,650 @@
+{
+  "scenario_id": "ordinary:b-mecha03-owner-death-route",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "multiwave:arlan-relics",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "arlan:relics",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": null,
+          "relics": [
+            {
+              "instance_id": "arlan:relic:BODY",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61013",
+                "stable_id": "relic_template::61013"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "BODY",
+                "stable_id": "relic_slot::BODY"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "53:2",
+                "stable_id": "relic_main_affix::53:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "3e6366201001513951b5a83801ead6778f96758ee67fe81433a3773bb375e7d3"
+            },
+            {
+              "instance_id": "arlan:relic:FOOT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61014",
+                "stable_id": "relic_template::61014"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "dfce666a8705be59428155d61a9c7255c8e6784df5349695de9feab4b7ec95e3"
+            },
+            {
+              "instance_id": "arlan:relic:HAND",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61012",
+                "stable_id": "relic_template::61012"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HAND",
+                "stable_id": "relic_slot::HAND"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "52:1",
+                "stable_id": "relic_main_affix::52:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "72b5c1d47feb0db6541e83128bb9c725c1a4d3b6322d81779807b9f73b2c09e6"
+            },
+            {
+              "instance_id": "arlan:relic:HEAD",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61011",
+                "stable_id": "relic_template::61011"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HEAD",
+                "stable_id": "relic_slot::HEAD"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "51:1",
+                "stable_id": "relic_main_affix::51:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "eb1ed9d48c2313c8dc1852ee5e27558419393d830d5d769daa7ec6b4182a8380"
+            },
+            {
+              "instance_id": "arlan:relic:NECK",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:2",
+                "stable_id": "relic_main_affix::55:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "b19e38090c487159141a2a21877ae382330a96a44c6d338cc12358590d89fa32"
+            },
+            {
+              "instance_id": "arlan:relic:OBJECT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:4",
+                "stable_id": "relic_main_affix::56:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "6b4f0a78ee9549b479f7e242103fa1b5989ec5b1843d16af1cb91770088de159"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "80f68a9b5d8321298495e657d6429e03e2129682a7d7de9994e30bbc913fcc44"
+        },
+        "input_fingerprint": "f8861fd525eadaddd464e1a10cd831432b6920c7fc5227cae9f23293a371b2b5"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "natasha:build-relics",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "natasha:relics",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [
+            {
+              "instance_id": "natasha:relic:BODY",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61013",
+                "stable_id": "relic_template::61013"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "BODY",
+                "stable_id": "relic_slot::BODY"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "53:2",
+                "stable_id": "relic_main_affix::53:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "c407c7d87f892013ebdc216185fd179a44bcdda82b8d5462422896c68ce5b3ff"
+            },
+            {
+              "instance_id": "natasha:relic:FOOT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61014",
+                "stable_id": "relic_template::61014"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "014f157fc24c5075a9587e4db512952cdc1ae3dcf22114fb35c27abf254261ef"
+            },
+            {
+              "instance_id": "natasha:relic:HAND",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61012",
+                "stable_id": "relic_template::61012"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HAND",
+                "stable_id": "relic_slot::HAND"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "52:1",
+                "stable_id": "relic_main_affix::52:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "93f124b2f64e6efb68615b8305cb5343a0017bf37d3c43ed9047e9d888b9c61b"
+            },
+            {
+              "instance_id": "natasha:relic:HEAD",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61011",
+                "stable_id": "relic_template::61011"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HEAD",
+                "stable_id": "relic_slot::HEAD"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "51:1",
+                "stable_id": "relic_main_affix::51:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "1cc1bd41cad50450d88d6ab6ac2ba1c65e0cba2569de5bb753bf673385738b3d"
+            },
+            {
+              "instance_id": "natasha:relic:NECK",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:2",
+                "stable_id": "relic_main_affix::55:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "333e42e544f7abfc3efde454852821b64d2c88b593b5cf1b2b5066e44709b405"
+            },
+            {
+              "instance_id": "natasha:relic:OBJECT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:4",
+                "stable_id": "relic_main_affix::56:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "e6063da2f939aec9962bcb20367a5acf6b33a4da90cbf22b66bda22b41a7f38e"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "fc37aad661e1215a1804ad87181799c8bc5844a03af318e2363e8c5c04af4534"
+        },
+        "input_fingerprint": "13673039eb7c8163bb8ab3d245be6f10c997067f67135e2fd67bf7e12671729f"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "lynx",
+      "side": "ally",
+      "entity_ref": "avatar:1110",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 2,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "lynx:build-relics",
+        "character_card_id": "character_data_card:avatar:1110",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "lynx:relics",
+          "character_card_id": "character_data_card:avatar:1110",
+          "light_cone": null,
+          "relics": [
+            {
+              "instance_id": "lynx:relic:BODY",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61013",
+                "stable_id": "relic_template::61013"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "BODY",
+                "stable_id": "relic_slot::BODY"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "53:2",
+                "stable_id": "relic_main_affix::53:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "7da9c864640ae339b7eb3f5374c83b290e889dda7663153151df27876b870b23"
+            },
+            {
+              "instance_id": "lynx:relic:FOOT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61014",
+                "stable_id": "relic_template::61014"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "766297b1929cadbbecb57f3661865eaaa24cfa83dfe1ba031cab0e69f27aa7ff"
+            },
+            {
+              "instance_id": "lynx:relic:HAND",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61012",
+                "stable_id": "relic_template::61012"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HAND",
+                "stable_id": "relic_slot::HAND"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "52:1",
+                "stable_id": "relic_main_affix::52:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "c08dd26376e2e20e3fe11ba9da0573466be86cc1529a05ac582c4876081b9276"
+            },
+            {
+              "instance_id": "lynx:relic:HEAD",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61011",
+                "stable_id": "relic_template::61011"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HEAD",
+                "stable_id": "relic_slot::HEAD"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "51:1",
+                "stable_id": "relic_main_affix::51:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "e5b5801945c174210e7655a97ecbc88b984032fe83716373f51c451a5ee3fa2c"
+            },
+            {
+              "instance_id": "lynx:relic:NECK",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:2",
+                "stable_id": "relic_main_affix::55:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "251d4639f4809539753d98a383a0fdc34d214211d66f33c75e6d8b3656364566"
+            },
+            {
+              "instance_id": "lynx:relic:OBJECT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:4",
+                "stable_id": "relic_main_affix::56:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "2d5be86943df86c2ef3e7e4e81be7bf2ac3da3e862d6fe9cb8e6500f6b54754b"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "3e1df5d4d80bac0a3315daa45ad98cd5d8160e97566aa358023823a2efa8de23"
+        },
+        "input_fingerprint": "f02ed6eece0888bcd378098ff75cc0a39c1b531790f1be11dbc1f54740b7640e"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "march7th",
+      "side": "ally",
+      "entity_ref": "avatar:1001",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 3,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "march7th:build-relics",
+        "character_card_id": "character_data_card:avatar:1001",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "march7th:relics",
+          "character_card_id": "character_data_card:avatar:1001",
+          "light_cone": null,
+          "relics": [
+            {
+              "instance_id": "march7th:relic:BODY",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61013",
+                "stable_id": "relic_template::61013"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "BODY",
+                "stable_id": "relic_slot::BODY"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "53:2",
+                "stable_id": "relic_main_affix::53:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "8f2725e757e870ac894e8ebf20ac532823f7b63dcedbd2c19c1c294c03109c60"
+            },
+            {
+              "instance_id": "march7th:relic:FOOT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61014",
+                "stable_id": "relic_template::61014"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "93e30066907d702b0ca188d3bd322e6fabc444b9a91229e50129661faf386dc5"
+            },
+            {
+              "instance_id": "march7th:relic:HAND",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61012",
+                "stable_id": "relic_template::61012"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HAND",
+                "stable_id": "relic_slot::HAND"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "52:1",
+                "stable_id": "relic_main_affix::52:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "76f3e5c0dc27afe16e0fc41398c2a0dfbdafb571125336ce85819ed383ee9a20"
+            },
+            {
+              "instance_id": "march7th:relic:HEAD",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61011",
+                "stable_id": "relic_template::61011"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HEAD",
+                "stable_id": "relic_slot::HEAD"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "51:1",
+                "stable_id": "relic_main_affix::51:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "a5ab44b4895d9bf7c447205e557c4de96bed4e81bfeb2bc951b11c48d6268ffe"
+            },
+            {
+              "instance_id": "march7th:relic:NECK",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:2",
+                "stable_id": "relic_main_affix::55:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "3a1cc82b37026085504ff15ded7e10b80ce4e5c821af9163b213eb72d909dbe6"
+            },
+            {
+              "instance_id": "march7th:relic:OBJECT",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:4",
+                "stable_id": "relic_main_affix::56:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "b7e72de26d3481c38bfca975fef066c80892a9f1458dd86d67a69e7dc9bf9c2d"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "4cc20d0f6302447673f165b30ec4dd875fcc1dae28b30f8581ae9d7776faef6d"
+        },
+        "input_fingerprint": "1020361d09798e19e142ff88c8cee3884885de246e10e55acc6d1ec7331067ff"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "307214",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "StageConfig 307214 wave 0 single enemy monster:2013010 (Aurumaton Gatekeeper). Allies: Lv80 E0 Arlan/Natasha/Lynx/March7th with six shared stat relics. Route: Arlan skill uses raise Overdrive to three; SkillP01_Insert summons two monster:2012010 Illumination Dragonfish; both children act; one child is naturally defeated by an ally attack; its OnDeathrattle callback dispels its statuses, confirms the finalized death and inserts Monster_W2_Mecha02_00_SkillP01_Insert at MonsterDeathRattle; the 0.61 animation leaves deal a Fire ByMaxHP explosion to the caster team and apply MCommon_DefenceRatioDown; the Gatekeeper falls while the other child is alive, its MCommon_Servant listener force-kills that child, whose own deathrattle insert finds no live teammate, then the wave closes into victory."
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+ "battle_setup": {
+  "metadata": {
+   "scope": "StageConfig 201010110 waves only. Fixed C-route inputs: wave 0 is cleared by real actions, wave 1 is born and initialized once, enemy units execute their source skills, and public submissions continue to victory. Full stage environment is not included.",
+   "stage_scope": "wave_only"
+  },
+  "timeline": {
+   "mode": "runtime_initialize"
+  }
+ },
+ "route": [],
+ "scenario_id": "ordinary:c-multiwave-real-enemy-action",
+ "stage_ref": "201010110",
+ "units": [
+  {
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "multiwave:arlan",
+    "character_card_id": "character_data_card:avatar:1008",
+    "eidolon_level": 0,
+    "equipment_build": {
+     "build_fingerprint": "9aa8f0345f608fb28d7b2cdb314b78ba969bf08bd8723426389e7ea760546416",
+     "build_id": "empty",
+     "character_card_id": "character_data_card:avatar:1008",
+     "identity_labels": {},
+     "light_cone": null,
+     "relics": []
+    },
+    "input_fingerprint": "f4abd7eda49d56cc26ef79bbb05edd65105c602026fc838df35d1af8718c7eb6",
+    "level": 80,
+    "promotion": 6,
+    "unlocked_trace_node_ids": []
+   },
+   "eidolon_level": 0,
+   "entity_ref": "avatar:1008",
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   },
+   "level": 80,
+   "position": 0,
+   "side": "ally",
+   "unit_id": "arlan"
+  },
+  {
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "multiwave:serval",
+    "character_card_id": "character_data_card:avatar:1103",
+    "eidolon_level": 0,
+    "equipment_build": {
+     "build_fingerprint": "a7e429fde84336cbfa68f6acd15a5fff2b0267acdd0aa0f878e0f91b94cd43da",
+     "build_id": "empty",
+     "character_card_id": "character_data_card:avatar:1103",
+     "identity_labels": {},
+     "light_cone": null,
+     "relics": []
+    },
+    "input_fingerprint": "247afb227c3cc4f8e20c6e349745e50d70abb695f1fe685ca221ca987669f07b",
+    "level": 1,
+    "promotion": 0,
+    "unlocked_trace_node_ids": []
+   },
+   "eidolon_level": 0,
+   "entity_ref": "avatar:1103",
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   },
+   "level": 1,
+   "position": 1,
+   "side": "ally",
+   "unit_id": "serval"
+  },
+  {
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "multiwave:natasha",
+    "character_card_id": "character_data_card:avatar:1105",
+    "eidolon_level": 0,
+    "equipment_build": {
+     "build_fingerprint": "e53bdd03455e1fd978a7674266ad057c7885d19421d2a25a582950bdb4da10e0",
+     "build_id": "empty",
+     "character_card_id": "character_data_card:avatar:1105",
+     "identity_labels": {},
+     "light_cone": null,
+     "relics": []
+    },
+    "input_fingerprint": "6a3fba575da86c24829d77f6af44d757388b7000ee95c6f05b3c391bd1b1b3a9",
+    "level": 1,
+    "promotion": 0,
+    "unlocked_trace_node_ids": []
+   },
+   "eidolon_level": 0,
+   "entity_ref": "avatar:1105",
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   },
+   "level": 1,
+   "position": 2,
+   "side": "ally",
+   "unit_id": "natasha"
+  }
+ ],
+ "version": "v0_200",
+ "wave_index": 0
+}

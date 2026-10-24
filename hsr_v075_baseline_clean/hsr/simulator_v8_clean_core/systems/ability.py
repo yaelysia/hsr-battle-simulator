@@ -21,6 +21,7 @@ from .dynamic_values import (
     character_skill_param_binding_sources,
     character_declared_dynamic_binding_source,
     monster_skill_param_binding_sources,
+    monster_standalone_skill_param_binding_sources,
     store_from_state,
 )
 from .effect import EffectExecutionContext, EffectRegistry
@@ -64,7 +65,12 @@ from .task_graph import (
     with_template_binding_sources,
     resolve_task_graph_weighted_selection,
 )
-from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
+from .unit_lifecycle import UnitLifecycleSystem
+from .unit_relation import (
+    TargetEvaluationContext,
+    committed_turn_owner_id,
+    is_same_combat_team,
+)
 
 
 _STANDALONE_CALLBACK_ORDER = ("OnStart", "OnAttack", "OnHit", "OnEnd")
@@ -141,6 +147,10 @@ class StandaloneAbilityInvocation:
     queue_entry_id: str
     queue_intent_id: str
     queue_resolution_id: str
+    # Formal final-death identity of one admitted Deathrattle queue entry. Only
+    # the queue admission producer may populate it; a generic event payload or
+    # audit trace is not a substitute.
+    death_instance_id: str = ""
 
     def __post_init__(self) -> None:
         if type(self) is not StandaloneAbilityInvocation:
@@ -155,6 +165,8 @@ class StandaloneAbilityInvocation:
         )
         if any(type(value) is not str or not value for value in values):
             raise ValueError("standalone ability invocation identity is incomplete")
+        if type(self.death_instance_id) is not str:
+            raise ValueError("standalone ability death instance is invalid")
         targets = tuple(self.target_ids)
         if any(type(value) is not str or not value for value in targets):
             raise ValueError("standalone ability invocation targets are invalid")
@@ -171,6 +183,7 @@ class StandaloneAbilityInvocation:
             "queue_entry_id": self.queue_entry_id,
             "queue_intent_id": self.queue_intent_id,
             "queue_resolution_id": self.queue_resolution_id,
+            "death_instance_id": self.death_instance_id,
         }
 
 
@@ -334,6 +347,47 @@ class _FormalAbilityInvocation:
                 raise TypeError("formal ability target fact type is invalid")
             if type(self.expected_action_window_scope) is not ActionWindowExpectedScope:
                 raise TypeError("formal ability window scope type is invalid")
+
+
+def _external_legacy_trigger_is_process_only(
+    rules: RuleBook,
+    task: AbilityTaskIR,
+) -> bool:
+    """Prove that a TriggerAbility only replays admitted non-gameplay tasks.
+
+    A missing reference, an unknown or blocked task, and an executable task are
+    not presentation proof.  Only tasks that the source compiler explicitly
+    marked process-only *and* whose strict lowerer-admitted source-shape
+    contract still holds can be skipped.  The linked graph is the single
+    source-declared reference; an executable nested trigger stays gameplay
+    authority even when its own target happens to be visual.
+    """
+    phases: list[AbilityPhaseIR | None] = []
+    if task.linked_standalone_graph_id:
+        graph = rules.standalone_ability_graph(task.linked_standalone_graph_id)
+        if graph is not None:
+            phases = [rules.ability_phase(phase_id) for phase_id in graph.phase_ids]
+    elif task.linked_ability_phase_id:
+        phases = [rules.ability_phase(task.linked_ability_phase_id)]
+    if not phases or any(phase is None for phase in phases):
+        return False
+    linked_tasks = [
+        item
+        for phase in phases
+        if phase is not None
+        for item in rules.ability_tasks_for_phase(phase.phase_id)
+    ]
+    if not linked_tasks:
+        return False
+    return all(
+        is_process_only_ability_task(item)
+        and not ability_task_runtime_blocked_reason(
+            rules,
+            item,
+            topology_authority="external_legacy",
+        )
+        for item in linked_tasks
+    )
 
 
 class AbilityTaskSystem:
@@ -1623,6 +1677,14 @@ class AbilityTaskSystem:
             f"ability_task:{state.event_index}:{invocation.actor_id}:{invocation.ability_id}:"
             f"{task.task_id}:{invocation.execution_path}"
         )
+        # The corpse-only ExitBreak branch consumes exactly the final-death
+        # identity of this entry's admitted Deathrattle queue authority.
+        death_instance_id = (
+            invocation.standalone.death_instance_id
+            if invocation.invocation_kind == "queue_standalone"
+            and invocation.standalone is not None
+            else ""
+        )
         result = self.effect_registry.execute(
             effect,
             EffectExecutionContext(
@@ -1633,6 +1695,7 @@ class AbilityTaskSystem:
                 ability_instance_id=ability_instance_id,
                 application_instance_id=application_instance_id,
                 owner_id=invocation.actor_id,
+                death_instance_id=death_instance_id,
                 param_entity_id=primary_target or invocation.actor_id,
                 current_action_target_id=primary_target,
                 target_resolution=target_resolution,
@@ -2417,12 +2480,26 @@ class AbilityTaskSystem:
         if (
             len(phases) != len(graph.phase_ids)
             or tuple(phase.phase_id for phase in phases) != graph.phase_ids
-            or any(
-                phase.invocation_role != "standalone_root"
-                or phase.ability_name != graph.ability_name
-                for phase in phases
-            )
+            or any(phase.ability_name != graph.ability_name for phase in phases)
         ):
+            return self._standalone_invocation_blocked(
+                state, invocation, "standalone_ability_formal_root_mismatch"
+            )
+        # Character standalone graphs are materialized formal roots. Shared and
+        # monster inserted abilities keep their explicit external legacy topology
+        # and execute leaf tasks from their admitted queue resolution ledger.
+        external_legacy_graph = graph.source_mode in {
+            "mainline_monster",
+            "mainline_common_additional",
+            "mainline_battle_event",
+            "mainline_stage",
+        }
+        allowed_roles = (
+            {"standalone_root", "external_legacy"}
+            if external_legacy_graph
+            else {"standalone_root"}
+        )
+        if any(phase.invocation_role not in allowed_roles for phase in phases):
             return self._standalone_invocation_blocked(
                 state, invocation, "standalone_ability_formal_root_mismatch"
             )
@@ -2518,11 +2595,20 @@ class AbilityTaskSystem:
             formal_invocation = replace(formal_invocation,
                 action_command=command, action_definition=replace(definition, source_mode="queue_standalone"),
                 ability_level=level)
-        result = self._execute_formal_entries(
-            state,
-            entries=tuple(entries),
-            invocation=formal_invocation,
-        )
+        if external_legacy_graph and any(
+            phase.invocation_role == "external_legacy" for phase in phases
+        ):
+            result = self._execute_external_legacy_standalone_entries(
+                state,
+                entries=tuple(entries),
+                invocation=formal_invocation,
+            )
+        else:
+            result = self._execute_formal_entries(
+                state,
+                entries=tuple(entries),
+                invocation=formal_invocation,
+            )
         if any(item.status != "complete" for item in result.node_results):
             return result
         execution_record = SettlementRecord(
@@ -2537,6 +2623,481 @@ class AbilityTaskSystem:
             trace={"standalone_graph_source": graph.source.to_json()},
         ).to_json()
         return replace(result, records=(execution_record, *result.records))
+
+    def _execute_external_legacy_standalone_entries(
+        self,
+        state: BattleState,
+        *,
+        entries: tuple[tuple[AbilityPhaseIR, str], ...],
+        invocation: "_FormalAbilityInvocation",
+    ) -> AbilityTaskExecutionResult:
+        """Execute shared/monster inserted ability tasks without a task graph.
+
+        These definitions keep their explicit external legacy topology. The
+        recursive walker honours PredicateTaskList branches, executes leaves
+        through the formal leaf boundary and records strictly admitted
+        process-only tasks (presentation, scoring) as non-gameplay skips. Any
+        blocked, unknown, or non-process-only unexecutable task stays
+        fail-closed.
+        """
+
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        node_results: list[ExecutionNodeResult] = []
+        dispatched = set(invocation.dispatched_event_ids)
+
+        def blocked(reason: str) -> AbilityTaskExecutionResult:
+            return self._standalone_invocation_blocked(
+                state, invocation.standalone, reason
+            )
+
+        def run_task(task: AbilityTaskIR, children: dict[str, list[AbilityTaskIR]]) -> str:
+            nonlocal current
+            animation_children = tuple(children.get(task.task_id, ()))
+            if task.opcode == "TriggerAnimStateWithMove" and animation_children:
+                if task.execution_mode != "runtime_effect":
+                    # A presentation wrapper never owns executable children.
+                    return (
+                        "external_legacy_anim_wrapper_execution_mode_not_admitted:"
+                        f"{task.execution_mode}"
+                    )
+                # The wrapper owns one ordered gameplay unit. Parent admission,
+                # the standard EffectIR contract and the complete direct-child
+                # ledger are proved before the first child runs, so a blocked or
+                # incomplete wrapper can never leak an already-lowered sibling.
+                wrapper_blocked = self._external_legacy_anim_wrapper_blocked_reason(
+                    task, children
+                )
+                if wrapper_blocked:
+                    return (
+                        "external_legacy_anim_wrapper_not_admitted:"
+                        f"{wrapper_blocked}"
+                    )
+                for child in self._external_legacy_anim_wrapper_child_tasks(
+                    task, children
+                ):
+                    reason = run_task(child, children)
+                    if reason:
+                        return reason
+                node_results.append(
+                    ExecutionNodeResult(
+                        "external_ability_anim_wrapper", task.task_id, "complete"
+                    )
+                )
+                return ""
+            if (
+                task.opcode == "TriggerAnimStateWithMove"
+                and task.execution_mode == "runtime_effect"
+                and task.coverage_status == "executable"
+            ):
+                # A runtime wrapper is a control node, never a standalone leaf.
+                return (
+                    "external_legacy_anim_wrapper_child_ledger_missing:"
+                    f"{task.task_path}"
+                )
+            if is_process_only_ability_task(task):
+                process_only_blocker = ability_task_runtime_blocked_reason(
+                    self.rules,
+                    task,
+                    topology_authority="external_legacy",
+                )
+                if process_only_blocker:
+                    return (
+                        "external_legacy_process_only_task_not_admitted:"
+                        f"{task.opcode}:{task.task_path}:{process_only_blocker}"
+                    )
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=True,
+                        blocked_reason=(
+                            "external_legacy_non_gameplay_task_skipped:"
+                            f"{task.blocked_reason or 'process_only'}"
+                        ),
+                        effect_id=task.effect_id,
+                        effect_opcode=task.opcode,
+                        effect_coverage=task.coverage_status,
+                    )
+                )
+                node_results.append(
+                    ExecutionNodeResult(
+                        "external_ability_process_only", task.task_id, "complete"
+                    )
+                )
+                return ""
+            if task.coverage_status != "executable":
+                return (
+                    "external_legacy_required_task_blocked:"
+                    f"{task.opcode}:{task.task_path}:"
+                    f"{task.blocked_reason or task.coverage_status}"
+                )
+            if task.opcode == "PredicateTaskList":
+                passed, reason, _evidence = self._evaluate_formal_ability_condition(
+                    current,
+                    task,
+                    invocation=invocation,
+                    primary_target=invocation.target_resolution.primary,
+                    target_resolution=invocation.target_resolution,
+                )
+                if passed is None:
+                    return f"external_legacy_predicate_blocked:{reason}"
+                taken = "success" if passed else "failed"
+                for child in sorted(
+                    (item for item in children.get(task.task_id, ())
+                     if item.branch == taken),
+                    key=lambda item: (item.task_index, item.task_path, item.task_id),
+                ):
+                    reason = run_task(child, children)
+                    if reason:
+                        return reason
+                return ""
+            if task.opcode in {"LoopExecuteTaskListWithInterval"}:
+                return "external_legacy_task_loop_not_admitted"
+            if task.opcode == "TriggerAbility":
+                if _external_legacy_trigger_is_process_only(self.rules, task):
+                    records.append(
+                        _task_process_record(
+                            task,
+                            ok=True,
+                            blocked_reason="external_legacy_presentation_trigger_skipped",
+                            effect_id=task.effect_id,
+                            effect_opcode=task.opcode,
+                            effect_coverage="process_only",
+                        )
+                    )
+                    node_results.append(
+                        ExecutionNodeResult(
+                            "external_ability_process_only", task.task_id, "complete"
+                        )
+                    )
+                    return ""
+                return "external_legacy_trigger_ability_not_admitted"
+            if task.opcode == "SummonMonster":
+                _summon_state, task_mutations, task_events, task_rng, task_records = (
+                    self.execute_summon_monster_task(
+                        current,
+                        task,
+                        actor_id=invocation.actor_id,
+                        dispatched_event_ids=dispatched,
+                    )
+                )
+                blocker = _ability_task_records_blocked_reason(task_records)
+                if blocker:
+                    return f"external_legacy_summon_blocked:{blocker}"
+                current = self.reducer.apply_all(current, tuple(task_mutations))
+                mutations.extend(task_mutations)
+                rng_events.extend(task_rng)
+                records.extend(task_records)
+                events.extend(task_events)
+                if self.event_dispatcher is not None:
+                    for emitted in task_events:
+                        if str(emitted.to_json()["event_id"]) in dispatched:
+                            continue
+                        dispatched_result = self.event_dispatcher.dispatch_event(
+                            current, event=emitted
+                        )
+                        current = dispatched_result.after_state
+                        dispatched.update(dispatched_result.dispatched_event_ids)
+                        mutations.extend(dispatched_result.mutations)
+                        events.extend(dispatched_result.events)
+                        rng_events.extend(dispatched_result.rng_events)
+                        records.extend(dispatched_result.records)
+                        if dispatched_result.errors:
+                            return (
+                                "external_legacy_summon_listener_blocked:"
+                                + ",".join(dispatched_result.errors)
+                            )
+                node_results.append(
+                    ExecutionNodeResult(
+                        "external_ability_leaf", task.task_id, "complete"
+                    )
+                )
+                return ""
+            if self.rules.damage_emissions_for_task(task.task_id):
+                damage_result = self._execute_external_legacy_damage_task(
+                    current,
+                    task,
+                    invocation=invocation,
+                    dispatched_event_ids=dispatched,
+                )
+                if isinstance(damage_result, str):
+                    return damage_result
+                (
+                    current,
+                    task_mutations,
+                    task_events,
+                    task_rng,
+                    task_records,
+                ) = damage_result
+                blocker = _ability_task_records_blocked_reason(task_records)
+                if blocker:
+                    return (
+                        "external_legacy_task_blocked:"
+                        f"{task.opcode}:{task.task_path}:{blocker}"
+                    )
+                mutations.extend(task_mutations)
+                events.extend(task_events)
+                rng_events.extend(task_rng)
+                records.extend(task_records)
+                node_results.append(
+                    ExecutionNodeResult(
+                        "external_ability_damage", task.task_id, "complete"
+                    )
+                )
+                return ""
+            # The leaf updates its invocation's dispatched-event identity before
+            # the listener runs.  Give it a candidate copy so a blocked call
+            # cannot publish those identities into the caller or this walk's
+            # committed set.
+            leaf_dispatched = set(dispatched)
+            leaf_invocation = replace(
+                invocation, dispatched_event_ids=leaf_dispatched
+            )
+            leaf_result = self._execute_effect_leaf_task(
+                current,
+                task,
+                invocation=leaf_invocation,
+                primary_target=invocation.target_resolution.primary,
+                target_resolution=invocation.target_resolution,
+                reduce_candidate=False,
+                created_unit_ids=None,
+                task_graph_continuation=None,
+            )
+            blocker = _ability_task_records_blocked_reason(leaf_result[4])
+            if blocker:
+                return (
+                    f"external_legacy_task_blocked:{task.opcode}:"
+                    f"{task.task_path}:{task.effect_id}:{blocker}"
+                )
+            (
+                current,
+                task_mutations,
+                task_events,
+                task_rng,
+                task_records,
+                _projections,
+            ) = self._dispatch_effect_leaf_events(
+                current,
+                task,
+                leaf_result,
+                leaf_dispatched,
+                None,
+                None,
+            )
+            blocker = _ability_task_records_blocked_reason(task_records)
+            if blocker:
+                return (
+                    f"external_legacy_task_blocked:{task.opcode}:"
+                    f"{task.task_path}:{blocker}"
+                )
+            dispatched.update(leaf_dispatched)
+            mutations.extend(task_mutations)
+            events.extend(task_events)
+            rng_events.extend(task_rng)
+            records.extend(task_records)
+            node_results.append(
+                ExecutionNodeResult(
+                    "external_ability_leaf", task.task_id, "complete"
+                )
+            )
+            return ""
+
+        for phase, callback_kind in entries:
+            phase_tasks = [
+                task
+                for task in self.rules.ability_tasks_for_phase(phase.phase_id)
+                if task.callback_kind == callback_kind
+            ]
+            children: dict[str, list[AbilityTaskIR]] = {}
+            for task in phase_tasks:
+                children.setdefault(task.parent_task_id, []).append(task)
+            roots = sorted(
+                children.get("", ()),
+                key=lambda item: (item.task_index, item.task_path, item.task_id),
+            )
+            if not roots:
+                return blocked(
+                    "external_standalone_phase_requires_materialized_task_graph"
+                )
+            for root in roots:
+                reason = run_task(root, children)
+                if reason:
+                    return blocked(reason)
+        # Only a fully successful call publishes dispatch identity; every
+        # blocked return above keeps the caller's set untouched.
+        invocation.dispatched_event_ids.update(dispatched)
+        return AbilityTaskExecutionResult(
+            after_state=current,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+            node_results=tuple(node_results),
+            dispatched_event_ids=frozenset(dispatched),
+        )
+
+    def _external_legacy_anim_wrapper_blocked_reason(
+        self,
+        task: AbilityTaskIR,
+        children: dict[str, list[AbilityTaskIR]],
+    ) -> str:
+        """Prove one animation wrapper unit before any child executes.
+
+        The formal shared-task contract verifies the parent's execution mode,
+        coverage, standard EffectIR payload and direct-child ledger. The walker
+        additionally verifies that the phase topology it is about to run is
+        exactly that ledger and that every direct child is admitted, so a
+        blocked or incomplete control node executes nothing at all.
+        """
+        reason = ability_task_runtime_blocked_reason(
+            self.rules,
+            task,
+            topology_authority="external_legacy",
+        )
+        if reason:
+            return reason
+        ledger = tuple(getattr(task, "child_task_ids", ()) or ())
+        direct = tuple(children.get(task.task_id, ()))
+        if not ledger:
+            return "anim_wrapper_child_ledger_missing"
+        if len(direct) != len(ledger) or {
+            item.task_id for item in direct
+        } != set(ledger):
+            return "anim_wrapper_child_ledger_incomplete"
+        by_id = {item.task_id: item for item in direct}
+        for child_task_id in ledger:
+            child = by_id.get(child_task_id)
+            if child is None:
+                return f"anim_wrapper_child_task_missing:{child_task_id}"
+            if child.parent_task_id != task.task_id:
+                return f"anim_wrapper_child_parent_mismatch:{child_task_id}"
+            child_reason = ability_task_runtime_blocked_reason(
+                self.rules,
+                child,
+                topology_authority="external_legacy",
+            )
+            if child_reason:
+                return (
+                    f"anim_wrapper_child_not_admitted:{child_task_id}:"
+                    f"{child_reason}"
+                )
+        return ""
+
+    def _external_legacy_anim_wrapper_child_tasks(
+        self,
+        task: AbilityTaskIR,
+        children: dict[str, list[AbilityTaskIR]],
+    ) -> tuple[AbilityTaskIR, ...]:
+        """Resolve the wrapper's formal direct-child ledger in source order."""
+        by_id = {item.task_id: item for item in children.get(task.task_id, ())}
+        return tuple(
+            by_id[child_task_id]
+            for child_task_id in (getattr(task, "child_task_ids", ()) or ())
+        )
+
+    def _execute_external_legacy_damage_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        invocation: "_FormalAbilityInvocation",
+        dispatched_event_ids: set[str] | None = None,
+    ) -> (
+        tuple[
+            BattleState,
+            list[Mutation],
+            list[GameEvent],
+            list[RNGEvent],
+            list[dict[str, JSONValue]],
+        ]
+        | str
+    ):
+        """Run one admitted inserted-ability damage leaf on its own packet.
+
+        The source ability keeps the external legacy task topology, so its
+        damage leaves still go through the shared damage system with the
+        caster's formal spawn panel and card-level SkillParam bindings.
+        """
+
+        emissions = tuple(
+            emission
+            for emission in self.rules.damage_emissions_for_task(task.task_id)
+            if emission.action_id == task.action_id
+            and emission.level == task.level
+        )
+        if not emissions:
+            return "external_legacy_damage_emission_missing"
+        attack_types = {
+            emission.scaling_basis_expr.get("attack_type")
+            for emission in emissions
+        }
+        if len(attack_types) != 1 or not all(
+            isinstance(value, str) and value for value in attack_types
+        ):
+            return "external_legacy_damage_attack_type_binding_missing"
+        definition = ActionDefinitionIR(
+            f"ability_damage:{task.task_id}",
+            task.action_id,
+            invocation.ability_level,
+            next(iter(attack_types)),
+            "standalone_ability",
+            "single" if invocation.target_resolution.selected else "none",
+            0,
+            0,
+            0,
+            0,
+            (),
+            (),
+            (),
+            None,
+            task.source,
+            coverage_status="executable",
+            damage_kind="hp_damage",
+            damage_formula_family="direct",
+            source_mode="queue_standalone",
+        )
+        command = ActionCommand(
+            invocation.actor_id,
+            task.action_id,
+            invocation.ability_level,
+            target_ids=invocation.target_resolution.selected,
+            source=(
+                "queue"
+                if invocation.invocation_kind == "queue_standalone"
+                else "system"
+            ),
+            metadata={
+                "ability_task_execution_path": invocation.execution_path,
+                "ability_task_iteration_index": invocation.iteration_index,
+            },
+        )
+        (
+            state_after,
+            mutations,
+            events,
+            rng_events,
+            records,
+            _projections,
+        ) = self._execute_damage_task(
+            state,
+            task,
+            command=command,
+            action_definition=definition,
+            primary_target=invocation.target_resolution.primary,
+            target_resolution=invocation.target_resolution,
+            task_graph_continuation=None,
+            nested_ability_hooks=None,
+            dispatched_event_ids=(
+                dispatched_event_ids
+                if dispatched_event_ids is not None
+                else invocation.dispatched_event_ids
+            ),
+            packet_sequence_id=_ability_instance_id(state, invocation),
+        )
+        return state_after, mutations, events, rng_events, records
 
     @staticmethod
     def _standalone_invocation_blocked(
@@ -2765,6 +3326,17 @@ class AbilityTaskSystem:
                 action_definition=action_definition,
                 primary_target=primary_target,
                 target_resolution=target_resolution,
+            )
+        if task.opcode == "Retarget":
+            return self._execute_retarget_task(
+                state,
+                task,
+                tasks,
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+                action_damage_modifiers=action_damage_modifiers,
             )
         leaf_result = self._execute_ability_leaf_task(
             state,
@@ -3273,15 +3845,45 @@ class AbilityTaskSystem:
                     )
                 )
                 continue
-            target_ids = _damage_targets_for_emission(emission.target_group, target_resolution)
+            if emission.target_group == "all_teammate" and (
+                not command.actor_id or command.actor_id not in current.units
+            ):
+                # The relative-side alias needs the caster to resolve its own
+                # team. Absent context is not the same fact as an empty living
+                # team and must not become a legal no-effect.
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=False,
+                        blocked_reason=(
+                            "damage_relative_side_target_group_context_missing"
+                        ),
+                    )
+                )
+                continue
+            target_ids = _damage_targets_for_emission(
+                emission.target_group,
+                target_resolution,
+                state=current,
+                attacker_id=command.actor_id,
+            )
             if not target_ids:
-                optional_group = emission.target_group == "adjacent"
+                # A relative-side group (the caster's whole team) is a valid
+                # source target even when every member is already defeated.
+                # That is a legal no-effect, not an implementation failure; a
+                # real single-target request with no target stays blocked.
+                optional_group = emission.target_group in {
+                    "adjacent",
+                    "all_teammate",
+                }
                 records.append(
                     _task_process_record(
                         task,
                         ok=optional_group,
                         blocked_reason=(
-                            "damage_optional_target_group_empty"
+                            "damage_relative_side_target_group_empty"
+                            if emission.target_group == "all_teammate"
+                            else "damage_optional_target_group_empty"
                             if optional_group
                             else "damage_target_missing"
                         ),
@@ -3741,6 +4343,147 @@ class AbilityTaskSystem:
             target_resolution=target_resolution,
         )
 
+    def _execute_retarget_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        tasks: dict[str, AbilityTaskIR],
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+        action_damage_modifiers: tuple[DamageModifierContribution, ...] = (),
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        """Resolve a typed target-list selection, then run TaskList per target.
+
+        The Retarget source shape selects up to N targets (optionally filtered
+        and sampled randomly) and applies its TaskList to each selected target
+        through ParamEntity.  Target selection is a typed target expression, so
+        its source closure and RNG decisions stay in the target-language layer.
+        """
+
+        effect = self.rules.effect(task.effect_id) if task.effect_id else None
+        standard = effect.payload.get("standard") if effect is not None else None
+
+        def blocked(reason: str) -> tuple[
+            BattleState, list[Mutation], list[GameEvent], list[RNGEvent],
+            list[dict[str, JSONValue]],
+        ]:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=reason,
+                    effect_id=task.effect_id or "",
+                    effect_opcode=task.opcode,
+                )
+            ]
+
+        if effect is None or not isinstance(standard, dict):
+            return blocked("retarget_effect_missing")
+        if standard.get("operation") != "retarget_task_list" or standard.get("blocked_reason"):
+            return blocked(
+                str(standard.get("blocked_reason") or "retarget_task_not_admitted")
+            )
+        expression_id = standard.get("target_expression_id")
+        expression = (
+            self.rules.target_expression(str(expression_id))
+            if isinstance(expression_id, str) and expression_id else None
+        )
+        if expression is None or expression.coverage_status != "executable":
+            return blocked("retarget_target_expression_not_executable")
+        target_context = TargetEvaluationContext(
+            caster_id=command.actor_id,
+            effect_owner_id=command.actor_id,
+            parameter_entity_ids=(primary_target,) if primary_target else (),
+            parameter_entity_list_ids=(primary_target,) if primary_target else (),
+            selected_target_ids=target_resolution.selected,
+            current_target_id=primary_target,
+            turn_owner_id=committed_turn_owner_id(state),
+        )
+        resolved = self.targets.resolve_target_expression(
+            state,
+            expression,
+            context=target_context,
+            target_resolution=target_resolution,
+            condition_event_payload={
+                "action_id": command.action_id,
+                "action_level": command.action_level,
+                "task_id": task.task_id,
+            },
+            binding_sources=_binding_sources(
+                self.rules,
+                state,
+                command.actor_id,
+                primary_target,
+                action_level=action_definition.level,
+                action_id=action_definition.action_id,
+            ),
+        )
+        if resolved.status != "resolved":
+            return blocked(
+                resolved.blocked_reason or "retarget_target_resolution_blocked"
+            )
+        selected_target_ids = tuple(resolved.target_ids)
+        rng_events: list[RNGEvent] = list(resolved.rng_events)
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = [
+            _task_process_record(
+                task,
+                ok=True,
+                selected_child_ids=tuple(task.child_task_ids),
+                condition_result={
+                    "selected_target_ids": list(selected_target_ids),
+                    "target_expression_id": expression.target_expression_id,
+                    "rng_event_count": len(rng_events),
+                },
+            )
+        ]
+        for selected_target in selected_target_ids:
+            scoped_resolution = TargetResolution(
+                requested=(selected_target,),
+                legal=(selected_target,),
+                selected=(selected_target,),
+                rejected=(),
+                reason="retarget_param_entity",
+                source="ability_task_system",
+            )
+            for child_id in task.child_task_ids:
+                child = tasks.get(child_id)
+                if child is None:
+                    records.append(
+                        _task_process_record(
+                            task,
+                            ok=False,
+                            blocked_reason=f"missing_child_task:{child_id}",
+                        )
+                    )
+                    continue
+                (
+                    current,
+                    child_mutations,
+                    child_events,
+                    child_rng_events,
+                    child_records,
+                ) = self._execute_task(
+                    current,
+                    child,
+                    tasks,
+                    command=command,
+                    action_definition=action_definition,
+                    primary_target=selected_target,
+                    target_resolution=scoped_resolution,
+                    action_damage_modifiers=action_damage_modifiers,
+                )
+                mutations.extend(child_mutations)
+                events.extend(child_events)
+                rng_events.extend(child_rng_events)
+                records.extend(child_records)
+        return current, mutations, events, rng_events, records
+
     def _execute_predicate_task(
         self,
         state: BattleState,
@@ -4139,6 +4882,7 @@ def _binding_sources(
             current_action_trigger_key=current_action_trigger_key,
         ),
         *monster_skill_param_binding_sources(rules, state, actor_id, action_id, action_level),
+        *monster_standalone_skill_param_binding_sources(rules, state, actor_id, action_id),
         *((initial,) if initial else ()),
     )
     # The same action parameter occurs in multiple hit profiles. Bind it once;
@@ -4166,6 +4910,9 @@ def _action_trigger_key(action_definition: ActionDefinitionIR) -> str:
 def _damage_targets_for_emission(
     target_group: str,
     target_resolution: TargetResolution,
+    *,
+    state: BattleState | None = None,
+    attacker_id: str = "",
 ) -> tuple[str, ...]:
     selected = tuple(target_resolution.selected)
     primary = target_resolution.primary or (selected[0] if selected else None)
@@ -4178,6 +4925,25 @@ def _damage_targets_for_emission(
         return tuple(target_id for target_id in impact_group if target_id != primary)
     if target_group in {"aoe", "all_enemy"}:
         return impact_group
+    if target_group == "all_teammate":
+        # The source alias is relative to the caster. Only units that can still
+        # receive damage are packet targets; the caster's own corpse is not.
+        if state is None or not attacker_id:
+            return ()
+        attacker = state.units.get(attacker_id)
+        if attacker is None:
+            return ()
+        lifecycle = UnitLifecycleSystem()
+        return tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            # AllTeammate is the caster's team without the caster itself; the
+            # alias excludes the owner, so the death explosion never hits the
+            # corpse that produced it.
+            if unit_id != attacker_id
+            and is_same_combat_team(attacker, unit)
+            and lifecycle.can_receive_damage(state, unit_id)[0]
+        )
     if target_group.startswith("bounce:") and target_resolution.source == "task_graph_executor":
         return selected
     return ()

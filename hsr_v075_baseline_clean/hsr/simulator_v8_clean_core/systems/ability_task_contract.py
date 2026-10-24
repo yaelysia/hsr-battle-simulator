@@ -106,6 +106,66 @@ def _process_only_task_blocked_reason(rules: RuleBook, task: AbilityTaskIR) -> s
     return ""
 
 
+def _anim_wrapper_task_blocked_reason(rules: RuleBook, task: AbilityTaskIR) -> str:
+    """Prove the shared animation wrapper unit before any child executes.
+
+    The parent's standard EffectIR contract and its complete, ordered direct
+    child ledger must agree with the formal phase topology. Missing, blocked or
+    unknown children keep the whole unit fail-closed.
+    """
+    effect = rules.effect(task.effect_id)
+    if effect is None:
+        return "anim_wrapper_effect_missing"
+    if effect.opcode != task.opcode:
+        return "anim_wrapper_effect_opcode_mismatch"
+    if effect.source != task.source:
+        return "anim_wrapper_effect_source_mismatch"
+    if effect.coverage_status != "executable":
+        return f"anim_wrapper_effect_not_executable:{effect.coverage_status}"
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return "anim_wrapper_standard_contract_missing"
+    if standard.get("operation") != "anim_wrapper_task_list":
+        return "anim_wrapper_operation_not_admitted"
+    if standard.get("source_shape") != "animation_timeline_with_gameplay_leaves":
+        return "anim_wrapper_source_shape_not_admitted"
+    if standard.get("blocked_reason"):
+        return f"anim_wrapper_source_shape_blocked:{standard['blocked_reason']}"
+    ledger = tuple(getattr(task, "child_task_ids", ()) or ())
+    if not ledger:
+        return "anim_wrapper_child_ledger_missing"
+    if len(set(ledger)) != len(ledger):
+        return "anim_wrapper_child_ledger_duplicated"
+    if standard.get("event_list_child_count") != len(ledger):
+        return "anim_wrapper_child_ledger_count_mismatch"
+    direct_children = tuple(
+        child
+        for child in rules.ability_tasks_for_phase(task.phase_id)
+        if child.parent_task_id == task.task_id
+    )
+    if len(direct_children) != len(ledger) or {
+        child.task_id for child in direct_children
+    } != set(ledger):
+        return "anim_wrapper_child_ledger_incomplete"
+    by_id = {child.task_id: child for child in direct_children}
+    gameplay_child_count = 0
+    for child_task_id in ledger:
+        child = by_id.get(child_task_id)
+        if child is None:
+            return f"anim_wrapper_child_task_missing:{child_task_id}"
+        if child.parent_task_id != task.task_id:
+            return f"anim_wrapper_child_parent_mismatch:{child_task_id}"
+        if child.phase_id != task.phase_id or child.callback_kind != task.callback_kind:
+            return f"anim_wrapper_child_callback_mismatch:{child_task_id}"
+        if child.execution_mode != "process_only":
+            gameplay_child_count += 1
+    if standard.get("gameplay_child_count") != gameplay_child_count:
+        return "anim_wrapper_gameplay_child_count_mismatch"
+    if gameplay_child_count <= 0:
+        return "anim_wrapper_gameplay_child_missing"
+    return ""
+
+
 def ability_task_runtime_blocked_reason(
     rules: RuleBook,
     task: AbilityTaskIR,
@@ -128,10 +188,39 @@ def ability_task_runtime_blocked_reason(
             return condition.blocked_reason or f"condition_not_executable:{condition.coverage_status}:{condition.opcode}"
         return ""
     if task.opcode == "Retarget":
-        if topology_authority != "task_graph":
-            return "retarget_requires_formal_task_graph"
-        expression, reason = rules.target_expression_resolution(task.target_expression_id)
-        return reason if expression is None else ""
+        if topology_authority == "task_graph":
+            expression, reason = rules.target_expression_resolution(
+                task.target_expression_id
+            )
+            return reason if expression is None else ""
+        effect = rules.effect(task.effect_id)
+        standard = effect.payload.get("standard") if effect is not None else None
+        expression_id = (
+            standard.get("target_expression_id")
+            if isinstance(standard, dict) else None
+        )
+        if (
+            effect is None
+            or effect.coverage_status != "executable"
+            or not isinstance(standard, dict)
+            or standard.get("operation") != "retarget_task_list"
+            or standard.get("blocked_reason")
+            or not isinstance(expression_id, str)
+            or not expression_id
+        ):
+            return "retarget_effect_contract_not_admitted"
+        expression, reason = rules.target_expression_resolution(expression_id)
+        if expression is None:
+            return reason or "retarget_target_expression_missing"
+        if not task.child_task_ids:
+            return "retarget_task_list_missing_or_empty"
+        for child_task_id in task.child_task_ids:
+            child = rules.ability_task(child_task_id)
+            if child is None:
+                return "retarget_child_task_missing"
+            if child.parent_task_id != task.task_id:
+                return "retarget_child_parent_mismatch"
+        return ""
     if task.opcode == "LoopExecuteTaskListWithInterval":
         if task.repeat_count <= 0:
             return "fixed_positive_loop_count_required"
@@ -146,6 +235,11 @@ def ability_task_runtime_blocked_reason(
             if child.parent_task_id != task.task_id:
                 return "loop_child_parent_mismatch"
         return ""
+    if (
+        task.opcode == "TriggerAnimStateWithMove"
+        and topology_authority == "external_legacy"
+    ):
+        return _anim_wrapper_task_blocked_reason(rules, task)
     if task.opcode == "FireProjectile":
         effect = rules.effect(task.effect_id)
         standard = effect.payload.get("standard") if effect is not None else None

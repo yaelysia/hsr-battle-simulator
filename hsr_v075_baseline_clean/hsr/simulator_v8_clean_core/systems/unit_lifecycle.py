@@ -193,6 +193,93 @@ class UnitLifecycleSystem:
                      unit.flags["pending_defeat"], None, "close a rescued lethal cause", hp_mutation.source,
                      after_exists=False, metadata=metadata))
 
+    def forced_death_mutations(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        effect_id: str,
+        effect_source: dict[str, JSONValue],
+        source_trace: dict[str, JSONValue],
+        target_alias: str,
+    ) -> tuple[tuple[Mutation, ...], dict[str, JSONValue]]:
+        """Produce one formal non-damage death for an active unit.
+
+        ForceKill is lethal without a hit, damage packet or kill credit. The
+        produced facts stay at the shared lifecycle boundary: HP reaches 0, the
+        lifecycle status becomes defeated, a typed defeat record keeps the
+        causal identity, and the caller emits the matching unit.defeated event.
+        """
+
+        unit = state.units.get(unit_id)
+        if unit is None:
+            raise ValueError("forced_death_unit_missing")
+        if self.status_of(unit) != "active" or float(unit.hp) <= 0:
+            raise ValueError("forced_death_requires_active_target")
+        common = {
+            "effect_id": effect_id,
+            "effect_source": effect_source,
+            "source_trace": source_trace,
+            "forced_death_kind": "formal_ability_force_kill",
+            "forced_death_target_alias": target_alias,
+        }
+        hp = Mutation(
+            "set",
+            ("units", unit_id, "hp"),
+            unit.hp,
+            0.0,
+            "formal forced death zeroes HP without a damage packet",
+            "effect_system",
+            metadata={**common, "lifecycle_operation": "unit_forced_death_hp"},
+        )
+        record: dict[str, JSONValue] = {
+            "target_id": unit_id,
+            "defeated_unit_id": unit_id,
+            "target_before_hp": unit.hp,
+            "target_after_hp": 0.0,
+            "hp_mutation_id": hp.stable_id(),
+            "forced_death_kind": "formal_ability_force_kill",
+            "forced_death_target_alias": target_alias,
+            "effect_id": effect_id,
+            "effect_source": effect_source,
+            "source_trace": source_trace,
+        }
+        status = Mutation(
+            "set",
+            ("units", unit_id, "lifecycle_status"),
+            unit.lifecycle_status,
+            "defeated",
+            "formal forced death at the shared lifecycle boundary",
+            "effect_system",
+            metadata={
+                **common,
+                "lifecycle_operation": "unit_defeat",
+                "lifecycle_status_before": "active",
+                "lifecycle_status_after": "defeated",
+                "hp_mutation_id": hp.stable_id(),
+                "defeat_record": record,
+            },
+        )
+        lifecycle_mutation_id = status.stable_id()
+        typed_record = {**record, "lifecycle_mutation_id": lifecycle_mutation_id}
+        record_mutation = Mutation(
+            "set",
+            ("units", unit_id, "flags", "defeat_record"),
+            unit.flags.get("defeat_record"),
+            typed_record,
+            "record the formal forced death cause",
+            "effect_system",
+            before_exists="defeat_record" in unit.flags,
+            metadata={
+                **common,
+                "lifecycle_operation": "unit_defeat_record",
+                "lifecycle_mutation_id": lifecycle_mutation_id,
+                "hp_mutation_id": hp.stable_id(),
+                "defeat_record": typed_record,
+            },
+        )
+        return (hp, status, record_mutation), typed_record
+
     def view(self, state: BattleState, unit_id: str) -> UnitLifecycleView:
         unit = state.units.get(unit_id)
         if unit is None:
@@ -460,6 +547,40 @@ class UnitLifecycleSystem:
             "blocked_reason": reason,
             "state_unchanged": True,
         }
+
+
+def unit_behavior_flags(unit: UnitState) -> frozenset[str]:
+    """Active behavior flags carried by the unit's status instances."""
+
+    flags: set[str] = set()
+    for detail in unit.flags.get("status_details", ()):
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("lifecycle_state") or "active").startswith(
+            ("expired", "removed")
+        ):
+            continue
+        for flag in detail.get("behavior_flags", ()):
+            if isinstance(flag, str) and flag:
+                flags.add(flag)
+    return frozenset(flags)
+
+
+def unit_protected_weakness_types(unit: UnitState) -> frozenset[str]:
+    """Weakness types protected by active source-declared status projections."""
+
+    protected: set[str] = set()
+    for detail in unit.flags.get("status_details", ()):
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("lifecycle_state") or "active").startswith(
+            ("expired", "removed")
+        ):
+            continue
+        for element in detail.get("weakness_protection", ()):
+            if isinstance(element, str) and element:
+                protected.add(element)
+    return frozenset(protected)
 
 
 def _unit_base_type(unit: UnitState) -> str:

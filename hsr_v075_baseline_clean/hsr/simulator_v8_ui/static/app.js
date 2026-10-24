@@ -23,13 +23,33 @@ const state = {
 const el = (id) => document.getElementById(id);
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const data = await response.json();
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (error) {
+    const wrapped = new Error(`无法连接服务：${error.message}`);
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch (cause) {
+    // A malformed body is a failed request, never a business result. In
+    // particular an HTTP 200 with a broken body must not clear the live battle.
+    const status = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+    const error = new Error(response.status === 409
+      ? `战斗已更新或页面已过期（${status}），请刷新当前战斗后重新选择动作。`
+      : `服务返回了无法解析的 JSON 响应（${status}）。`);
+    error.status = response.status;
+    error.cause = cause;
+    throw error;
+  }
   if (!response.ok) {
-    const error = new Error(data.error || response.statusText);
+    const error = new Error(data.error || response.statusText || `HTTP ${response.status}`);
     error.status = response.status;
     throw error;
   }
@@ -47,6 +67,8 @@ async function init() {
       acceptBattle(current);
       el("scenarioEditor").value = pretty(current.scenario);
       renderSetup();
+      // The draft was just replaced by the authoritative battle scenario.
+      syncCaseIdentity(current.scenario_id);
       setMessage("已恢复当前战斗。服务重启前可下载战斗记录。", "ok");
       return;
     }
@@ -99,6 +121,7 @@ async function loadSelectedCase() {
   const observationSource = el("observationsEditor").value;
   state.busy = true;
   renderAll();
+  setMessage(`正在加载用例：${caseId}…`);
   try {
     const example = state.examples.find((item) => `example:${item.case_id}` === caseId);
     const scenario = example ? example.scenario : await api(`/api/cases/${encodeURIComponent(caseId)}`);
@@ -131,6 +154,7 @@ async function saveCase() {
   const observationSource = el("observationsEditor").value;
   state.busy = true;
   renderAll();
+  setMessage(`正在保存用例：${caseId}…`);
   try {
     await api(`/api/cases/${encodeURIComponent(caseId)}`, {method: "PUT", body: JSON.stringify(scenario)});
     try {
@@ -180,17 +204,19 @@ function renderAll() {
   renderRunState();
   renderObservations();
   el("undoRouteBtn").hidden = isLive();
+  el("undoRouteBtn").disabled = state.busy;
   el("setupPanel").hidden = !isLive();
   el("legacyRunOptions").hidden = isLive();
   el("runBtn").textContent = isLive() ? (state.session ? "按配置重新开战" : "开始战斗") : "运行路线";
   el("downloadBattleBtn").disabled = !state.session || state.busy;
-  for (const id of ["battleMode", "loadCaseBtn", "saveCaseBtn", "runBtn", "refreshBattleBtn", "replayBattleBtn", "resumeBattleBtn", "prepareBuildsBtn", "loadLightConesBtn", "loadCharactersBtn"]) {
+  for (const id of ["battleMode", "caseSelect", "caseId", "loadCaseBtn", "saveCaseBtn", "runBtn", "refreshBattleBtn", "replayBattleBtn", "resumeBattleBtn", "prepareBuildsBtn", "loadLightConesBtn", "loadCharactersBtn"]) {
     el(id).disabled = state.busy;
   }
   el("setupFields").querySelectorAll("input, select, button").forEach((input) => { input.disabled = state.busy; });
   el("partyFormation").querySelectorAll("button, select").forEach((input) => { input.disabled = state.busy; });
   el("stagePanel").querySelectorAll("input, select, button").forEach((input) => { input.disabled = state.busy; });
   el("applyStageBtn").disabled = state.busy || !el("stageChoice").value;
+  el("actionPrompt").setAttribute("aria-busy", state.busy ? "true" : "false");
   const forks = state.report?.fork_choices || [];
   el("forkPanel").hidden = !isLive() || !forks.length;
   el("forkChoice").disabled = state.busy;
@@ -254,9 +280,10 @@ function renderUnitRow(id, units) {
 function unitCard(unit) {
   const current = state.report && state.report.battlefield_view && state.report.battlefield_view.current_unit_id === unit.unit_id;
   const targetable = state.selectedSkill && isPromptTarget(unit.unit_id);
+  const targetSelected = state.selectedTargets.includes(unit.unit_id);
   const hpRatio = Math.max(0, Math.min(1, Number(unit.hp_ratio || 0)));
   return `
-    <button class="unitCard ${escapeHtml(unit.side || "")} ${current ? "current" : ""} ${targetable ? "targetable" : ""} ${state.selectedUnitId === unit.unit_id ? "selected" : ""}" type="button" data-unit-id="${escapeHtml(unit.unit_id)}">
+    <button class="unitCard ${escapeHtml(unit.side || "")} ${current ? "current" : ""} ${targetable ? "targetable" : ""} ${targetSelected || state.selectedUnitId === unit.unit_id ? "selected" : ""}" type="button" data-unit-id="${escapeHtml(unit.unit_id)}" aria-pressed="${targetSelected}">
       <div class="unitName">
         <span>${escapeHtml(unit.display_name || unit.unit_id)}</span>
         <span class="cardSmall">${current ? "当前" : `站位 ${valueText(unit.position)}`}</span>
@@ -287,18 +314,20 @@ function renderActionPrompt() {
   }
   const slots = prompt.slots || [];
   const selected = state.selectedSkill;
+  const terminal = {victory: "战斗胜利", defeat: "战斗败北"}[state.report.outcome];
   el("actionPrompt").innerHTML = `
     <div class="promptHeader">
       <h2>行动选择</h2>
-      <span class="mutedText">${escapeHtml(prompt.current_unit_name || prompt.reason || "等待行动")}</span>
+      <span class="mutedText">${escapeHtml(terminal || prompt.current_unit_name || prompt.reason || "等待行动")}</span>
     </div>
     ${contentSupportHtml(state.report.content_support)}
     <div class="skillButtons">
       ${slots.map((slot) => skillButton(slot, selected)).join("")}
     </div>
-    ${prompt.reason ? `<p>${escapeHtml(prompt.reason)}</p>` : ""}
+    ${terminal ? `<p>战斗已结束。可下载记录、校验回放，或按配置重新开战。</p>`
+      : prompt.reason ? `<p>${escapeHtml(prompt.reason)}</p>` : ""}
     ${selected ? `<div class="targetHint">已选择 ${escapeHtml(selected.display_label || selected.label)}，请点击目标卡片。
-      <span>已选：${escapeHtml(state.selectedTargets.join("、") || "无")}</span>
+      <span>已选：${escapeHtml(state.selectedTargets.join("、") || "无")}${selected.target_query.selection_max > 1 ? `（${state.selectedTargets.length} / ${selected.target_query.selection_max}）` : ""}</span>
       ${selected.target_query.selection_max > 1 ? `<button id="confirmTargetsBtn" type="button"
         ${state.selectedTargets.length < selected.target_query.selection_min || state.selectedTargets.length > selected.target_query.selection_max ? "disabled" : ""}>提交所选目标</button>` : ""}
       <button id="cancelTargetsBtn" type="button">取消选择</button>
@@ -308,7 +337,7 @@ function renderActionPrompt() {
     button.addEventListener("click", () => selectSkill(button.dataset.skillSlot).catch((error) => setMessage(error.message, "bad")));
   });
   el("cancelTargetsBtn")?.addEventListener("click", () => {
-    state.selectedSkill = null; state.selectedTargets = []; renderActionPrompt(); renderBattlefield();
+    state.selectedSkill = null; state.selectedTargets = []; renderActionPrompt(); renderBattlefield(); focusFirstSkill();
   });
   el("confirmTargetsBtn")?.addEventListener("click", () => appendRouteStepWithTargets(
     state.selectedSkill, state.selectedTargets, state.selectedTargets.join("、"),
@@ -317,7 +346,7 @@ function renderActionPrompt() {
 
 function skillButton(slot, selected) {
   const disabled = !slot.available || state.busy;
-  const isSelected = selected && selected.slot === slot.slot;
+  const isSelected = Boolean(selected && selected.slot === slot.slot);
   const label = slot.display_label || slot.label || slot.slot;
   const reason = slot.blocked_reason || "当前不可选";
   return `
@@ -325,6 +354,7 @@ function skillButton(slot, selected) {
       class="skillButton ${isSelected ? "active" : ""}"
       type="button"
       data-skill-slot="${escapeHtml(slot.slot)}"
+      aria-pressed="${isSelected}"
       ${disabled ? "disabled" : ""}
       title="${escapeHtml(disabled ? reason : `${slot.action_ref} 等级 ${slot.action_level}`)}"
     >
@@ -465,6 +495,7 @@ async function selectSkill(slotName) {
   setMessage(`已选择 ${slot.display_label || slot.label}，请选择目标`, "ok");
   renderActionPrompt();
   renderBattlefield();
+  focusFirstTarget();
 }
 
 async function handleUnitClick(unitId) {
@@ -477,9 +508,18 @@ async function handleUnitClick(unitId) {
       return;
     }
     if (state.selectedSkill.target_query.selection_max > 1) {
-      state.selectedTargets = state.selectedTargets.includes(unitId)
-        ? state.selectedTargets.filter((id) => id !== unitId) : [...state.selectedTargets, unitId];
+      const maximum = state.selectedSkill.target_query.selection_max;
+      if (state.selectedTargets.includes(unitId)) {
+        state.selectedTargets = state.selectedTargets.filter((id) => id !== unitId);
+      } else if (state.selectedTargets.length >= maximum) {
+        setMessage(`该动作最多选择 ${maximum} 个目标；请先取消一个已选目标。`, "warn");
+        return;
+      } else {
+        state.selectedTargets = [...state.selectedTargets, unitId];
+      }
       renderActionPrompt();
+      renderBattlefield();
+      focusUnitCard(unitId);
       return;
     }
     await appendRouteStep(state.selectedSkill, unit);
@@ -1226,6 +1266,21 @@ function findBattlefieldUnit(unitId) {
   return units.find((unit) => unit.unit_id === unitId);
 }
 
+function focusFirstTarget() {
+  const target = document.querySelector(".unitCard.targetable");
+  if (target && typeof target.focus === "function") target.focus();
+}
+
+function focusUnitCard(unitId) {
+  const card = Array.from(document.querySelectorAll(".unitCard")).find((item) => item.dataset.unitId === unitId);
+  if (card && typeof card.focus === "function") card.focus();
+}
+
+function focusFirstSkill() {
+  const button = el("actionPrompt").querySelector?.("[data-skill-slot]:not(:disabled)");
+  if (button && typeof button.focus === "function") button.focus();
+}
+
 function openDrawer() {
   el("detailDrawer").classList.add("open");
 }
@@ -1336,10 +1391,27 @@ document.querySelectorAll("input[name=mode], #initTimeline").forEach((input) => 
   input.addEventListener("change", () => runScenario({ quiet: true }).catch((error) => setMessage(error.message, "bad")));
 });
 el("caseSelect").addEventListener("change", () => {
-  el("caseId").value = el("caseSelect").value;
+  el("caseId").value = caseSaveId(el("caseSelect").value);
 });
 
 function isLive() { return el("battleMode").value === "live"; }
+
+function caseSaveId(caseId) {
+  // ``example:`` is a selector prefix, not a legal saved-case identifier.
+  return caseId.startsWith("example:") ? caseId.slice("example:".length) : caseId;
+}
+
+function syncCaseIdentity(scenarioId) {
+  // Only a path that actually replaced the editor draft may adopt a case identity.
+  // Saved copies and examples can share one scenario_id, so never pick the first
+  // match: without one unambiguous candidate, keep the current draft's save target.
+  if (!scenarioId) return;
+  const matches = state.cases.filter((item) => (item.scenario?.scenario_id || item.scenario_id) === scenarioId);
+  if (matches.length !== 1) return;
+  const match = matches[0];
+  el("caseSelect").value = match.case_id;
+  el("caseId").value = caseSaveId(match.case_id);
+}
 
 function battleIdentity() {
   return state.session ? {session_id: state.session.session_id, revision: state.session.revision} : {};
@@ -1414,7 +1486,10 @@ async function compareObservation() {
     setMessage("已记录当前局面对照。请保存用例或导出观测，并下载对应战斗记录。", "ok");
   } catch (error) {
     if (error.status === 409) {
-      try { acceptBattle(await api("/api/battle")); } catch { /* Retain the typed observation until a refresh succeeds. */ }
+      try {
+        // Refresh only the battle; the draft and its save identity stay untouched.
+        acceptBattle(await api("/api/battle"));
+      } catch { /* Retain the typed observation until a refresh succeeds. */ }
     }
     setMessage(error.message, "bad");
   } finally { state.busy = false; renderAll(); }
@@ -1465,9 +1540,11 @@ async function battleRequest(path, body, message) {
   el("runBtn").disabled = true;
   renderAll();
   setMessage(message);
+  let focusPrompt = false;
   try {
     const report = await api(path, {method: "POST", body: JSON.stringify(body)});
     acceptBattle(report);
+    focusPrompt = Boolean(report.decision?.ready && report.action_prompt?.available);
     const last = report.steps.at(-1);
     const reasons = last?.transition_outcome?.reason_codes || [];
     if (last && !last.transition_outcome.successor_eligible) {
@@ -1479,13 +1556,18 @@ async function battleRequest(path, body, message) {
       setMessage(outcome ? `${outcome}。可下载记录并校验回放。` : "请选择行动者的动作；敌我双方均由你操作。", "ok");
     }
   } catch (error) {
-    if (error.status === 409) acceptBattle(await api("/api/battle"));
+    if (error.status === 409) {
+      // The rejected command is not retried; only the battle report is refreshed.
+      // If the refresh itself fails, keep the conflict message and last visible battle.
+      try { acceptBattle(await api("/api/battle")); } catch { /* Keep the conflict message. */ }
+    }
     setMessage(error.message, "bad");
   } finally {
     state.busy = false;
     document.querySelector(".topbar").removeAttribute("aria-busy");
     el("runBtn").disabled = false;
     renderAll();
+    if (focusPrompt) focusFirstSkill();
   }
 }
 
@@ -1612,6 +1694,7 @@ async function applyPartyOrder(unitIds, focusUnit) {
   state.busy = true;
   el("setupPanel").setAttribute("aria-busy", "true");
   renderAll();
+  setMessage("正在调整我方站位…");
   try {
     const result = await api("/api/battle/party-order", {method: "POST", body: JSON.stringify({
       scenario: JSON.parse(source), unit_ids: unitIds,
@@ -1653,6 +1736,7 @@ async function applyInitialCondition(unitId, fields) {
   state.busy = true;
   el("setupPanel").setAttribute("aria-busy", "true");
   renderAll();
+  setMessage("正在应用初始生命值与能量…");
   try {
     const result = await api("/api/battle/initial-condition", {method: "POST", body: JSON.stringify({
       scenario: JSON.parse(source), unit_id: unitId,
@@ -1731,7 +1815,7 @@ function contentSupportHtml(support) {
 }
 
 function renderBuildPreview() {
-  if (!state.buildOptions) { el("buildPreview").innerHTML = ""; return; }
+  if (!state.buildOptions) { el("buildPreview").innerHTML = emptyText("尚未校验构筑。"); return; }
   if (el("scenarioEditor").value !== state.buildPreviewSource) {
     el("buildPreview").textContent = "配置已变化，请再次校验构筑以更新面板与技能等级。";
     return;
@@ -1842,6 +1926,7 @@ async function searchStages() {
   state.busy = true;
   el("stagePanel").setAttribute("aria-busy", "true");
   renderAll();
+  setMessage("正在搜索来源关卡目录…");
   try {
     const result = await api(`/api/battle/stages?${new URLSearchParams({q: query})}`);
     if (el("stageSearch").value !== query) return;
@@ -1862,6 +1947,7 @@ async function applyStage() {
   state.busy = true;
   el("stagePanel").setAttribute("aria-busy", "true");
   renderAll();
+  setMessage("正在应用敌方波次…");
   try {
     const result = await api("/api/battle/stage", {method: "POST", body: JSON.stringify({
       scenario: JSON.parse(source), stage_id: stageId,
@@ -1889,6 +1975,7 @@ function characterFields(unit) {
 async function loadCharacters() {
   if (state.busy) return;
   state.busy = true;
+  el("setupPanel").setAttribute("aria-busy", "true");
   renderAll();
   setMessage("正在读取角色目录…");
   try {
@@ -1897,7 +1984,7 @@ async function loadCharacters() {
     renderSetup();
     setMessage(`已加载 ${result.characters.length} 个角色选项。选择后请校验构筑；技能规则按所选队伍加载。`, "ok");
   } catch (error) { setMessage(error.message, "bad"); }
-  finally { state.busy = false; renderAll(); }
+  finally { state.busy = false; el("setupPanel").removeAttribute("aria-busy"); renderAll(); }
 }
 
 async function applyCharacter(unitId, entityRef, operation = "replace") {
@@ -1906,6 +1993,7 @@ async function applyCharacter(unitId, entityRef, operation = "replace") {
   state.busy = true;
   el("setupPanel").setAttribute("aria-busy", "true");
   renderAll();
+  setMessage("正在应用队员调整…");
   try {
     const result = await api("/api/battle/character", {method: "POST", body: JSON.stringify({
       scenario: JSON.parse(source), unit_id: unitId, entity_ref: entityRef, operation,
@@ -2049,7 +2137,10 @@ el("battleMode").addEventListener("change", async () => {
     state.report = null;
     state.selectedSkill = null;
     await loadCases();
-    if (isLive()) acceptBattle(await api("/api/battle"));
+    if (isLive()) {
+      // Switching modes only reloads the battle report, not the draft.
+      acceptBattle(await api("/api/battle"));
+    }
     renderAll();
   } catch (error) { setMessage(error.message, "bad"); }
 });
@@ -2057,21 +2148,53 @@ el("refreshBattleBtn").addEventListener("click", async () => {
   if (state.busy) return;
   try {
     el("battleMode").value = "live";
+    // Refresh only the battle report; keep the user's draft and its save identity.
     acceptBattle(await api("/api/battle"));
     setMessage(state.session ? "已刷新当前战斗。" : "没有正在进行的战斗，请载入场景并开始。", "ok");
   } catch (error) { setMessage(error.message, "bad"); }
 });
 el("downloadBattleBtn").addEventListener("click", async () => {
+  if (state.busy || !state.session) return;
+  const identity = battleIdentity();
+  const filename = `hsr-battle-${state.session.session_id}.json.gz`;
+  state.busy = true;
+  document.querySelector(".topbar").setAttribute("aria-busy", "true");
+  renderAll();
+  setMessage("正在生成战斗归档…");
   try {
-    const response = await fetch(`/api/battle/archive?${new URLSearchParams(battleIdentity())}`);
-    if (!response.ok) throw new Error((await response.json()).error);
+    let response;
+    try {
+      response = await fetch(`/api/battle/archive?${new URLSearchParams(identity)}`);
+    } catch (error) {
+      throw new Error(`无法连接服务：${error.message}`);
+    }
+    if (!response.ok) {
+      let data = {};
+      try { data = await response.json(); } catch { /* Keep the status-based message. */ }
+      const error = new Error(data.error || `下载失败（HTTP ${response.status}）`);
+      error.status = response.status;
+      throw error;
+    }
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
     link.href = url;
-    link.download = `hsr-battle-${state.session.session_id}.json.gz`;
+    link.download = filename;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch (error) { setMessage(error.message, "bad"); }
+    setMessage("战斗归档已下载。", "ok");
+  } catch (error) {
+    if (error.status === 409) {
+      try {
+        // Refresh only the battle; keep the draft and its save identity.
+        acceptBattle(await api("/api/battle"));
+      } catch { /* Keep the last visible battle until a refresh succeeds. */ }
+    }
+    setMessage(error.message, "bad");
+  } finally {
+    state.busy = false;
+    document.querySelector(".topbar").removeAttribute("aria-busy");
+    renderAll();
+  }
 });
 el("replayBattleBtn").addEventListener("click", () => el("replayFile").click());
 el("resumeBattleBtn").addEventListener("click", () => el("resumeFile").click());
@@ -2088,13 +2211,16 @@ async function importBattleArchive(file, resume) {
   setMessage(resume ? "正在校验归档并恢复战斗，请稍候…" : "正在独立重建并逐步校验回放，当前战斗保持不变…");
   try {
     const text = await readBattleArchive(file);
-    const body = resume ? JSON.stringify({...identity, archive: JSON.parse(text)}) : text;
+    // Send the archive as exact text: JSON.parse/stringify would rewrite 1.0 as 1
+    // and the archive graph distinguishes integer and float scalars.
+    const body = resume ? JSON.stringify({...identity, archive_text: text}) : text;
     const report = await api(`/api/battle/${resume ? "resume" : "replay"}`, {method: "POST", body});
     if (resume) {
       el("battleMode").value = "live";
       el("scenarioEditor").value = pretty(report.scenario);
       renderSetup();
       acceptBattle(report);
+      syncCaseIdentity(report.scenario_id);
       const outcome = {victory: "胜利", defeat: "败北"}[report.outcome];
       if (outcome) setMessage(`归档已恢复，战斗已${outcome}。可查看战场或下载记录。`, "ok");
       else if (!report.decision.ready) setMessage(`归档已恢复，推进受阻：${report.decision.blocked_reason}。可下载记录保留现场。`, "warn");
@@ -2104,7 +2230,10 @@ async function importBattleArchive(file, resume) {
     }
   } catch (error) {
     if (error.status === 409) {
-      try { acceptBattle(await api("/api/battle")); } catch { /* Keep the last visible battle until a refresh succeeds. */ }
+      try {
+        // Refresh only the battle; keep the draft and its save identity.
+        acceptBattle(await api("/api/battle"));
+      } catch { /* Keep the last visible battle until a refresh succeeds. */ }
     }
     setMessage(error.message, "bad");
   } finally {
@@ -2117,23 +2246,36 @@ async function importBattleArchive(file, resume) {
 }
 
 async function readBattleArchive(file) {
+  const gzip = file.name.toLowerCase().endsWith(".gz");
   let stream = file.stream();
-  if (file.name.toLowerCase().endsWith(".gz")) {
+  if (gzip) {
     if (typeof DecompressionStream === "undefined") throw new Error("当前浏览器无法解压，请先将归档解压为 JSON 文件再载入。");
     stream = stream.pipeThrough(new DecompressionStream("gzip"));
   }
   const reader = stream.getReader();
   const chunks = [];
   let size = 0;
+  let tooLarge = false;
   try {
     while (true) {
       const {done, value} = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 9_900_000) throw new Error("归档解压后超过网页载入上限（约 10 MB），请使用 CLI 恢复。");
+      if (size > 9_900_000) {
+        tooLarge = true;
+        throw new Error("归档解压后超过网页载入上限（约 10 MB），请使用 CLI 恢复。");
+      }
       chunks.push(value);
     }
-  } finally { await reader.cancel(); }
+  } catch (error) {
+    if (gzip && !tooLarge) {
+      const detail = String(error.message || error).replace(/[.。]\s*$/, "");
+      throw new Error(`归档解压失败：${detail}。请确认文件完整，或改用未压缩的 JSON 文件。`);
+    }
+    throw error;
+  } finally {
+    try { await reader.cancel(); } catch { /* The failed stream is already closed. */ }
+  }
   return new Response(new Blob(chunks)).text();
 }
 

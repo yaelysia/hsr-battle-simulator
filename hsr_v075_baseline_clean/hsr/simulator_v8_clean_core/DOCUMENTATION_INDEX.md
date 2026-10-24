@@ -23,6 +23,8 @@
 
 - 工程终点、里程碑与新增需求处理：
   [工程完结路线](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-工程完结路线)
+- 剩余交付包、依赖与并行写入边界：
+  [工作分组与并行排程](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#剩余工作的交付分组)
 - 当前实际进度与下一项：[CODEX_HANDOFF.md](../CODEX_HANDOFF.md)
 - 已交付命令行场景与操作：[CLI_MVP.md](CLI_MVP.md)
 
@@ -36,6 +38,8 @@
 | 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
 | 战斗中怪物自然召唤 | [真实入口、共享调用链与集中验收约束](docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)；当前进度仍见交接 |
 | 召唤怪物有效等级与面板 | [出生属性、上下文隔离与数值验收约束](docs/MONSTER_SUMMON_STAT_BINDING.md)；当前进度仍见交接 |
+| 普通怪物战斗闭环 | [两类召唤者、生命周期、队列、多波与胜负的集中交付约束](docs/MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md)；当前进度仍见交接 |
+| 正式角色构筑与普通队伍战斗 | [R05 四卡行迹/星魂、参数与实际战斗的集中交付](docs/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md)；当前批次收口提交后由用户安排执行 |
 | 独立伤害逐任务绑定 | [已验收批次的绑定契约](docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
 | 技能后置监听行动事实 | [自然路线、实现边界与固定命令](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md) |
