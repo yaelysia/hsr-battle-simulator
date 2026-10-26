@@ -74,6 +74,8 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
 
 def status_modifier_has_direct_combat_consumer(bucket: str, key: str) -> bool:
     """Whether this runtime modifier key is consumed by the S7 stat layer."""
+    if bucket == "attribute" and key == "hp_convert":
+        return True
     return any(
         bucket == configured_bucket and key in configured_keys
         for configured_bucket, *configured_keys in (
@@ -124,11 +126,18 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
         static_flat = stat_pool.static_flat if stat_pool is not None else 0.0
         ratio_delta, ratio_terms = _status_modifier_total(unit, bucket, (ratio_key,))
         flat_delta, flat_terms = _status_modifier_total(unit, bucket, (flat_key,))
+        convert_delta = 0.0
+        convert_terms: tuple[dict[str, JSONValue], ...] = ()
+        if stat == "max_hp":
+            convert_delta, convert_terms = _status_modifier_total(
+                unit, bucket, ("hp_convert",)
+            )
         base_delta, base_terms = _status_modifier_total(unit, bucket, (f"{stat}_base_delta",))
         value = (
             (base_value + base_delta) * (1.0 + static_ratio + ratio_delta)
             + static_flat
             + flat_delta
+            + convert_delta
         )
         return EffectiveUnitStat(
             stat=stat,
@@ -138,7 +147,20 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
             static_flat=static_flat,
             flat_delta=flat_delta,
             value=value,
-            source_terms=(*base_terms, *ratio_terms, *flat_terms),
+            source_terms=(*base_terms, *ratio_terms, *flat_terms, *convert_terms),
+        )
+
+    if stat == "hp_convert":
+        flat_delta, terms = _status_modifier_total(unit, "attribute", ("hp_convert",))
+        return EffectiveUnitStat(
+            stat=stat,
+            base_value=0.0,
+            static_ratio=0.0,
+            ratio_delta=0.0,
+            static_flat=0.0,
+            flat_delta=flat_delta,
+            value=flat_delta,
+            source_terms=terms,
         )
 
     resource_config = _RESOURCE_STAT_MODIFIERS.get(stat)
@@ -178,6 +200,50 @@ def control_kind_from_behavior_flags(behavior_flags: tuple[str, ...]) -> str:
             continue
         return flag.removeprefix("STAT_")
     return "control"
+
+
+def behavior_flag_status_resistance(
+    unit: UnitState,
+    behavior_flags: tuple[str, ...],
+) -> tuple[float, tuple[dict[str, JSONValue], ...]]:
+    """Combine committed behavior-flag status resistance installations.
+
+    StackStatusResistance installs one entry per producer on the owning unit.
+    Only entries whose behavior flag is carried by the incoming status take
+    part; multiple producers combine multiplicatively, which is the same
+    independence model the shared resistance chance already uses.
+    """
+
+    flags = {
+        flag
+        for flag in behavior_flags
+        if isinstance(flag, str) and flag
+    }
+    if not flags:
+        return 0.0, ()
+    installed = unit.flags.get("status_resistance_stacks")
+    if not isinstance(installed, (list, tuple)):
+        return 0.0, ()
+    matched: list[dict[str, JSONValue]] = []
+    remaining = 1.0
+    for entry in installed:
+        if not isinstance(entry, dict):
+            continue
+        flag = entry.get("behavior_flag")
+        value = entry.get("value")
+        if (
+            flag not in flags
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            continue
+        remaining *= 1.0 - float(value)
+        matched.append(dict(entry))
+    if not matched:
+        return 0.0, ()
+    return max(0.0, min(1.0, 1.0 - remaining)), tuple(matched)
 
 
 def effective_status_resistance(
@@ -346,6 +412,8 @@ def status_modifier_numeric_value(
         ),
     )
     return float(result.value) if result.ok and result.value is not None else None
+
+
 
 
 def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:

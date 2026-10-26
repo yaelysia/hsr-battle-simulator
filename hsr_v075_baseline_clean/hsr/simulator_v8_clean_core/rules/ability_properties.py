@@ -12,6 +12,10 @@ _ABILITY_PROPERTY_STATS: dict[str, str] = {
     "ElationDamageExtraAddedRatio": "elation_damage_extra_added_ratio",
     "ElationEchoPoint": "elation_echo_point",
     "MaxHP": "max_hp",
+    # A flat Max-HP amount produced by HP conversion effects.  The game formula
+    # subtracts it from MaxHP before applying percent-of-Max-HP conversions, so
+    # it is a separate runtime bucket rather than part of the base panel.
+    "HPConvert": "hp_convert",
     "CurrentHP": "hp",
     # TBGD uses SP for per-unit ultimate energy; team skill points are BP.
     "CurrentSP": "energy",

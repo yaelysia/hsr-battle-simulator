@@ -10,6 +10,26 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
+def current_max_hp(unit: Any) -> float:
+    """Return the authoritative current Max-HP ceiling for a unit.
+
+    The units stat layer owns active construction (birth panel + status
+    modifiers + conversion bucket).  Resolve it directly instead of relying on
+    a registration side effect, so conditions, healing and integrity checks see
+    the same ceiling in every process.
+    """
+
+    from ..systems.unit_stats import effective_unit_stat
+
+    value = effective_unit_stat(unit, "max_hp").value
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError("current_max_hp_result_not_numeric")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError("current_max_hp_result_not_finite")
+    return numeric
+
+
 if TYPE_CHECKING:
     from ..systems.shield import ShieldExhaustionFact
     from ..systems.status import StatusLifecyclePlan
@@ -1181,6 +1201,34 @@ class TargetResolution:
         }
 
 
+_STATUS_HP_CLAMP_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class StatusHPClampFact:
+    """Immutable producer inputs for auditing a status-derived HP clamp.
+
+    This fact is local to native execution, like lifecycle event facts. It is
+    not reconstructed from settlement copies or serialized mutation metadata.
+    """
+
+    before_unit: UnitState
+    after_unit: UnitState
+    metadata: dict[str, JSONValue]
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _STATUS_HP_CLAMP_PRODUCER:
+            raise ValueError("HP clamp fact requires StatusSystem producer")
+        if (type(self.before_unit) is not UnitState or type(self.after_unit) is not UnitState
+                or self.before_unit.unit_id != self.after_unit.unit_id):
+            raise ValueError("HP clamp fact requires one exact unit")
+        metadata = freeze_json(self.metadata)
+        if not isinstance(metadata, dict):
+            raise TypeError("HP clamp fact metadata must be an object")
+        object.__setattr__(self, "metadata", metadata)
+
+
 @dataclass(frozen=True)
 class Mutation:
     """Single authoritative state change.
@@ -1199,6 +1247,7 @@ class Mutation:
     after_exists: bool = True
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     mutation_id: str = ""
+    status_hp_clamp_fact: StatusHPClampFact | None = field(default=None, repr=False, compare=False)
     _stable_id_cache: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -1213,6 +1262,8 @@ class Mutation:
             raise TypeError("mutation reason and source must be strings")
         if not isinstance(self.mutation_id, str):
             raise TypeError("mutation_id must be a string")
+        if self.status_hp_clamp_fact is not None and type(self.status_hp_clamp_fact) is not StatusHPClampFact:
+            raise TypeError("mutation HP clamp fact must be produced by StatusSystem")
         before = freeze_json(self.before)
         after = freeze_json(self.after)
         metadata = freeze_json(self.metadata)

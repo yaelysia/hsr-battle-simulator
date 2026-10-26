@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .immutable_json import freeze_json, thaw_json
-from .model import BattleState, JSONValue, Mutation, PendingDefeatPlan, UnitState
+from .model import BattleState, JSONValue, Mutation, PendingDefeatPlan, UnitState, current_max_hp
 
 
 StateIntegrityStatus = Literal["passed", "failed", "not_run"]
@@ -294,8 +294,8 @@ def _lifecycle_final_state_issues(
         )
     elif (
         max_hp_is_finite
-        and float(unit.max_hp) > 0
-        and (float(unit.hp) < 0 or float(unit.hp) > float(unit.max_hp))
+        and current_max_hp(unit) > 0
+        and (float(unit.hp) < 0 or float(unit.hp) > current_max_hp(unit))
     ):
         issues.append(
             _issue(

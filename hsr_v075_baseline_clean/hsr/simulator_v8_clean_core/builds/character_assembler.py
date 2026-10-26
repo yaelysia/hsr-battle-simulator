@@ -2354,6 +2354,25 @@ def _direct_dynamic_root_draft(
             f"direct_character_dynamic_graph_not_source_closed:"
             f"{binding.build_binding_id}"
         )
+    selection = (
+        rules.character_trace_node(binding.selection_ref_id)
+        if binding.selection_kind == "trace"
+        else rules.character_eidolon_slot(binding.selection_ref_id)
+    )
+    mechanism_slot = rules.character_mechanism_slot(binding.mechanism_slot_id)
+    if (
+        selection is None
+        or binding.mechanism_slot_id not in selection.linked_mechanism_slot_ids
+        or mechanism_slot is None
+        or mechanism_slot.character_data_card_id != binding.character_data_card_id
+        or mechanism_slot.coverage_status != "executable"
+        or mechanism_slot.blocked_reason
+    ):
+        return None, (
+            f"character_dynamic_graph_mechanism_slot_not_executable:"
+            f"{binding.build_binding_id}:"
+            f"{(mechanism_slot.blocked_reason if mechanism_slot is not None else 'missing') or 'not_executable'}"
+        )
     draft = _dynamic_root_draft(
         root_kind="ability_definition",
         root_ref_id=definition.definition_id,

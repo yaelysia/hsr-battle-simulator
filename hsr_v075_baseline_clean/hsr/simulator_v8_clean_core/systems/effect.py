@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution, StatusImmunityFact, StatusLifecycleFact
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution, StatusImmunityFact, StatusLifecycleFact, current_max_hp
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -132,6 +132,7 @@ class EffectRegistry:
             self.register("SetModifierValue", self._execute_modifier_value)
             self.register("InfectModifier", self._execute_infect_modifier)
             self.register("ModifySkillPropertyByType", self._execute_modify_skill_property)
+        self.register("SetHP", self._execute_set_hp)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
@@ -166,6 +167,7 @@ class EffectRegistry:
         self.register("SetDieImmediately", self._execute_finish_retirement)
         self.register("LockActionDelayChange", self._execute_action_delay_lock)
         self.register("SetControlSkillMapping", self._execute_control_skill_mapping)
+        self.register("StackStatusResistance", self._execute_stack_status_resistance)
         self.register("SetActionDelay", self._execute_set_action_delay)
         self.register("ExitBreakState", self._execute_exit_break_state)
         self.register("ModifyCurrentSkillDelayCost", self._execute_current_skill_delay_cost)
@@ -232,6 +234,121 @@ class EffectRegistry:
             mutation_id=mutation.stable_id() if mutation else None, process_only=mutation is None,
             payload=metadata, trace=effect.source.to_json(),
         ).to_json(),))
+
+    def _execute_stack_status_resistance(
+        self, effect: EffectIR, context: EffectExecutionContext | None
+    ) -> EffectResult:
+        standard = effect.payload.get("standard")
+        if (
+            context is None
+            or self.status_system is None
+            or not isinstance(standard, dict)
+            or standard.get("operation") != "stack_status_resistance"
+            or standard.get("blocked_reason")
+            or not isinstance(standard.get("behavior_flag"), str)
+            or not standard["behavior_flag"]
+            or standard.get("target_alias") not in {"Caster", "ModifierOwnerEntity"}
+        ):
+            return _unsupported_effect(
+                effect, "status_resistance_context_or_definition_missing"
+            )
+        target_id = _resolve_target_alias(
+            standard.get("target_alias"),
+            caster_id=context.caster_id,
+            owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+        )
+        if (
+            not isinstance(target_id, str)
+            or not target_id
+            or target_id not in context.state.units
+        ):
+            return _unsupported_effect(effect, "status_resistance_target_missing")
+        evaluation = _evaluate_numeric(effect, context, standard.get("resistance"))
+        if not evaluation.ok or evaluation.value is None:
+            return _unsupported_effect(
+                effect,
+                evaluation.blocked_reason or "status_resistance_value_unresolved",
+            )
+        value = float(evaluation.value)
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            return _unsupported_effect(
+                effect, "status_resistance_value_not_admitted"
+            )
+        unit = context.state.units[target_id]
+        before = unit.flags.get("status_resistance_stacks")
+        if before is not None and not isinstance(before, (list, tuple)):
+            return _unsupported_effect(effect, "status_resistance_state_invalid")
+        entries = [
+            dict(entry) for entry in (before or ()) if isinstance(entry, dict)
+        ]
+        kept = [
+            entry
+            for entry in entries
+            if entry.get("producer_effect_id") != effect.effect_id
+        ]
+        installed = {
+            "bucket": "status_resistance",
+            "scope": "target",
+            "behavior_flag": standard["behavior_flag"],
+            "value": value,
+            "opcode": effect.opcode,
+            "producer_effect_id": effect.effect_id,
+            "owner_id": target_id,
+            "effect_source": effect.source.to_json(),
+            "numeric_evaluation": evaluation.to_json(),
+        }
+        after = [*kept, installed]
+        changed = after != entries
+        mutation = (
+            Mutation(
+                "set",
+                ("units", target_id, "flags", "status_resistance_stacks"),
+                before,
+                after,
+                "install a behavior-flag status resistance stack",
+                "effect_system",
+                before_exists="status_resistance_stacks" in unit.flags,
+                metadata={
+                    "effect_id": effect.effect_id,
+                    "opcode": effect.opcode,
+                    "behavior_flag": installed["behavior_flag"],
+                    "value": value,
+                    "owner_id": target_id,
+                    "effect_source": effect.source.to_json(),
+                },
+            )
+            if changed
+            else None
+        )
+        return EffectResult(
+            mutations=(mutation,) if mutation is not None else (),
+            records=(
+                SettlementRecord(
+                    record_type="status_resistance_stack",
+                    source="effect_system",
+                    mutation_id=mutation.stable_id() if mutation is not None else None,
+                    process_only=mutation is None,
+                    payload={
+                        "owner_id": target_id,
+                        "behavior_flag": installed["behavior_flag"],
+                        "value": value,
+                        "previous_value": next(
+                            (
+                                entry.get("value")
+                                for entry in entries
+                                if entry.get("producer_effect_id")
+                                == effect.effect_id
+                            ),
+                            None,
+                        ),
+                        "numeric_evaluation": evaluation.to_json(),
+                    },
+                    trace=effect.source.to_json(),
+                ).to_json(),
+            ),
+        )
 
     def _execute_modify_skill_property(
         self, effect: EffectIR, context: EffectExecutionContext | None
@@ -1017,6 +1134,20 @@ class EffectRegistry:
             "operation": "verify_death_settlement", "source_shape_admitted": True,
         }:
             return "blocked"
+        if effect.opcode == "StackStatusResistance":
+            standard = effect.payload.get("standard")
+            if not (
+                isinstance(standard, dict)
+                and not standard.get("blocked_reason")
+                and standard.get("operation") == "stack_status_resistance"
+                and standard.get("target_alias") in {"Caster", "ModifierOwnerEntity"}
+                and isinstance(standard.get("behavior_flag"), str)
+                and bool(standard["behavior_flag"])
+                and _runtime_numeric_payload_is_executable(
+                    standard.get("resistance")
+                )
+            ):
+                return "blocked"
         if effect.opcode == "AddModifier" and not _add_modifier_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
@@ -1356,6 +1487,135 @@ class EffectRegistry:
         return EffectResult(events=tuple(events), mutations=tuple(mutations), records=tuple(records),
                             rng_events=resolution.rng_events)
 
+    def _execute_set_hp(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        if context is None:
+            return _unsupported_effect(effect, "set_hp requires EffectExecutionContext")
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            return _unsupported_effect(effect, "set_hp effect has no standardized payload")
+        blocked_reason = standard.get("blocked_reason")
+        if isinstance(blocked_reason, str) and blocked_reason:
+            return _unsupported_effect(
+                effect,
+                f"unsupported_formula:{blocked_reason}",
+                {"standard": standard},
+            )
+        target_id = _resolve_target_alias(
+            standard.get("target_alias"),
+            caster_id=context.caster_id,
+            owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
+        )
+        if target_id is None:
+            return _unsupported_effect(
+                effect,
+                "unsupported_or_missing_target_alias:" + str(standard.get("target_alias")),
+            )
+        amount_result = _evaluate_numeric(effect, context, standard.get("amount"))
+        if not amount_result.ok or amount_result.value is None:
+            return _unsupported_effect(
+                effect,
+                "unsupported_formula:" + str(amount_result.blocked_reason or "numeric_evaluation_failed"),
+                {"numeric_evaluation": amount_result.to_json(), "standard": standard},
+            )
+        requested = float(amount_result.value)
+        if not math.isfinite(requested) or requested < 0:
+            return _unsupported_effect(effect, "unsupported_formula:set_hp_amount_invalid")
+        state = context.state
+        unit = state.units.get(target_id)
+        if unit is None:
+            return _unsupported_effect(effect, "target unit is not in state")
+        maximum = current_max_hp(unit)
+        hp_after = min(requested, maximum) if maximum > 0 else requested
+        source_trace = {
+            "effect_id": effect.effect_id,
+            "effect_source": effect.source.to_json(),
+            "set_hp_request": requested,
+            "target_id": target_id,
+            "current_max_hp": maximum,
+        }
+        metadata = {
+            **source_trace,
+            "target_before_hp": unit.hp,
+            "target_after_hp": hp_after,
+            "hp_adjustment": "set",
+        }
+        if unit.lifecycle_status == "limbo":
+            lifecycle = UnitLifecycleSystem()
+            try:
+                plan = lifecycle.pending_defeat(state, target_id)
+            except ValueError as exc:
+                return _unsupported_effect(effect, "set_hp_pending_defeat_invalid:" + str(exc))
+            if plan is None:
+                return _unsupported_effect(effect, "set_hp_limbo_pending_defeat_missing")
+            hp_mutation = Mutation(
+                "set",
+                ("units", target_id, "hp"),
+                unit.hp,
+                hp_after,
+                "restore a pending unit through SetHP",
+                "effect_system",
+                metadata={**metadata, "pending_defeat_id": plan.pending_id},
+            )
+            try:
+                rescue = lifecycle.rescue_from_limbo_mutations(state, plan, hp_mutation)
+            except ValueError as exc:
+                return _unsupported_effect(effect, "set_hp_limbo_rescue_blocked:" + str(exc))
+            records = tuple(
+                SettlementRecord(
+                    record_type="unit_revived" if mutation.path[-1] == "hp" else "unit_lifecycle",
+                    source="effect_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        **metadata,
+                        "pending_defeat_id": plan.pending_id,
+                        "lifecycle_operation": "unit_limbo_rescued",
+                        "mutation_path": list(mutation.path),
+                    },
+                    trace=source_trace,
+                ).to_json()
+                for mutation in rescue
+            )
+            return EffectResult(mutations=rescue, records=records)
+        if hp_after == unit.hp:
+            return EffectResult(
+                records=tuple(
+                    SettlementRecord(
+                        record_type="set_hp_idempotent",
+                        source="effect_system",
+                        process_only=True,
+                        payload={**metadata, "state_unchanged": True},
+                        trace=source_trace,
+                    ).to_json(),
+                ),
+            )
+        mutation = Mutation(
+            "set",
+            ("units", target_id, "hp"),
+            unit.hp,
+            hp_after,
+            "set current HP through SetHP",
+            "effect_system",
+            metadata=metadata,
+        )
+        record = SettlementRecord(
+            record_type="hp_set",
+            source="effect_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={**metadata, "mutation_path": ["units", target_id, "hp"]},
+            trace=source_trace,
+        ).to_json()
+        events = events_for_mutation(
+            mutation,
+            actor_id=context.caster_id,
+            source_id=context.caster_id,
+            event_index=state.event_index,
+        )
+        return EffectResult(mutations=(mutation,), events=events, records=(record,))
     def _execute_heal(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         standard = effect.payload.get("standard")
         if not isinstance(standard, dict) or standard.get("target_alias") not in _GROUP_HEAL_TARGET_ALIASES:
@@ -2031,7 +2291,7 @@ def _execute_fixed_unit_delta(
         formula_details["outgoing_healing_ratio"] = outgoing.to_json()
         formula_details["incoming_healing_ratio"] = incoming.to_json()
         formula_details["transient_heal_ratio"] = transient_ratio
-        after = max(0.0, min(unit.max_hp, unit.hp + amount))
+        after = max(0.0, min(current_max_hp(unit), unit.hp + amount))
         formula_details["offered_healing"] = amount
         formula_details["realized_healing"] = after - unit.hp
         formula_details["overheal"] = max(0.0, amount - (after - unit.hp))
@@ -2330,7 +2590,7 @@ def _execute_hp_loss_ratio(
     if ratio < 0:
         return _unsupported_effect(effect, "unsupported_formula:hp_loss_ratio_negative", {"numeric_evaluation": ratio_result.to_json(), "standard": standard})
     target = context.state.units[target_id]
-    base_hp = target.max_hp if ratio_type == "MaxHP" else target.hp
+    base_hp = current_max_hp(target) if ratio_type == "MaxHP" else target.hp
     amount = base_hp * ratio
     requested_amount = amount
     minimum_hp = None
@@ -2432,14 +2692,15 @@ def _execute_hp_loss_ratio(
             )
         after_hp = float(hp_mutation.after)
         hp_mutation_id = hp_mutation.stable_id()
-    if target.max_hp <= 0:
+    target_max_hp = current_max_hp(target)
+    if target_max_hp <= 0:
         return _unsupported_effect(
             effect,
             "hp_loss_dynamic_result_max_hp_not_positive",
             {"standard": standard, "target_id": target_id},
         )
     actual_loss = max(0.0, before_hp - after_hp)
-    applied_ratio = actual_loss / float(target.max_hp)
+    applied_ratio = actual_loss / float(target_max_hp)
     dynamic_owner_id = context.owner_id or context.caster_id
     source_detail = _find_hp_loss_owner_status_detail(context, dynamic_owner_id, effect)
     dynamic_result_hash = _hp_loss_status_dynamic_hash(
@@ -2464,7 +2725,7 @@ def _execute_hp_loss_ratio(
             "target_id": target_id,
             "before_hp": before_hp,
             "after_hp": after_hp,
-            "max_hp": float(target.max_hp),
+            "max_hp": float(target_max_hp),
             "actual_loss": actual_loss,
             "hp_mutation_id": hp_mutation_id,
         },
@@ -2488,7 +2749,7 @@ def _execute_hp_loss_ratio(
             "target_id": target_id,
             "before_hp": before_hp,
             "after_hp": after_hp,
-            "max_hp": float(target.max_hp),
+            "max_hp": float(target_max_hp),
             "actual_loss": actual_loss,
             "hp_mutation_id": hp_mutation_id,
         },
@@ -4058,15 +4319,17 @@ def _resolve_formula_amount(
     if caster is None:
         return 0.0, details, "unsupported_formula:formula_caster_missing"
     if formula_base == "target.max_hp":
-        details["base_value"] = target.max_hp
-        return target.max_hp * raw_value, details, ""
+        target_max_hp = current_max_hp(target)
+        details["base_value"] = target_max_hp
+        return target_max_hp * raw_value, details, ""
     if formula_base == "target.lost_hp":
-        lost_hp = max(0.0, target.max_hp - target.hp)
+        lost_hp = max(0.0, current_max_hp(target) - target.hp)
         details["base_value"] = lost_hp
         return lost_hp * raw_value, details, ""
     if formula_base == "caster.max_hp":
-        details["base_value"] = caster.max_hp
-        return caster.max_hp * raw_value, details, ""
+        caster_max_hp = current_max_hp(caster)
+        details["base_value"] = caster_max_hp
+        return caster_max_hp * raw_value, details, ""
     if formula_base == "caster.defense":
         effective_defense = effective_unit_stat(caster, "defense")
         details["base_value"] = effective_defense.value

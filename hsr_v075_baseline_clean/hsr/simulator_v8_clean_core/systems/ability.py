@@ -278,6 +278,9 @@ class _FormalAbilityInvocation:
     template_target_ids: tuple[str, ...] | None = None
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
     damage_window_ledger: DamageWindowLedger = field(default_factory=DamageWindowLedger, compare=False, repr=False)
+    # Assigned on first use so every task of one invocation shares one
+    # execution identity even while nested events advance the state index.
+    stable_ability_instance_id: str = field(default="", compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if type(self) is not _FormalAbilityInvocation:
@@ -4055,7 +4058,10 @@ class AbilityTaskSystem:
                                 action_level=command.action_level, action_id=command.action_id,
                                 current_action_trigger_key=_action_trigger_key(action_definition),
                                 template_binding_sources=template_binding_sources,
-                                ability_instance_id=f"ability_action:{state.event_index}:{command.actor_id}:{command.action_id}:{command.action_level}"),
+                                ability_instance_id=(
+                                    packet_sequence_id
+                                    or f"ability_action:{state.event_index}:{command.actor_id}:{command.action_id}:{command.action_level}"
+                                )),
                             *_expression_binding_sources(extra_expr),
                         ), source_trace=emission.source.to_json()))
                     if not extra_eval.ok or extra_eval.value is None:
@@ -4846,10 +4852,14 @@ def _formal_condition_provider(
 
 
 def _ability_instance_id(state: BattleState, invocation: _FormalAbilityInvocation) -> str:
-    return (
+    if invocation.stable_ability_instance_id:
+        return invocation.stable_ability_instance_id
+    value = (
         f"ability_{invocation.invocation_kind}:{state.event_index}:"
         f"{invocation.actor_id}:{invocation.ability_id}:{invocation.ability_level}"
     )
+    object.__setattr__(invocation, "stable_ability_instance_id", value)
+    return value
 
 
 def _binding_sources(

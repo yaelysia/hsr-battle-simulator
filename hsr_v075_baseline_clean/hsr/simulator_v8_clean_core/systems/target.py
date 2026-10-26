@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
+from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution, current_max_hp
 from ..immutable_json import freeze_json, thaw_json
 from ..rules.evaluator import (
     EvaluationContext,
@@ -2572,9 +2572,10 @@ def _property_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
     if sort_key == "CurrentHP":
         return float(unit.hp), ""
     if sort_key == "MaxHP":
-        if unit.max_hp <= 0:
+        maximum = current_max_hp(unit)
+        if maximum <= 0:
             return 0.0, "max_hp_non_positive"
-        return float(unit.max_hp), ""
+        return float(maximum), ""
     if sort_key == "CurrentStance":
         return float(unit.toughness), ""
     if sort_key == "MaxStance":
@@ -2590,9 +2591,10 @@ def _property_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
 
 def _property_ratio_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
     if sort_key == "HPRatio":
-        if unit.max_hp <= 0:
+        maximum = current_max_hp(unit)
+        if maximum <= 0:
             return 0.0, "max_hp_non_positive"
-        return float(unit.hp) / float(unit.max_hp), ""
+        return float(unit.hp) / float(maximum), ""
     if sort_key == "StanceRatio":
         if unit.max_toughness <= 0:
             return 0.0, "max_toughness_non_positive"

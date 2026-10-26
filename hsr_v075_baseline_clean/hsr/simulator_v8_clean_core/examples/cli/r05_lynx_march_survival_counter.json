@@ -1,0 +1,116 @@
+{
+ "battle_setup": {
+  "metadata": {
+   "stage_scope": "wave_only",
+   "scope": "StageConfig 400020800 wave 0 (Lv28 Source Minions). Lynx Lv80 E6 full traces casts Skill on March to apply Survival Response and its HoT; March Lv80 E6 full traces shields and counters and casts her Ultimate to freeze. Initial energies are declared inputs, not injected state."
+  },
+  "timeline": {
+   "mode": "runtime_initialize"
+  }
+ },
+ "route": [],
+ "scenario_id": "ordinary:lynx-march-survival-counter",
+ "stage_ref": "400020800",
+ "units": [
+  {
+   "unit_id": "lynx",
+   "side": "ally",
+   "entity_ref": "avatar:1110",
+   "level": 80,
+   "eidolon_level": 6,
+   "position": 0,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "lynx:build",
+    "character_card_id": "character_data_card:avatar:1110",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 6,
+    "unlocked_trace_node_ids": [
+     "character_trace_node:character_data_card:avatar:1110:1110001:6",
+     "character_trace_node:character_data_card:avatar:1110:1110002:10",
+     "character_trace_node:character_data_card:avatar:1110:1110003:10",
+     "character_trace_node:character_data_card:avatar:1110:1110004:10",
+     "character_trace_node:character_data_card:avatar:1110:1110101:1",
+     "character_trace_node:character_data_card:avatar:1110:1110102:1",
+     "character_trace_node:character_data_card:avatar:1110:1110103:1",
+     "character_trace_node:character_data_card:avatar:1110:1110201:1",
+     "character_trace_node:character_data_card:avatar:1110:1110202:1",
+     "character_trace_node:character_data_card:avatar:1110:1110203:1",
+     "character_trace_node:character_data_card:avatar:1110:1110204:1",
+     "character_trace_node:character_data_card:avatar:1110:1110205:1",
+     "character_trace_node:character_data_card:avatar:1110:1110206:1",
+     "character_trace_node:character_data_card:avatar:1110:1110207:1",
+     "character_trace_node:character_data_card:avatar:1110:1110208:1",
+     "character_trace_node:character_data_card:avatar:1110:1110209:1",
+     "character_trace_node:character_data_card:avatar:1110:1110210:1"
+    ],
+    "equipment_build": {
+     "build_id": "lynx:equipment",
+     "character_card_id": "character_data_card:avatar:1110",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "1a92054928adc11af33d5b4392df00319137ce8dc2c13ce940929d55d0ddbdff"
+    },
+    "input_fingerprint": "efba9605d3b2313208d5d4398824adbc707af15c263e5ca59276baea85d3f315"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  },
+  {
+   "unit_id": "march",
+   "side": "ally",
+   "entity_ref": "avatar:1001",
+   "level": 80,
+   "eidolon_level": 4,
+   "position": 1,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "march:build",
+    "character_card_id": "character_data_card:avatar:1001",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 4,
+    "unlocked_trace_node_ids": [
+     "character_trace_node:character_data_card:avatar:1001:1001001:6",
+     "character_trace_node:character_data_card:avatar:1001:1001002:10",
+     "character_trace_node:character_data_card:avatar:1001:1001003:10",
+     "character_trace_node:character_data_card:avatar:1001:1001004:10",
+     "character_trace_node:character_data_card:avatar:1001:1001101:1",
+     "character_trace_node:character_data_card:avatar:1001:1001102:1",
+     "character_trace_node:character_data_card:avatar:1001:1001103:1",
+     "character_trace_node:character_data_card:avatar:1001:1001201:1",
+     "character_trace_node:character_data_card:avatar:1001:1001202:1",
+     "character_trace_node:character_data_card:avatar:1001:1001203:1",
+     "character_trace_node:character_data_card:avatar:1001:1001204:1",
+     "character_trace_node:character_data_card:avatar:1001:1001205:1",
+     "character_trace_node:character_data_card:avatar:1001:1001206:1",
+     "character_trace_node:character_data_card:avatar:1001:1001207:1",
+     "character_trace_node:character_data_card:avatar:1001:1001208:1",
+     "character_trace_node:character_data_card:avatar:1001:1001209:1",
+     "character_trace_node:character_data_card:avatar:1001:1001210:1"
+    ],
+    "equipment_build": {
+     "build_id": "march:equipment",
+     "character_card_id": "character_data_card:avatar:1001",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "795cfab629fb2120f64ad5edade61c5f48920d7d73961f048ed588c59d191584"
+    },
+    "input_fingerprint": "2e4556378e61c373d15587e8a1b5edde06d1931624f74597a3b4c195c4447812"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  }
+ ],
+ "version": "v0_200",
+ "wave_index": 0
+}

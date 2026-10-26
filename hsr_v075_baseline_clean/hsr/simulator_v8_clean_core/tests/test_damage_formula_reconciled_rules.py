@@ -8,6 +8,8 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
+import pytest
+
 from hsr.simulator_v8_clean_core.core.model import BattleState, UnitState, UnitStatPool
 from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR, IRSource
 from hsr.simulator_v8_clean_core.systems.damage_formula import DamageFormulaInput, DirectDamageFormula
@@ -177,3 +179,247 @@ class DamageFormulaReconciledRulesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# --- R05 review: damage block admission, lifecycle and settlement linkage -----------------
+
+
+def _r05_block_case():
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.tests.test_kill_energy_shared_producer import (
+        _primitive_case,
+    )
+
+    state, packet = _primitive_case()
+    detail = {
+        "instance_id": "block:instance",
+        "status_id": "modifier:BlockDamage_Count",
+        "modifier_name": "BlockDamage_Count",
+        "owner_id": "target",
+        "caster_id": "target",
+        "stacks": 1,
+        "lifecycle_state": "active",
+        "behavior_flags": ["BlockDamageExcludeDot"],
+    }
+    target = replace(
+        state.units["target"],
+        hp=100.0,
+        statuses=(detail["status_id"],),
+        flags={"status_details": [detail]},
+    )
+    state = replace(state, units={**state.units, "target": target})
+    return state, replace(packet, damage_formula_family="direct")
+
+
+def test_r05_damage_block_does_not_admit_an_invalid_direct_packet():
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.systems.damage import DamageSystem
+
+    state, packet = _r05_block_case()
+    without_block = replace(
+        state,
+        units={
+            **state.units,
+            "target": replace(state.units["target"], flags={}, statuses=()),
+        },
+    )
+    control = DamageSystem().apply_packet(without_block, packet)
+    assert not control.ok, control.to_json()
+    result = DamageSystem().apply_packet(state, packet)
+    assert not result.ok and not result.mutations, result.to_json()
+
+
+def test_r05_exhausted_damage_block_links_every_native_mutation():
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR, IRSource
+    from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSystem
+
+    state, previous = _r05_block_case()
+    state = replace(
+        state,
+        units={
+            **state.units,
+            "source": replace(state.units["source"], attack=10.0),
+        },
+    )
+    source = IRSource("component", "validation", "normal-hit")
+    action = ActionDefinitionIR(
+        "definition", "action", 1, "Normal", "SingleAttack", "Single",
+        0, 0, 0, 0, (), (), (), "Fire", source,
+    )
+    packet = DamagePacket(
+        "source", "target", "Normal", "direct", action_definition=action,
+        scaling_ratio=1.0,
+        scaling_basis={"kind": "unit_stat", "unit_ref": "attacker", "stat": "attack"},
+        element_type="Fire", source_frame=previous.source_frame,
+        source_trace=source.to_json(), metadata={"crit_mode": "noncrit"},
+    )
+    control_state = replace(
+        state,
+        units={
+            **state.units,
+            "target": replace(state.units["target"], flags={}, statuses=()),
+        },
+    )
+    assert DamageSystem().apply_packet(control_state, packet).ok
+    result = DamageSystem().apply_packet(state, packet)
+    assert result.ok
+    mutation_ids = {mutation.stable_id() for mutation in result.mutations}
+    record_ids = {record.get("mutation_id") for record in result.records}
+    assert mutation_ids <= record_ids, {
+        "unlinked_mutations": mutation_ids - record_ids,
+    }
+
+
+def test_r05_status_damage_pursued_formula_keeps_the_break_chain():
+    import json
+    from pathlib import Path
+
+    from hsr.simulator_v8_clean_core.tbgd.lowering import (
+        _status_callback_task_admission,
+    )
+
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    data = json.loads(
+        (root / "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json").read_text()
+    )
+    for modifier in ("MCommon_Element_Frozen", "MCommon_Element_Entangle"):
+        tasks = [
+            task
+            for callback in data["ModifierMap"][modifier]["_CallbackList"]
+            if callback["Event"] == "OnPhase1"
+            for task in callback["CallbackConfig"]
+            if task.get("$type") == "RPG.GameCore.DamageByAttackProperty"
+        ]
+        assert len(tasks) == 1
+        attack = tasks[0]["AttackProperty"]
+        assert attack["FormulaType"] == "ByBreakDamage"
+        assert attack["AttackType"] == "Pursued"
+        assert _status_callback_task_admission(
+            "OnPhase1", "DamageByAttackProperty", tasks[0]
+        ) == ("executable", "")
+
+def test_r05_damage_block_consumes_one_remaining_layer_formally():
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR, IRSource
+    from hsr.simulator_v8_clean_core.systems.damage import DamagePacket, DamageSystem
+
+    state, previous = _r05_block_case()
+    target = state.units["target"]
+    layered = {
+        **target.flags["status_details"][0],
+        "stacks": 2,
+        "max_stacks": 2,
+        "stack_policy": "Layer",
+    }
+    state = replace(
+        state,
+        units={
+            **state.units,
+            "target": replace(
+                target,
+                flags={"status_details": [layered]},
+                statuses=(layered["status_id"],),
+            ),
+            "source": replace(state.units["source"], attack=10.0),
+        },
+    )
+    source = IRSource("component", "validation", "normal-hit")
+    action = ActionDefinitionIR(
+        "definition", "action", 1, "Normal", "SingleAttack", "Single",
+        0, 0, 0, 0, (), (), (), "Fire", source,
+    )
+    packet = DamagePacket(
+        "source", "target", "Normal", "direct", action_definition=action,
+        scaling_ratio=1.0,
+        scaling_basis={"kind": "unit_stat", "unit_ref": "attacker", "stat": "attack"},
+        element_type="Fire", source_frame=previous.source_frame,
+        source_trace=source.to_json(), metadata={"crit_mode": "noncrit"},
+    )
+    result = DamageSystem().apply_packet(state, packet)
+    assert result.ok, result.errors
+    mutation_ids = {mutation.stable_id() for mutation in result.mutations}
+    record_ids = {record.get("mutation_id") for record in result.records}
+    assert mutation_ids <= record_ids
+    after_details = next(
+        mutation.after
+        for mutation in result.mutations
+        if mutation.path == ("units", "target", "flags", "status_details")
+    )
+    assert after_details[0]["stacks"] == 1
+
+
+@pytest.mark.parametrize(
+    "basis",
+    [
+        {"kind": "unsupported"},
+        {"kind": "unit_stat", "unit_ref": "attacker", "stat": "unsupported"},
+        {"kind": "unit_stat", "unit_ref": "unbound", "stat": "attack"},
+    ],
+)
+def test_r05_block_preserves_the_real_formula_basis_admission(basis):
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.systems.damage import DamageSystem
+
+    state, packet = _r05_block_case()
+    packet = replace(packet, scaling_basis=basis)
+    without_block = replace(
+        state,
+        units={
+            **state.units,
+            "target": replace(state.units["target"], statuses=(), flags={}),
+        },
+    )
+    control = DamageSystem().apply_packet(without_block, packet)
+    assert not control.ok, control.to_json()
+    result = DamageSystem().apply_packet(state, packet)
+    assert not result.ok and not result.mutations and not result.rng_events
+
+
+def test_r05_block_preserves_elation_actor_authority_admission():
+    from dataclasses import replace
+
+    from hsr.simulator_v8_clean_core.systems.damage import DamageSystem
+    from hsr.simulator_v8_clean_core.systems.elation import (
+        resolve_elation_damage_context,
+    )
+
+    from hsr.simulator_v8_clean_core.systems.damage import DamagePacket
+
+    state, previous = _r05_block_case()
+    context = resolve_elation_damage_context(state, "target", point_source="echo")
+    packet = DamagePacket(
+        "source",
+        "target",
+        "Normal",
+        "elation",
+        elation_context=context,
+        scaling_ratio=1.0,
+        scaling_basis={"kind": "elation_level_base"},
+        source_frame=previous.source_frame,
+        source_trace={
+            "kind": "validation_fixture",
+            "scope": "elation actor authority",
+        },
+        metadata={"crit_mode": "noncrit"},
+    )
+    without_block = replace(
+        state,
+        units={
+            **state.units,
+            "target": replace(state.units["target"], statuses=(), flags={}),
+        },
+    )
+    control = DamageSystem().apply_packet(without_block, packet)
+    assert not control.ok
+    assert "elation_context_actor_mismatch" in control.errors, control.errors
+    result = DamageSystem().apply_packet(state, packet)
+    assert not result.ok and not result.mutations and not result.rng_events, {
+        "control": control.errors,
+        "ok": result.ok,
+        "writes": [list(mutation.path) for mutation in result.mutations],
+    }

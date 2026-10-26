@@ -8,8 +8,9 @@ from typing import Callable
 
 from ..core.model import (
     BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution,
+    current_max_hp,
     StatusImmunityFact, StatusLifecycleFact, _STATUS_IMMUNITY_PRODUCER,
-    _STATUS_LIFECYCLE_PRODUCER,
+    _STATUS_LIFECYCLE_PRODUCER, StatusHPClampFact, _STATUS_HP_CLAMP_PRODUCER,
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
@@ -43,6 +44,7 @@ from .unit_relation import EntityRelationResolver, TargetEvaluationContext, comm
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_relation import is_opposing_combat_team
 from .unit_stats import (
+    behavior_flag_status_resistance,
     control_kind_from_behavior_flags,
     effective_status_resistance,
     effective_unit_stat,
@@ -325,6 +327,142 @@ class StatusSystem:
             metadata={"status_id": status_id},
         )
 
+    def reduce_status_layer(
+        self,
+        state: BattleState,
+        *,
+        target_id: str,
+        detail: dict[str, JSONValue],
+        source: str,
+        source_trace: dict[str, JSONValue],
+    ) -> StatusLifecycleResult:
+        """Consume one layer from an exact status instance through the lifecycle.
+
+        The structured stack operation is preferred when the instance declares its
+        stack policy.  A source-declared one-hit block may still carry a plain
+        layer count; this method keeps that consumption inside the same lifecycle
+        (status/detail/records), never by editing the flags directly.
+        """
+
+        unit = state.units.get(target_id)
+        status_id = str(detail.get("status_id") or "")
+        stacks = detail.get("stacks")
+        if (
+            unit is None
+            or not status_id
+            or status_id not in unit.statuses
+            or type(stacks) is not int
+            or stacks <= 1
+        ):
+            return StatusLifecycleResult(
+                ok=False,
+                operation="stack_reduce",
+                records=(
+                    SettlementRecord(
+                        record_type="status_stack_reduce",
+                        source=source,
+                        process_only=True,
+                        payload={"operation": "stack_reduce", "reason": "status_layer_not_reducible"},
+                        trace=source_trace,
+                    ).to_json(),
+                ),
+                unsupported=("status_layer_not_reducible",),
+            )
+        try:
+            instance_fields = {
+                item.name: detail[item.name]
+                for item in fields(StatusInstance)
+                if item.name in detail
+            }
+            # One-hit block details may omit the duplicate source/caster ids.
+            instance_fields.setdefault(
+                "source_id",
+                str(detail.get("caster_id") or detail.get("owner_id") or ""),
+            )
+            instance_fields.setdefault(
+                "caster_id",
+                str(detail.get("owner_id") or ""),
+            )
+            instance = StatusInstance(**instance_fields)
+        except (TypeError, ValueError):
+            return StatusLifecycleResult(
+                ok=False,
+                operation="stack_reduce",
+                records=(
+                    SettlementRecord(
+                        record_type="status_stack_reduce",
+                        source=source,
+                        process_only=True,
+                        payload={
+                            "operation": "stack_reduce",
+                            "reason": "status_layer_instance_not_admitted",
+                        },
+                        trace=source_trace,
+                    ).to_json(),
+                ),
+                unsupported=("status_layer_instance_not_admitted",),
+            )
+        plan = StatusLifecyclePlan(
+            operation="stack_reduce",
+            target_id=target_id,
+            status_id=status_id,
+            source=source,
+            before_details=tuple(_status_details(unit.flags)),
+            existing_detail=detail,
+            status_instance=replace(
+                instance,
+                stacks=stacks - 1,
+                application_operation="stack_reduce",
+            ),
+            source_trace=source_trace,
+        )
+        return self._apply_lifecycle_plan(state, plan)
+    def remove_status_instance(
+        self,
+        state: BattleState,
+        *,
+        target_id: str,
+        detail: dict[str, JSONValue],
+        source: str,
+        source_trace: dict[str, JSONValue],
+    ) -> StatusLifecycleResult:
+        """Remove one exact status instance through the formal lifecycle.
+
+        Callers that consume a rule status already present on the unit (for
+        example a one-hit damage block) use this instead of editing status
+        details and statuses by hand: the lifecycle produces the status, detail,
+        departure and dynamic-value cleanup mutations together with their native
+        settlement records and OnDestroy events.
+        """
+
+        unit = state.units.get(target_id)
+        status_id = str(detail.get("status_id") or "")
+        if unit is None or not status_id or status_id not in unit.statuses:
+            return StatusLifecycleResult(
+                ok=False,
+                operation="remove",
+                records=(
+                    SettlementRecord(
+                        record_type="status_lifecycle",
+                        source=source,
+                        process_only=True,
+                        payload={"operation": "remove", "reason": "status_instance_not_present"},
+                        trace=source_trace,
+                    ).to_json(),
+                ),
+                unsupported=("status_instance_not_present",),
+            )
+        plan = StatusLifecyclePlan(
+            operation="remove",
+            target_id=target_id,
+            status_id=status_id,
+            source=source,
+            before_details=tuple(_status_details(unit.flags)),
+            existing_detail=detail,
+            source_trace=source_trace,
+        )
+        return self._apply_lifecycle_plan(state, plan)
+
     def remove_status(self, state: BattleState, unit_id: str, status_id: str, source: str) -> Mutation:
         unit = state.units[unit_id]
         statuses = tuple(item for item in unit.statuses if item != status_id)
@@ -470,7 +608,20 @@ class StatusSystem:
                 unsupported=result.unsupported, lifecycle_result=result,
             ))
         if value_kind == "Layer":
-            instance = StatusInstance(**{item.name: detail[item.name] for item in fields(StatusInstance) if item.name in detail})
+            instance_fields = {
+                item.name: detail[item.name]
+                for item in fields(StatusInstance)
+                if item.name in detail
+            }
+            instance_fields.setdefault(
+                "source_id",
+                str(detail.get("caster_id") or detail.get("owner_id") or ""),
+            )
+            instance_fields.setdefault(
+                "caster_id",
+                str(detail.get("owner_id") or ""),
+            )
+            instance = StatusInstance(**instance_fields)
             operation = "stack" if value >= old else "stack_reduce"
             result = self._apply_lifecycle_plan(state, StatusLifecyclePlan(
                 operation=operation, target_id=target_id, status_id=detail["status_id"], source="status_system",
@@ -2290,6 +2441,7 @@ class StatusSystem:
                 records=(_status_dispel_process_record("status_dispel_blocked", reason, source_trace),),
                 unsupported=(reason,),
             )
+        unbounded = count_admission.get("unbounded") is True
         count = int(count_admission.get("count") or 0)
         lifecycle_results: list[StatusLifecycleResult] = []
         records: list[dict[str, JSONValue]] = []
@@ -2313,7 +2465,7 @@ class StatusSystem:
                     )
                 )
                 continue
-            selected = candidates[:count]
+            selected = list(candidates) if unbounded else candidates[:count]
             if order == "Random":
                 if count != 1:
                     reason = "random_dispel_count_not_one"
@@ -2372,7 +2524,8 @@ class StatusSystem:
                             unsupported=("dispel_multi_target_mutation_conflict",),
                         )
                     current_state = reduction.after_state
-                break
+                if not unbounded:
+                    break
         mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
         events = tuple(event for result in lifecycle_results for event in result.events)
         records.extend(record for result in lifecycle_results for record in result.records)
@@ -3020,19 +3173,42 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
     if speed_mutation is not None:
         mutation_ids.append(speed_mutation.stable_id())
         records.append(_status_speed_progress_record(plan, speed_mutation))
+    clamp = _hp_cap_clamp_after_lifecycle(
+        state, plan, after_statuses, after_details
+    )
+    clamp_mutation = None
+    clamp_events: tuple[GameEvent, ...] = ()
+    if clamp is not None:
+        clamp_mutation, clamp_record = clamp
+        mutation_ids.append(clamp_mutation.stable_id())
+        records.append(clamp_record)
+        clamp_events = events_for_mutation(
+            clamp_mutation,
+            actor_id=plan.target_id,
+            source_id=plan.target_id,
+            event_index=state.event_index,
+        )
     mutations = tuple(
         mutation
-        for mutation in (status_mutation, detail_mutation, speed_mutation)
+        for mutation in (
+            status_mutation,
+            detail_mutation,
+            speed_mutation,
+            clamp_mutation,
+        )
         if mutation is not None
     )
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
         mutations=mutations,
-        events=_status_lifecycle_events(
-            plan,
-            state,
-            mutation_ids=tuple(mutation_ids),
+        events=(
+            *_status_lifecycle_events(
+                plan,
+                state,
+                mutation_ids=tuple(mutation_ids),
+            ),
+            *clamp_events,
         ),
         records=tuple(records),
         unsupported=plan.unsupported,
@@ -3097,6 +3273,111 @@ def _status_dynamic_value_cleanup(
     ).to_json()
     return mutation, record
 
+
+def _hp_cap_clamp_after_attribute_write(
+    state: BattleState,
+    target_id: str,
+    after_statuses: list[str],
+    after_details: list[dict[str, JSONValue]],
+    *,
+    source_trace: dict[str, JSONValue],
+    status_id: str,
+    status_instance_id: str,
+    operation: str,
+    lifecycle_plan: dict[str, JSONValue] | None = None,
+    attribute_write: dict[str, JSONValue] | None = None,
+) -> tuple[Mutation, dict[str, JSONValue]] | None:
+    """Clamp current HP after any status write lowered the effective Max-HP.
+
+    UnitState.max_hp stays the birth panel.  A construction status can raise the
+    effective ceiling; removals, expiries, replacements, layer reductions and
+    in-place modifier updates may lower it while the current HP is still above
+    the remaining ceiling.  The write and its exact HP difference are recorded
+    with the formal producer trace (lifecycle plan or attribute-write identity)
+    so the audit can verify the clamp from the native status result.
+    """
+
+    unit = state.units.get(target_id)
+    if unit is None:
+        return None
+    probe = replace(
+        unit,
+        statuses=tuple(after_statuses),
+        flags={**unit.flags, "status_details": list(after_details)},
+    )
+    ceiling = current_max_hp(probe)
+    if ceiling < 0 or unit.hp <= ceiling:
+        return None
+    before_ceiling = current_max_hp(unit)
+    hp_contract = {
+        "before_hp": unit.hp,
+        "after_hp": float(ceiling),
+        "delta": float(ceiling) - float(unit.hp),
+        "effective_max_hp_before": before_ceiling,
+        "effective_max_hp_after": float(ceiling),
+    }
+    metadata: dict[str, JSONValue] = {
+        "status_id": status_id,
+        "operation": operation,
+        "status_instance_id": status_instance_id,
+        "lifecycle_operation": "unit_hp_clamped_to_current_max_hp",
+        "source_trace": source_trace,
+        "hp_contract": hp_contract,
+        "hp_before": unit.hp,
+        "hp_after": float(ceiling),
+        "current_max_hp": float(ceiling),
+        "effective_max_hp_before": before_ceiling,
+        "effective_max_hp_after": float(ceiling),
+    }
+    if lifecycle_plan is not None:
+        metadata["source_operation"] = "lifecycle"
+        metadata["lifecycle_plan"] = lifecycle_plan
+    if attribute_write is not None:
+        metadata["source_operation"] = "attribute_write"
+        metadata["attribute_write"] = attribute_write
+    mutation = Mutation(
+        "set",
+        ("units", target_id, "hp"),
+        unit.hp,
+        float(ceiling),
+        "clamp HP after a status write lowered the effective Max-HP",
+        "status_system",
+        metadata=metadata,
+        status_hp_clamp_fact=StatusHPClampFact(
+            unit, probe, metadata, _STATUS_HP_CLAMP_PRODUCER
+        ),
+    )
+    record = SettlementRecord(
+        record_type="status_lifecycle_hp_clamp",
+        source="status_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload=dict(metadata),
+        trace=source_trace,
+    ).to_json()
+    return mutation, record
+
+
+def _hp_cap_clamp_after_lifecycle(
+    state: BattleState,
+    plan: StatusLifecyclePlan,
+    after_statuses: list[str],
+    after_details: list[dict[str, JSONValue]],
+) -> tuple[Mutation, dict[str, JSONValue]] | None:
+    return _hp_cap_clamp_after_attribute_write(
+        state,
+        plan.target_id,
+        after_statuses,
+        after_details,
+        source_trace=plan.source_trace,
+        status_id=plan.status_id,
+        status_instance_id=str(
+            (plan.existing_detail or {}).get("instance_id")
+            or (plan.status_instance.instance_id if plan.status_instance else "")
+        ),
+        operation=plan.operation,
+        lifecycle_plan=plan.to_json(),
+    )
 
 def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
     unit = state.units[plan.target_id]
@@ -3197,6 +3478,21 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         cleanup_mutation, cleanup_record = cleanup
         mutations = (*mutations, cleanup_mutation)
         records.append(cleanup_record)
+    clamp = _hp_cap_clamp_after_lifecycle(
+        state, plan, after_statuses, after_details
+    )
+    clamp_events: tuple[GameEvent, ...] = ()
+    if clamp is not None:
+        clamp_mutation, clamp_record = clamp
+        mutations = (*mutations, clamp_mutation)
+        mutation_ids.append(clamp_mutation.stable_id())
+        records.append(clamp_record)
+        clamp_events = events_for_mutation(
+            clamp_mutation,
+            actor_id=plan.target_id,
+            source_id=plan.target_id,
+            event_index=state.event_index,
+        )
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
@@ -3208,6 +3504,7 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
                 mutation_ids=tuple(mutation_ids),
             ),
             *departure_events,
+            *clamp_events,
         ),
         records=tuple(records),
         lifecycle_plan=plan,
@@ -3370,6 +3667,21 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         cleanup_mutation, cleanup_record = cleanup
         mutations = (*mutations, cleanup_mutation)
         records.append(cleanup_record)
+    clamp = _hp_cap_clamp_after_lifecycle(
+        state, plan, after_statuses, after_details
+    )
+    clamp_events: tuple[GameEvent, ...] = ()
+    if clamp is not None:
+        clamp_mutation, clamp_record = clamp
+        mutations = (*mutations, clamp_mutation)
+        mutation_ids.append(clamp_mutation.stable_id())
+        records.append(clamp_record)
+        clamp_events = events_for_mutation(
+            clamp_mutation,
+            actor_id=plan.target_id,
+            source_id=plan.target_id,
+            event_index=state.event_index,
+        )
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
@@ -3381,6 +3693,7 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
                 mutation_ids=tuple(mutation_ids),
             ),
             *departure_events,
+            *clamp_events,
         ),
         records=tuple(records),
         lifecycle_plan=plan,
@@ -3572,11 +3885,20 @@ def _status_lifecycle_events(
             for flag in plan.existing_detail.get("behavior_flags", [])
             if isinstance(flag, str)
         )
+    # Two different lifecycle results for the same status can share one
+    # transaction.  The mutation identities disambiguate them while a repeated
+    # identical mutation keeps the same identity and is still rejected.
+    lifecycle_suffix = (
+        ":" + hashlib.sha1("|".join(mutation_ids).encode("utf-8")).hexdigest()[:16]
+        if mutation_ids
+        else ""
+    )
     events: list[GameEvent] = []
     for callback_event in callback_events:
         event_id = (
             f"event:{state.event_index}:status_lifecycle:"
             f"{plan.operation}:{plan.target_id}:{_status_id_fragment(plan.status_id)}:{callback_event}"
+            f"{lifecycle_suffix}"
         )
         lifecycle_fact = None
         if not remove_like and plan.status_instance is not None:
@@ -4904,6 +5226,9 @@ def _runtime_chance_admission(
             category_source = "engine_rule:explicit_chance_opposing_target"
     control_kind = str(metadata.get("control_kind") or "")
     target_unit = state.units.get(target_id)
+    flag_resistance = 0.0
+    flag_resistance_terms: tuple[dict[str, JSONValue], ...] = ()
+    exposed_flags: tuple[str, ...] = ()
     if category == "buff":
         classification = "positive_status"
         effect_hit = 0.0
@@ -4925,6 +5250,18 @@ def _runtime_chance_admission(
         effect_resistance = resistance.effect_resistance
         control_resistance = resistance.control_resistance
         specific_resistance = resistance.specific_resistance
+        exposed_flags = tuple(
+            str(flag)
+            for flag in (metadata.get("behavior_flags") or ())
+            if isinstance(flag, str) and flag
+        )
+        flag_resistance, flag_resistance_terms = behavior_flag_status_resistance(
+            target_unit, exposed_flags
+        )
+        if flag_resistance:
+            specific_resistance = 1.0 - (1.0 - specific_resistance) * (
+                1.0 - flag_resistance
+            )
     elif category == "control":
         if target_unit is None:
             return {
@@ -5007,6 +5344,9 @@ def _runtime_chance_admission(
         "effect_resistance": effect_resistance,
         "control_resistance": control_resistance,
         "specific_resistance": specific_resistance,
+        "behavior_flag_resistance": flag_resistance,
+        "behavior_flag_resistance_terms": [dict(term) for term in flag_resistance_terms],
+        "behavior_flags": list(exposed_flags),
         "hit_adjusted_probability": hit_adjusted,
         "final_success_probability": final_probability,
         "requires_rng": 0.0 < final_probability < 1.0,
@@ -5194,6 +5534,17 @@ def _runtime_dispel_count_admission(
             source_trace=source_trace,
         ),
     )
+    if standard.get("dispel_scope") == "all_eligible":
+        # The source declares an unbounded eligible-status cleanup.  Count is
+        # the candidate list itself, so no numeric count is fabricated.
+        return {
+            "admission_status": "executable",
+            "blocked_reason": "",
+            "count": None,
+            "unbounded": True,
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
     if _is_missing_numeric_expr(count_expr):
         return {
             "admission_status": "blocked",
@@ -5300,11 +5651,18 @@ def _dispel_candidates(
 def _dispel_detail_skipped_reason(detail: dict[str, JSONValue], standard: dict[str, JSONValue]) -> str:
     if detail.get("can_dispel") is not True:
         return "can_dispel_not_true"
-    buff_type = str(standard.get("buff_type") or "")
+    # DispelStatus omits BuffType when the effect cleanses debuffs, which is
+    # the game's default dispel target.  A buff only becomes removable when the
+    # source names Buff explicitly.
+    buff_type = str(standard.get("buff_type") or "Debuff")
     if not buff_type:
         return ""
     category = str(detail.get("status_category") or "").lower()
     status_type = str(detail.get("status_type") or "").lower()
+    if not category and not status_type:
+        # Synthetic/generic status fixtures do not carry a category.  They are
+        # not an explicit buff, so the source's default debuff dispel applies.
+        return ""
     if buff_type == "Buff" and "buff" not in {category, status_type}:
         return "buff_type_mismatch:Buff"
     if buff_type == "Debuff" and "debuff" not in {category, status_type}:
@@ -5605,6 +5963,10 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
     common_properties = {
         "HPAddedRatio": ("attribute", "hp_added_ratio", "actor"),
         "HPDelta": ("attribute", "hp_delta", "actor"),
+        # A flat Max-HP amount produced by an HP conversion.  It participates in
+        # Max HP but stays separate from the source Max HP that percent-of-Max-HP
+        # conversions read.
+        "HPConvert": ("attribute", "hp_convert", "actor"),
         "AttackAddedRatio": ("attribute", "attack_added_ratio", "actor"),
         "AttackDelta": ("attribute", "attack_delta", "actor"),
         "DefenceAddedRatio": ("attribute", "defense_added_ratio", "target"),
@@ -6564,7 +6926,7 @@ def _defeated_halo_member_remains_related(
         return False, ""
     active_view = replace(
         unit,
-        hp=max(1.0, min(float(unit.max_hp), 1.0)),
+        hp=max(1.0, min(float(current_max_hp(unit)), 1.0)),
         lifecycle_status="active",
         flags={
             key: value

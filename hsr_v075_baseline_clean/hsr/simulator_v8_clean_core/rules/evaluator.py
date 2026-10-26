@@ -1606,7 +1606,9 @@ def _evaluate_condition_payload(
         unit = _state_unit(context, target_id)
         if unit is None:
             return _condition_blocked(condition_id, opcode, "target_unit_missing", {"target_id": target_id}, source_trace)
-        max_hp = float(getattr(unit, "max_hp", 0.0) or 0.0)
+        from ..core.model import current_max_hp
+
+        max_hp = current_max_hp(unit)
         if max_hp <= 0:
             return _condition_blocked(condition_id, opcode, "target_max_hp_not_positive", {"target_id": target_id}, source_trace)
         compare_value = evaluator.evaluate_numeric(
@@ -3396,7 +3398,9 @@ def _unit_property_ratios(
     for unit_id in unit_ids:
         unit = _state_unit(context, unit_id)
         hp = getattr(unit, "hp", None)
-        maximum = getattr(unit, "max_hp", None)
+        from ..core.model import current_max_hp
+
+        maximum = current_max_hp(unit)
         if not _finite_number(hp) or not _finite_number(maximum) or float(maximum) <= 0:
             return None
         values[unit_id] = float(hp) / float(maximum)

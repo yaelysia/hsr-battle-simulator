@@ -12,6 +12,7 @@ from ..core.model import (
     PendingDefeatPlan,
     UnitLifecycleStatus,
     UnitState,
+    current_max_hp,
 )
 from ..unit_eligibility import (
     runtime_unit_is_on_field,
@@ -181,7 +182,7 @@ class UnitLifecycleSystem:
                 or not hp_mutation.before_exists or not hp_mutation.after_exists
                 or type(hp_mutation.before) not in (int, float) or hp_mutation.before != unit.hp
                 or type(hp_mutation.after) not in (int, float) or not math.isfinite(hp_mutation.after)
-                or not 0 < hp_mutation.after <= unit.max_hp):
+                or not 0 < hp_mutation.after <= current_max_hp(unit)):
             raise ValueError("limbo_rescue_requires_its_positive_hp_mutation")
         metadata = {**hp_mutation.metadata, "pending_defeat_id": plan.pending_id,
                     "lethal_hp_mutation_id": plan.hp_mutation.stable_id(),

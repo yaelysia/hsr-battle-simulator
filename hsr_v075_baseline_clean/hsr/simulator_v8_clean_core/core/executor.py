@@ -269,6 +269,16 @@ class CombatExecutor:
                 if dispatched.errors:
                     break
 
+        if not errors:
+            limbo_rescue = self._execute_pending_limbo_queue_rescue(current_state)
+            if limbo_rescue is not None:
+                current_state = limbo_rescue.after_state
+                dispatch_mutations.extend(limbo_rescue.mutations)
+                dispatch_events.extend(limbo_rescue.events)
+                dispatch_rng_events.extend(limbo_rescue.rng_events)
+                dispatch_records.extend(limbo_rescue.records)
+                node_results.extend(limbo_rescue.node_results)
+                errors.extend(limbo_rescue.errors)
         transaction_events: tuple[GameEvent, ...] = ()
         if identity_conflict is None:
             try:
@@ -350,6 +360,212 @@ class CombatExecutor:
             event_normalizations=tuple(all_event_normalizations) if atomic_commit.outcome.successor_eligible else (),
         )
 
+    def _execute_pending_limbo_queue_rescue(self, state: BattleState) -> EventDispatchResult | None:
+        """Consume a limbo inserted-ability rescue entry inside the same transition.
+
+        A rescue listener (for example Arlan E4) enqueues a turn-insert ability while
+        the unit waits in limbo.  Until this entry actually runs the pending defeat
+        window cannot be finalized.  The executor therefore dequeues the entry, runs
+        the admitted standalone graph, and requires the native SetHP rescue to close
+        the pending cause before publishing the transaction.
+        """
+
+        from ..systems.queue import QueueSystem
+        from ..systems.unit_lifecycle import UnitLifecycleSystem
+        from ..systems.ability import StandaloneAbilityInvocation
+
+        lifecycle = UnitLifecycleSystem()
+        for unit_id, unit in sorted(state.units.items()):
+            if unit.lifecycle_status != "limbo":
+                continue
+            try:
+                plan = lifecycle.pending_defeat(state, unit_id)
+            except ValueError as exc:
+                return self._limbo_rescue_failure(state, f"limbo_rescue_pending_invalid:{exc}")
+            if plan is None:
+                continue
+            for queue_name, entries in sorted(state.queues.items()):
+                if not isinstance(entries, (list, tuple)):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    if (
+                        str(entry.get("actor_id") or "") != unit_id
+                        or str(entry.get("owner_alive_state") or "") != "alive_or_limbo"
+                    ):
+                        continue
+                    queue_system = QueueSystem()
+                    intent_id = str(entry.get("queue_intent_id") or "")
+                    entry_id = str(entry.get("entry_id") or "")
+                    resolution = self.rules.queue_resolution_for_intent(intent_id)
+                    if (
+                        resolution is None
+                        or resolution.coverage_status != "executable"
+                        or resolution.resolved_kind != "standalone_ability_graph"
+                    ):
+                        continue
+                    drain_plan = queue_system.plan_entry(
+                        state,
+                        queue_name,
+                        entry_id,
+                        resolution,
+                        rules=self.rules,
+                    )
+                    if (
+                        not drain_plan.ok
+                        or drain_plan.status != "drain_candidate"
+                        or drain_plan.resolved_kind != "standalone_ability_graph"
+                    ):
+                        return self._limbo_rescue_failure(
+                            state,
+                            "limbo_rescue_drain_plan_blocked:"
+                            + (
+                                drain_plan.blocked_reason
+                                or drain_plan.status
+                                or "unknown"
+                            ),
+                        )
+                    graph_id = str(
+                        resolution.resolved_ids.get("standalone_ability_graph_id") or ""
+                    )
+                    if not graph_id:
+                        return self._limbo_rescue_failure(
+                            state, "limbo_rescue_standalone_graph_missing"
+                        )
+                    target_ids = entry.get("target_ids")
+                    if not isinstance(target_ids, (list, tuple)):
+                        return self._limbo_rescue_failure(
+                            state, "limbo_rescue_target_identity_invalid"
+                        )
+                    try:
+                        dequeue = queue_system.drain_admitted(
+                            state,
+                            drain_plan,
+                            "queue_system",
+                            metadata={
+                                "queue_operation": "dequeue",
+                                "scheduler": "event_commit_limbo_rescue",
+                                "queue_window_plan": drain_plan.queue_window or {},
+                            },
+                        )
+                        invocation = StandaloneAbilityInvocation(
+                            graph_id=graph_id,
+                            actor_id=unit_id,
+                            target_ids=tuple(str(item) for item in target_ids),
+                            queue_name=queue_name,
+                            queue_entry_id=entry_id,
+                            queue_intent_id=intent_id,
+                            queue_resolution_id=resolution.queue_resolution_id,
+                            death_instance_id="",
+                        )
+                    except (TypeError, ValueError) as exc:
+                        return self._limbo_rescue_failure(
+                            state, f"limbo_rescue_invocation_invalid:{exc}"
+                        )
+                    reducer = MutationReducer()
+                    after_dequeue = reducer.apply_all(state, (dequeue,))
+                    ability_result = self.ability_tasks._execute_admitted_queue_standalone(
+                        after_dequeue,
+                        invocation=invocation,
+                    )
+                    incomplete = tuple(
+                        item for item in ability_result.node_results
+                        if item.status != "complete"
+                    )
+                    if not ability_result.node_results or incomplete:
+                        reasons = ",".join(
+                            item.reason_code or item.status for item in incomplete
+                        ) or "limbo_rescue_ability_result_empty"
+                        return self._limbo_rescue_failure(
+                            state, f"limbo_rescue_ability_not_successor:{reasons}"
+                        )
+                    mutations = (dequeue, *ability_result.mutations)
+                    after = reducer.apply_all(state, mutations)
+                    rescued_unit = after.units.get(unit_id)
+                    if (
+                        rescued_unit is None
+                        or rescued_unit.lifecycle_status != "active"
+                        or not rescued_unit.hp > 0
+                        or "pending_defeat" in rescued_unit.flags
+                    ):
+                        return self._limbo_rescue_failure(
+                            state, "limbo_rescue_did_not_restore_the_unit"
+                        )
+                    drain_payload = {
+                        "drain_plan": drain_plan.to_json(),
+                        "queue_resolution": resolution.to_json(),
+                        "queue_window_plan": drain_plan.queue_window or {},
+                        "external_command": {},
+                    }
+                    drain_begin_record = SettlementRecord(
+                        record_type="queue_drain_begin",
+                        source="queue_system",
+                        process_only=True,
+                        payload=drain_payload,
+                        trace=drain_plan.source_trace or {},
+                    ).to_json()
+                    dequeue_record = SettlementRecord(
+                        record_type="queue_dequeue",
+                        source="queue_system",
+                        mutation_id=dequeue.stable_id(),
+                        process_only=False,
+                        payload=drain_payload,
+                        trace=drain_plan.source_trace or {},
+                    ).to_json()
+                    drain_events = (
+                        GameEvent(
+                            "queue.drain.begin",
+                            source_id=unit_id,
+                            event_id=(
+                                f"event:{state.event_index}:queue_drain_begin:"
+                                f"{intent_id}"
+                            ),
+                            window="queue",
+                            process_only=True,
+                            payload=drain_payload,
+                        ),
+                        GameEvent(
+                            "queue.drained",
+                            source_id=unit_id,
+                            event_id=(
+                                f"event:{state.event_index}:queue_drained:"
+                                f"{intent_id}"
+                            ),
+                            window="queue",
+                            process_only=True,
+                            payload={"drain_plan": drain_plan.to_json()},
+                        ),
+                    )
+                    return EventDispatchResult(
+                        after_state=after,
+                        mutations=mutations,
+                        events=(*drain_events, *ability_result.events),
+                        rng_events=ability_result.rng_events,
+                        records=(
+                            drain_begin_record,
+                            dequeue_record,
+                            *ability_result.records,
+                        ),
+                        node_results=ability_result.node_results,
+                    )
+            return self._limbo_rescue_failure(state, "limbo_rescue_queue_entry_missing")
+        return None
+
+    @staticmethod
+    def _limbo_rescue_failure(state: BattleState, reason: str) -> EventDispatchResult:
+        return EventDispatchResult(
+            after_state=state,
+            errors=(reason,),
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="limbo_rescue",
+                    node_id="pending_defeat",
+                    status="blocked",
+                    reason_code=reason,
+                ),
+            ),
+        )
     def execute(
         self,
         command: ActionCommand,

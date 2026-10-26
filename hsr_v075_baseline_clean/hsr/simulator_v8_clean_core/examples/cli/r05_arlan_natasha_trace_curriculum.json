@@ -1,0 +1,117 @@
+{
+ "battle_setup": {
+  "metadata": {
+   "stage_scope": "wave_only",
+   "scope": "StageConfig 201010110 waves only. Arlan Lv80 E6 full traces enters at 45% HP so A6 Repel blocks the first non-DoT hit; A4 halves DoT application; A2 heals after a low-HP kill. Natasha Lv80 E6 full traces cleanses with A2 and extends her skill HoT with A6. No injected state beyond the declared initial HP/energy."
+  },
+  "timeline": {
+   "mode": "runtime_initialize"
+  }
+ },
+ "route": [],
+ "scenario_id": "ordinary:arlan-natasha-trace-curriculum",
+ "stage_ref": "201010110",
+ "units": [
+  {
+   "unit_id": "arlan",
+   "side": "ally",
+   "entity_ref": "avatar:1008",
+   "level": 80,
+   "eidolon_level": 6,
+   "position": 0,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "arlan:build",
+    "character_card_id": "character_data_card:avatar:1008",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 6,
+    "unlocked_trace_node_ids": [
+     "character_trace_node:character_data_card:avatar:1008:1008001:6",
+     "character_trace_node:character_data_card:avatar:1008:1008002:10",
+     "character_trace_node:character_data_card:avatar:1008:1008003:10",
+     "character_trace_node:character_data_card:avatar:1008:1008004:10",
+     "character_trace_node:character_data_card:avatar:1008:1008101:1",
+     "character_trace_node:character_data_card:avatar:1008:1008102:1",
+     "character_trace_node:character_data_card:avatar:1008:1008103:1",
+     "character_trace_node:character_data_card:avatar:1008:1008201:1",
+     "character_trace_node:character_data_card:avatar:1008:1008202:1",
+     "character_trace_node:character_data_card:avatar:1008:1008203:1",
+     "character_trace_node:character_data_card:avatar:1008:1008204:1",
+     "character_trace_node:character_data_card:avatar:1008:1008205:1",
+     "character_trace_node:character_data_card:avatar:1008:1008206:1",
+     "character_trace_node:character_data_card:avatar:1008:1008207:1",
+     "character_trace_node:character_data_card:avatar:1008:1008208:1",
+     "character_trace_node:character_data_card:avatar:1008:1008209:1",
+     "character_trace_node:character_data_card:avatar:1008:1008210:1"
+    ],
+    "equipment_build": {
+     "build_id": "arlan:equipment",
+     "character_card_id": "character_data_card:avatar:1008",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "db49b7973cd08c7bcebbec76395affe456c090a58be61272d334b9f3de96230e"
+    },
+    "input_fingerprint": "5deb501e0ea5c4a55e31f9d4674b3d041188518f6db0da6ea362d9f3b1733d46"
+   },
+   "initial_condition": {
+    "hp_mode": "ratio",
+    "hp_value": "0.45",
+    "initial_energy": "30",
+    "initial_resource_values": []
+   }
+  },
+  {
+   "unit_id": "natasha",
+   "side": "ally",
+   "entity_ref": "avatar:1105",
+   "level": 80,
+   "eidolon_level": 6,
+   "position": 1,
+   "build_mode": "assembled_character_build",
+   "character_build": {
+    "build_id": "natasha:build",
+    "character_card_id": "character_data_card:avatar:1105",
+    "level": 80,
+    "promotion": 6,
+    "eidolon_level": 6,
+    "unlocked_trace_node_ids": [
+     "character_trace_node:character_data_card:avatar:1105:1105001:6",
+     "character_trace_node:character_data_card:avatar:1105:1105002:10",
+     "character_trace_node:character_data_card:avatar:1105:1105003:10",
+     "character_trace_node:character_data_card:avatar:1105:1105004:10",
+     "character_trace_node:character_data_card:avatar:1105:1105101:1",
+     "character_trace_node:character_data_card:avatar:1105:1105102:1",
+     "character_trace_node:character_data_card:avatar:1105:1105103:1",
+     "character_trace_node:character_data_card:avatar:1105:1105201:1",
+     "character_trace_node:character_data_card:avatar:1105:1105202:1",
+     "character_trace_node:character_data_card:avatar:1105:1105203:1",
+     "character_trace_node:character_data_card:avatar:1105:1105204:1",
+     "character_trace_node:character_data_card:avatar:1105:1105205:1",
+     "character_trace_node:character_data_card:avatar:1105:1105206:1",
+     "character_trace_node:character_data_card:avatar:1105:1105207:1",
+     "character_trace_node:character_data_card:avatar:1105:1105208:1",
+     "character_trace_node:character_data_card:avatar:1105:1105209:1",
+     "character_trace_node:character_data_card:avatar:1105:1105210:1"
+    ],
+    "equipment_build": {
+     "build_id": "natasha:equipment",
+     "character_card_id": "character_data_card:avatar:1105",
+     "light_cone": null,
+     "relics": [],
+     "identity_labels": {},
+     "build_fingerprint": "8d7ac2fa04786f7ba773cc2897657064f7a34f041d96edf32044d3148c59e750"
+    },
+    "input_fingerprint": "c532c14913e8e202f1e62c95c5ab72117ba52514a28acc7c42eb4abae000e5e1"
+   },
+   "initial_condition": {
+    "hp_mode": "full",
+    "initial_energy": "0",
+    "initial_resource_values": []
+   }
+  }
+ ],
+ "version": "v0_200",
+ "wave_index": 0
+}

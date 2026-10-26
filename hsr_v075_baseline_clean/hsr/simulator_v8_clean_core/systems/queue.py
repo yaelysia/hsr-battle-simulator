@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..core.model import (
-    ActionCommand, BattleState, GameEvent, JSONValue, Mutation, QueueActionStartFact, QueueActionTerminalFact, TargetResolution,
+    ActionCommand, BattleState, GameEvent, JSONValue, Mutation, PendingDefeatPlan,
+    QueueActionStartFact, QueueActionTerminalFact, TargetResolution,
     _QUEUE_ACTION_START_PRODUCER, _QUEUE_ACTION_TERMINAL_PRODUCER,
 )
 from ..core.settlement import SettlementRecord
@@ -40,6 +41,159 @@ class QueueTargetResolution:
             "source_trace": self.source_trace or {},
         }
 
+
+LIMBO_RESCUE_ADMISSION_FIELDS = frozenset({
+    "unit_id",
+    "pending_defeat_id",
+    "lethal_hp_mutation_id",
+    "source_event_id",
+    "source_status_instance_id",
+    "source_modifier_name",
+    "ability_name",
+    "queue_intent_id",
+    "queue_kind",
+    "source_task_id",
+})
+
+
+@dataclass(frozen=True)
+class LimboRescueQueueAdmission:
+    """Limited queue authority for one pending unit own revive insert.
+
+    Only the OnLimboWaitHeal callback of the status that observed the native
+    lethal hit may enqueue this unit own turn-insert ability while the unit is
+    still in limbo.  The authority is bound to the pending-defeat identity, the
+    lethal HP mutation, the callback event/status/task and the formal queue
+    intent; it admits no other actor, intent or changed pending record.
+    """
+
+    unit_id: str
+    pending_defeat_id: str
+    lethal_hp_mutation_id: str
+    source_event_id: str
+    source_status_instance_id: str
+    source_modifier_name: str
+    ability_name: str
+    queue_intent_id: str
+    queue_kind: str
+    source_task_id: str
+
+    def __post_init__(self) -> None:
+        values = (
+            self.unit_id,
+            self.pending_defeat_id,
+            self.lethal_hp_mutation_id,
+            self.source_event_id,
+            self.source_status_instance_id,
+            self.source_modifier_name,
+            self.ability_name,
+            self.queue_intent_id,
+            self.queue_kind,
+            self.source_task_id,
+        )
+        if any(type(value) is not str or not value for value in values):
+            raise ValueError("limbo_rescue_queue_admission_identity_invalid")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {field: getattr(self, field) for field in LIMBO_RESCUE_ADMISSION_FIELDS}
+
+    @staticmethod
+    def from_json(raw: object) -> "LimboRescueQueueAdmission":
+        if not isinstance(raw, dict) or set(raw) != LIMBO_RESCUE_ADMISSION_FIELDS:
+            raise ValueError("limbo_rescue_queue_admission_shape_invalid")
+        return LimboRescueQueueAdmission(
+            **{field: raw[field] for field in LIMBO_RESCUE_ADMISSION_FIELDS}
+        )
+
+    def entry_contract_blocked_reason(self, entry: dict[str, JSONValue]) -> str:
+        targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
+        if targets is None:
+            return "queue_entry_target_identity_invalid"
+        if (
+            str(entry.get("actor_id") or "") != self.unit_id
+            or str(entry.get("queue_intent_id") or "") != self.queue_intent_id
+            or str(entry.get("action_or_ability_ref") or "") != self.ability_name
+            or str(entry.get("queue_kind") or "") != self.queue_kind
+            or str(entry.get("owner_alive_state") or "") != "alive_or_limbo"
+            or entry.get("can_run_on_unselectable_target") is not True
+        ):
+            return f"queue_owner_limbo_rescue_contract_mismatch:{self.unit_id}"
+        if any(target_id != self.unit_id for target_id in targets):
+            return f"queue_target_limbo_rescue_not_admitted:{self.unit_id}"
+        return ""
+
+    def blocked_reason(
+        self,
+        state: BattleState,
+        *,
+        entry: dict[str, JSONValue] | None = None,
+        rules: "RuleBook | None" = None,
+    ) -> str:
+        unit = state.units.get(self.unit_id)
+        if unit is None:
+            return f"queue_limbo_rescue_unit_missing:{self.unit_id}"
+        if unit.lifecycle_status != "limbo" or float(unit.hp) != 0.0:
+            return f"queue_limbo_rescue_unit_not_pending:{self.unit_id}"
+        pending = unit.flags.get("pending_defeat")
+        if not isinstance(pending, dict):
+            return f"queue_limbo_rescue_pending_defeat_missing:{self.unit_id}"
+        try:
+            typed_plan = PendingDefeatPlan.from_json(pending)
+            expected_limbo_event = next(
+                event
+                for event in UnitLifecycleSystem().limbo_events(typed_plan)
+                if event.event_type == "unit.limbo_wait_heal"
+            )
+        except (ValueError, StopIteration):
+            return f"queue_limbo_rescue_pending_defeat_invalid:{self.unit_id}"
+        if (
+            typed_plan.unit_id != self.unit_id
+            or typed_plan.pending_id != self.pending_defeat_id
+            or typed_plan.hp_mutation.stable_id() != self.lethal_hp_mutation_id
+            or expected_limbo_event.event_id != self.source_event_id
+        ):
+            return f"queue_limbo_rescue_native_identity_mismatch:{self.unit_id}"
+        matching = [
+            detail for detail in unit.flags.get("status_details", ())
+            if isinstance(detail, dict)
+            and detail.get("instance_id") == self.source_status_instance_id
+        ]
+        if (len(matching) != 1
+                or matching[0].get("modifier_name") != self.source_modifier_name
+                or matching[0].get("owner_id") != self.unit_id
+                or str(matching[0].get("lifecycle_state") or "active")
+                not in {"active", "active_partial"}):
+            return f"queue_limbo_rescue_source_status_instance_mismatch:{self.unit_id}"
+        if rules is None:
+            return f"queue_limbo_rescue_rulebook_missing:{self.unit_id}"
+        if rules is not None:
+            task = rules.status_callback_task(self.source_task_id)
+            callback = (
+                rules.status_callback(task.callback_id) if task is not None else None
+            )
+            intent = rules.queue_intent(self.queue_intent_id)
+            if (
+                task is None
+                or callback is None
+                or task.event != "OnLimboWaitHeal"
+                or task.opcode != "TurnInsertAbility"
+                or task.coverage_status != "executable"
+                or task.blocked_reason
+                or task.modifier_name != self.source_modifier_name
+                or callback.event != "OnLimboWaitHeal"
+                or callback.coverage_status != "executable"
+                or callback.blocked_reason
+                or callback.modifier_name != self.source_modifier_name
+                or intent is None
+                or intent.coverage_status != "executable"
+                or intent.blocked_reason
+                or intent.callback_id != task.callback_id
+                or intent.source_task_id != task.task_id
+                or intent.queue_kind != self.queue_kind
+                or intent.action_ref_or_ability_name != self.ability_name
+            ):
+                return f"queue_limbo_rescue_callback_identity_mismatch:{self.unit_id}"
+        return ""
 
 DEATHRATTLE_ADMISSION_FIELDS = frozenset({
     "unit_id",
@@ -288,6 +442,7 @@ class QueueEntry:
     target_alive_state: str = "alive_only"
     can_run_on_unselectable_target: bool = False
     deathrattle_admission: dict[str, JSONValue] | None = None
+    limbo_rescue_admission: dict[str, JSONValue] | None = None
 
     def __post_init__(self) -> None:
         value = self.elation_override_points
@@ -300,6 +455,8 @@ class QueueEntry:
             raise ValueError("queue_entry_unselectable_permission_invalid")
         if self.deathrattle_admission is not None:
             DeathrattleQueueAdmission.from_json(self.deathrattle_admission)
+        if self.limbo_rescue_admission is not None:
+            LimboRescueQueueAdmission.from_json(self.limbo_rescue_admission)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -335,6 +492,7 @@ class QueueEntry:
             "target_alive_state": self.target_alive_state,
             "can_run_on_unselectable_target": self.can_run_on_unselectable_target,
             "deathrattle_admission": self.deathrattle_admission or {},
+            "limbo_rescue_admission": self.limbo_rescue_admission or {},
         }
 
 
@@ -621,6 +779,7 @@ class QueueTargetResolver:
         source_trace: dict[str, JSONValue] | None = None,
         allow_unselectable_target: bool = False,
         deathrattle_admission: "DeathrattleQueueAdmission | None" = None,
+        limbo_unit_id: str = "",
     ) -> QueueTargetResolution:
         actor_id = self._resolve_single(state, detail, trigger_event, actor_alias, relative_actor_id="")
         if not actor_id:
@@ -643,7 +802,12 @@ class QueueTargetResolver:
                 f"queue_actor_missing:{actor_id}",
                 source_trace,
             )
-        if deathrattle_admission is not None:
+        if limbo_unit_id and actor_id == limbo_unit_id:
+            # A pending-defeat rescue listener may enqueue this unit's own
+            # turn-insert ability.  The pending cause is the owning authority;
+            # every other actor still needs ordinary liveness.
+            pass
+        elif deathrattle_admission is not None:
             # The admitted death instance carries limited authority for this
             # unit's own Deathrattle insert; ordinary actor liveness still
             # applies to every other queue request.
@@ -705,7 +869,9 @@ class QueueTargetResolver:
         invalid_targets = tuple(
             target_id
             for target_id in target_ids
-            if not _queue_target_admitted(
+            if not (
+                limbo_unit_id and target_id == limbo_unit_id
+            ) and not _queue_target_admitted(
                 self.lifecycle, state, target_id,
                 allow_unselectable=allow_unselectable_target,
                 deathrattle_unit_id=(
@@ -819,6 +985,50 @@ class QueueSystem:
             state, queue_name, entry, resolution, drain_order=0, rules=rules
         )
 
+    def plan_entry(
+        self,
+        state: BattleState,
+        queue_name: str,
+        entry_id: str,
+        resolution: QueueResolutionIR | None,
+        *,
+        rules: "RuleBook | None" = None,
+    ) -> QueueDrainPlan:
+        """Plan one named queue entry through the formal drain admission.
+
+        Used by the limbo rescue consumer so the dequeue keeps the ordinary
+        drain window, priority, target and resolution authority.
+        """
+
+        entries = tuple(
+            (index, entry)
+            for index, entry in enumerate(state.queues.get(queue_name, ()))
+            if isinstance(entry, dict)
+        )
+        match = next(
+            ((index, entry) for index, entry in entries if entry.get("entry_id") == entry_id),
+            None,
+        )
+        if match is None:
+            return QueueDrainPlan(
+                False,
+                "blocked",
+                queue_name,
+                {},
+                "",
+                "",
+                "queue_entry_missing_for_rescue",
+            )
+        index, entry = match
+        return self._plan_entry(
+            state,
+            queue_name,
+            entry,
+            resolution,
+            drain_order=index,
+            rules=rules,
+        )
+
     def plan_next_drain(
         self,
         state: BattleState,
@@ -902,7 +1112,9 @@ class QueueSystem:
         if not queue_intent_id:
             return QueueDrainPlan(False, "blocked", queue_name, entry, "", "", "queue_entry_missing_intent_id")
         abort_reason = _abort_behavior_blocked_reason(state, entry)
-        alive_state_reason = _entry_alive_state_blocked_reason(state, entry)
+        alive_state_reason = _entry_alive_state_blocked_reason(
+            state, entry, rules=rules
+        )
         if alive_state_reason:
             abort_reason = alive_state_reason
         _, actor_reason = self.lifecycle.can_act(state, str(entry.get("actor_id") or ""))
@@ -2041,14 +2253,42 @@ def _entry_deathrattle_admitted(state: BattleState, entry: dict[str, JSONValue])
     )
 
 
-def _entry_alive_state_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
+
+
+def _entry_limbo_rescue_admission(
+    entry: dict[str, JSONValue],
+) -> tuple[LimboRescueQueueAdmission | None, str]:
+    raw = entry.get("limbo_rescue_admission")
+    if raw is None or raw == {}:
+        return None, ""
+    try:
+        return LimboRescueQueueAdmission.from_json(raw), ""
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
+
+def _entry_alive_state_blocked_reason(
+    state: BattleState,
+    entry: dict[str, JSONValue],
+    *,
+    rules: "RuleBook | None" = None,
+) -> str:
     actor_id = str(entry.get("actor_id") or "")
     admission, admission_invalid = _entry_deathrattle_admission(entry)
     if admission_invalid:
         return f"queue_owner_deathrattle_admission_invalid:{admission_invalid}"
+    limbo_admission, limbo_invalid = _entry_limbo_rescue_admission(entry)
+    if limbo_invalid:
+        return f"queue_owner_limbo_rescue_admission_invalid:{limbo_invalid}"
     targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
     if targets is None:
         return "queue_entry_target_identity_invalid"
+    if limbo_admission is not None:
+        contract_reason = limbo_admission.entry_contract_blocked_reason(entry)
+        if contract_reason:
+            return contract_reason
+        return limbo_admission.blocked_reason(
+            state, entry=entry, rules=rules
+        )
     if admission is not None:
         # One admitted death instance owns this entry. Every identity check is
         # re-verified against the record the death producer actually wrote.

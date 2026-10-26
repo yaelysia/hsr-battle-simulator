@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import math
 
-from ..core.model import BattleState, JSONValue, Mutation, UnitState
+from ..core.model import BattleState, JSONValue, Mutation, UnitState, current_max_hp
 from ..rules.ir import ResourceRuleIR
 from .unit_stats import effective_unit_stat
 
@@ -40,7 +40,7 @@ class ResourceSystem:
 
     def change_unit_hp(self, state: BattleState, unit_id: str, delta: float, source: str) -> Mutation:
         unit = state.units[unit_id]
-        new_hp = max(0.0, min(unit.max_hp, unit.hp + delta))
+        new_hp = max(0.0, min(current_max_hp(unit), unit.hp + delta))
         return Mutation(
             op="set",
             path=("units", unit_id, "hp"),

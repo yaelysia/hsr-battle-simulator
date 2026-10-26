@@ -6677,7 +6677,16 @@ class TBGDLowering:
                 },
             }
             if decoded_dynamic is not None
-            else _effect_payload(task, opcode, "", source=source)
+            else _effect_payload(
+                task,
+                opcode,
+                "",
+                source=source,
+                # Ability tasks without ContextScope write to their own execution
+                # context, not to an unrelated status instance.
+                default_context_scope="ContextAbility",
+                allow_implicit_modifier_layer=True,
+            )
         )
         if remodifier_condition is not None:
             payload["standard"]["query"]["predicate_condition_id"] = remodifier_condition.condition_id
@@ -10933,9 +10942,10 @@ def _admit_trace_startup_ability_slot(
     effects_by_id: dict[str, EffectIR],
     root_task_ids_by_graph: dict[str, tuple[str, ...]],
 ) -> CharacterMechanismSlotIR:
-    evidence = slot.source.evidence if isinstance(slot.source.evidence, dict) else {}
-    if evidence.get("enhanced_id") is None:
-        return slot
+    # Ordinary and enhanced cards share one admission path: a trace ability is
+    # executable only when its unique source-owned standalone graph, its formal
+    # root ledger and every OnStart effect admit.  EnhancedID only changes which
+    # avatar-config dynamic-value declaration the slot carries, not the rule.
     semantics = dict(slot.semantics)
     ability_name = str(semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
     if not ability_name:
@@ -10975,14 +10985,16 @@ def _admit_trace_startup_ability_slot(
                 },
             },
         )
-    root_task_id_set = frozenset(root_task_ids)
+    # The formal root ledger proves the phase topology admits; the effect itself
+    # may sit behind a source branch (for example an HP predicate), so every
+    # OnStart effect task of the phase is admitted rather than only a direct
+    # top-level AddModifier.
     candidate_tasks = tuple(
         task
         for phase_id in graph.phase_ids
         for task in tasks_by_phase.get(phase_id, ())
         if task.callback_kind == "OnStart"
-        and task.task_id in root_task_id_set
-        and task.opcode == "AddModifier"
+        and task.opcode in TRACE_STARTUP_EFFECT_OPCODES
         and task.effect_id
     )
     if not candidate_tasks:
@@ -11078,20 +11090,28 @@ def _trace_startup_blocked_slot(
     )
 
 
+TRACE_STARTUP_EFFECT_OPCODES = frozenset({"AddModifier", "StackStatusResistance"})
+
+
 def _trace_startup_effect_blocked_reason(effect: EffectIR) -> str:
-    if effect.opcode != "AddModifier":
-        return f"trace_startup_effect_opcode_not_add_modifier:{effect.opcode}"
+    if effect.opcode not in TRACE_STARTUP_EFFECT_OPCODES:
+        return f"trace_startup_effect_opcode_not_admitted:{effect.opcode}"
     if effect.coverage_status != "executable":
         return f"trace_startup_effect_not_executable:{effect.coverage_status}"
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return "trace_startup_effect_standard_payload_missing"
-    modifier_name = standard.get("modifier_name")
-    if not isinstance(modifier_name, str) or not modifier_name:
-        return "trace_startup_effect_modifier_name_missing"
     target_alias = standard.get("target_alias")
     if target_alias not in {"Caster", "ModifierOwnerEntity"}:
         return f"trace_startup_effect_target_alias_not_admitted:{target_alias}"
+    if effect.opcode == "StackStatusResistance":
+        behavior_flag = standard.get("behavior_flag")
+        if not isinstance(behavior_flag, str) or not behavior_flag:
+            return "trace_startup_effect_behavior_flag_missing"
+        return ""
+    modifier_name = standard.get("modifier_name")
+    if not isinstance(modifier_name, str) or not modifier_name:
+        return "trace_startup_effect_modifier_name_missing"
     return ""
 
 
@@ -18666,6 +18686,7 @@ def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
 
 REMOVE_MODIFIER_OPCODES = {"RemoveModifier", "RemoveSelfModifier"}
 HEAL_OPCODES = {"HealHP"}
+SET_HP_OPCODES = {"SetHP"}
 SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
 SUSTAIN_FORMULA_EVIDENCE = (
     "https://github.com/yaelysia/hsr-battle-simulator/blob/"
@@ -18904,7 +18925,9 @@ def _standard_elation_payload(value: dict[str, Any]) -> dict[str, Any]:
 
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str,
                     *, source: IRSource | None = None,
-                    status_callback_event: str | None = None) -> dict[str, Any]:
+                    status_callback_event: str | None = None,
+                    default_context_scope: str | None = None,
+                    allow_implicit_modifier_layer: bool = False) -> dict[str, Any]:
     payload = _compact_payload(value)
     if opcode == "ElationOperation":
         payload["standard"] = _standard_elation_payload(value)
@@ -18915,6 +18938,26 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = {"operation": "select_status_instances",
             "query": _status_callback_runtime_payload(value, source_modifier_name=source_modifier_name),
             "blocked_reason": reason}
+    if opcode == "StackStatusResistance":
+        target = _target_alias(value.get("TargetType")) or ""
+        behavior_flag = value.get("BehaviorFlag")
+        resistance = _numeric_expr_summary(value.get("Resistance"))
+        admitted = (
+            not set(value) - {"$type", "TargetType", "BehaviorFlag", "Resistance"}
+            and target in {"Caster", "ModifierOwnerEntity"}
+            and isinstance(behavior_flag, str)
+            and behavior_flag.startswith("STAT_")
+            and len(behavior_flag) > len("STAT_")
+            and _numeric_expr_can_be_runtime_bound(resistance)
+        )
+        payload["standard"] = {
+            "operation": "stack_status_resistance",
+            "target_alias": target or "Caster",
+            "behavior_flag": behavior_flag if isinstance(behavior_flag, str) else "",
+            "resistance": resistance,
+            "scope": "target",
+            "blocked_reason": "" if admitted else "status_resistance_fields_not_admitted",
+        }
     if opcode == "SetControlSkillMapping":
         slot = {"ControlSkill01": "basic", "ControlSkill02": "skill", "ControlSkill03": "ultimate"}.get(value.get("ControlSkillType", "ControlSkill01"))
         key = _value_field(value.get("SkillTriggerKey"))
@@ -19006,6 +19049,23 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         function = value.get("ModifyFunction", count_rule["operation"] if count_rule else "")
         amount = _numeric_expr_summary(value.get("Value") if "Value" in value else
             {"IsDynamic": False, "FixedValue": {"Value": count_rule["amount"]}} if count_rule and "amount" in count_rule else None)
+        # TBGD sources also emit SetModifierValue with only ModifierName and
+        # ModifyFunction=Add.  The runtime's Add operation is one layer; keep
+        # that source shape narrow and make the adopted default explicit.
+        implicit_add_layer = (
+            count_rule is None
+            and allow_implicit_modifier_layer
+            and function == "Add"
+            and "ValueType" not in value
+            and "Value" not in value
+            and isinstance(modifier_name, str)
+            and bool(modifier_name)
+            and not (set(value) - {"$type", "TargetType", "ModifierName", "ModifyFunction"})
+        )
+        if implicit_add_layer:
+            value_kind = "Layer"
+            amount = numeric_fixed(1.0)
+            target_alias = "ModifierOwnerEntity"
         param_lifetime = (modifier_name == "ParamModifier" and value_kind == "LifeTime"
             and function == "Add" and (numeric_fixed_value(amount) is None or numeric_fixed_value(amount) >= 0))
         # A status callback that already receives the triggering modifier can
@@ -19018,6 +19078,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         )
         target_semantics_admitted = (
             callback_triggering_modifier
+            or implicit_add_layer
             or target is None and bool(count_rule)
             or isinstance(target, dict) and set(target) == {"$type", "Alias"}
             and target.get("$type") == "RPG.GameCore.TargetAlias"
@@ -19044,7 +19105,13 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             "blocked_reason": "" if admitted else "modifier_value_fields_or_defaults_not_admitted",
             "adopted_rule_source": {"kind": "adopted_mechanism_data", "research": count_rule["research"],
                                     "version": count_rule["version"], "condition": count_rule.get("condition", ""),
-                                    "raw_source": source.to_json()} if count_rule else {},
+                                    "raw_source": source.to_json()} if count_rule else {
+                "kind": "adopted_mechanism_data",
+                "research": "TBGD SetModifierValue Add without ValueType/Value",
+                "version": "Avatar_Arlan_00_Ability AddModifier value increment",
+                "condition": "source shape carries only ModifierName and ModifyFunction=Add",
+                "behavior": "one layer",
+            } if implicit_add_layer else {},
         }
     if opcode == "TriggerSkipDeadHandler":
         payload["standard"] = {
@@ -19084,6 +19151,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         )
     elif opcode in HEAL_OPCODES:
         payload["standard"] = _standard_heal_payload(value)
+    elif opcode in SET_HP_OPCODES:
+        payload["standard"] = _standard_set_hp_payload(value)
     elif opcode in SHIELD_OPCODES:
         payload["standard"] = _standard_shield_payload(value, opcode, source_modifier_name)
     elif opcode in REMOVE_SHIELD_OPCODES:
@@ -19238,15 +19307,25 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
     elif opcode == "AttachEntityDeparted":
         payload["standard"] = _standard_attach_entity_departed_payload(value)
     elif opcode == "DefineDynamicValue":
-        payload["standard"] = _standard_define_dynamic_value_payload(value)
+        payload["standard"] = _standard_define_dynamic_value_payload(
+            value, default_context_scope=default_context_scope
+        )
     elif opcode == "SetDynamicValue":
-        payload["standard"] = _standard_set_dynamic_value_payload(value)
+        payload["standard"] = _standard_set_dynamic_value_payload(
+            value, default_context_scope=default_context_scope
+        )
     elif opcode == "SetDynamicValueByAddValue":
-        payload["standard"] = _standard_set_dynamic_value_by_add_value_payload(value)
+        payload["standard"] = _standard_set_dynamic_value_by_add_value_payload(
+            value, default_context_scope=default_context_scope
+        )
     elif opcode == "SetDynamicValueByModifierValue":
         normalized = {**value, "ValueType": "Layer", "ReadTargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"},
                       "TargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"}} if count_rule else value
-        payload["standard"] = _standard_set_dynamic_value_by_modifier_value_payload(normalized, source_modifier_name)
+        payload["standard"] = _standard_set_dynamic_value_by_modifier_value_payload(
+            normalized,
+            source_modifier_name,
+            default_context_scope=default_context_scope,
+        )
         if count_rule:
             payload["standard"]["adopted_rule_source"] = {
                 "kind": "adopted_mechanism_data", "research": count_rule["research"],
@@ -19279,6 +19358,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
                 value,
                 opcode,
                 source_modifier_name,
+                default_context_scope=default_context_scope,
             )
         standard = dict(standard)
         destination_key = standard.get("value_name", standard.get("target_value_name"))
@@ -21616,6 +21696,16 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
     if opcode == "SetControlSkillMapping":
         standard = payload.get("standard", {})
         return "executable" if standard.get("operation") == "set_control_skill_mapping" and not standard.get("blocked_reason") else "blocked"
+    if opcode == "StackStatusResistance":
+        standard = payload.get("standard", {})
+        return "executable" if (
+            isinstance(standard, dict)
+            and not standard.get("blocked_reason")
+            and standard.get("operation") == "stack_status_resistance"
+            and standard.get("target_alias") in {"Caster", "ModifierOwnerEntity"}
+            and isinstance(standard.get("behavior_flag"), str)
+            and bool(standard["behavior_flag"])
+        ) else "blocked"
     if opcode in {"SetActionDelay", "ModifyCurrentSkillDelayCost"}:
         standard = payload.get("standard", {})
         operation = "set_action_value" if opcode == "SetActionDelay" else "current_skill_delay_cost"
@@ -21734,6 +21824,20 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         if _target_alias_admitted(str(standard.get("target_alias") or "")):
             return "executable"
         return "blocked"
+    if opcode in SET_HP_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("blocked_reason"):
+            return "blocked"
+        if (
+            standard.get("target_expression_coverage_status") != "executable"
+            and not _target_alias_admitted(str(standard.get("target_alias") or ""))
+        ):
+            return "blocked"
+        if not _numeric_expr_can_be_runtime_bound(standard.get("amount")):
+            return "blocked"
+        return "executable"
     if opcode in HEAL_OPCODES | SHIELD_OPCODES:
         standard = payload.get("standard")
         if not isinstance(standard, dict):
@@ -22365,7 +22469,10 @@ def _status_callback_task_admission(
         return ("executable", "") if coverage == "executable" else (
             "blocked", _effect_blocked_reason(opcode, payload, coverage)
         )
-    if event == "OnPhase1" and opcode == "HealHP":
+    if event in {"OnPhase1", "OnTriggerDeath"} and opcode == "HealHP":
+        # OnTriggerDeath is the source event for "after this unit lands the
+        # killing blow" heals (for example Arlan's A2 Revival); it uses the same
+        # admitted heal payload as periodic healing.
         payload = source_effect_payload if source_effect_payload is not None else _effect_payload(task, opcode, source_modifier_name)
         coverage = _effect_coverage_status(opcode, payload)
         if coverage == "executable":
@@ -22535,6 +22642,7 @@ def _status_callback_task_admission(
             "OnListenBeforeSkillUse",
             "OnBeingBreak",
             "OnListenAfterAttack",
+            "OnLimboWaitHeal",
             *foundational_effect_events,
         }
         and opcode in {
@@ -22545,6 +22653,9 @@ def _status_callback_task_admission(
             "AddModifier",
             "RemoveModifier",
             "RemoveSelfModifier",
+            "DispelStatus",
+            "SetModifierValue",
+            "SetHP",
             "TriggerModifierCustomEvent",
             "StackWeakness",
         }
@@ -22639,13 +22750,39 @@ def _status_callback_task_admission(
             if extra_formula_type == "ByDefence" and not _numeric_expr_can_be_runtime_bound(extra_damage_percentage):
                 return "blocked", f"dot_extra_damage_percentage_not_executable:{extra_damage_percentage.get('reason') or extra_damage_percentage.get('kind')}"
             return "executable", ""
+        # The source formula decides the family: BreakDamagePercentage keeps the
+        # established break multiplier chain (Frozen/Entangle), while an
+        # additional attack-property hit without ordinary percentage/value
+        # expressions is not a break callback and must stay blocked.
+        if formula_type == "ByBreakDamage":
+            if attack_type not in {"DOT", "Pursued"}:
+                return "blocked", f"status_damage_attack_type_not_admitted:{attack_type}"
+            scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+            if not _numeric_expr_can_be_runtime_bound(scaling_expr):
+                return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
+            return "executable", ""
+        if attack_type == "Pursued":
+            # Control-related status damage (for example Frozen or Entangle)
+            # deals an additional attack-property hit on its own phase.  It is
+            # admitted only when the percentage/value expressions are fully
+            # runtime-bound; the emission lowering maps it to the additional
+            # damage family.
+            additional_percentage = _numeric_expr_summary(
+                attack_property.get("DamagePercentage")
+            )
+            additional_value = _numeric_expr_summary(
+                attack_property.get("DamageValue")
+            )
+            if not (
+                _numeric_expr_can_be_runtime_bound(additional_percentage)
+                or _numeric_expr_can_be_runtime_bound(additional_value)
+            ):
+                return "blocked", "status_additional_damage_value_not_executable"
+            return "executable", ""
         if formula_type != "ByBreakDamage":
             return "blocked", f"status_damage_formula_not_admitted:{formula_type}"
         if attack_type not in {"DOT", "Pursued"}:
             return "blocked", f"status_damage_attack_type_not_admitted:{attack_type}"
-        scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
-        if not _numeric_expr_can_be_runtime_bound(scaling_expr):
-            return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
         return "executable", ""
     if event == "OnPhase1" and opcode == "ModifyCurrentSkillDelayCost":
         return _equipment_task_admission(event, opcode, task, modifier_name=source_modifier_name)
@@ -25112,6 +25249,7 @@ def _queue_window_policy(
     return policy
 
 
+
 def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:
     standard = payload.get("standard")
     if isinstance(standard, dict) and standard.get("blocked_reason"):
@@ -26021,11 +26159,22 @@ def _standard_dispel_status_payload(
         and value.get("OnlyAlive") is False
         and value.get("IsSilentDispel") is True
     )
+    # A limbo-wait heal listener may declare a self dispel without Numbers or
+    # Order (Arlan E4 revive cleanup shape).  The source then means every
+    # eligible status on the owner; keep the unbounded scope named instead of
+    # inventing a count or an ordering.
+    limbo_cleanup_all = (
+        status_callback_event == "OnLimboWaitHeal"
+        and not _numeric_expr_can_be_runtime_bound(count_expr)
+        and not set(value) - {"$type", "TargetType", "OnlyAlive"}
+        and _target_alias(value.get("TargetType")) in {"ModifierOwnerEntity", "Caster"}
+    )
     payload = {
         "kind": "status_dispel",
         "operation": (
             "deathrattle_status_cleanup" if deathrattle_cleanup else "dispel_status"
         ),
+        **({"dispel_scope": "all_eligible"} if limbo_cleanup_all else {}),
         "target_alias": _target_alias(value.get("TargetType")),
         "buff_type": _value_field(value.get("BuffType")),
         "numbers": count_expr,
@@ -26039,12 +26188,37 @@ def _standard_dispel_status_payload(
     }
     if deathrattle_cleanup:
         return payload
+    if limbo_cleanup_all:
+        payload["order"] = "LastAdded"
+        return payload
     if not _numeric_expr_can_be_runtime_bound(count_expr):
         payload["blocked_reason"] = f"dispel_count_not_executable:{count_expr.get('kind') or 'unknown'}"
     elif order not in {"LastAdded", "Random"}:
         payload["blocked_reason"] = f"dispel_order_not_admitted:{order or 'missing'}"
     return payload
 
+
+def _standard_set_hp_payload(value: dict[str, Any]) -> dict[str, Any]:
+    amount = _numeric_expr_summary(value.get("ModifyValue"))
+    target_alias = _target_alias(value.get("TargetType"))
+    payload = {
+        "kind": "set_hp",
+        "target_alias": target_alias,
+        "amount": amount,
+        "raw_formula_fields": {
+            "ModifyValue": _json_safe(value.get("ModifyValue")),
+            "TargetType": _json_safe(value.get("TargetType")),
+            "ShowText": _json_safe(value.get("ShowText")),
+        },
+    }
+    if not isinstance(target_alias, str) or not target_alias:
+        payload["blocked_reason"] = "set_hp_target_alias_missing"
+    elif not _numeric_expr_can_be_runtime_bound(amount):
+        payload["blocked_reason"] = (
+            "set_hp_amount_not_executable:"
+            f"{amount.get('reason') or amount.get('kind')}"
+        )
+    return payload
 
 def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
     modify_value = _numeric_expr_summary(value.get("ModifyValue"))
@@ -26388,7 +26562,9 @@ def _shield_formula_base(formula_type: Any) -> str:
     return "flat"
 
 
-def _standard_set_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]:
+def _standard_set_dynamic_value_payload(
+    value: dict[str, Any], *, default_context_scope: str | None = None
+) -> dict[str, Any]:
     value_expr = _numeric_expr_summary(value.get("Value"))
     value_name = _value_field(value.get("DynamicKey"))
     target_alias = _target_alias(value.get("TargetType")) or "ModifierOwnerEntity"
@@ -26396,7 +26572,11 @@ def _standard_set_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]
         "kind": "dynamic_value_store",
         "opcode": "SetDynamicValue",
         "target_alias": target_alias,
-        "status_scope": _value_field(value.get("ContextScope")) or "modifier_local",
+        "status_scope": (
+            _value_field(value.get("ContextScope"))
+            or default_context_scope
+            or "modifier_local"
+        ),
         "value_name": value_name,
         "hash": None,
         "value_expr": value_expr,
@@ -26503,7 +26683,9 @@ def _standard_trigger_ability_payload(value: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _standard_define_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]:
+def _standard_define_dynamic_value_payload(
+    value: dict[str, Any], *, default_context_scope: str | None = None
+) -> dict[str, Any]:
     value_expr = _numeric_expr_summary(value.get("ResetValue"))
     if value_expr.get("kind") == "missing":
         value_expr = numeric_fixed(0.0)
@@ -26513,7 +26695,11 @@ def _standard_define_dynamic_value_payload(value: dict[str, Any]) -> dict[str, A
         "kind": "dynamic_value_store",
         "opcode": "DefineDynamicValue",
         "target_alias": target_alias,
-        "status_scope": _value_field(value.get("ContextScope")) or "modifier_local",
+        "status_scope": (
+            _value_field(value.get("ContextScope"))
+            or default_context_scope
+            or "modifier_local"
+        ),
         "value_name": value_name,
         "hash": None,
         "value_expr": value_expr,
@@ -26538,7 +26724,9 @@ def _standard_define_dynamic_value_payload(value: dict[str, Any]) -> dict[str, A
     return payload
 
 
-def _standard_set_dynamic_value_by_add_value_payload(value: dict[str, Any]) -> dict[str, Any]:
+def _standard_set_dynamic_value_by_add_value_payload(
+    value: dict[str, Any], *, default_context_scope: str | None = None
+) -> dict[str, Any]:
     add_value = _numeric_expr_summary(value.get("AddValue"))
     min_value = _numeric_expr_summary(value.get("Min"))
     max_value = _numeric_expr_summary(value.get("Max"))
@@ -26548,7 +26736,11 @@ def _standard_set_dynamic_value_by_add_value_payload(value: dict[str, Any]) -> d
         "kind": "dynamic_value_store",
         "opcode": "SetDynamicValueByAddValue",
         "target_alias": target_alias,
-        "status_scope": _value_field(value.get("ContextScope")) or "modifier_local",
+        "status_scope": (
+            _value_field(value.get("ContextScope"))
+            or default_context_scope
+            or "modifier_local"
+        ),
         "value_name": value_name,
         "add_value": add_value,
         "min_value": min_value,
@@ -26575,6 +26767,8 @@ def _standard_set_dynamic_value_by_add_value_payload(value: dict[str, Any]) -> d
 def _standard_set_dynamic_value_by_modifier_value_payload(
     value: dict[str, Any],
     source_modifier_name: str,
+    *,
+    default_context_scope: str | None = None,
 ) -> dict[str, Any]:
     source_modifier = _value_field(value.get("ModifierName")) or source_modifier_name
     source_value_name = _value_field(value.get("ValueType"))
@@ -26592,7 +26786,9 @@ def _standard_set_dynamic_value_by_modifier_value_payload(
         "target_hash": None,
         "target_alias": target_alias,
         "source_target_alias": source_target_alias,
-        "context_scope": _value_field(value.get("ContextScope")),
+        "context_scope": (
+            _value_field(value.get("ContextScope")) or default_context_scope
+        ),
         "multiplier": multiplier,
         "raw_formula_fields": {
             "ModifierName": _json_safe(value.get("ModifierName")),
@@ -26630,6 +26826,8 @@ def _standard_generic_dynamic_value_payload(
     value: dict[str, Any],
     opcode: str,
     source_modifier_name: str,
+    *,
+    default_context_scope: str | None = None,
 ) -> dict[str, Any]:
     destination_fields = (
         ("ToDynamicKey",)

@@ -481,11 +481,39 @@ class EventDispatchSystem:
         plan = event.pending_defeat_plan
         lifecycle = UnitLifecycleSystem()
         try:
-            # Queued rescue needs a binding to this pending cause and limbo
-            # admission in the queue consumer. Until connected, reject the
-            # actual request instead of killing its target ahead of the queue.
-            if any(mutation.path[:1] == ("queues",) for mutation in result.mutations):
-                raise ValueError("limbo_queue_rescue_not_connected")
+            # A limbo wait window may enqueue one admitted turn-insert rescue.
+            # The committing executor runs it before publishing this transition,
+            # so the window stays open here instead of finalizing the defeat.
+            queue_mutations = tuple(
+                mutation
+                for mutation in result.mutations
+                if mutation.path[:1] == ("queues",)
+            )
+            if queue_mutations:
+                if event.event_type != "unit.limbo_wait_heal":
+                    raise ValueError("limbo_queue_rescue_stage_not_admitted")
+                rescue_entries = tuple(
+                    entry
+                    for entries in result.after_state.queues.values()
+                    if isinstance(entries, (list, tuple))
+                    for entry in entries
+                    if isinstance(entry, dict)
+                    and str(entry.get("actor_id") or "") == plan.unit_id
+                    and str(entry.get("owner_alive_state") or "") == "alive_or_limbo"
+                )
+                if not rescue_entries:
+                    raise ValueError("limbo_queue_rescue_entry_missing")
+                for entry in rescue_entries:
+                    resolution = self.rules.queue_resolution_for_intent(
+                        str(entry.get("queue_intent_id") or "")
+                    )
+                    if (
+                        resolution is None
+                        or resolution.coverage_status != "executable"
+                        or resolution.resolved_kind != "standalone_ability_graph"
+                    ):
+                        raise ValueError("limbo_queue_rescue_not_connected")
+                return result
             current = lifecycle.pending_defeat(result.after_state, plan.unit_id)
             if current is None:
                 unit = result.after_state.units[plan.unit_id]

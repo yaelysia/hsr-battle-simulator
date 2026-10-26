@@ -1556,6 +1556,8 @@ def _dynamic_graph_build_binding(
 def _finalize_selection_bindings(
     bindings: list[CharacterBuildBindingIR],
     selector_relations: tuple[CharacterBuildSelectorRelationIR, ...],
+    *,
+    allow_parameter_only: bool = False,
 ) -> tuple[CharacterBuildBindingIR, ...]:
     generic_gap_reasons = {
         "trace_extra_effect_has_no_structured_effect_source",
@@ -1573,7 +1575,7 @@ def _finalize_selection_bindings(
             and binding.blocked_reason in generic_gap_reasons
         )
     ]
-    if not filtered and not selector_relations:
+    if not filtered and not selector_relations and not allow_parameter_only:
         raise ValueError("selection did not produce a build binding classification")
     return tuple(
         replace(
@@ -1689,6 +1691,10 @@ def _trace_build_bindings(
             ability_name = slot.linked_ir_ids.get("ability_name")
             if not isinstance(ability_name, str) or not ability_name:
                 raise ValueError("trace ability slot has no typed ability identity")
+            # Slot admission happens in lowering after the source graphs are
+            # built, so the selection must stay classified as a dynamic graph
+            # reference here; the assembler rejects it when the final mechanism
+            # slot is not executable.
             bindings.append(
                 _dynamic_graph_build_binding(
                     resolver=resolver,
@@ -1703,6 +1709,29 @@ def _trace_build_bindings(
                 )
             )
             ordinal += 1
+        elif slot.mechanism_kind == "trace_skill_point_param":
+            # The slot declares the character-config SkillTreeParam read that
+            # this selected trace node supplies at runtime.  Selection itself is
+            # carried by the node; the value binding is consumed by the source
+            # gated ability tasks, so no separate build projection is emitted.
+            if slot.coverage_status != "executable":
+                bindings.append(
+                    _source_gap_build_binding(
+                        card_id=node.character_data_card_id,
+                        avatar_id=node.avatar_id,
+                        selection_kind="trace",
+                        selection_ref_id=node.trace_node_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        target_ref_id=mechanism_slot_id,
+                        ordinal=ordinal,
+                        source=node.source,
+                        reason=(
+                            slot.blocked_reason
+                            or f"trace_skill_point_param_not_executable:{slot.coverage_status}"
+                        ),
+                    )
+                )
+                ordinal += 1
         elif slot.mechanism_kind == "trace_extra_effect":
             target_ids = (*node.extra_effect_ids, *node.simple_extra_effect_ids)
             for target_id in target_ids or (mechanism_slot_id,):
@@ -1735,7 +1764,14 @@ def _trace_build_bindings(
                 )
             )
             ordinal += 1
-    return _finalize_selection_bindings(bindings, selector_relations)
+    parameter_only = bool(node.linked_mechanism_slot_ids) and all(
+        slots_by_id.get(slot_id) is not None
+        and slots_by_id[slot_id].mechanism_kind == "trace_skill_point_param"
+        for slot_id in node.linked_mechanism_slot_ids
+    )
+    return _finalize_selection_bindings(
+        bindings, selector_relations, allow_parameter_only=parameter_only,
+    )
 
 
 def _eidolon_build_bindings(
@@ -2063,6 +2099,79 @@ def _trace_nodes_and_slots(
                         blocked_reason="trace_ability_effect_not_admitted_v0_265",
                     )
                 )
+            if not ability_name:
+                raw_params = row.get("ParamList")
+                param_values = list(_number_items(raw_params))
+                param_bindings = _trace_dynamic_value_bindings_for_row(
+                    row,
+                    config_dynamic_value_bindings,
+                )
+                bindings_by_hash = param_bindings.get("by_hash")
+                if (
+                    isinstance(raw_params, list)
+                    and raw_params
+                    and isinstance(bindings_by_hash, dict)
+                    and bindings_by_hash
+                ):
+                    param_blocked_reason = ""
+                    if len(param_values) != len(raw_params):
+                        param_blocked_reason = (
+                            "trace_skill_point_param_values_not_numeric"
+                        )
+                    else:
+                        for raw_hash, binding in sorted(bindings_by_hash.items()):
+                            index = (
+                                binding.get("param_index")
+                                if isinstance(binding, dict)
+                                else None
+                            )
+                            if (
+                                not isinstance(index, int)
+                                or isinstance(index, bool)
+                                or not 0 <= index < len(param_values)
+                            ):
+                                param_blocked_reason = (
+                                    "trace_skill_point_param_index_out_of_range:"
+                                    f"{raw_hash}"
+                                )
+                                break
+                    slot_id = (
+                        f"character_mechanism_slot:{card_id}:trace:"
+                        f"{point_id}:{level}:skill_point_param"
+                    )
+                    linked_slot_ids.append(slot_id)
+                    slots.append(
+                        CharacterMechanismSlotIR(
+                            mechanism_slot_id=slot_id,
+                            character_data_card_id=card_id,
+                            mechanism_kind="trace_skill_point_param",
+                            runtime_system="character_build_parameter_source",
+                            linked_ir_ids={"trace_node_id": trace_node_id},
+                            activation={
+                                "kind": "trace_unlock",
+                                "trace_node_id": trace_node_id,
+                                "default_enabled": default_unlocked,
+                            },
+                            semantics={
+                                "point_trigger_key": str(
+                                    row.get("PointTriggerKey") or ""
+                                ),
+                                "param_values": param_values,
+                                "dynamic_value_bindings": param_bindings,
+                                "binding_source_kind": (
+                                    "character_config_skill_tree_param_read_info"
+                                ),
+                                "consumer_boundary": (
+                                    "parameter reads by source-gated ability tasks"
+                                ),
+                            },
+                            source=source,
+                            coverage_status=(
+                                "blocked" if param_blocked_reason else "executable"
+                            ),
+                            blocked_reason=param_blocked_reason,
+                        )
+                    )
             level_up_skill_ids = tuple(str(value) for value in row.get("LevelUpSkillID") or ())
             if level_up_skill_ids:
                 slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:skill_level"

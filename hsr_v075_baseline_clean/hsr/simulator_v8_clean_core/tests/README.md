@@ -21,6 +21,12 @@
 替换路径可选择其它检查；省略路径会运行全部集成检查。
 集成组件探查不等同于游戏操作整链，支持边界见各测试与 CLI 文档。
 
+生命上限收缩的来源契约使用 `test_hp_clamp_source_contract.py`（普通组件检查，无完整编译）：
+覆盖 HPConvert/HPDelta/比例生命与静态属性池、属性首次追加/原位更新、联合篡改、剥离标签、
+实例错配和兄弟状态保护。正式 E4 救援的空审计 trace、联合伪造及 JSON 往返检查复用
+`test_character_eidolon_build_branches.py::test_limbo_rescue_admission_verifies_its_native_source_identity`
+（显式 `integration`），其余星魂用例不因该检查自动成为必跑项。
+
 V2 五元素普通击破自然路线集中在 `test_ordinary_element_break_natural_routes.py`，一条命令
 一次运行火/雷/冰/量子/虚数五条自然链（显式选择 `integration`，复用编译缓存）：
 

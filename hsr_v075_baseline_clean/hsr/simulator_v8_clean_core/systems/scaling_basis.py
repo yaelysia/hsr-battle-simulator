@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.model import BattleState, JSONValue, UnitState
+from ..core.model import BattleState, JSONValue, UnitState, current_max_hp
 from .unit_stats import effective_unit_stat
 
 
@@ -106,7 +106,7 @@ def _unit_stat_value(
     if stat == "hp":
         return float(unit.hp), ()
     if stat == "max_hp":
-        return float(unit.max_hp), ()
+        return float(current_max_hp(unit)), ()
     if stat in {"attack", "defense", "speed"}:
         effective = effective_unit_stat(unit, stat)
         return effective.value, effective.source_terms

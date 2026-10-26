@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, cast
 
-from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution
+from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, PendingDefeatPlan, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution, current_max_hp
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -65,6 +65,7 @@ from .effect import (
 from .mutation_events import events_for_mutation, mutation_backed_event_id
 from .queue import (
     DeathrattleQueueAdmission,
+    LimboRescueQueueAdmission,
     QueueEntry,
     QueueSystem,
     QueueTargetResolver,
@@ -79,7 +80,12 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
-from .status import StatusSystem, _map_stack_property, status_control_gate_for_actor
+from .status import (
+    StatusSystem,
+    _hp_cap_clamp_after_attribute_write,
+    _map_stack_property,
+    status_control_gate_for_actor,
+)
 from .target import TargetExpressionResult, TargetSystem
 from .task_graph import (
     TaskGraphBranchResult,
@@ -426,6 +432,61 @@ def _status_callback_event_matches_fact(
     callback_key = _callback_companion_key(callback_event)
     return bool(callback_key) and callback_key == _callback_companion_key(fact_event)
 
+
+def _limbo_rescue_queue_admission(
+    callback: StatusCallbackIR,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    trigger_event: GameEvent | None,
+    intent: QueueIntentIR,
+) -> tuple[str, str, "LimboRescueQueueAdmission | None"]:
+    """Bind one OnLimboWaitHeal insert to the pending-defeat cause it rescues.
+
+    The pending plan is the only authority that lets a limbo owner enqueue and
+    later run its own turn-insert ability.  Source callback/task identity, the
+    owner instance, the alive-state mask and the unselectable-target flag all
+    have to agree; a normal queue request still needs an active actor.
+    """
+
+    plan = getattr(trigger_event, "pending_defeat_plan", None)
+    if type(plan) is not PendingDefeatPlan or trigger_event is None:
+        return "", "", None
+    if trigger_event.event_type != "unit.limbo_wait_heal":
+        return "", "", None
+    if callback.event != "OnLimboWaitHeal" or task.event != "OnLimboWaitHeal":
+        return "", "limbo_rescue_callback_event_not_admitted", None
+    if (
+        task.coverage_status != "executable"
+        or task.blocked_reason
+        or callback.coverage_status != "executable"
+        or callback.blocked_reason
+        or task.task_id != intent.source_task_id
+        or callback.callback_id != intent.callback_id
+    ):
+        return "", "limbo_rescue_source_callback_not_admitted", None
+    if str(detail.get("owner_id") or "") != plan.unit_id:
+        return "", "limbo_rescue_source_not_pending_unit", None
+    if (
+        intent.opcode != "TurnInsertAbility"
+        or intent.owner_alive_state != "alive_or_limbo"
+        or intent.can_run_on_unselectable_target is not True
+    ):
+        return "", "limbo_rescue_queue_contract_not_admitted", None
+    if intent.ability_target_alias and intent.target_alive_state != "alive_or_limbo":
+        return "", "limbo_rescue_target_contract_not_admitted", None
+    admission = LimboRescueQueueAdmission(
+        unit_id=plan.unit_id,
+        pending_defeat_id=plan.pending_id,
+        lethal_hp_mutation_id=plan.hp_mutation.stable_id(),
+        source_event_id=str(trigger_event.event_id or ""),
+        source_status_instance_id=str(detail.get("instance_id") or ""),
+        source_modifier_name=str(callback.modifier_name or ""),
+        ability_name=str(intent.action_ref_or_ability_name or ""),
+        queue_intent_id=str(intent.queue_intent_id or ""),
+        queue_kind=str(intent.queue_kind or ""),
+        source_task_id=str(task.task_id or ""),
+    )
+    return plan.unit_id, "", admission
 
 class StatusCallbackSystem:
     """Executes admitted modifier-local callbacks from Canonical IR."""
@@ -2496,18 +2557,56 @@ class StatusCallbackSystem:
                               "status_instance_id": detail["instance_id"], "source_trace": task.source.to_json(),
                               "numeric_evaluation": value.to_json()},
                 )
-                reduction = self.reducer.apply_all_result(state, (mutation,))
+                clamp = _hp_cap_clamp_after_attribute_write(
+                    state,
+                    owner_id,
+                    list(unit.statuses),
+                    list(after),
+                    source_trace=task.source.to_json(),
+                    status_id=str(detail.get("status_id") or ""),
+                    status_instance_id=str(detail["instance_id"]),
+                    operation="modify_status_property",
+                    attribute_write={
+                        "operation": "modify_status_property",
+                        "property": str(task.task_payload.get("Property") or ""),
+                        "before_value": (
+                            installed[0].get("value") if installed else None
+                        ),
+                        "after_value": value.value,
+                        "task_id": task.task_id,
+                        "callback_id": callback.callback_id,
+                        "modifier_name": task.modifier_name,
+                    },
+                )
+                mutations: tuple[Mutation, ...] = (
+                    (mutation, clamp[0]) if clamp is not None else (mutation,)
+                )
+                reduction = self.reducer.apply_all_result(state, mutations)
                 if not reduction.ok:
                     return StatusCallbackExecutionResult(ok=False, after_state=state,
                         errors=("stack_property_mutation_conflict",), records=())
-                return StatusCallbackExecutionResult(
-                    ok=True, after_state=reduction.after_state, mutations=(mutation,),
-                    records=(SettlementRecord(
+                records: tuple[dict[str, JSONValue], ...] = (
+                    SettlementRecord(
                         "status_stack_property", "status_callback_system", mutation_id=mutation.stable_id(),
                         payload={"status_instance_id": detail["instance_id"], "property": task.task_payload["Property"],
                                  "before": installed[0].get("value") if installed else None, "after": value.value,
                                  "numeric_evaluation": value.to_json()}, trace=task.source.to_json(),
-                    ).to_json(),),
+                    ).to_json(),
+                    *((clamp[1],) if clamp is not None else ()),
+                )
+                clamp_events = (
+                    events_for_mutation(
+                        clamp[0],
+                        actor_id=owner_id,
+                        source_id=owner_id,
+                        event_index=state.event_index,
+                    )
+                    if clamp is not None
+                    else ()
+                )
+                return StatusCallbackExecutionResult(
+                    ok=True, after_state=reduction.after_state, mutations=mutations,
+                    events=clamp_events, records=records,
                 )
         if task.opcode in {"StackProperty", "StackStatusResistance"}:
             return StatusCallbackExecutionResult(
@@ -5558,6 +5657,17 @@ class StatusCallbackSystem:
                 ))
                 errors.append(deathrattle_admission_reason)
                 continue
+            limbo_unit_id, limbo_admission_reason, limbo_admission = (
+                _limbo_rescue_queue_admission(
+                    callback, task, detail, trigger_event, intent
+                )
+            )
+            if limbo_admission_reason:
+                records.append(_queue_intent_blocked_record(
+                    callback, task, detail, intent, limbo_admission_reason
+                ))
+                errors.append(limbo_admission_reason)
+                continue
             target_resolution = self.queue_targets.resolve(
                 current_state,
                 detail=detail,
@@ -5570,6 +5680,7 @@ class StatusCallbackSystem:
                 },
                 allow_unselectable_target=intent.can_run_on_unselectable_target,
                 deathrattle_admission=deathrattle_admission,
+                limbo_unit_id=limbo_unit_id,
             )
             if not target_resolution.ok:
                 reason = target_resolution.blocked_reason or "queue_target_resolution_failed"
@@ -5578,7 +5689,7 @@ class StatusCallbackSystem:
                 continue
             alive_state_reason = (
                 ""
-                if deathrattle_admission is not None
+                if deathrattle_admission is not None or limbo_unit_id
                 else _queue_intent_alive_state_blocked_reason(
                     current_state, intent, target_resolution
                 )
@@ -5686,6 +5797,11 @@ class StatusCallbackSystem:
                 deathrattle_admission=(
                     deathrattle_admission.to_json()
                     if deathrattle_admission is not None
+                    else None
+                ),
+                limbo_rescue_admission=(
+                    limbo_admission.to_json()
+                    if limbo_admission is not None
                     else None
                 ),
                 insert_abort=self._queue_insert_abort_binding(
@@ -6314,7 +6430,8 @@ def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSON
 
 def _hp_ratio(state: BattleState, unit_id: str) -> float:
     unit = state.units[unit_id]
-    return float(unit.hp / unit.max_hp) if unit.max_hp > 0 else float("inf")
+    maximum = current_max_hp(unit)
+    return float(unit.hp / maximum) if maximum > 0 else float("inf")
 
 
 def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> dict[str, JSONValue]:

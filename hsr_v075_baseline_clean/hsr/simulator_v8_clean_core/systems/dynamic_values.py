@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..core.model import BattleState, JSONValue, Mutation
+from ..core.model import BattleState, JSONValue, Mutation, current_max_hp
 from ..core.settlement import SettlementRecord
 from ..immutable_json import freeze_json, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
@@ -1523,7 +1523,8 @@ def _resolve_source_operand(
         if operand.operand_kind == "unit_property":
             value = ability_property_value(unit, parameters.get("property_name"))
         elif operand.operand_kind == "hp_ratio":
-            value = unit.hp / unit.max_hp if unit.max_hp > 0 else None
+            maximum = current_max_hp(unit)
+            value = unit.hp / maximum if maximum > 0 else None
         elif operand.operand_kind == "shield_value":
             value = ability_property_value(unit, "Shield")
         elif operand.operand_kind == "status_count":
@@ -2089,9 +2090,11 @@ def character_trace_param_binding_source(
     """Read selected trace parameters through their formal build slots.
 
     SkillTreeParam values are declared on the character config and carried by
-    the trace node's ability-hook mechanism slot.  Only explicitly selected,
-    executable trace nodes supply values; an unselected or blocked node never
-    falls back to its raw param list.
+    the trace node's ability-hook mechanism slot or, for rows whose effect lives
+    in source-gated ability tasks instead of a dedicated ability, by the
+    trace_skill_point_param slot.  Only explicitly selected, executable trace
+    nodes supply values; an unselected or blocked node never falls back to its
+    raw param list.
     """
 
     unit = state.units.get(unit_id)
@@ -2128,7 +2131,16 @@ def character_trace_param_binding_source(
             if (
                 slot is None
                 or slot.character_data_card_id != card.card_id
-                or slot.mechanism_kind != "trace_ability_hook"
+                or slot.mechanism_kind
+                not in {"trace_ability_hook", "trace_skill_point_param"}
+            ):
+                continue
+            if (
+                slot.mechanism_kind == "trace_skill_point_param"
+                and (
+                    slot.coverage_status != "executable"
+                    or slot.blocked_reason
+                )
             ):
                 continue
             semantics = slot.semantics if isinstance(slot.semantics, dict) else {}

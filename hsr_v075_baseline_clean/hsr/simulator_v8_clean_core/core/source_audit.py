@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Any
 
-from .model import BattleTransition, JSONValue, Mutation, PendingDefeatPlan, freeze_json
+from .model import BattleTransition, JSONValue, Mutation, PendingDefeatPlan, current_max_hp, freeze_json
 from .reducer import _typed_equal
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import is_exact_numeric_expression
@@ -466,6 +466,15 @@ class RuntimeSourceAuditor:
         if mutation.source == "break_system":
             return self._audit_break_mutation(
                 mutation, records, violations, mutations_by_id=mutations_by_id
+            )
+        if (
+            mutation.status_hp_clamp_fact is not None
+            or (mutation.source == "status_system" and len(mutation.path) == 3
+                and mutation.path[0] == "units" and mutation.path[2] == "hp")
+            or any(record.get("record_type") == "status_lifecycle_hp_clamp" for record in records)
+        ):
+            return self._audit_hp_clamp_mutation(
+                mutation, records, violations, mutations_by_id
             )
         if mutation.source == "status_callback_system":
             return self._audit_status_callback_mutation(mutation, records, violations)
@@ -3782,6 +3791,273 @@ class RuntimeSourceAuditor:
             },
         )
 
+    def _audit_hp_clamp_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+        mutations_by_id: Mapping[str, Mutation] | None,
+    ) -> dict[str, JSONValue]:
+        """Audit a status-derived HP clamp against its native source contract."""
+
+        metadata = mutation.metadata
+        target_id = mutation.path[1] if len(mutation.path) == 3 else ""
+        fact = mutation.status_hp_clamp_fact
+        if fact is None:
+            violations.append(_violation(mutation, "status_hp_clamp_producer_fact_missing"))
+            return _trace(mutation, records, {})
+        if (fact.before_unit.unit_id != target_id
+                or not _strict_json_equal(metadata, fact.metadata)):
+            violations.append(_violation(mutation, "status_hp_clamp_producer_mismatch"))
+            return _trace(mutation, records, {})
+        contract = metadata.get("hp_contract")
+        contract = contract if isinstance(contract, Mapping) else None
+        required = (
+            "before_hp",
+            "after_hp",
+            "delta",
+            "effective_max_hp_before",
+            "effective_max_hp_after",
+        )
+        numbers = {
+            key: contract.get(key)
+            for key in required
+        } if contract is not None else {}
+        if (
+            mutation.op != "set"
+            or len(mutation.path) != 3
+            or mutation.path[0] != "units"
+            or mutation.path[2] != "hp"
+            or not target_id
+            or mutation.source != "status_system"
+            or contract is None
+            or any(
+                type(numbers.get(key)) not in (int, float)
+                or not math.isfinite(numbers.get(key))
+                for key in required
+            )
+            or type(mutation.before) not in (int, float)
+            or type(mutation.after) not in (int, float)
+        ):
+            violations.append(
+                _violation(mutation, "status_hp_clamp_write_invalid")
+            )
+            return _trace(mutation, records, {})
+        before_hp = float(mutation.before)
+        after_hp = float(mutation.after)
+        before_unit, after_unit = fact.before_unit, fact.after_unit
+        try:
+            before_ceiling = current_max_hp(before_unit)
+            after_ceiling = current_max_hp(after_unit)
+        except (TypeError, ValueError):
+            violations.append(_violation(mutation, "status_hp_clamp_attribute_ceiling_invalid"))
+            return _trace(mutation, records, {})
+        expected_contract = {
+            "before_hp": before_unit.hp,
+            "after_hp": after_ceiling,
+            "delta": after_ceiling - float(before_unit.hp),
+            "effective_max_hp_before": before_ceiling,
+            "effective_max_hp_after": after_ceiling,
+        }
+        if (
+            not math.isfinite(before_hp)
+            or not math.isfinite(after_hp)
+            or before_hp <= after_hp
+            or after_hp < 0
+            or float(numbers["before_hp"]) != before_hp
+            or float(numbers["after_hp"]) != after_hp
+            or not math.isclose(
+                float(numbers["delta"]),
+                after_hp - before_hp,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            or float(metadata.get("hp_before", -1)) != before_hp
+            or float(metadata.get("hp_after", -1)) != after_hp
+            or float(metadata.get("current_max_hp", -1)) != after_hp
+            or float(numbers["effective_max_hp_after"]) != after_hp
+            or before_hp != before_unit.hp
+            or not _strict_json_equal(contract, expected_contract)
+            or metadata.get("effective_max_hp_before") != before_ceiling
+            or metadata.get("effective_max_hp_after") != after_ceiling
+        ):
+            violations.append(
+                _violation(mutation, "status_hp_clamp_contract_mismatch")
+            )
+            return _trace(mutation, records, {"hp_contract": dict(contract)})
+        status_instance_id = str(metadata.get("status_instance_id") or "")
+        status_id = str(metadata.get("status_id") or "")
+        source_trace = metadata.get("source_trace")
+        if (
+            not status_instance_id
+            or not status_id
+            or not isinstance(source_trace, Mapping)
+        ):
+            violations.append(
+                _violation(mutation, "status_hp_clamp_source_missing")
+            )
+            return _trace(mutation, records, {"hp_contract": dict(contract)})
+        lifecycle = metadata.get("lifecycle_plan")
+        attribute_write = metadata.get("attribute_write")
+        host: Mutation | None = None
+        if isinstance(lifecycle, Mapping):
+            instance = lifecycle.get("existing_detail") or lifecycle.get("status_instance")
+            if (
+                lifecycle.get("target_id") != target_id
+                or not isinstance(lifecycle.get("source_trace"), Mapping)
+                or lifecycle.get("status_id") != status_id
+                or lifecycle.get("operation") != metadata.get("operation")
+                or not isinstance(instance, Mapping)
+                or instance.get("instance_id") != status_instance_id
+                or instance.get("status_id") != status_id
+                or instance.get("owner_id") != target_id
+            ):
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_lifecycle_mismatch")
+                )
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+            expected_plan = dict(lifecycle)
+            for other in (mutations_by_id or {}).values():
+                if other.stable_id() == mutation.stable_id():
+                    continue
+                other_plan = other.metadata.get("lifecycle_plan")
+                if (
+                    other.path == ("units", target_id, "flags", "status_details")
+                    and other.source == "status_system"
+                    and isinstance(other_plan, Mapping)
+                    and _strict_json_equal(other_plan, expected_plan)
+                    and _strict_json_equal(other.before, before_unit.flags.get("status_details"))
+                    and _strict_json_equal(other.after, after_unit.flags.get("status_details"))
+                ):
+                    host = other
+                    break
+            if host is None:
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_lifecycle_mismatch")
+                )
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+            effect_id = _first_str(
+                lifecycle.get("source_trace", {}).get("effect_id"),
+                lifecycle.get("source_trace", {}).get("effect"),
+            )
+            if effect_id:
+                self._audit_effect_id(mutation, effect_id, violations)
+                modifier_name = _first_str(
+                    lifecycle.get("source_trace", {}).get("modifier_name"),
+                )
+                if modifier_name and self.rules.modifier_definition(modifier_name) is None:
+                    violations.append(_violation(mutation, "modifier_definition_missing",
+                        details={"modifier_name": modifier_name}))
+            elif self.rules.ir.effects:
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_source_missing")
+                )
+        elif isinstance(attribute_write, Mapping):
+            if attribute_write.get("operation") != "modify_status_property":
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_source_missing")
+                )
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+            task_id = str(attribute_write.get("task_id") or "")
+            callback_id = str(attribute_write.get("callback_id") or "")
+            task = self.rules.status_callback_task(task_id) if task_id else None
+            callback = (
+                self.rules.status_callback(callback_id) if callback_id else None
+            )
+            if (
+                task is None
+                or callback is None
+                or task.opcode != "StackProperty"
+                or task.event != "OnStack"
+                or task.coverage_status != "executable"
+                or task.blocked_reason
+                or callback.coverage_status != "executable"
+                or callback.blocked_reason
+                or task.callback_id != callback.callback_id
+                or task.task_payload.get("Property") != attribute_write.get("property")
+                or task.modifier_name != str(
+                    attribute_write.get("modifier_name") or ""
+                )
+            ):
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_source_mismatch")
+                )
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+            for other in (mutations_by_id or {}).values():
+                if other.stable_id() == mutation.stable_id():
+                    continue
+                if (
+                    other.path == ("units", target_id, "flags", "status_details")
+                    and other.source == "status_callback_system"
+                    and other.metadata.get("task_id") == task_id
+                    and other.metadata.get("status_instance_id")
+                    == status_instance_id
+                    and _strict_json_equal(other.before, before_unit.flags.get("status_details"))
+                    and _strict_json_equal(other.after, after_unit.flags.get("status_details"))
+                ):
+                    host = other
+                    break
+            if host is None:
+                violations.append(
+                    _violation(mutation, "status_hp_clamp_source_mismatch")
+                )
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+            instances = [item for item in host.after if isinstance(item, Mapping)
+                         and item.get("instance_id") == status_instance_id]
+            if (len(instances) != 1 or instances[0].get("status_id") != status_id
+                    or instances[0].get("owner_id") != target_id
+                    or instances[0].get("modifier_name") != task.modifier_name):
+                violations.append(_violation(mutation, "status_hp_clamp_source_mismatch"))
+                return _trace(mutation, records, {"hp_contract": dict(contract)})
+        else:
+            violations.append(
+                _violation(mutation, "status_hp_clamp_source_missing")
+            )
+            return _trace(mutation, records, {"hp_contract": dict(contract)})
+        if host is not None and (
+            host.before_exists != ("status_details" in before_unit.flags)
+            or not host.after_exists
+            or (before_unit.statuses != after_unit.statuses and not any(
+                other.source == "status_system"
+                and other.path == ("units", target_id, "statuses")
+                and _strict_json_equal(other.before, before_unit.statuses)
+                and _strict_json_equal(other.after, after_unit.statuses)
+                and _strict_json_equal(other.metadata.get("lifecycle_plan"), lifecycle)
+                for other in (mutations_by_id or {}).values()
+            ))
+        ):
+            violations.append(_violation(mutation, "status_hp_clamp_host_mismatch"))
+            return _trace(mutation, records, {"hp_contract": dict(contract)})
+        native_records = [
+            record
+            for record in records
+            if isinstance(record, Mapping)
+            and record.get("record_type") == "status_lifecycle_hp_clamp"
+            and record.get("source") == "status_system"
+            and record.get("process_only") is False
+            and isinstance(record.get("payload"), Mapping)
+        ]
+        if len(records) != 1 or len(native_records) != 1:
+            violations.append(
+                _violation(mutation, "status_hp_clamp_settlement_mismatch")
+            )
+            return _trace(mutation, records, {"hp_contract": dict(contract)})
+        payload = native_records[0]["payload"]
+        if (
+            not _strict_json_equal(payload, metadata)
+            or not _strict_json_equal(
+                native_records[0].get("trace"), metadata.get("source_trace")
+            )
+        ):
+            violations.append(
+                _violation(mutation, "status_hp_clamp_settlement_mismatch")
+            )
+        return _trace(
+            mutation,
+            records,
+            {"hp_contract": dict(contract), "status_instance_id": status_instance_id},
+        )
+
     def _audit_status_mutation(
         self,
         mutation: Mutation,
@@ -6984,6 +7260,7 @@ _TRUSTED_NUMERIC_BINDING_SOURCES = frozenset({
     "dynamic_value_store",
     "break_template_runtime_value",
     "character_skill_param_slot",
+    "character_trace_param",
     "task_template_parameter",
 })
 
@@ -7585,6 +7862,8 @@ def _single_entry_removal_index(before: object, after: object) -> int | None:
     return None
 
 
+
+
 def _records_by_mutation_id(
     records: tuple[dict[str, JSONValue], ...],
 ) -> dict[str, tuple[dict[str, JSONValue], ...]]:
@@ -7809,6 +8088,7 @@ def _audit_dynamic_numeric_binding(
         "dynamic_value_store",
         "break_template_runtime_value",
         "character_skill_param_slot",
+        "character_trace_param",
         "task_template_parameter",
     }:
         # Only the formal toughness producer passes the RuleBook emission and
@@ -7840,6 +8120,25 @@ def _audit_dynamic_numeric_binding(
         return
     if not isinstance(entry.get("source_trace"), dict):
         violations.append(_violation(mutation, "dynamic_numeric_binding_source_trace_missing", missing_field="numeric_evaluation.bindings.entry.source_trace"))
+    elif source_type == "character_trace_param":
+        trace = entry["source_trace"]
+        required = (
+            "character_data_card_id",
+            "trace_node_id",
+            "mechanism_slot_id",
+            "trace_node_source",
+            "mechanism_slot_source",
+            "dynamic_value_binding",
+        )
+        if any(not trace.get(key) for key in required):
+            violations.append(
+                _violation(
+                    mutation,
+                    "dynamic_numeric_binding_source_trace_incomplete",
+                    missing_field="numeric_evaluation.bindings.entry.source_trace",
+                    details={"source_trace": trace},
+                )
+            )
     elif source_type == "task_template_parameter":
         _audit_template_parameter_binding(mutation, entry, violations, template_depth)
 

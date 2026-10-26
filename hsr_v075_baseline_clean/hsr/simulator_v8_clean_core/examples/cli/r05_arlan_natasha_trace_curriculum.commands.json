@@ -1,0 +1,84 @@
+{
+ "commands": [
+  {
+   "actor_id": "arlan",
+   "action_id": "avatar_skill:100802",
+   "action_level": 12,
+   "target_ids": [
+    "enemy:stage:201010110:wave:0:pos:0"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "enemy:stage:201010110:wave:0:pos:1",
+   "action_id": "monster_skill:100205001",
+   "action_level": 1,
+   "target_ids": [
+    "arlan"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "natasha",
+   "action_id": "avatar_skill:110502",
+   "action_level": 12,
+   "target_ids": [
+    "arlan"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "arlan",
+   "action_id": "avatar_skill:100802",
+   "action_level": 12,
+   "target_ids": [
+    "enemy:stage:201010110:wave:0:pos:1"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "arlan",
+   "action_id": "avatar_skill:100803",
+   "action_level": 12,
+   "target_ids": [
+    "enemy:stage:201010110:wave:1:pos:0"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "arlan",
+   "action_id": "avatar_skill:100803",
+   "action_level": 12,
+   "target_ids": [
+    "enemy:stage:201010110:wave:1:pos:0"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "natasha",
+   "action_id": "avatar_skill:110502",
+   "action_level": 12,
+   "target_ids": [
+    "arlan"
+   ],
+   "source": "manual",
+   "queue_name": null
+  },
+  {
+   "actor_id": "arlan",
+   "action_id": "avatar_skill:100802",
+   "action_level": 12,
+   "target_ids": [
+    "enemy:stage:201010110:wave:1:pos:2"
+   ],
+   "source": "manual",
+   "queue_name": null
+  }
+ ]
+}

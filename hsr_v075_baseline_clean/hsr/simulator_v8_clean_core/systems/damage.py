@@ -23,6 +23,7 @@ from .resource import ResourceSystem
 from .unit_lifecycle import UnitLifecycleSystem
 from .shield import HPDamageRoute, ShieldSystem
 from .elation import ElationDamageContext
+from .scaling_basis import resolve_scaling_basis
 
 
 DamageFormulaFamily = Literal[
@@ -328,6 +329,221 @@ class DamageApplicationResult:
         }
 
 
+_DAMAGE_BLOCK_EXCLUDING_DOT_FLAG = "BlockDamageExcludeDot"
+def _damage_request_admission_reason(
+    state: BattleState,
+    packet: DamagePacket,
+    rules: RuleBook | None,
+) -> str:
+    """Return the structural admission failure of a damage request before side effects.
+
+    Blocking a hit consumes a status and must not turn an invalid packet into a
+    successful transaction.  Every supported family therefore performs the same
+    definition/formula/context checks that its applier requires, before the block
+    status is touched; the applier still repeats them as the final authority.
+    """
+
+    family = packet.damage_formula_family
+    if packet.target_id not in state.units:
+        return "damage_target_missing"
+    if family == "direct":
+        if packet.action_definition is None:
+            return "direct damage requires action_definition"
+        if packet.scaling_ratio is None:
+            return "direct damage requires hit_profile scaling_ratio"
+        if (type(packet.scaling_ratio) not in (int, float)
+                or not math.isfinite(packet.scaling_ratio)
+                or packet.scaling_ratio < 0):
+            return "direct damage requires finite hit_profile scaling_ratio"
+        if not isinstance(packet.scaling_basis, dict):
+            return "direct damage requires hit_profile scaling_basis"
+        basis_result = resolve_scaling_basis(
+            state,
+            attacker_id=packet.attacker_id,
+            target_id=packet.target_id,
+            basis=packet.scaling_basis,
+            source_trace=packet.source_trace,
+        )
+        if not basis_result.ok or basis_result.value is None:
+            return (
+                basis_result.blocked_reason
+                or "direct damage scaling_basis_not_admitted"
+            )
+        extra_basis = packet.scaling_basis.get("extra_scaling_basis")
+        if extra_basis is not None or packet.extra_scaling_ratio is not None:
+            if (
+                type(packet.extra_scaling_ratio) not in (int, float)
+                or not math.isfinite(packet.extra_scaling_ratio)
+            ):
+                return "extra_scaling_ratio_missing_or_invalid"
+            extra_result = resolve_scaling_basis(
+                state,
+                attacker_id=packet.attacker_id,
+                target_id=packet.target_id,
+                basis=extra_basis,
+                source_trace=packet.source_trace,
+            )
+            if not extra_result.ok or extra_result.value is None:
+                return (
+                    extra_result.blocked_reason
+                    or "extra_scaling_basis_not_admitted"
+                )
+        return ""
+    if family == "elation":
+        reason, _ = _elation_admission(state, packet, rules)
+        return reason
+    if family == "break":
+        if packet.amount is None:
+            return "break damage requires admitted amount"
+        if packet.amount_stage != "family_base":
+            return "break damage requires family_base amount stage"
+        if not packet.break_damage_emission_id and not packet.status_damage_emission_id:
+            return "break damage requires break_damage_emission_id or status_damage_emission_id"
+        if not packet.break_template_id:
+            return "break damage requires break_template_id"
+        if packet.status_damage_emission_id and rules is not None:
+            emission = rules.status_damage_emission(
+                packet.status_damage_emission_id
+            )
+            if (
+                emission is None
+                or emission.coverage_status != "executable"
+                or emission.damage_formula_family != "break"
+                or packet.base_includes_break_bonus
+                is not emission.base_includes_break_bonus
+                or (
+                    packet.base_includes_break_bonus
+                    and emission.break_amount_mode != "value"
+                )
+            ):
+                return "included_break_bonus_emission_mismatch"
+        elif packet.base_includes_break_bonus:
+            return "included_break_bonus_emission_missing"
+        return ""
+    if family == "super_break":
+        if packet.amount is None:
+            return "super break damage requires admitted amount"
+        if packet.amount_stage != "family_base":
+            return "super break damage requires family_base amount stage"
+        if not packet.super_break_emission_id:
+            return "super break damage requires super_break_emission_id"
+        return ""
+    if family in {"dot", "additional"}:
+        record_type = "dot_damage" if family == "dot" else "additional_damage"
+        if packet.amount is None:
+            return f"{record_type} requires admitted amount"
+        if packet.amount_stage != "family_base":
+            return f"{record_type} requires family_base amount stage"
+        if not packet.status_damage_emission_id:
+            return f"{record_type} requires status_damage_emission_id"
+        return ""
+    if family in {"true_damage", "hp_loss"}:
+        if packet.amount is None:
+            return f"{family} requires fixed amount"
+        if packet.amount_stage != "fixed_final":
+            return f"{family} requires fixed_final amount stage"
+        return ""
+    if _family_policy(family).runtime_status == "blocked":
+        return ""
+    return f"unsupported damage formula family {family!r}"
+
+# Source modifier GlobalModifier_Common_Specific.BlockDamage_Count declares one
+# count of "nullify all DMG received except DoT".  Break, additional and
+# elation damage are damage received; DoT, true damage and HP-loss operations
+# are separate families and bypass the block.
+_DAMAGE_BLOCK_EXCLUDING_DOT_FAMILIES = frozenset(
+    {"direct", "elation", "break", "super_break", "additional"}
+)
+
+
+def _elation_admission(state: BattleState, packet: DamagePacket, rules: RuleBook | None) -> tuple[str, dict[str, object]]:
+    """Return the non-side-effect admission failure for an elation packet.
+
+    Mirrors the real applier contract before any damage/block side effect: the
+    context must be the one issued by the formal producer for this actor and
+    state, its own blocked_reason must be clear, and the runtime override,
+    basis, rules, formula and modifier-term dependencies must be admitted.
+    """
+
+    if (
+        packet.amount is not None
+        or packet.extra_scaling_ratio is not None
+        or "elation_formula" in packet.metadata
+    ):
+        return "elation_base_runtime_override_not_admitted", {}
+    if type(packet.elation_context) is not ElationDamageContext:
+        return "elation_damage_context_missing", {}
+    reason = packet.elation_context.blocked_reason(
+        actor_id=packet.attacker_id,
+        state=state,
+        modifier_terms=tuple(
+            item.formula_term() for item in packet.modifier_contributions
+        ),
+    )
+    if reason:
+        return reason, {}
+    if (
+        type(packet.scaling_ratio) not in (int, float)
+        or not math.isfinite(packet.scaling_ratio)
+        or packet.scaling_ratio < 0
+        or packet.scaling_basis.get("kind") != "elation_level_base"
+    ):
+        return "elation_scaling_ratio_or_basis_not_admitted", {}
+    if rules is None or packet.attacker_id not in state.units:
+        return "elation_formal_rules_or_actor_missing", {}
+    selected: dict[str, FormulaIR] = {}
+    for kind in ("elation_level_base", "elation_multiplier_rule"):
+        candidates = tuple(
+            formula for formula in rules.ir.formulas if formula.kind == kind
+        )
+        if (
+            len(candidates) != 1
+            or candidates[0].coverage_status != "executable"
+            or rules.formula_resolution(candidates[0].formula_id)[0] is None
+        ):
+            return f"{kind}_formula_not_admitted", {}
+        selected[kind] = candidates[0]
+    base_formula = selected["elation_level_base"]
+    values = base_formula.expression.get("values")
+    raw_base = (
+        values.get(str(state.units[packet.attacker_id].level))
+        if isinstance(values, dict)
+        else None
+    )
+    try:
+        base = float(raw_base) if type(raw_base) in (int, float, str) else math.nan
+    except ValueError:
+        base = math.nan
+    if not math.isfinite(base) or base < 0:
+        return "elation_level_base_missing_or_invalid", {}
+    for contribution in packet.modifier_contributions:
+        term = contribution.formula_term()
+        bucket, key = term.get("bucket"), str(term.get("key") or "")
+        admitted = (
+            (bucket == "crit" and key in {"critical_chance", "critical_damage"})
+            or (bucket == "defense" and key == "defender_defence_added_ratio")
+            or (bucket == "resistance" and key in {"all_res_pen", *(f"{element}_res_pen" for element in (
+                "Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary"))})
+            or (bucket == "damage_taken" and key == "damage_taken_ratio")
+            or (bucket == "damage_reduction" and key == "damage_reduction")
+            or (bucket == "base" and key == "attack_added_ratio")
+            or (bucket == "damage_bonus" and key == "damage_added_ratio")
+            or (bucket == "elation_bonus" and key == "elation_damage_added_ratio")
+            or (bucket == "elation_context" and key in {"points", "point_multiplier_enabled"})
+            or bucket == "weakness"
+        )
+        if not admitted:
+            return f"elation_transient_modifier_not_admitted:{bucket}:{key}", {}
+    base_amount = base * packet.scaling_ratio
+    if not math.isfinite(base_amount):
+        return "elation_base_amount_not_finite", {}
+    return "", {
+        "base": base,
+        "base_amount": base_amount,
+        "base_formula": base_formula,
+        "multiplier_rule": selected["elation_multiplier_rule"],
+    }
+
 class DamageSystem:
     def __init__(
         self,
@@ -351,6 +567,11 @@ class DamageSystem:
             return _damage_error(packet, "reserved_packet_metadata_field:packet_fields")
         if packet.modifier_contributions and packet.damage_formula_family not in {"direct", "elation"}:
             return _damage_error(packet, "transient_damage_modifiers_require_direct_consumer")
+        admission_reason = _damage_request_admission_reason(
+            state, packet, self.rules
+        )
+        if admission_reason:
+            return _damage_error(packet, admission_reason)
         dead_target_continuation = False
         if window_ledger is not None:
             admitted, reason, dead_target_continuation = window_ledger.admit_packet(state, packet)
@@ -360,7 +581,10 @@ class DamageSystem:
             admitted, reason = _admit_packet_without_window(state, packet)
             if not admitted:
                 return _damage_source_skip(packet, reason, None)
-        if packet.damage_formula_family == "direct":
+        damage_block = self._damage_block_excluding_dot(state, packet)
+        if damage_block is not None:
+            result = damage_block
+        elif packet.damage_formula_family == "direct":
             result = self._apply_direct_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "elation":
             result = self._apply_elation_damage(state, packet, dead_target_continuation=dead_target_continuation)
@@ -411,6 +635,131 @@ class DamageSystem:
             for event in result.events:
                 window_ledger.record_defeat_event(event)
         return result
+
+    def _damage_block_excluding_dot(
+        self, state: BattleState, packet: DamagePacket
+    ) -> DamageApplicationResult | None:
+        """Consume a source-declared damage block on an incoming non-DoT hit.
+
+        Modifiers carrying the BlockDamageExcludeDot behavior flag nullify the
+        damage of one hit and are consumed by it; DoT damage bypasses them.  The
+        block is a native damage-pipeline rule keyed by the behavior flag, not a
+        per-character decision.  Consumption goes through the formal status
+        lifecycle so every mutation keeps its native settlement record and the
+        OnDestroy/cleanup events of the status instance.
+        """
+
+        from .status import StatusSystem
+
+        if packet.damage_formula_family not in _DAMAGE_BLOCK_EXCLUDING_DOT_FAMILIES:
+            return None
+        target = state.units.get(packet.target_id)
+        if target is None or target.hp <= 0:
+            return None
+        details = target.flags.get("status_details")
+        if not isinstance(details, (list, tuple)):
+            return None
+        detail = next(
+            (
+                item
+                for item in details
+                if isinstance(item, dict)
+                and _DAMAGE_BLOCK_EXCLUDING_DOT_FLAG
+                in (item.get("behavior_flags") or ())
+                and str(item.get("lifecycle_state") or "active")
+                in {"active", "active_partial"}
+            ),
+            None,
+        )
+        if detail is None:
+            return None
+        stacks = detail.get("stacks")
+        remaining = (int(stacks) if isinstance(stacks, int) and not isinstance(stacks, bool) else 1) - 1
+        status_trace = (
+            dict(detail.get("source_trace"))
+            if isinstance(detail.get("source_trace"), dict)
+            else {}
+        )
+        block_request = {
+            "damage_block_flag": _DAMAGE_BLOCK_EXCLUDING_DOT_FLAG,
+            "status_instance_id": detail.get("instance_id"),
+            "status_id": detail.get("status_id"),
+            "modifier_name": detail.get("modifier_name"),
+            "behavior_flags": list(detail.get("behavior_flags") or ()),
+            "consumed_stack": bool(remaining <= 0),
+            "remaining_stacks": max(0, remaining),
+            "damage_request": packet.to_json(),
+        }
+        trace = {**status_trace, "damage_block": block_request}
+        system = StatusSystem(self.rules)
+        if remaining > 0:
+            try:
+                lifecycle = system.modify_modifier_value(
+                    state,
+                    packet.target_id,
+                    str(detail.get("modifier_name") or ""),
+                    "Layer",
+                    "Add",
+                    -1,
+                    caster_id=str(detail.get("caster_id") or ""),
+                    metadata=trace,
+                    status_instance_id=str(detail.get("instance_id") or ""),
+                )
+            except (TypeError, ValueError):
+                lifecycle = None
+            if lifecycle is None or not lifecycle.ok:
+                # A plain layer count without a stack policy still consumes one
+                # instance layer through the same formal lifecycle.
+                lifecycle = system.reduce_status_layer(
+                    state,
+                    target_id=packet.target_id,
+                    detail=detail,
+                    source="damage_system",
+                    source_trace=trace,
+                )
+        else:
+            lifecycle = system.remove_status_instance(
+                state,
+                target_id=packet.target_id,
+                detail=detail,
+                source="damage_system",
+                source_trace=trace,
+            )
+        if not lifecycle.ok:
+            # The status instance is not consumable through the formal lifecycle
+            # (for example a synthetic detail without a stack admission).  Do not
+            # invent unrecorded mutations: let the damage chain proceed normally.
+            return None
+        detail_mutation = next(
+            (
+                mutation
+                for mutation in lifecycle.mutations
+                if mutation.path == ("units", packet.target_id, "flags", "status_details")
+            ),
+            None,
+        )
+        hp = target.hp
+        block_record = SettlementRecord(
+            record_type="damage_blocked",
+            source="damage_system",
+            mutation_id=detail_mutation.stable_id() if detail_mutation is not None else "",
+            process_only=False,
+            payload={
+                **block_request,
+                "amount": 0.0,
+                "target_before_hp": hp,
+                "target_after_hp": hp,
+                "status_lifecycle": lifecycle.to_json() if hasattr(lifecycle, "to_json") else {},
+            },
+            trace=packet.source_trace,
+        ).to_json()
+        return DamageApplicationResult(
+            packet=packet,
+            ok=True,
+            events=lifecycle.events,
+            mutations=lifecycle.mutations,
+            records=(block_record, *lifecycle.records),
+        )
 
     def _with_pending_defeat(
         self, state: BattleState, packet: DamagePacket, result: DamageApplicationResult,
@@ -509,56 +858,16 @@ class DamageSystem:
     def _apply_elation_damage(
         self, state: BattleState, packet: DamagePacket, *, dead_target_continuation: bool = False,
     ) -> DamageApplicationResult:
-        if packet.amount is not None or packet.extra_scaling_ratio is not None or "elation_formula" in packet.metadata:
-            return _damage_error(packet, "elation_base_runtime_override_not_admitted")
-        if type(packet.elation_context) is not ElationDamageContext:
-            return _damage_error(packet, "elation_damage_context_missing")
-        reason = packet.elation_context.blocked_reason(
-            actor_id=packet.attacker_id, state=state,
-            modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions),
-        )
+        reason, admitted = _elation_admission(state, packet, self.rules)
         if reason:
             return _damage_error(packet, reason)
-        if (type(packet.scaling_ratio) not in (int, float) or not math.isfinite(packet.scaling_ratio)
-                or packet.scaling_ratio < 0 or packet.scaling_basis.get("kind") != "elation_level_base"):
-            return _damage_error(packet, "elation_scaling_ratio_or_basis_not_admitted")
-        if self.rules is None or packet.attacker_id not in state.units:
-            return _damage_error(packet, "elation_formal_rules_or_actor_missing")
-        selected = {}
-        for kind in ("elation_level_base", "elation_multiplier_rule"):
-            candidates = tuple(formula for formula in self.rules.ir.formulas if formula.kind == kind)
-            if (len(candidates) != 1 or candidates[0].coverage_status != "executable"
-                    or self.rules.formula_resolution(candidates[0].formula_id)[0] is None):
-                return _damage_error(packet, f"{kind}_formula_not_admitted")
-            selected[kind] = candidates[0]
-        base_formula = selected["elation_level_base"]
-        values = base_formula.expression.get("values")
-        raw_base = values.get(str(state.units[packet.attacker_id].level)) if isinstance(values, dict) else None
-        try:
-            base = float(raw_base) if type(raw_base) in (int, float, str) else math.nan
-        except ValueError:
-            base = math.nan
-        if not math.isfinite(base) or base < 0:
-            return _damage_error(packet, "elation_level_base_missing_or_invalid")
-        for contribution in packet.modifier_contributions:
-            term = contribution.formula_term()
-            bucket, key = term.get("bucket"), str(term.get("key") or "")
-            admitted = ((bucket == "crit" and key in {"critical_chance", "critical_damage"})
-                or (bucket == "defense" and key == "defender_defence_added_ratio")
-                or (bucket == "resistance" and key in {"all_res_pen", *(f"{element}_res_pen" for element in (
-                    "Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary"))})
-                or (bucket == "damage_taken" and key == "damage_taken_ratio")
-                or (bucket == "damage_reduction" and key == "damage_reduction")
-                or (bucket == "base" and key == "attack_added_ratio")
-                or (bucket == "damage_bonus" and key == "damage_added_ratio")
-                or (bucket == "elation_bonus" and key == "elation_damage_added_ratio")
-                or (bucket == "elation_context" and key in {"points", "point_multiplier_enabled"})
-                or bucket == "weakness")
-            if not admitted:
-                return _damage_error(packet, f"elation_transient_modifier_not_admitted:{bucket}:{key}")
-        base_amount = base * packet.scaling_ratio
-        if not math.isfinite(base_amount):
-            return _damage_error(packet, "elation_base_amount_not_finite")
+        base = float(admitted["base"])
+        base_amount = float(admitted["base_amount"])
+        base_formula = admitted["base_formula"]
+        selected = {
+            "elation_level_base": base_formula,
+            "elation_multiplier_rule": admitted["multiplier_rule"],
+        }
         prepared = replace(packet, amount=base_amount, amount_stage="family_base", metadata={
             **packet.metadata, "elation_formula": {
                 "level_base": base, "scaling_ratio": packet.scaling_ratio, "ratio_delta": 0.0,
