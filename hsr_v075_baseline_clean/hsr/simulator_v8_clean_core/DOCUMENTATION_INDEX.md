@@ -39,7 +39,8 @@
 | 战斗中怪物自然召唤 | [真实入口、共享调用链与集中验收约束](docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)；当前进度仍见交接 |
 | 召唤怪物有效等级与面板 | [出生属性、上下文隔离与数值验收约束](docs/MONSTER_SUMMON_STAT_BINDING.md)；当前进度仍见交接 |
 | 普通怪物战斗闭环 | [两类召唤者、生命周期、队列、多波与胜负的集中交付约束](docs/MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md)；当前进度仍见交接 |
-| 正式角色构筑与普通队伍战斗 | [R05 四卡行迹/星魂、参数与实际战斗的集中交付](docs/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md)；当前实施入口，实现基线 `516acc8`，由用户安排执行 |
+| 正式角色构筑与普通队伍战斗 | [R05 四卡行迹/星魂、参数与实际战斗的集中交付](docs/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md)；验收与提交状态见交接 |
+| 光锥与遗器完整效果 | [R06 成品装配、动态触发、阈值与完整清理的整包说明](docs/EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md)；实现基线 `b35d0a7`，由用户安排执行 |
 | 独立伤害逐任务绑定 | [已验收批次的绑定契约](docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
 | V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
 | 技能后置监听行动事实 | [自然路线、实现边界与固定命令](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md) |
