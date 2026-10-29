@@ -143,12 +143,39 @@
 - 结果直接替换本文末尾的交付表，交接只更新状态和入口，不追加逐轮流水账。
   实现方未获另行授权不提交、不推送、不改 submodule、依赖或环境；整包交回 Codex。
 
-## 交付表（实现时维护）
+## 交付表（2026-10-28，已验收）
+
+基线 `70b9e07`，工作区未提交。全部 224 个 `mainline_equipment` 图通过运行时静态闭包；
+162 张已发布光锥、58 套遗器、90 个阈值均进入正式 IR。8 个原始缺口全部闭合，无删除分支或
+降级为 non_gameplay。
 
 | 行为族 | 对应来源／同族装备 | 本次改动与原生执行证据 | 公开路线或组件边界 | 剩余依赖 |
 | --- | --- | --- | --- | --- |
-| 成品装配与静态贡献 | 待归并 | 待实现／核对已有能力 | 待填写 | 待核对 |
-| 行动、伤害与资源事件 | 待归并 | 待实现／核对已有能力 | 待填写 | 待核对 |
-| 死亡相关恢复、治疗与存储 | 待归并 | 待实现／核对已有能力 | 待填写 | 待核对 |
-| 属性／资源阈值与团队效果 | 待归并 | 待实现／核对已有能力 | 待填写 | 待核对 |
-| 到期、退场、清理与再次施加 | 待归并 | 待实现／核对已有能力 | 待填写 | 待核对 |
+| 成品装配与静态贡献 | `light_cone_cards.py`、`relic_cards.py`、`equipment_assembler.py`、`relic_set_assembler.py`；224 图 | 162 光锥（等级／晋阶／叠影）、58 套遗器（六部位、主副词条）、90 阈值保持正式目录与参数来源；光锥参数按技能叠影索引绑定。`Ability20024` 的区间 Min 纳入 modifier 参数继承（`_modifier_range_dynamic_hashes`），避免 watcher 读不到叠影值。 | 路线 A/B/C 均从 `assembled_character_build` 与来源波次入场；路线 A 同时验证 `MRelic_302_Sub` 速度阈值实际激活（attack +8%）。 | 无（目录/装配范围内）；合法自定义成品按正式输入校验，获取和养成过程不在战斗范围。 |
+| 行动、伤害与资源事件 | `Ability20015`（OnBeforeSkillUse）、`Ability23033`（OnAfterSkillUse/OnEnterBattle）、`Ability23041`（OnPhase1/OnBeforeHitAll）、`Ability23013`（OnListenAfterAttack） | `ModifyCurrentSkillDelayCost` 缺省 `ModifyFunction` 定为 Add（真实 raw 任务 → TimelineSystem，−12% 延迟登记为 88）；`Pursued + FinalFormulaType=ByPureDamage` 在格挡副作用之前由正式 executable emission 决定最终公式与 indirect 身份，进入 additional 纯伤害契约（不参与暴击／普通增伤、无暴击 RNG，仅保留目标侧倍率；普通 additional 行为不变）；审计在实际 additional 分派路径统一按正式 emission 的 final_formula_type／is_indirect 校验 metadata 与 settlement（含 20018/21029 的空公式+indirect 正例），并要求存在匹配该 mutation 的原生 `additional_damage`／`damage_system` 结算；`OnSnapshotCreate` 经正式事件传输并在公开路线实际执行；元素源 `ReadTargetType` 允许 raw 占位 `DamageType`；`OnSnapshotCreate` 由真实治疗 mutation 投影 `heal.snapshot.created`；`ByCurrentSkillType` 省略字段沿用既有 TBGD 缺省枚举 Normal。 | 组件：`test_equipment_heal_formula_delay_cost.py`（真实 20015 raw 任务 → 88 行动值）、`test_equipment_heal_record_snapshot.py`（快照身份/寿命、纯伤害对比、双佩戴者）。路线 A 胜利并出现 `status_damage_identity` 与真实 `OnSnapshotCreate` 记录，`_TotalAmount` 由正归零；路线 C 胜利并挂载 `MEquip_21033_Main`/`MEquip_23033_Sub`。 | 23033 雷遁“两次普攻后行动提前”尚未在自然路线完整跑出（仅状态挂载与真实条件树）；20015 行动提前由真实任务组件证明。 |
+| 死亡相关恢复、治疗与存储 | `Ability21033`、`Ability23002`（OnTriggerDeath/OnAfterBeingAttacked）、`Ability23013`（OnAfterDealHeal/OnSnapshotCreate）、`Ability23051`（OnBeforeSkillUse） | 缺 FormulaType 的 HealHP 采用 `HealByHealerAttack`（caster.attack 基数），三张光锥真实 raw 形状校验；跨 modifier 内部动态值（治疗记录 `_TotalAmount`）下沉为 owner-unit scope 并带 owner 过滤，避免他人治疗串源；`SetDynamicValueByHealDataProperty` 的 event_value operand 只由 `HealEventFact` 读取并校验，缺失／错配在写入前阻断（不再以 0 掩盖错配）；heal mutation 由类型化 `HealEventFact` 绑定真实治疗者/目标/数值/事件 ID/source/顶层目标/window/scope/快照身份，并以 `_claims` 封存全部业务字段（`replace` 复制或改写 mutation/金额即拒绝）；派发入口在两个事件写入前校验事实、事件身份与作用域；快照归属治疗者（`actor_local`），双佩戴者各记各自治疗、无来源冲突。 | 组件：`test_equipment_heal_record_snapshot.py`（金额篡改、事件／目标／作用域错配、重放换 event_id、复制事实改值、无生产者快照、双佩戴者独立累计、快照幂等）。路线 A：23002 OnTriggerDeath 与 OnAfterBeingAttacked 治疗、0.24 伤害加成、23013 记录→攻击消费→清零与真实快照派发。路线 B：23051 终结技前群疗 + 全体 `MEquip_23051_Sub` 0.24 增伤。 | 路线 B 为定向自然段（观察到两类效果后停止，未宣称整场胜负）。 |
+| 属性／资源阈值与团队效果 | `Ability20024`（OnElationPointChange）、`Ability23051`（OnStack 增伤） | `OnElationPointChange` 的 `{Min,OnEnterRange,OnExitRange}` 原生形状下沉为既有 AbilityPropertyWatcher/Range（新增 `property_source=elation_base_points`），由 `elation.points.changed` 正式事件触发重查；重复区间不重复通知、退出移除、再进入重加。`ByTargetCount` 召唤物分支沿用现有 producer（路线 B 无召唤物时 0.24，有召唤物时参数 0.12 额外项保持来源定义）。非装备来源的同形 `OnElationPointChange` 不删除：Monster_W5_JK_00 的 [0]/[1] 保留真实回调和明确 blocked 原因（`test_non_equipment_native_range_callbacks_remain_visible_and_blocked`）。 | 组件：`test_equipment_elation_point_range.py`（真实 20024 IR，阈值恰好 10 进入、重复变化不重复、跌回移除、再次进入重加、CriticalDamageBase +0.2）。路线 B：23051 Redoubt 0.24 逐单位绑定，`MEquip_23041_SubOnEmemy` 光环与被打目标 DEF −0.12 实际落地。 | 23041 “敌方拥有装备者添加的弱点” 的 +60% 伤害分支仅有 Remodifier 真实 payload 选择组件（`test_equipment_remodifier_include_limbo.py`），当前已装配角色无弱点施加者，未自然跑出。 |
+| 到期、退场、清理与再次施加 | `Ability23002`（Effect OnPhase2）、`Ability20024`（range exit）、`Ability23013`（RemoveWhenCasterDead/Reset）、`Ability23033`（RemoveSelfModifier） | 23002 Effect 用 OnPhase1/OnPhase2 门控并在 Phase2 移除；20024 区间退出只移除该来源 Sub；23013 每次消费后 `_TotalAmount` 与 Flag 归零、再治疗可重新累计；23033 Raiton 状态 RemoveSelfModifier 保留在真实回调树中。 | 路线 A：23002 增益跨回合仍按来源声明保留/清理，23013 总记录多次由正归零并再次累计；组件：elation 退出/再进入、23013 双佩戴者独立累计与快照幂等、重放/复制事实拒绝。 | 23033 两次普攻后的 RemoveSelfModifier 仅在静态/条件树与专门组件覆盖范围内，未在整场自然链观察。 |
+
+### 实现方验证记录（2026-10-28，最终）
+
+- Codex 四个复验入口合并：**29 passed**（`test_r06_codex_acceptance.py` 11 + `test_r06_contract_followup.py` 9 + `test_r06_final_formula_audit_review.py` 3 + `test_r06_additional_settlement_boundary_review.py` 6）。
+- 合并边界：
+  - 常规：**79 passed**（出生／快照分离、治疗公式／延迟组件 7 项、可持续资源、当前技能延迟）。
+  - R06 integration：治疗记录 **22 passed**、elation **2 passed**、remodifier **1 passed**、`test_equipment_battle.py` **2 passed**；damage／break 审计与格挡回归 **30 passed**。
+- 代表性公开路线：
+  - 路线 A（两波公共路线；阿兰 23002+遗器、希露瓦 23033、娜塔莎 23013）：**victory**（约 2:11），严格审计下通过，实际执行 `OnSnapshotCreate`，覆盖 23002 OnTriggerDeath/OnAfterBeingAttacked、0.24 增伤、23013 记录→消费→清零、遗器阈值与 23033 入场回能。
+  - 路线 B（Stage 307311）：定向自然段；路线 C（Stage 200021050）：**victory**。两者沿用前轮证据，本项审计修复不改变路线行为，按约束未重跑整场。
+  - R05 普通队伍路线在严格审计下复跑 **2 passed**（约 5:58），确认未回归既有角色路线。
+- 纯伤害／普通间接附伤、原生结算存在性、快照事实与双佩戴者、非装备范围保留、正式传输均有真实装备 IR 的组件／反例检查；未删反例。
+- 未提交、未推送；未更新 submodule、依赖或环境。
+
+## 最终复审修复与复验（2026-10-28，通过）
+
+Codex 已复查本批源码、正式调用链及审计分派，集中验收通过，未发现新的可操作问题。
+
+- additional 的最终公式与 indirect 身份统一取自正式 executable emission；真实 20018／21029 的普通间接附伤原生结算通过。metadata 与正确重关联后的 settlement 降级均被拒绝。
+- 每笔应有附伤结算必须匹配实际 mutation ID、`additional_damage` 类型及 `damage_system` 生产者；缺失、改名、错 source、非法 payload 均拒绝，再核对来源身份、HP 路由形状与最终公式。
+- 四个历史复验入口与永久治疗／快照、治疗公式／延迟、伤害／格挡及出生／快照分离回归合跑：**78 passed，27.74 s**；墙钟 **30.72 s**，峰值 **891,928 KiB**，日志 `/tmp/r06_final_acceptance.log`。
+- 实现方的装备闭包、elation／remodifier 及公开路线证据保留；本轮按影响范围复用 A／B／C 和 R05 整场／自然段证据，未重复全量或整场验证。交付表列出的三个组件分支与路线 B 边界继续保留。
+- 验收仅更新本文和交接，未修改生产代码；未提交、未推送，未改 submodule／依赖／环境。

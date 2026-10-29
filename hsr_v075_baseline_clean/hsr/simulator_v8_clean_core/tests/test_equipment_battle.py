@@ -35,9 +35,12 @@ def test_equipment_graph_source_closure_and_speed_threshold():
     rules, scenario = _case()
     graphs = [g for g in rules.ir.standalone_ability_graphs if g.source_mode == 'mainline_equipment']
     assert len(graphs) == 224
+    # R06 closed the previously deferred equipment graphs: every published
+    # light cone / relic-set graph must now pass the same static runtime
+    # closure.  Runtime and numeric evidence is separate (see the R06 routes and
+    # component checks) and is not implied by this assertion.
     blocked = {g.ability_name for g in graphs if rules._equipment_graph_runtime_closure_reason(g)}
-    assert blocked == {'Ability23051', 'Ability20015', 'Ability21033',
-                       'Ability23002', 'Ability23013', 'Ability23033'}
+    assert blocked == set()
     for name in ('Ability20005', 'Ability21002', 'Ability21032', 'Ability21036',
                  'Ability21056', 'Ability53021', 'Ability23006'):
         assert name not in blocked

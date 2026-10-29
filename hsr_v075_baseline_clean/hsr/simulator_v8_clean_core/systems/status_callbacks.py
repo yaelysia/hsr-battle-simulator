@@ -49,6 +49,7 @@ from .dot_formula import DotFormula, DotFormulaInput
 from .elation import resolve_elation_damage_context
 from .dynamic_values import (
     binding_source_from_status_detail,
+    binding_source_from_store_for_units,
     binding_source_from_store,
     character_skill_param_declared_keys,
     character_skill_param_binding_sources,
@@ -316,8 +317,18 @@ def resolve_remodifier_status_scopes(
         return TaskGraphTargetResult("blocked", blocked_reason="remodifier_filter_invalid")
     scopes: list[TaskGraphStatusScope] = []
     rng_events: list[RNGEvent] = []
+    include_limbo = payload.get("IncludeLimbo") is True
+    from .unit_lifecycle import UnitLifecycleSystem
+
+    lifecycle = UnitLifecycleSystem()
     for target_id in target_ids:
         unit = state.units.get(target_id)
+        if unit is not None and not include_limbo:
+            # Source default excludes present-but-inactive (limbo) targets;
+            # IncludeLimbo=True admits their status instances for this query.
+            view = lifecycle.view(state, target_id)
+            if view.is_present and not view.is_active:
+                continue
         details = unit.flags.get("status_details", ()) if unit is not None else None
         if not isinstance(details, (list, tuple)):
             return TaskGraphTargetResult("blocked", blocked_reason="remodifier_status_details_invalid")
@@ -3662,8 +3673,28 @@ class StatusCallbackSystem:
         *,
         template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
     ) -> StatusCallbackExecutionResult:
-        modify_function = task.task_payload.get("ModifyFunction")
-        if (task.coverage_status != "executable" or not isinstance(modify_function, str)
+        # The lowered effect owns the effective operation (an omitted raw
+        # ModifyFunction is Add); the runtime does not re-derive that default.
+        effect = self.rules.effect(task.effect_id) if task.effect_id else None
+        standard = (
+            effect.payload.get("standard")
+            if effect is not None and isinstance(effect.payload, dict)
+            else None
+        )
+        formal_standard = (
+            standard
+            if isinstance(standard, dict)
+            and standard.get("operation") == "current_skill_delay_cost"
+            and not standard.get("blocked_reason")
+            else None
+        )
+        modify_function = (
+            formal_standard.get("modify_function")
+            if formal_standard is not None
+            else task.task_payload.get("ModifyFunction")
+        )
+        if (task.coverage_status != "executable"
+                or not isinstance(modify_function, str)
                 or modify_function not in {"Set", "Add"}):
             reason = (task.blocked_reason or "current_skill_delay_cost_not_executable"
                       if task.coverage_status != "executable"
@@ -4993,6 +5024,12 @@ class StatusCallbackSystem:
                 target_id=target_id,
                 attack_type=emission.attack_type,
                 damage_formula_family=emission.damage_formula_family,
+                final_formula_type=str(
+                    (emission.scaling_expr or {}).get("final_formula_type") or ""
+                ),
+                is_indirect=(
+                    (emission.scaling_expr or {}).get("is_indirect") is True
+                ),
                 amount=None if emission.damage_formula_family == "elation" else float(evaluation.value),
                 amount_stage="unspecified" if emission.damage_formula_family == "elation" else "family_base",
                 scaling_ratio=float(evaluation.value) if emission.damage_formula_family == "elation" else None,
@@ -5457,7 +5494,13 @@ class StatusCallbackSystem:
                     if unit_id
                 )
             )
-            status_sources = status_binding_sources(state, source_unit_ids)
+            shared_owner_hashes = _unit_scope_dynamic_hashes(
+                state, modifier_owner_id
+            )
+            status_sources = tuple(
+                _strip_hashes_from_binding_source(source, shared_owner_hashes)
+                for source in status_binding_sources(state, source_unit_ids)
+            )
             mirrored_status_instance_ids = tuple(
                 str(source.get("status_instance_id") or "")
                 for source in status_sources
@@ -5465,8 +5508,9 @@ class StatusCallbackSystem:
             )
             sources = (
                 *status_sources,
-                binding_source_from_store(
+                binding_source_from_store_for_units(
                     store_from_state(state),
+                    source_unit_ids,
                     excluded_status_instance_ids=mirrored_status_instance_ids,
                 ),
             )
@@ -6964,6 +7008,137 @@ def _formal_status_transient_provider(
     return status_provider
 
 
+_UNIT_SCOPE_DYNAMIC_KINDS = frozenset({"unit", "combat"})
+
+
+def _slot_hash(key: object) -> str:
+    text = str(key or "")
+    if not text:
+        return ""
+    if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+        return text
+    from ..dynamic_key_hash import tbgd_dynamic_key_hash
+
+    return str(tbgd_dynamic_key_hash(text))
+
+
+def _unit_scope_dynamic_hashes(state: BattleState, owner_id: str) -> frozenset[str]:
+    """Hashes this owner already holds as committed unit-scope dynamic values."""
+
+    if not owner_id:
+        return frozenset()
+    store = store_from_state(state)
+    entries = store.get("entries") if isinstance(store, dict) else None
+    if not isinstance(entries, dict):
+        return frozenset()
+    hashes: set[str] = set()
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("scope") or entry.get("scope_kind") or "") not in _UNIT_SCOPE_DYNAMIC_KINDS:
+            continue
+        entry_target = str(entry.get("target_id") or entry.get("owner_id") or "")
+        if entry_target != owner_id:
+            continue
+        hash_key = str(entry.get("hash") or "")
+        if hash_key:
+            hashes.add(hash_key)
+    return frozenset(hashes)
+
+
+def _without_unit_scoped_slots(
+    dynamic_values: object,
+    unit_hashes: frozenset[str],
+) -> tuple[object, frozenset[str]]:
+    """Drop per-instance defaults already superseded by a unit-scope writer.
+
+    A shared ability-level slot must be read from its committed unit-scope
+    value; the status instance keeps the declared default only until the first
+    writer wins.  The current instance's copy would otherwise shadow (or turn
+    ambiguous) the shared value.
+    """
+
+    if not isinstance(dynamic_values, dict) or not unit_hashes:
+        return dynamic_values, frozenset()
+    filtered: dict[str, object] = {}
+    dropped: set[str] = set()
+    for key, value in dynamic_values.items():
+        if str(key) in {
+            "__by_hash",
+            "__by_name",
+            "__evaluations",
+            "__definition_bindings",
+            "__dynamic_value_requests",
+        }:
+            continue
+        hash_key = _slot_hash(key)
+        if hash_key in unit_hashes:
+            dropped.add(hash_key)
+            continue
+        filtered[str(key)] = value
+    by_hash = dynamic_values.get("__by_hash")
+    if isinstance(by_hash, dict):
+        filtered["__by_hash"] = {
+            str(key): value
+            for key, value in by_hash.items()
+            if str(key) not in unit_hashes
+        }
+    by_name = dynamic_values.get("__by_name")
+    if isinstance(by_name, dict):
+        filtered["__by_name"] = {
+            str(key): value
+            for key, value in by_name.items()
+            if _slot_hash(key) not in unit_hashes
+        }
+    for meta in (
+        "__evaluations",
+        "__definition_bindings",
+        "__dynamic_value_requests",
+    ):
+        if meta in dynamic_values:
+            filtered[meta] = dynamic_values[meta]
+    return filtered, frozenset(dropped)
+
+
+def _strip_hashes_from_binding_source(
+    source: dict[str, JSONValue],
+    hashes: frozenset[str],
+) -> dict[str, JSONValue]:
+    """Remove slots superseded by a committed owner-scope writer."""
+
+    entries = source.get("entries")
+    if not isinstance(entries, dict) or not hashes:
+        return source
+    kept = {
+        key: entry
+        for key, entry in entries.items()
+        if not (
+            isinstance(entry, dict)
+            and str(entry.get("hash") or "") in hashes
+        )
+    }
+    if len(kept) == len(entries):
+        return source
+    by_hash: dict[str, list[str]] = {}
+    by_name: dict[str, list[str]] = {}
+    for key, entry in sorted(kept.items()):
+        if not isinstance(entry, dict):
+            continue
+        hash_key = entry.get("hash")
+        name = entry.get("name")
+        if isinstance(hash_key, str) and hash_key:
+            by_hash.setdefault(hash_key, []).append(str(key))
+        if isinstance(name, str) and name:
+            by_name.setdefault(name, []).append(str(key))
+    return {
+        **{key: value for key, value in source.items()
+           if key not in {"entries", "by_hash", "by_name"}},
+        "entries": dict(sorted(kept.items())),
+        "by_hash": {key: value for key, value in sorted(by_hash.items())},
+        "by_name": {key: value for key, value in sorted(by_name.items())},
+    }
+
+
 def _condition_context(
     rules: RuleBook,
     state: BattleState,
@@ -7009,7 +7184,10 @@ def _condition_context(
         payload["retarget_target_ids"] = list(selected_target_ids)
     current_status_binding_source = binding_source_from_status_detail(
         detail,
-        detail.get("dynamic_values"),
+        _without_unit_scoped_slots(
+            detail.get("dynamic_values"),
+            _unit_scope_dynamic_hashes(state, owner_id),
+        )[0],
     )
     current_status_instance_id = str(detail.get("instance_id") or "")
     current_hashes = tuple(
@@ -7169,7 +7347,10 @@ def _effect_context(
     current_status_instance_id = str(detail.get("instance_id") or "")
     current_status_binding_source = binding_source_from_status_detail(
         detail,
-        detail.get("dynamic_values"),
+        _without_unit_scoped_slots(
+            detail.get("dynamic_values"),
+            _unit_scope_dynamic_hashes(state, owner_id),
+        )[0],
     )
     current_hashes, current_names = _binding_source_keys(
         current_status_binding_source
@@ -7207,6 +7388,9 @@ def _effect_context(
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
         event_payload=payload,
+        heal_event_fact=(
+            event.heal_event_fact if event is not None else None
+        ),
         death_instance_id=(
             str(event.payload.get("lifecycle_mutation_id") or "")
             if event is not None and event.event_type == "unit.defeated"
@@ -7301,10 +7485,12 @@ def _callback_binding_sources(
             )
         )
     )
+    owner_id = str(detail.get("owner_id") or "")
     return (
         *explicit_sources,
-        binding_source_from_store(
+        binding_source_from_store_for_units(
             store_from_state(state),
+            tuple(unit_id for unit_id in (caster_id, owner_id) if unit_id),
             excluded_status_instance_ids=(current_status_instance_id,),
             excluded_hashes=shadowed_hashes,
             excluded_names=shadowed_names,

@@ -41,5 +41,7 @@ def test_birth_events_leave_snapshot_callback_blocked_and_uninvoked():
     # A caller explicitly requesting the unresolved snapshot event still fails closed.
     result = dispatch.dispatch_event(state, event=GameEvent(
         "snapshot.created", source_id="owner", target_id="born", window="OnSnapshotCreate"))
-    assert result.errors == ("event_source_missing:OnSnapshotCreate",)
+    # A unit birth or exported state cannot mint the heal-snapshot protocol;
+    # the runtime rejects the undeclared event source for the family.
+    assert result.errors == ("event_source_not_admitted_for_family:snapshot.created",)
     assert not result.mutations and result.after_state is state

@@ -255,6 +255,8 @@ class DamagePacket:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     hit_energy_gain: float | None = None
     base_includes_break_bonus: bool = False
+    final_formula_type: str = ""
+    is_indirect: bool = False
     modifier_contributions: tuple[DamageModifierContribution, ...] = ()
     extra_scaling_ratio: float | None = None
     elation_context: ElationDamageContext | None = None
@@ -262,6 +264,10 @@ class DamagePacket:
     def __post_init__(self) -> None:
         if self.damage_formula_family == FOLLOW_UP_ATTACK_TYPE:
             raise ValueError("follow_up is an attack type, not a damage formula family")
+        if not isinstance(self.final_formula_type, str):
+            raise TypeError("damage packet final formula type must be a string")
+        if type(self.is_indirect) is not bool:
+            raise TypeError("damage packet indirect marker must be a bool")
         if self.amount is not None and self.amount < 0:
             raise ValueError("damage amount must be non-negative")
         if any(type(item) is not DamageModifierContribution for item in self.modifier_contributions):
@@ -277,6 +283,8 @@ class DamagePacket:
             "amount": self.amount,
             "amount_stage": self.amount_stage,
             "base_includes_break_bonus": self.base_includes_break_bonus,
+            "final_formula_type": self.final_formula_type,
+            "is_indirect": self.is_indirect,
             "attack_type": self.attack_type,
             "damage_kind": self.damage_kind,
             "damage_formula_family": self.damage_formula_family,
@@ -330,6 +338,35 @@ class DamageApplicationResult:
 
 
 _DAMAGE_BLOCK_EXCLUDING_DOT_FLAG = "BlockDamageExcludeDot"
+def _additional_final_formula_admission(
+    packet: DamagePacket,
+    rules: RuleBook | None,
+) -> str:
+    """Bind an additional hit's final formula to its executable formal emission."""
+
+    final = packet.final_formula_type
+    if final not in {"", "ByPureDamage"}:
+        return f"additional_final_formula_not_admitted:{final}"
+    emission = (
+        rules.status_damage_emission(packet.status_damage_emission_id)
+        if rules is not None and packet.status_damage_emission_id
+        else None
+    )
+    if emission is not None:
+        if emission.coverage_status != "executable":
+            return "additional_final_formula_emission_not_executable"
+        expected_final = str(emission.scaling_expr.get("final_formula_type") or "")
+        expected_indirect = emission.scaling_expr.get("is_indirect") is True
+        if final != expected_final:
+            return "additional_final_formula_emission_mismatch"
+        if bool(packet.is_indirect) != expected_indirect:
+            return "additional_indirect_emission_mismatch"
+        return ""
+    if final == "ByPureDamage":
+        return "pure_damage_contract_requires_formal_emission"
+    return ""
+
+
 def _damage_request_admission_reason(
     state: BattleState,
     packet: DamagePacket,
@@ -436,6 +473,8 @@ def _damage_request_admission_reason(
             return f"{record_type} requires family_base amount stage"
         if not packet.status_damage_emission_id:
             return f"{record_type} requires status_damage_emission_id"
+        if family == "additional":
+            return _additional_final_formula_admission(packet, rules)
         return ""
     if family in {"true_damage", "hp_loss"}:
         if packet.amount is None:
@@ -894,10 +933,29 @@ class DamageSystem:
             return _damage_error(packet, f"{record_type} requires admitted amount")
         if not packet.status_damage_emission_id and not (is_elation and packet.damage_emission_id):
             return _damage_error(packet, f"{record_type} requires status_damage_emission_id")
+        pure_additional = (
+            not is_dot
+            and packet.damage_formula_family == "additional"
+            and packet.final_formula_type == "ByPureDamage"
+        )
+        if (
+            not is_dot
+            and packet.damage_formula_family == "additional"
+            and packet.final_formula_type
+            and packet.final_formula_type != "ByPureDamage"
+        ):
+            return _damage_error(
+                packet,
+                f"additional_final_formula_not_admitted:{packet.final_formula_type}",
+            )
+        if pure_additional and not packet.is_indirect:
+            return _damage_error(
+                packet, "pure_damage_contract_requires_indirect_marker"
+            )
         critical_bucket = None
         crit_resolution = None
         rng_events = ()
-        if not is_dot:
+        if not is_dot and not pure_additional:
             try:
                 crit_resolution, rng_event, bucket = resolve_damage_crit(
                     state, state.units[packet.attacker_id], packet.target_id,
@@ -936,6 +994,7 @@ class DamageSystem:
             engine_rules=self.engine_rules,
             critical_bucket=critical_bucket,
             elation_rule=elation_rule,
+            pure_damage=pure_additional,
         )
         if not pipeline.ok:
             return _damage_error(packet, pipeline.blocked_reason)
@@ -950,7 +1009,16 @@ class DamageSystem:
             "damage_pipeline": pipeline_json,
             "normal_multiplier_terms": list(pipeline.applied_terms),
             "uses_direct_multiplier_ledger": False,
-            "bypasses_normal_multipliers": False,
+            "bypasses_normal_multipliers": pure_additional,
+            "final_formula_type": packet.final_formula_type,
+            "is_indirect": packet.is_indirect,
+            "pure_damage_contract": {
+                "applied": pure_additional,
+                "bypassed_stages": (
+                    ["critical", "damage_bonus"] if pure_additional else []
+                ),
+                "source": "additional_attack_property.final_formula_type",
+            },
             **({"crit_resolution": crit_resolution.to_json()} if crit_resolution is not None else {}),
             **({"elation_formula": packet.metadata["elation_formula"]} if is_elation else {}),
         }
@@ -984,8 +1052,17 @@ class DamageSystem:
             "source_task_id": packet.source_task_id,
             "packet_metadata": packet.metadata,
             "source_frame": packet_json["source_frame"],
-            "bypasses_normal_multipliers": False,
+            "bypasses_normal_multipliers": pure_additional,
             "uses_direct_multiplier_ledger": False,
+            "final_formula_type": packet.final_formula_type,
+            "is_indirect": packet.is_indirect,
+            "pure_damage_contract": {
+                "applied": pure_additional,
+                "bypassed_stages": (
+                    ["critical", "damage_bonus"] if pure_additional else []
+                ),
+                "source": "additional_attack_property.final_formula_type",
+            },
             "normal_multiplier_terms": list(pipeline.applied_terms),
             "producer_base_amount": pipeline.producer_base_amount,
             "damage_pipeline": pipeline_json,
@@ -1641,6 +1718,7 @@ def _non_direct_pipeline(
     engine_rules: EngineRuleRegistry,
     critical_bucket: DamageStageBucket | None = None,
     elation_rule: FormulaIR | None = None,
+    pure_damage: bool = False,
 ) -> DamagePipelineResult:
     if packet.amount is None:
         return DamagePipelineResult(
@@ -1683,6 +1761,7 @@ def _non_direct_pipeline(
             elation_context=packet.elation_context,
             elation_rule=elation_rule,
             modifier_terms=tuple(item.formula_term() for item in packet.modifier_contributions),
+            pure_damage=pure_damage,
         )
     except ValueError as exc:
         return DamagePipelineResult(

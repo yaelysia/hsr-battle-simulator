@@ -232,15 +232,27 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
         or (operand_kind == "unit_property" and source_alias == "SnapshotPropertyEntity")
         or (operand_kind == "character_count" and bool(parameters.get("source_target_expression_id")))
     )
-    executable = operand_kind in {
-        "dynamic_value",
-        "unit_property",
-        "status_count",
-        "hp_ratio",
-        "shield_value",
-        "team_resource",
-        "character_count",
-    } and _generic_operand_parameters_complete(operand_kind, parameters)
+    # The heal-data reader is the first effect-event value producer to close.
+    # The formal heal mutation projection publishes the realized heal amount and
+    # the healer identity on the event payload consumed through
+    # DynamicValueExecutionRequest.event_payload.  Every other event_value
+    # family keeps its blocked record until it has a typed producer of its own.
+    event_value_producer_admitted = (
+        operand_kind == "event_value"
+        and opcode == "SetDynamicValueByHealDataProperty"
+    )
+    executable = (
+        operand_kind in {
+            "dynamic_value",
+            "unit_property",
+            "status_count",
+            "hp_ratio",
+            "shield_value",
+            "team_resource",
+            "character_count",
+        }
+        or event_value_producer_admitted
+    ) and _generic_operand_parameters_complete(operand_kind, parameters)
     executable = executable and source_alias_supported
     if opcode == "SetDynamicValueByPropertyClientOnly":
         executable = False
@@ -266,6 +278,13 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
             f"{parameters.get('property_name') or '<missing>'}"
         )
         required_producer = "shared_property_registry"
+    elif operand_kind == "event_value" and not event_value_producer_admitted:
+        executable = False
+        blocked_reason = (
+            "event_value_producer_not_closed:"
+            f"{opcode}"
+        )
+        required_producer = "effect_event_value_producer"
     elif not executable:
         blocked_reason = str(
             standard.get("operand_blocked_reason")
@@ -333,6 +352,7 @@ def _generic_operand_parameters_complete(
         "shield_value": ("source_target_alias",),
         "team_resource": ("resource_name",),
         "character_count": ("source_target_expression_id",),
+        "event_value": ("event_kind", "source_target_alias"),
     }[operand_kind]
     return all(isinstance(parameters.get(key), str) and parameters.get(key) for key in required)
 

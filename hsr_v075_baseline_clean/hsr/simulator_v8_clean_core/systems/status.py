@@ -1056,7 +1056,7 @@ class StatusSystem:
                 standard,
                 definition,
                 dynamic_values,
-                binding_sources,
+                _binding_sources_for_status_owner(binding_sources, target_id),
                 {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
                 retained_runtime_hashes,
                 character_bindings=character_bindings,
@@ -4060,6 +4060,62 @@ def _complete_status_admission_blocked_reason(
     if unsupported:
         return f"status_partial_not_admitted:{unsupported[0]}"
     return ""
+
+
+_UNIT_SCOPE_BINDING_KINDS = frozenset({"unit", "combat"})
+
+
+def _binding_sources_for_status_owner(
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    owner_id: str,
+) -> tuple[dict[str, JSONValue], ...]:
+    """Keep unit-scope dynamic slots only for the status's own owner.
+
+    A nested status resolved onto another unit must not inherit the source
+    unit's committed owner-scope accumulator (and vice versa).
+    """
+
+    if not owner_id:
+        return binding_sources
+    filtered_sources: list[dict[str, JSONValue]] = []
+    for source in binding_sources:
+        entries = source.get("entries")
+        if not isinstance(entries, dict):
+            filtered_sources.append(source)
+            continue
+        kept = {
+            key: entry
+            for key, entry in entries.items()
+            if not (
+                isinstance(entry, dict)
+                and str(entry.get("scope") or entry.get("scope_kind") or "")
+                in _UNIT_SCOPE_BINDING_KINDS
+                and str(entry.get("target_id") or entry.get("owner_id") or "")
+                != owner_id
+            )
+        }
+        if len(kept) == len(entries):
+            filtered_sources.append(source)
+            continue
+        by_hash: dict[str, list[str]] = {}
+        by_name: dict[str, list[str]] = {}
+        for key, entry in sorted(kept.items()):
+            if not isinstance(entry, dict):
+                continue
+            hash_key = entry.get("hash")
+            name = entry.get("name")
+            if isinstance(hash_key, str) and hash_key:
+                by_hash.setdefault(hash_key, []).append(str(key))
+            if isinstance(name, str) and name:
+                by_name.setdefault(name, []).append(str(key))
+        filtered_sources.append({
+            **{key: value for key, value in source.items()
+               if key not in {"entries", "by_hash", "by_name"}},
+            "entries": dict(sorted(kept.items())),
+            "by_hash": {key: value for key, value in sorted(by_hash.items())},
+            "by_name": {key: value for key, value in sorted(by_name.items())},
+        })
+    return tuple(filtered_sources)
 
 
 def _resolve_dynamic_values(

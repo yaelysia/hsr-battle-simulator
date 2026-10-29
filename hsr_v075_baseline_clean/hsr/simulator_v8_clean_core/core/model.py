@@ -31,6 +31,7 @@ def current_max_hp(unit: Any) -> float:
 
 
 if TYPE_CHECKING:
+    from ..systems.mutation_events import HealEventFact
     from ..systems.shield import ShieldExhaustionFact
     from ..systems.status import StatusLifecyclePlan
     from ..systems.action_event_contract import (
@@ -1084,6 +1085,9 @@ class GameEvent:
         default=None, repr=False, compare=False,
     )
     pending_defeat_plan: PendingDefeatPlan | None = field(
+        default=None, repr=False, compare=False,
+    )
+    heal_event_fact: HealEventFact | None = field(
         default=None, repr=False, compare=False,
     )
 

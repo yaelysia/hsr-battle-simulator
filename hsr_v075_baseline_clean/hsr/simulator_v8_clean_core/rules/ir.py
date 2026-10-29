@@ -6563,6 +6563,11 @@ class AbilityPropertyWatcherIR:
     property_name: str
     range_ids: tuple[str, ...]
     source: IRSource
+    # Formal value source for this range watcher.  "unit_property" keeps the
+    # historical per-unit effective-property producer; battle resources admit
+    # only the producers their domain actually owns (for example Elation base
+    # points from the canonical Punchline store).
+    property_source: str = "unit_property"
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
 
@@ -6573,6 +6578,7 @@ class AbilityPropertyWatcherIR:
             "property_name": self.property_name,
             "range_ids": list(self.range_ids),
             "source": self.source.to_json(),
+            "property_source": self.property_source,
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
         }

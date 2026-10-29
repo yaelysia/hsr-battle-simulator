@@ -19,6 +19,7 @@ from .effect import EffectRegistry
 from .mutation_events import (
     MUTATION_BACKED_EVENT_TYPES,
     PRE_MUTATION_BLOCK_REASON,
+    HealEventFact,
     mutation_backed_event_id,
 )
 from .phase_machine import CombatPhaseMachine
@@ -336,6 +337,28 @@ class EventDispatchSystem:
                 return self.dispatch_blocked(state, event=event, listener_kind="status_immunity_dispatch",
                     scope="owner_local", reason=reason)
             unit_id, modifier_name = fact.target_id, fact.protection_modifier_name
+        if event.event_type in {"heal.after", "heal.snapshot.created"}:
+            heal_fact = event.heal_event_fact
+            heal_reason = ""
+            if event.event_type == "heal.snapshot.created":
+                if type(heal_fact) is not HealEventFact or not heal_fact.matches_snapshot(event):
+                    heal_reason = "heal_snapshot_fact_missing_or_mismatched"
+                elif any(
+                    value is not None
+                    for value in (command, action_definition, target_resolution)
+                ):
+                    heal_reason = "heal_snapshot_action_context_not_admitted"
+            elif type(heal_fact) is not HealEventFact or not heal_fact.matches_heal_after(event):
+                heal_reason = "heal_event_fact_missing_or_mismatched"
+            if heal_reason:
+                return self.dispatch_blocked(
+                    state,
+                    event=event,
+                    listener_kind="heal_event_dispatch",
+                    scope=_event_scope_kind(event),
+                    reason=heal_reason,
+                    metadata={"event_type": event.event_type},
+                )
         transport_reason = _task_graph_transport_reason(
             task_graph_continuation,
             nested_ability_hooks,
@@ -2239,6 +2262,19 @@ def _ability_property_recheck_unit_ids(
         and event.target_id in state.units
     ):
         unit_ids.append(event.target_id)
+    if event.event_type == "elation.points.changed":
+        # A battle resource change can cross a range on any wearer that owns a
+        # source-backed watcher; only those units are rechecked.
+        unit_ids.extend(
+            unit_id
+            for unit_id, unit in state.units.items()
+            if isinstance(unit.flags.get("status_details"), (list, tuple))
+            and any(
+                isinstance(detail, dict)
+                and detail.get("ability_property_watcher_ids")
+                for detail in unit.flags.get("status_details", ())
+            )
+        )
     if event.event_type in {"battle.start", "battle.setup"}:
         unit_ids.extend(state.units)
     for mutation in mutations:
@@ -2291,7 +2327,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     }:
         return "actor_local"
     if callback_event == "OnSnapshotCreate":
-        return "global_listener"
+        return "actor_local"
     if callback_event.startswith("OnListen"):
         return "global_listener"
     if (

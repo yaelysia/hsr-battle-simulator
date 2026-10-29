@@ -973,10 +973,10 @@ def test_omitted_heal_formula_accepts_only_flat_and_internal_heal_stays_valid():
 
 
 @pytest.mark.parametrize("fields", [
-    {"HealPercentage": {"Value": 0.1}},
-    {"HealPercentage": {"Value": 0.1}, "ModifyValue": {"Value": 100}},
     {"FormulaType": None, "ModifyValue": {"Value": 100}},
     {"FormulaType": "HealByHealerMaxHP", "HealPercentage": {"Value": 0.1}, "ModifyValue": {}},
+    {"FormulaType": "HealByHealerAttack"},
+    {},
 ])
 def test_ambiguous_or_malformed_heal_blocks_without_mutation_or_rng(fields):
     state, result = _execute(_effect("HealHP", **fields))
@@ -984,6 +984,25 @@ def test_ambiguous_or_malformed_heal_blocks_without_mutation_or_rng(fields):
     assert not result.mutations
     assert not result.rng_events
     assert MutationReducer().replay_snapshot(state, (), state.snapshot().to_json()).ok
+
+
+def test_omitted_heal_formula_with_percentage_adopts_healer_attack():
+    effect = _effect("HealHP", HealPercentage={"Value": 0.1})
+    standard = effect.payload["standard"]
+    assert standard["formula_type"] == "HealByHealerAttack"
+    assert standard["formula_base"] == "caster.attack"
+    assert standard["formula_type_source"] == "adopted_healer_attack_default"
+    state, result = _execute(effect, state=replace(_state(), units={
+        **_state().units,
+        "caster": replace(_state().units["caster"], attack=900.0),
+        "target": replace(_state().units["target"], hp=1000.0),
+    }))
+    after = _commit_and_replay(state, result)
+    assert after.units["target"].hp == pytest.approx(1000.0 + 0.1 * 900.0 * (
+        1.0
+        + after.units["caster"].resources["outgoing_healing_ratio"]
+        + after.units["target"].resources["incoming_healing_ratio"]
+    ))
 
 
 @pytest.mark.parametrize("opcode,ratio_key,flat_key,formula", [

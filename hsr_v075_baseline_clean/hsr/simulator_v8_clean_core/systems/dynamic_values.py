@@ -59,6 +59,13 @@ class DynamicValueExecutionRequest:
     status_lifecycle_plan: StatusLifecyclePlan | None = None
     param_status_scope: TaskGraphStatusScope | None = None
     template_target_ids: tuple[str, ...] | None = None
+    # Process-only effect event fact for operands typed as event_value.  The
+    # caller (effect system) forwards the trigger event payload verbatim; no
+    # log, snapshot export or adjacent field may stand in for it.
+    event_payload: Mapping[str, Any] | None = None
+    # Typed producer fact for an admitted heal mutation.  The transport payload
+    # above is only a convenience copy; the fact is the authority.
+    heal_event_fact: HealEventFact | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("caster_id", "source_id", "effect_id", "opcode"):
@@ -97,6 +104,21 @@ class DynamicValueExecutionRequest:
             or len(self.template_target_ids) != len(set(self.template_target_ids))
         ):
             raise ValueError("dynamic value template target identities are invalid")
+        if self.event_payload is not None:
+            if not isinstance(self.event_payload, Mapping):
+                raise TypeError("dynamic value event payload must be an object")
+            try:
+                frozen_payload = freeze_json(dict(self.event_payload))
+            except (TypeError, ValueError):
+                # A non-JSON payload cannot be an event fact; leave it absent so
+                # an event_value operand fails closed instead of storing a value.
+                frozen_payload = None
+            object.__setattr__(self, "event_payload", frozen_payload)
+        if self.heal_event_fact is not None:
+            from .mutation_events import HealEventFact as _HealEventFact
+
+            if type(self.heal_event_fact) is not _HealEventFact:
+                raise TypeError("dynamic value heal event fact must be typed")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -121,6 +143,11 @@ class DynamicValueExecutionRequest:
                                     "instance_id": self.param_status_scope.instance_id}
                                    if self.param_status_scope else None),
             "template_target_ids": list(self.template_target_ids) if self.template_target_ids is not None else None,
+            "event_payload": (
+                thaw_json(self.event_payload)
+                if self.event_payload is not None
+                else None
+            ),
         }
 
 
@@ -330,6 +357,54 @@ def binding_source_from_store(
         "by_hash": normalized["by_hash"],
         "by_name": normalized["by_name"],
     }
+
+
+def binding_source_from_store_for_units(
+    store: object,
+    allowed_unit_ids: tuple[str, ...],
+    **kwargs: object,
+) -> dict[str, JSONValue]:
+    """Store bindings with unit-scope entries limited to the given owners.
+
+    Unit-scope slots are committed per owner; a consumer for one unit must not
+    resolve another unit's value.  Status/ability/event scopes keep their
+    existing visibility rules.
+    """
+
+    source = binding_source_from_store(store, **kwargs)
+    allowed = {unit_id for unit_id in allowed_unit_ids if unit_id}
+    if not allowed:
+        return source
+    entries = source.get("entries")
+    if not isinstance(entries, dict):
+        return source
+    filtered = {
+        key: entry
+        for key, entry in entries.items()
+        if not (
+            isinstance(entry, dict)
+            and str(entry.get("scope") or entry.get("scope_kind") or "")
+            in {"unit", "combat"}
+            and str(entry.get("target_id") or entry.get("owner_id") or "") not in allowed
+        )
+    }
+    if len(filtered) == len(entries):
+        return source
+    normalized = normalized_dynamic_value_store(store)
+    ledger = normalized.get("operation_ledger")
+    kept_ledger = (
+        {
+            key: item
+            for key, item in ledger.items()
+            if isinstance(item, dict)
+            and item.get("destination_entry_key") in filtered
+        }
+        if isinstance(ledger, dict)
+        else {}
+    )
+    return binding_source_from_store(
+        _reindex({"entries": filtered, "operation_ledger": kept_ledger})
+    )
 
 
 def upsert_dynamic_value(
@@ -1574,6 +1649,48 @@ def _resolve_source_operand(
             },
             "" if _finite_number(value) else f"{operand.operand_kind}_value_unresolved",
         )
+    if operand.operand_kind == "event_value":
+        event_kind = str(parameters.get("event_kind") or "")
+        if event_kind != "SetDynamicValueByHealDataProperty":
+            return None, {}, f"event_value_kind_not_admitted:{event_kind or '<missing>'}"
+        property_name = parameters.get("property_name")
+        if property_name not in (None, "", "HealAmount"):
+            return None, {}, (
+                f"event_value_property_not_admitted:{property_name or '<missing>'}"
+            )
+        event_payload = request.event_payload
+        if not isinstance(event_payload, Mapping):
+            return None, {}, "event_value_heal_payload_missing"
+        fact = request.heal_event_fact
+        from .mutation_events import HealEventFact
+
+        if type(fact) is not HealEventFact:
+            return None, {}, "event_value_heal_fact_missing"
+        if not fact.matches_heal_payload(dict(event_payload)):
+            return None, {}, "event_value_heal_fact_mismatch"
+        heal_amount = float(fact.heal_amount)
+        healer_id = fact.healer_id
+        read_alias = str(parameters.get("source_target_alias") or "")
+        if read_alias not in {"ModifierOwnerEntity", "Caster"}:
+            return None, {}, (
+                f"event_value_read_target_not_admitted:{read_alias or '<missing>'}"
+            )
+        if not source_id:
+            return None, {}, "event_value_read_target_unresolved"
+        binding = {
+            "source_type": "heal_event_value",
+            "read_target_id": source_id,
+            "healer_id": healer_id,
+            "heal_target_id": fact.heal_target_id,
+            "heal_amount": heal_amount,
+            "source_mutation_id": fact.mutation_id,
+            "heal_event_fact": "admitted",
+        }
+        if source_id != healer_id:
+            # The heal-data property belongs to the committed healer only.  A
+            # reader with another scope is an unadmitted consumer, not zero.
+            return None, {}, "heal_event_value_scope_mismatch"
+        return heal_amount, binding, ""
     if operand.operand_kind == "team_resource":
         resource_name = str(parameters.get("resource_name") or "")
         value: object = {

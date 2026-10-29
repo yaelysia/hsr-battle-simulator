@@ -19,6 +19,7 @@ from .dynamic_values import (
     DynamicValueExecutionRequest,
     _resolve_request_alias,
     binding_source_from_store,
+    binding_source_from_store_for_units,
     execute_dynamic_value_plan,
     find_status_detail,
     plan_dynamic_value_operation,
@@ -83,6 +84,9 @@ class EffectExecutionContext:
     current_action_target_id: str | None = None
     target_resolution: TargetResolution | None = None
     event_payload: dict[str, JSONValue] | None = None
+    # Typed producer fact for an admitted heal mutation.  Event-value operands
+    # read this fact; the transport payload alone never authorizes an amount.
+    heal_event_fact: "HealEventFact" = None  # type: ignore[assignment]
     # Formal final-death identity travelling with a Deathrattle consumer. Only
     # the producer of the committed unit.defeated fact may populate it; a
     # generic event payload or audit trace is not a substitute.
@@ -104,6 +108,7 @@ class EffectExecutionContext:
     template_target_ids: tuple[str, ...] | None = None
     task_graph_continuation: TaskGraphContinuation | None = None
     application_instance_id: str = ""
+    include_heal_snapshot_protocol: bool = False
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -1068,6 +1073,18 @@ class EffectRegistry:
                 )
             )
         else:
+            heal_snapshot_protocol = (
+                effect.opcode in {"Heal", "HealHP"}
+                and self.status_system is not None
+                and self.status_system.rules.status_event_family(
+                    "OnSnapshotCreate"
+                )
+                is not None
+            )
+            if heal_snapshot_protocol and context is not None:
+                context = replace(
+                    context, include_heal_snapshot_protocol=True
+                )
             result = handler(effect, context)
         if result.node_results:
             return result
@@ -2312,6 +2329,9 @@ def _execute_fixed_unit_delta(
             context=context,
             target_id=target_id,
             evaluation=amount_result,
+            include_heal_snapshot=(
+                kind == "heal" and context.include_heal_snapshot_protocol
+            ),
         )
     if kind == "shield":
         caster = state.units.get(context.caster_id)
@@ -3542,6 +3562,8 @@ def _execute_dynamic_value_operation(
         current_action_target_id=context.current_action_target_id or "",
         param_status_scope=context.param_status_scope,
         template_target_ids=context.template_target_ids,
+        event_payload=payload,
+        heal_event_fact=context.heal_event_fact,
     )
     target_id = _resolve_request_alias(context.state, operation.target_alias, request)
     status_instance_id = str(payload.get("status_instance_id") or "")
@@ -3863,6 +3885,7 @@ def _mutation_effect_result(
     target_id: str | None,
     resource: str | None = None,
     evaluation: NumericEvaluationResult | None = None,
+    include_heal_snapshot: bool = False,
 ) -> EffectResult:
     payload: dict[str, JSONValue] = {
         "effect_id": effect.effect_id,
@@ -3890,6 +3913,7 @@ def _mutation_effect_result(
             actor_id=context.caster_id,
             source_id=context.source_id,
             event_index=context.state.event_index,
+            include_heal_snapshot=include_heal_snapshot,
         ),
         mutations=(mutation,),
         records=(record,),
@@ -4144,8 +4168,9 @@ def _binding_sources(context: EffectExecutionContext) -> tuple[dict[str, JSONVal
             }
         )
     )
-    store_source = binding_source_from_store(
+    store_source = binding_source_from_store_for_units(
         context.state.global_flags.get("dynamic_value_store"),
+        unit_ids,
         excluded_status_instance_ids=tuple(
             sorted(shadowed_status_instance_ids)
         ),
@@ -4220,6 +4245,7 @@ def _formula_type_blocked(effect: EffectIR, standard: dict[str, JSONValue], kind
             "HealByTargetLostHP": "target.lost_hp",
             "HealByTargetMaxHP": "target.max_hp",
             "HealByHealerMaxHP": "caster.max_hp",
+            "HealByHealerAttack": "caster.attack",
         }
         # Internal Heal's fixed-amount contract is independent of raw HealHP.
         if formula_type is None and effect.opcode == "Heal":
@@ -4330,6 +4356,11 @@ def _resolve_formula_amount(
         caster_max_hp = current_max_hp(caster)
         details["base_value"] = caster_max_hp
         return caster_max_hp * raw_value, details, ""
+    if formula_base == "caster.attack":
+        effective_attack = effective_unit_stat(caster, "attack")
+        details["base_value"] = effective_attack.value
+        details["effective_stat"] = effective_attack.to_json()
+        return effective_attack.value * raw_value, details, ""
     if formula_base == "caster.defense":
         effective_defense = effective_unit_stat(caster, "defense")
         details["base_value"] = effective_defense.value

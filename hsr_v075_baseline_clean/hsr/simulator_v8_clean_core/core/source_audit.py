@@ -2600,6 +2600,133 @@ class RuntimeSourceAuditor:
                     violations.append(_violation(mutation, "status_damage_callback_mismatch", details={"expected": emission.callback_id, "actual": callback_id}))
                 if task_id and emission.source_task_id != task_id:
                     violations.append(_violation(mutation, "status_damage_task_mismatch", details={"expected": emission.source_task_id, "actual": task_id}))
+        if (
+            emission is not None
+            and emission.damage_formula_family == "additional"
+            and expected_family == "additional"
+        ):
+            expected_final = str(
+                emission.scaling_expr.get("final_formula_type") or ""
+            )
+            expected_indirect = emission.scaling_expr.get("is_indirect") is True
+            actual_final = metadata.get("final_formula_type")
+            actual_indirect = metadata.get("is_indirect")
+            if actual_final != expected_final:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "status_damage_final_formula_missing_or_mismatched",
+                        missing_field="final_formula_type",
+                        details={"expected": expected_final, "actual": actual_final},
+                    )
+                )
+            if actual_indirect is not expected_indirect:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "status_damage_indirect_missing_or_mismatched",
+                        missing_field="is_indirect",
+                        details={"expected": expected_indirect, "actual": actual_indirect},
+                    )
+                )
+            settlement_records = [
+                record
+                for record in records
+                if (
+                    isinstance(record, dict)
+                    and record.get("record_type") == "additional_damage"
+                    and record.get("source") == "damage_system"
+                    and record.get("mutation_id") == mutation.stable_id()
+                )
+            ]
+            if not settlement_records:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "additional_damage_settlement_missing",
+                        missing_field="additional_damage",
+                        details={
+                            "expected_record_type": "additional_damage",
+                            "expected_source": "damage_system",
+                            "mutation_id": mutation.stable_id(),
+                        },
+                    )
+                )
+            for record in settlement_records:
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "additional_damage_settlement_payload_invalid",
+                            missing_field="payload",
+                        )
+                    )
+                    continue
+                identity_expectations = {
+                    "status_damage_emission_id": emission_id,
+                    "status_callback_id": callback_id,
+                    "status_instance_id": metadata.get("status_instance_id"),
+                    "modifier_name": metadata.get("modifier_name"),
+                    "source_task_id": task_id,
+                    "damage_formula_family": expected_family,
+                }
+                for field, expected in identity_expectations.items():
+                    if expected and payload.get(field) != expected:
+                        violations.append(
+                            _violation(
+                                mutation,
+                                f"additional_damage_settlement_identity_mismatch:{field}",
+                                details={
+                                    "expected": expected,
+                                    "actual": payload.get(field),
+                                },
+                            )
+                        )
+                final_damage = payload.get("final_damage")
+                if (
+                    type(final_damage) not in (int, float)
+                    or isinstance(final_damage, bool)
+                ):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "additional_damage_settlement_final_damage_missing",
+                            missing_field="final_damage",
+                        )
+                    )
+                for hp_field in ("target_before_hp", "target_after_hp"):
+                    value = payload.get(hp_field)
+                    if type(value) not in (int, float) or isinstance(value, bool):
+                        violations.append(
+                            _violation(
+                                mutation,
+                                f"additional_damage_settlement_hp_route_missing:{hp_field}",
+                                missing_field=hp_field,
+                            )
+                        )
+                if payload.get("final_formula_type") != expected_final:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "settlement_final_formula_mismatch",
+                            details={
+                                "expected": expected_final,
+                                "actual": payload.get("final_formula_type"),
+                            },
+                        )
+                    )
+                if payload.get("is_indirect") is not expected_indirect:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "settlement_indirect_mismatch",
+                            details={
+                                "expected": expected_indirect,
+                                "actual": payload.get("is_indirect"),
+                            },
+                        )
+                    )
         return _trace(
             mutation,
             records,

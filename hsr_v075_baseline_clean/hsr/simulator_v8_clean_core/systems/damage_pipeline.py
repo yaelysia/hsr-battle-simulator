@@ -136,6 +136,7 @@ class DamageStagePipeline:
         elation_context: ElationDamageContext | None = None,
         elation_rule: FormulaIR | None = None,
         modifier_terms: tuple[dict[str, JSONValue], ...] = (),
+        pure_damage: bool = False,
     ) -> DamagePipelineResult:
         if family not in DAMAGE_FAMILY_STAGE_MATRIX:
             return DamagePipelineResult(
@@ -166,6 +167,19 @@ class DamageStagePipeline:
                 "damage_pipeline_actor_or_target_missing",
             )
         applicable = set(DAMAGE_FAMILY_STAGE_MATRIX[family])
+        if pure_damage:
+            # ByPureDamage additional damage is fixed by its final formula and
+            # is not affected by ordinary buffs; target-side multipliers
+            # (defense/resistance/damage taken) still apply.
+            applicable -= {
+                "critical",
+                "damage_bonus",
+                "break_bonus",
+                "toughness_bonus",
+                "elation_bonus",
+                "punchline",
+                "merrymake",
+            }
         if family == "elation":
             reason = ("elation_damage_context_missing" if type(elation_context) is not ElationDamageContext
                       else elation_context.blocked_reason(actor_id=attacker_id, state=state,

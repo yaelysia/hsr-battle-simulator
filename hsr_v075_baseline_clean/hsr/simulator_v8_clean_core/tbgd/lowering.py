@@ -8115,6 +8115,11 @@ class TBGDLowering:
             json_path="$.GlobalTemplates",
             scope="global",
         )
+        cross_modifier_shared_hashes = (
+            _equipment_cross_modifier_shared_dynamic_hashes(data)
+            if selected_equipment_sources is not None
+            else {}
+        )
         lowered = _LoweredAbility()
         callback_index = 0
         for map_name, modifier_name, modifier, modifier_context in modifier_maps:
@@ -8134,6 +8139,15 @@ class TBGDLowering:
                 "equipment_ability_source_admitted": equipment_source is not None,
                 "equipment_ability_source": (
                     equipment_source.to_json() if equipment_source is not None else {}
+                ),
+                "equipment_shared_dynamic_hashes": (
+                    sorted(
+                        cross_modifier_shared_hashes.get(
+                            ability_index, frozenset()
+                        )
+                    )
+                    if isinstance(ability_index, int)
+                    else []
                 ),
                 "stage_ability_source_admitted": relative in getattr(self, "_stage_ability_indices", {}),
             }
@@ -8200,7 +8214,29 @@ class TBGDLowering:
             if not isinstance(point_callbacks, list):
                 point_callbacks = [point_callbacks]
             if isinstance(point_callbacks, list):
+                point_ranges_before = len(lowered.ability_property_ranges)
+                point_ranges = self._lower_elation_point_ranges(
+                    point_callbacks,
+                    modifier_name=modifier_name,
+                    relative=relative,
+                    map_name=map_name,
+                    ability_file_order=ability_file_order,
+                    queue_priority_lookup=queue_priority_lookup,
+                    source_context=source_context,
+                    task_templates=task_templates,
+                    formal_source_context=formal_status_source_context,
+                    lowered=lowered,
+                    callback_index=callback_index,
+                )
+                callback_index = point_ranges
+                point_ranges_taken = (
+                    len(lowered.ability_property_ranges) > point_ranges_before
+                )
                 for index, point_callback in enumerate(point_callbacks):
+                    if point_ranges_taken and _admitted_elation_point_range_shape(
+                        point_callback
+                    ):
+                        continue
                     valid = (isinstance(point_callback, dict) and set(point_callback) == {"OnChange"}
                              and isinstance(point_callback["OnChange"], list))
                     callback_records.append((index,
@@ -8467,6 +8503,104 @@ class TBGDLowering:
                 for callback in lowered.status_callbacks
             ]
         return lowered
+
+    def _lower_elation_point_ranges(
+        self,
+        point_callbacks: list[Any],
+        *,
+        modifier_name: str,
+        relative: str,
+        map_name: str,
+        ability_file_order: int,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+        source_context: dict[str, Any],
+        task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]],
+        formal_source_context: _AbilityFormalTaskSourceContext | None,
+        lowered: "_LoweredAbility",
+        callback_index: int,
+    ) -> int:
+        # Equipment-only admission for this batch.  Non-equipment sources keep
+        # their previous fail-closed record for the native range shape.
+        if not source_context.get("equipment_ability_source_admitted"):
+            return callback_index
+        if not any(
+            _admitted_elation_point_range_shape(item) for item in point_callbacks
+        ):
+            return callback_index
+        watcher_id = (
+            f"ability_property_watcher:{relative}:{modifier_name}:elation_point"
+        )
+        watcher_source = IRSource(
+            source_path=relative,
+            raw_type=map_name,
+            raw_id=modifier_name,
+            evidence={
+                **_json_safe(source_context),
+                "ability_property_watcher_source": "OnElationPointChange",
+                "ability_property_watcher_json_path": (
+                    f"{source_context.get('json_path')}.OnElationPointChange"
+                ),
+                "property_name": "elation_points",
+                "property_source": "elation_base_points",
+            },
+        )
+        range_ids: list[str] = []
+        watcher_blocked_reason = ""
+        admitted_index = 0
+        for index, raw_range in enumerate(point_callbacks):
+            if not _admitted_elation_point_range_shape(raw_range):
+                continue
+            range_id = f"{watcher_id}:range:{admitted_index}"
+            admitted_index += 1
+            range_path = (
+                f"{source_context.get('json_path')}.OnElationPointChange[{index}]"
+            )
+            property_range, branch_lowered, callback_index = (
+                self._lower_ability_property_range(
+                    raw_range,
+                    relative=relative,
+                    map_name=map_name,
+                    modifier_name=modifier_name,
+                    watcher_id=watcher_id,
+                    range_id=range_id,
+                    range_index=index,
+                    range_path=range_path,
+                    ability_file_order=ability_file_order,
+                    callback_index=callback_index,
+                    queue_priority_lookup=queue_priority_lookup,
+                    source_context=source_context,
+                    task_templates=task_templates,
+                    formal_source_context=formal_source_context,
+                )
+            )
+            lowered.merge(branch_lowered)
+            lowered.ability_property_ranges.append(property_range)
+            range_ids.append(range_id)
+            if (
+                property_range.coverage_status != "executable"
+                and not watcher_blocked_reason
+            ):
+                watcher_blocked_reason = (
+                    property_range.blocked_reason
+                    or "ability_property_range_not_executable"
+                )
+        if not range_ids:
+            return callback_index
+        lowered.ability_property_watchers.append(
+            AbilityPropertyWatcherIR(
+                watcher_id=watcher_id,
+                modifier_name=modifier_name,
+                property_name="elation_points",
+                range_ids=tuple(range_ids),
+                source=watcher_source,
+                property_source="elation_base_points",
+                coverage_status=(
+                    "executable" if not watcher_blocked_reason else "blocked"
+                ),
+                blocked_reason=watcher_blocked_reason,
+            )
+        )
+        return callback_index
 
     def _lower_ability_property_watchers(
         self,
@@ -9188,10 +9322,17 @@ class TBGDLowering:
             child_task_ids.extend(child_ids)
             failed_task_ids.extend(child_ids)
         effect_payload = task_target_payload or None
+        shared_write_scope = _equipment_shared_dynamic_write_scope(
+            task,
+            opcode,
+            source_context=source_context,
+            equipment_source_admitted=equipment_source_admitted,
+        )
         if opcode not in STATUS_CALLBACK_EFFECTLESS_OPCODES:
             effect_payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
                 _effect_payload(task, opcode, modifier_name, source=source,
-                                status_callback_event=event), task,
+                                status_callback_event=event,
+                                default_context_scope=shared_write_scope), task,
                 effect_id=effect_id, source=source,
                 target_language_definitions=self._strict_target_language_definitions(),
             )
@@ -10479,6 +10620,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnHit": ("damage.hit", "toughness.hit"),
     "OnHPChange": ("hp.change", "heal.after"),
     "OnElationPointChange": ("elation.points.changed",),
+    "OnSnapshotCreate": ("heal.snapshot.created",),
     "OnListenHPChange": ("hp.change", "heal.after"),
     "OnAfterBeingHeal": ("heal.after",),
     "OnAfterDealHeal": ("heal.after",),
@@ -12692,6 +12834,7 @@ def _modifier_definition_entity(
     referenced_hashes.update(
         str(_tbgd_dynamic_key_hash(name)) for name in modifier_dynamic_keys
     )
+    referenced_hashes.update(_modifier_range_dynamic_hashes(modifier))
     local_by_hash = dynamic_value_bindings.get("by_hash")
     if not isinstance(local_by_hash, dict):
         local_by_hash = {}
@@ -12782,6 +12925,36 @@ def _modifier_definition_entity(
         source=source,
         coverage_status="lowered",
     )
+
+
+def _modifier_range_dynamic_hashes(modifier: dict[str, Any]) -> set[str]:
+    """Hashes referenced by native range watchers must inherit ability params."""
+
+    hashes: set[str] = set()
+    for raw_watchers in (
+        modifier.get("OnElationPointChange"),
+        modifier.get("OnAbilityPropertyChange"),
+    ):
+        if raw_watchers is None:
+            continue
+        items = raw_watchers if isinstance(raw_watchers, list) else [raw_watchers]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ranges = item.get("Ranges", item)
+            if isinstance(ranges, dict):
+                ranges = [ranges]
+            if not isinstance(ranges, list):
+                continue
+            for raw_range in ranges:
+                if not isinstance(raw_range, dict):
+                    continue
+                for key in ("Min", "Max"):
+                    for hash_key in numeric_dynamic_hashes(
+                        _numeric_expr_summary(raw_range.get(key))
+                    ):
+                        hashes.add(str(hash_key))
+    return hashes
 
 
 def _modifier_addition_effects(
@@ -18694,6 +18867,16 @@ SUSTAIN_FORMULA_EVIDENCE = (
     "public_mechanics_healing_shield_reconciliation_v1.md"
 )
 REMOVE_SHIELD_OPCODES = {"RemoveShield"}
+HEALER_ATTACK_FORMULA_SOURCE = {
+    "kind": "adopted_mechanism_data",
+    "research": "TBGD HealHP with HealPercentage and no FormulaType",
+    "version": "fixed TBGD 14c1d18f91a8101d610e6c523447a7517de3fae1",
+    "condition": (
+        "equipment sources 21033/23002/23051 read as "
+        "'restore HP equal to X% of the wearer's ATK'"
+    ),
+    "behavior": "heal ratio applies to the healer's effective ATK",
+}
 MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
 RESOURCE_DELTA_OPCODES = {
     "ModifySPNew",
@@ -19001,20 +19184,30 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             "blocked_reason": "" if admitted else "set_action_delay_normalized_value_not_admitted",
         }
     if opcode == "ModifyCurrentSkillDelayCost":
-        operation = value.get("ModifyFunction")
+        raw_operation = value.get("ModifyFunction")
         amount = _numeric_expr_summary(value.get("NormalizedValue"))
-        full_refund = "ModifyFunction" not in value and numeric_fixed_value(amount) == -1.0
-        # ponytail: only a full refund is established for an omitted operation;
-        # other values remain blocked until their operation is established.
-        if full_refund:
-            operation, amount = "Set", numeric_fixed(0.0)
+        omitted_operation = "ModifyFunction" not in value
+        # Raw sources either carry an explicit "Set" or omit the operation.
+        # An omitted operation is the additive normalized action-delay cost
+        # (negative advances the next action); Add(-1) reaches the same total
+        # as the previously pinned full-refund Set(0).
+        operation = "Add" if omitted_operation else raw_operation
         admitted = (not set(value) - {"$type", "ModifyFunction", "NormalizedValue"}
                     and operation in {"Set", "Add"} and _numeric_expr_can_be_runtime_bound(amount))
+        adopted_source = {}
+        if omitted_operation:
+            adopted_source = {
+                "kind": "adopted_mechanism_data",
+                "research": "TBGD ModifyCurrentSkillDelayCost omits ModifyFunction",
+                "version": "fixed TBGD 14c1d18f91a8101d610e6c523447a7517de3fae1",
+                "condition": "NormalizedValue is the additive normalized current-skill delay cost; negative values advance the next action",
+                "behavior": "light-cone texts read 'advance the next action by X%' for these sources",
+                "raw_source": source.to_json() if source is not None else {},
+            }
         payload["standard"] = {"operation": "current_skill_delay_cost", "modify_function": operation,
-            "normalized_value": amount, "blocked_reason": "" if admitted else "current_skill_delay_cost_fields_not_admitted",
-            "adopted_rule_source": {"url": "https://www.prydwen.gg/star-rail/characters/aglaea/",
-                "condition": "omitted ModifyFunction with fixed NormalizedValue=-1: full current-action refund",
-                "behavior": "100% self action advance after summoning"} if full_refund else {}}
+            "normalized_value": amount, "omitted_modify_function": omitted_operation,
+            "blocked_reason": "" if admitted else "current_skill_delay_cost_fields_not_admitted",
+            "adopted_rule_source": adopted_source}
     if opcode == "CreateServant":
         values = value.get("DynamicValues", {})
         callback = value.get("OnServantCreate", [])
@@ -22072,6 +22265,126 @@ def _retarget_task_status(condition: ConditionIR | None, child_task_ids: list[st
     return "executable", ""
 
 
+_EQUIPMENT_SHARED_WRITE_OPCODES = frozenset(
+    {
+        "SetDynamicValue",
+        "SetDynamicValueByAddValue",
+        "SetDynamicValueByModifierValue",
+        "SetDynamicValueByCopying",
+        "SetDynamicValueByCountOfBaseType",
+        "SetDynamicValueByHPRatio",
+        "SetDynamicValueByProperty",
+        "SetDynamicValueByStatusCount",
+        "SetDynamicValueByWeaknessCount",
+        "SetModifierDynamicValue",
+        "SetDynamicValueByHealDataProperty",
+        "SetDynamicValueByDamageDataProperty",
+        "SetDynamicValueByChangeValue",
+        "SetDynamicValueByBPChange",
+        "SetDynamicValueByAttackTargetCount",
+        "SetDynamicValueByBehaviorFlagCount",
+        "SetDynamicValueByCharacterCount",
+        "SetDynamicValueByMaxBP",
+        "SetDynamicValueByVariateType",
+    }
+)
+
+
+def _equipment_shared_dynamic_write_scope(
+    task: dict[str, Any],
+    opcode: str,
+    *,
+    source_context: dict[str, Any] | None,
+    equipment_source_admitted: bool,
+) -> str | None:
+    if not equipment_source_admitted or opcode not in _EQUIPMENT_SHARED_WRITE_OPCODES:
+        return None
+    shared = (
+        source_context.get("equipment_shared_dynamic_hashes")
+        if isinstance(source_context, dict)
+        else None
+    )
+    if not isinstance(shared, (list, tuple)) or not shared:
+        return None
+    key = _value_field(task.get("DynamicKey"))
+    if not isinstance(key, str) or not key:
+        return None
+    if str(_tbgd_dynamic_key_hash(key)) not in {str(item) for item in shared}:
+        return None
+    return "ContextOwner"
+
+
+def _equipment_cross_modifier_shared_dynamic_hashes(
+    data: Mapping[str, Any],
+) -> dict[int, frozenset[str]]:
+    """Find ability-internal dynamic slots written by one modifier and read by another.
+
+    Native ability tasks share one ability-level dynamic table.  The runtime
+    keeps writes with an explicit scope local; a slot that both a writer
+    modifier and a *different* reader modifier of the same equipment ability
+    reference must therefore be lowered to the owner-unit scope so both
+    instances observe the same committed value.
+    """
+
+    result: dict[int, frozenset[str]] = {}
+    abilities = data.get("AbilityList")
+    if not isinstance(abilities, list):
+        return result
+    for ability_index, ability in enumerate(abilities):
+        if not isinstance(ability, dict):
+            continue
+        dynamic_values = ability.get("DynamicValues")
+        type_none_hashes: set[str] = set()
+        if isinstance(dynamic_values, dict):
+            for values in dynamic_values.values():
+                if not isinstance(values, dict):
+                    continue
+                for dynamic_hash, definition in values.items():
+                    read_info = (
+                        definition.get("ReadInfo")
+                        if isinstance(definition, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(read_info, dict)
+                        and str(read_info.get("Type") or "") == "None"
+                    ):
+                        type_none_hashes.add(str(dynamic_hash))
+        modifiers = ability.get("Modifiers")
+        if not isinstance(modifiers, dict) or not type_none_hashes:
+            continue
+        occurrences: dict[str, int] = {}
+        for modifier in modifiers.values():
+            if not isinstance(modifier, dict):
+                continue
+            seen: set[str] = set()
+
+            def walk(value: Any) -> None:
+                if isinstance(value, dict):
+                    key = _value_field(value.get("DynamicKey"))
+                    if isinstance(key, str) and key:
+                        hash_key = str(_tbgd_dynamic_key_hash(key))
+                        if hash_key in type_none_hashes:
+                            seen.add(hash_key)
+                    for child in value.values():
+                        walk(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        walk(child)
+
+            walk(modifier)
+            for hash_key in seen:
+                occurrences[hash_key] = occurrences.get(hash_key, 0) + 1
+        shared = frozenset(
+            hash_key
+            for hash_key, count in occurrences.items()
+            if count > 1 and hash_key in type_none_hashes
+        )
+        if shared:
+            result[ability_index] = shared
+    return result
+
+
 def _equipment_task_admission(
     event: str,
     opcode: str,
@@ -22147,7 +22460,10 @@ def _equipment_task_admission(
             heal_ratio.get("reason") or f"{fields[0].lower()}_not_executable"
         )
     if opcode == "ModifyCurrentSkillDelayCost":
-        if not isinstance(task.get("ModifyFunction"), str) or task["ModifyFunction"] not in {"Set", "Add"}:
+        if "ModifyFunction" in task and (
+            not isinstance(task["ModifyFunction"], str)
+            or task["ModifyFunction"] not in {"Set", "Add"}
+        ):
             return "blocked", "current_skill_delay_cost_modify_function_not_admitted"
         normalized = _numeric_expr_summary(task.get("NormalizedValue"))
         if _numeric_expr_can_be_runtime_bound(normalized):
@@ -22180,8 +22496,11 @@ def _equipment_task_admission(
 
 def _remodifier_task_admission(task: dict[str, Any]) -> tuple[str, str]:
     if set(task) - {"$type", "TargetType", "CasterFilter", "ModifierName", "BehaviorFlagFilter",
-                   "MaxNumber", "TaskList", "FailedTaskList", "StatusTypeMask", "PredicateFilter"}:
+                   "MaxNumber", "TaskList", "FailedTaskList", "StatusTypeMask", "PredicateFilter",
+                   "IncludeLimbo"}:
         return "blocked", "remodifier_filter_or_fields_not_admitted"
+    if "IncludeLimbo" in task and type(task["IncludeLimbo"]) is not bool:
+        return "blocked", "remodifier_include_limbo_not_boolean"
     if "StatusTypeMask" in task and task["StatusTypeMask"] != "Buff":
         return "blocked", "remodifier_status_type_mask_not_admitted"
     if "PredicateFilter" in task and (not isinstance(task["PredicateFilter"], dict)
@@ -22219,7 +22538,13 @@ def _status_damage_identity_target_fields(task: Mapping[str, Any]) -> tuple[dict
     attack = task.get("AttackProperty")
     damage_type = attack.get("DamageType") if isinstance(attack, Mapping) else None
     if isinstance(damage_type, Mapping) and (damage_type.get("SourceType") == "ReadTargetType" or "ReadTargetType" in damage_type):
-        if set(damage_type) != {"SourceType", "ReadTargetType"} or damage_type.get("SourceType") != "ReadTargetType":
+        # Explicit ReadTargetType sources may keep the raw table's placeholder
+        # DamageType field; the committed element comes from the read target.
+        if set(damage_type) - {"SourceType", "ReadTargetType", "DamageType"} or damage_type.get("SourceType") != "ReadTargetType":
+            return fields, "status_damage_element_source_shape_not_admitted"
+        if "DamageType" in damage_type and damage_type["DamageType"] not in {
+            "Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary",
+        }:
             return fields, "status_damage_element_source_shape_not_admitted"
         fields["AttackProperty.DamageType.ReadTargetType"] = damage_type["ReadTargetType"]
     elif isinstance(attack, Mapping) and attack.get("FormulaType") == "ByElationDamage" and damage_type is not None and (
@@ -23013,6 +23338,32 @@ def _status_callback_tasks_are_non_gameplay_scoring(
     )
 
 
+_ELATION_POINT_RANGE_FIELDS = frozenset(
+    {
+        "Min",
+        "Max",
+        "MinInclusive",
+        "MaxInclusive",
+        "OnEnterRange",
+        "OnExitRange",
+    }
+)
+
+
+def _admitted_elation_point_range_shape(value: Any) -> bool:
+    """Native OnElationPointChange range entry: Min/Max + enter/exit branches."""
+
+    if not isinstance(value, dict) or not value:
+        return False
+    if set(value) - _ELATION_POINT_RANGE_FIELDS:
+        return False
+    if "Min" not in value and "Max" not in value:
+        return False
+    return isinstance(value.get("OnEnterRange"), list) or isinstance(
+        value.get("OnExitRange"), list
+    )
+
+
 def _status_callback_scope_kind(event: str) -> str:
     if event == "OnElationPointChange":
         return "global_listener"
@@ -23069,7 +23420,9 @@ def _status_callback_scope_kind(event: str) -> str:
     }:
         return "status_local"
     if event in {"OnSnapshotCreate"}:
-        return "global_listener"
+        # A heal snapshot belongs to the healer whose committed heal created
+        # it; only that unit's statuses observe OnSnapshotCreate.
+        return "actor_local"
     if event.startswith("OnListen"):
         return "global_listener"
     if event.startswith("OnBeing") or "BeingHit" in event or "BeingAttacked" in event:
@@ -23160,11 +23513,11 @@ def _status_damage_emission_from_task(
         damage_formula_family = "true_damage"
         scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
         element_type = _attack_property_element_type(attack_property)
-    elif str(attack_property.get("FinalFormulaType") or "") == "ByPureDamage":
-        damage_formula_family = "unresolved"
-        scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
-        element_type = _attack_property_element_type(attack_property)
     elif attack_type == "Pursued":
+        # Pursued damage carries its final formula on the additional-damage
+        # contract.  ByPureDamage is recorded with the emission (the in-game
+        # text states the additional damage is not affected by other buffs);
+        # it is not an unresolved formula family.
         damage_formula_family = "additional"
         scaling_expr = {
             "kind": "additional_attack_property",
@@ -23177,7 +23530,12 @@ def _status_damage_emission_from_task(
             "final_formula_type": str(
                 attack_property.get("FinalFormulaType") or ""
             ),
+            "is_indirect": attack_property.get("IsIndirect") is True,
         }
+        element_type = _attack_property_element_type(attack_property)
+    elif str(attack_property.get("FinalFormulaType") or "") == "ByPureDamage":
+        damage_formula_family = "unresolved"
+        scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
         element_type = _attack_property_element_type(attack_property)
     elif attack_type == "DOT":
         damage_formula_family = "dot"
@@ -26231,6 +26589,7 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         "HealByTargetLostHP",
         "HealByTargetMaxHP",
         "HealByHealerMaxHP",
+        "HealByHealerAttack",
     }
     # Reconciled flat-only healing contract, not a recovered raw enum default.
     # PR8/public_mechanics_healing_shield_reconciliation_v1.md, section 5.
@@ -26239,8 +26598,18 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         and "HealPercentage" not in value
         and _numeric_expr_can_be_runtime_bound(modify_value)
     )
+    # Raw HealHP also omits FormulaType when only HealPercentage is present.
+    # Every equipment source of that shape reads as a percentage of the
+    # wearer's ATK in the in-game text, so that shape adopts the healer-ATK
+    # base; MaxHP bases stay explicit FormulaType values and flat-only keeps
+    # the reconciled contract above.
+    implicit_healer_attack_formula = (
+        formula_type_missing and "HealPercentage" in value
+    )
     effective_formula_type = (
-        "HealByBaseValue" if implicit_flat_formula else formula_type
+        "HealByBaseValue" if implicit_flat_formula
+        else "HealByHealerAttack" if implicit_healer_attack_formula
+        else formula_type
     )
     amount = (
         percentage
@@ -26256,6 +26625,8 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
         "formula_type_source": (
             "reconciled_flat_only_heal_model"
             if implicit_flat_formula
+            else "adopted_healer_attack_default"
+            if implicit_healer_attack_formula
             else "explicit_tbgd_field"
             if not formula_type_missing
             else "missing"
@@ -26273,6 +26644,8 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
+    if implicit_healer_attack_formula:
+        payload["adopted_rule_source"] = HEALER_ATTACK_FORMULA_SOURCE
     if effective_formula_type in ratio_formula_types and "ModifyValue" in value:
         payload["flat_addition"] = modify_value
     if effective_formula_type not in {
@@ -26549,6 +26922,8 @@ def _heal_formula_base(formula_type: Any) -> str:
         return "target.max_hp"
     if formula_type == "HealByHealerMaxHP":
         return "caster.max_hp"
+    if formula_type == "HealByHealerAttack":
+        return "caster.attack"
     return "flat"
 
 
@@ -28185,7 +28560,7 @@ def _status_callback_runtime_payload(
         "CasterFilter",
     ):
         payload[key] = _target_alias(task.get(key)) or ""
-    for key in ("AliveOnly",):
+    for key in ("AliveOnly", "IncludeLimbo"):
         if isinstance(task.get(key), bool):
             payload[key] = task[key]
     if source_modifier_name:
@@ -28227,6 +28602,14 @@ def _status_callback_runtime_payload(
     for key in ("ByRandom", "IncludeLimbo", "DoReset", "Floor"):
         if isinstance(task.get(key), bool):
             payload[key] = task[key]
+    if (
+        str(task.get("$type") or "").rsplit(".", 1)[-1]
+        == "ModifyCurrentSkillDelayCost"
+        and "ModifyFunction" not in task
+    ):
+        # The effectless status task keeps the admission-owned default so the
+        # runtime never re-derives an omitted operation.
+        payload["ModifyFunction"] = "Add"
     return payload
 
 

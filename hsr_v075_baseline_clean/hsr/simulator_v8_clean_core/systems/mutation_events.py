@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import json
+import math
+from dataclasses import dataclass, field, replace
 
 from ..core.model import GameEvent, JSONValue, Mutation
 from ..core.unit_state_codec import unit_state_from_payload
@@ -17,6 +19,7 @@ from ..unit_presence import departure_source_count
 MUTATION_BACKED_EVENT_TYPES = frozenset({
     "hp.change",
     "heal.after",
+    "heal.snapshot.created",
     "shield.change",
     "shield.exhausted",
     "toughness.before_hit",
@@ -35,6 +38,251 @@ MUTATION_BACKED_EVENT_TYPES = frozenset({
 
 PRE_MUTATION_BLOCK_REASON = "pre_mutation_listener_recompute_not_admitted"
 
+_HEAL_EVENT_FACT_PRODUCER = object()
+_HEAL_WINDOW = "OnAfterBeingHeal"
+_HEAL_LISTENER_SCOPE = "being_hit_target_local"
+_SNAPSHOT_WINDOW = "OnSnapshotCreate"
+_SNAPSHOT_LISTENER_SCOPE = "actor_local"
+
+
+def _heal_claim_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _heal_fact_claim_values(
+    *,
+    source_mutation: Mutation,
+    healer_id: str,
+    heal_target_id: str,
+    heal_amount: float,
+    event_index: int,
+    heal_event_id: str,
+    snapshot_event_id: str,
+    event_source_id: str,
+    window: str,
+    listener_scope: str,
+    snapshot_id: str,
+) -> tuple[object, ...]:
+    """Seal every issued business field of one heal event fact."""
+
+    mutation = source_mutation
+    return (
+        healer_id,
+        heal_target_id,
+        float(heal_amount),
+        int(event_index),
+        heal_event_id,
+        snapshot_event_id,
+        event_source_id,
+        window,
+        listener_scope,
+        snapshot_id,
+        mutation.stable_id(),
+        mutation.op,
+        tuple(mutation.path),
+        mutation.source,
+        mutation.reason,
+        _heal_claim_json(mutation.before),
+        _heal_claim_json(mutation.after),
+    )
+
+
+def _new_heal_event_fact(
+    *,
+    source_mutation: Mutation,
+    healer_id: str,
+    heal_target_id: str,
+    heal_amount: float,
+    event_index: int,
+    event_id_prefix: str,
+    event_source_id: str,
+) -> "HealEventFact":
+    heal_event_id = f"{event_id_prefix}:heal_after"
+    snapshot_event_id = f"{event_id_prefix}:heal_snapshot_created"
+    snapshot_id = f"heal_snapshot:{source_mutation.stable_id()}"
+    claims = _heal_fact_claim_values(
+        source_mutation=source_mutation,
+        healer_id=healer_id,
+        heal_target_id=heal_target_id,
+        heal_amount=heal_amount,
+        event_index=event_index,
+        heal_event_id=heal_event_id,
+        snapshot_event_id=snapshot_event_id,
+        event_source_id=event_source_id,
+        window=_HEAL_WINDOW,
+        listener_scope=_HEAL_LISTENER_SCOPE,
+        snapshot_id=snapshot_id,
+    )
+    return HealEventFact(
+        source_mutation=source_mutation,
+        healer_id=healer_id,
+        heal_target_id=heal_target_id,
+        heal_amount=float(heal_amount),
+        event_index=event_index,
+        heal_event_id=heal_event_id,
+        snapshot_event_id=snapshot_event_id,
+        event_source_id=event_source_id,
+        window=_HEAL_WINDOW,
+        listener_scope=_HEAL_LISTENER_SCOPE,
+        snapshot_id=snapshot_id,
+        _producer_token=_HEAL_EVENT_FACT_PRODUCER,
+        _claims=claims,
+    )
+
+
+@dataclass(frozen=True)
+class HealEventFact:
+    """One committed heal mutation bound to its complete produced event identity.
+
+    The fact carries the issued event ids, source, top-level target, window,
+    listener scope and all mutation business fields.  `_claims` seals those
+    values: a copied fact whose mutation or amount was rewritten with
+    `dataclasses.replace` keeps the old claims and is rejected.
+    """
+
+    source_mutation: Mutation = field(repr=False)
+    healer_id: str
+    heal_target_id: str
+    heal_amount: float
+    event_index: int
+    heal_event_id: str
+    snapshot_event_id: str
+    event_source_id: str
+    window: str
+    listener_scope: str
+    snapshot_id: str
+    _producer_token: object = field(repr=False, compare=False)
+    _claims: tuple[object, ...] = field(default=(), repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _HEAL_EVENT_FACT_PRODUCER:
+            raise ValueError("heal event fact requires the mutation event producer")
+        mutation = self.source_mutation
+        if type(mutation) is not Mutation:
+            raise TypeError("heal event fact requires a committed mutation")
+        if (
+            not isinstance(self.healer_id, str)
+            or not self.healer_id
+            or not isinstance(self.heal_target_id, str)
+            or not self.heal_target_id
+            or not isinstance(self.snapshot_id, str)
+            or not self.snapshot_id
+            or not isinstance(self.heal_event_id, str)
+            or not self.heal_event_id
+            or not isinstance(self.snapshot_event_id, str)
+            or not self.snapshot_event_id
+            or not isinstance(self.event_source_id, str)
+            or not self.event_source_id
+            or self.window != _HEAL_WINDOW
+            or self.listener_scope != _HEAL_LISTENER_SCOPE
+            or type(self.event_index) is not int
+            or self.event_index < 0
+            or type(self.heal_amount) not in (int, float)
+            or isinstance(self.heal_amount, bool)
+            or not math.isfinite(float(self.heal_amount))
+            or float(self.heal_amount) <= 0
+        ):
+            raise ValueError("heal event fact identity is incomplete")
+        before = _numeric_value(mutation.before)
+        after = _numeric_value(mutation.after)
+        if (
+            mutation.op != "set"
+            or mutation.path != ("units", self.heal_target_id, "hp")
+            or before is None
+            or after is None
+            or after - before <= 0
+            or not math.isclose(after - before, float(self.heal_amount), rel_tol=0.0, abs_tol=1e-9)
+        ):
+            raise ValueError("heal event fact requires a committed heal mutation")
+        if self._claims != self._claim_values():
+            raise ValueError("heal event fact claims do not match its issued identity")
+
+    def _claim_values(self) -> tuple[object, ...]:
+        return _heal_fact_claim_values(
+            source_mutation=self.source_mutation,
+            healer_id=self.healer_id,
+            heal_target_id=self.heal_target_id,
+            heal_amount=self.heal_amount,
+            event_index=self.event_index,
+            heal_event_id=self.heal_event_id,
+            snapshot_event_id=self.snapshot_event_id,
+            event_source_id=self.event_source_id,
+            window=self.window,
+            listener_scope=self.listener_scope,
+            snapshot_id=self.snapshot_id,
+        )
+
+    @property
+    def mutation_id(self) -> str:
+        return self.source_mutation.stable_id()
+
+    def _heal_payload_matches(self, payload: dict[str, JSONValue]) -> bool:
+        amount = _numeric_value(payload.get("heal_amount"))
+        return (
+            payload.get("mutation_id") == self.mutation_id
+            and payload.get("actor_id") == self.healer_id
+            and payload.get("target_id") == self.heal_target_id
+            and amount is not None
+            and math.isclose(amount, float(self.heal_amount), rel_tol=0.0, abs_tol=1e-9)
+        )
+
+    def matches_heal_payload(self, payload: object) -> bool:
+        """Validate the consumer-facing payload copy against every issued field."""
+
+        if not isinstance(payload, dict):
+            return False
+        callback_events = payload.get("callback_events")
+        return (
+            isinstance(callback_events, (list, tuple))
+            and "OnAfterDealHeal" in callback_events
+            and payload.get("event_id") == self.heal_event_id
+            and payload.get("event_source_id") == self.event_source_id
+            and payload.get("event_target_id") == self.heal_target_id
+            and payload.get("event_window") == self.window
+            and payload.get("listener_scope") == self.listener_scope
+            and self._heal_payload_matches(payload)
+        )
+
+    def matches_heal_after(self, event: GameEvent) -> bool:
+        return (
+            event.event_type == "heal.after"
+            and event.event_id == self.heal_event_id
+            and event.source_id == self.event_source_id
+            and event.target_id == self.heal_target_id
+            and event.window == self.window
+            and isinstance(event.payload, dict)
+            and event.payload.get("listener_scope") == self.listener_scope
+            and self._heal_payload_matches(event.payload)
+        )
+
+    def matches_snapshot(self, event: GameEvent) -> bool:
+        payload = event.payload
+        if not isinstance(payload, dict):
+            return False
+        lifetime = payload.get("snapshot_lifetime")
+        return (
+            event.event_type == "heal.snapshot.created"
+            and event.event_id == self.snapshot_event_id
+            and event.source_id == self.event_source_id
+            and event.window == _SNAPSHOT_WINDOW
+            and event.target_id == self.healer_id
+            and payload.get("listener_scope") == _SNAPSHOT_LISTENER_SCOPE
+            and payload.get("param_entity_id") == self.healer_id
+            and payload.get("healer_id") == self.healer_id
+            and payload.get("snapshot_id") == self.snapshot_id
+            and isinstance(lifetime, dict)
+            and lifetime.get("kind") == "source_mutation"
+            and lifetime.get("mutation_id") == self.mutation_id
+            and self._heal_payload_matches(payload)
+        )
+
+
+def _numeric_value(value: JSONValue) -> float | None:
+    if type(value) in (int, float) and not isinstance(value, bool):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+    return None
+
 
 def mutation_backed_event_id(mutation_id: str, event_type: str) -> str:
     """Return the stable business identity for one mutation-backed event."""
@@ -52,6 +300,7 @@ def events_for_mutation(
     event_index: int = 0,
     include_before: bool = True,
     extra_payload: dict[str, JSONValue] | None = None,
+    include_heal_snapshot: bool = False,
 ) -> tuple[GameEvent, ...]:
     """Create process-only listener events from an already admitted mutation."""
 
@@ -258,24 +507,85 @@ def events_for_mutation(
             callback_events = ["OnHPChange", "OnListenHPChange", "OnAfterBeingHeal", "OnAfterDealHeal"]
             if _heal_overflow_proved(mutation, delta):
                 callback_events.append("OnHPOverflow")
-            return (
-                GameEvent(
-                    event_type="heal.after",
-                    source_id=event_source_id,
-                    target_id=target_id,
-                    event_id=f"{event_id_prefix}:heal_after",
-                    window="OnAfterBeingHeal",
-                    process_only=True,
-                    payload={
-                        **payload,
-                        "callback_events": callback_events,
-                        "listener_scope": "being_hit_target_local",
-                        "heal_amount": delta,
-                        "actual_delta": delta,
-                        "overflow_amount": _heal_overflow_amount(mutation, delta),
-                    },
-                ),
+            healer_id = str(payload.get("actor_id") or event_source_id or "")
+            if not healer_id:
+                # A heal without the committed healer identity has no producer
+                # fact, so only the public heal event can be published.
+                return (
+                    GameEvent(
+                        event_type="heal.after",
+                        source_id=event_source_id,
+                        target_id=target_id,
+                        event_id=f"{event_id_prefix}:heal_after",
+                        window="OnAfterBeingHeal",
+                        process_only=True,
+                        payload={
+                            **payload,
+                            "callback_events": callback_events,
+                            "listener_scope": "being_hit_target_local",
+                            "heal_amount": delta,
+                            "actual_delta": delta,
+                            "overflow_amount": _heal_overflow_amount(mutation, delta),
+                        },
+                    ),
+                )
+            heal_fact = _new_heal_event_fact(
+                source_mutation=mutation,
+                healer_id=healer_id,
+                heal_target_id=target_id,
+                heal_amount=float(delta),
+                event_index=event_index,
+                event_id_prefix=event_id_prefix,
+                event_source_id=event_source_id,
             )
+            heal_event = GameEvent(
+                event_type="heal.after",
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=f"{event_id_prefix}:heal_after",
+                window="OnAfterBeingHeal",
+                process_only=True,
+                heal_event_fact=heal_fact,
+                payload={
+                    **payload,
+                    "callback_events": callback_events,
+                    "listener_scope": "being_hit_target_local",
+                    "heal_amount": delta,
+                    "actual_delta": delta,
+                    "overflow_amount": _heal_overflow_amount(mutation, delta),
+                },
+            )
+            if not include_heal_snapshot:
+                # The public heal event keeps its typed fact; the snapshot
+                # protocol is only published when the rulebook declares it.
+                return (heal_event,)
+            snapshot_event = GameEvent(
+                event_type="heal.snapshot.created",
+                source_id=event_source_id,
+                target_id=healer_id,
+                event_id=f"{event_id_prefix}:heal_snapshot_created",
+                window="OnSnapshotCreate",
+                process_only=True,
+                heal_event_fact=heal_fact,
+                payload={
+                    **payload,
+                    "callback_events": ["OnSnapshotCreate"],
+                    "listener_scope": "actor_local",
+                    # The snapshot belongs to the healer whose committed heal
+                    # mutation created it; other wearers are not observers.
+                    "param_entity_id": healer_id,
+                    "snapshot_kind": "heal_data",
+                    "snapshot_id": heal_fact.snapshot_id,
+                    "snapshot_lifetime": {
+                        "kind": "source_mutation",
+                        "mutation_id": mutation.stable_id(),
+                    },
+                    "healer_id": healer_id,
+                    "heal_target_id": target_id,
+                    "heal_amount": delta,
+                },
+            )
+            return (heal_event, snapshot_event)
         return (
             GameEvent(
                 event_type="hp.change",

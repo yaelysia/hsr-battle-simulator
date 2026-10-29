@@ -226,10 +226,13 @@ class AbilityPropertyWatcherSystem:
                         watcher.blocked_reason
                         or "ability_property_watcher_not_executable",
                     )
-                property_value = ability_property_value(
+                property_value, value_reason = _watcher_property_value(
+                    current_state,
                     current_state.units[unit_id],
-                    watcher.property_name,
+                    watcher,
                 )
+                if value_reason:
+                    return _blocked(state, value_reason)
                 if property_value is None:
                     return _blocked(
                         state,
@@ -502,6 +505,26 @@ class AbilityPropertyWatcherSystem:
                 or f"ability_property_range_{bound_name}_evaluation_failed"
             )
         return float(result.value), ""
+
+
+def _watcher_property_value(
+    state: BattleState,
+    unit: object,
+    watcher: object,
+) -> tuple[float | None, str]:
+    """Resolve a watcher's formal value source without adjacent fallbacks."""
+
+    source = str(getattr(watcher, "property_source", "unit_property") or "")
+    if source == "unit_property":
+        return ability_property_value(unit, getattr(watcher, "property_name", "")), ""
+    if source == "elation_base_points":
+        from .elation import elation_base_points
+
+        try:
+            return elation_base_points(state), ""
+        except (TypeError, ValueError) as exc:
+            return None, str(exc)
+    return None, f"ability_property_watcher_source_not_admitted:{source or 'missing'}"
 
 
 def _watcher_state_mutation(

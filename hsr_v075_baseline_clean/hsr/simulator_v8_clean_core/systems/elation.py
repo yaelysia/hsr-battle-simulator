@@ -76,6 +76,13 @@ def _runtime(state: BattleState) -> dict:
     return thaw_json(value)
 
 
+def elation_base_points(state: BattleState) -> float:
+    """Formal read-only Punchline source for source-backed range watchers."""
+
+    runtime = _runtime(state)
+    return float(runtime["base_points"])
+
+
 def _team(state: BattleState, actor_id: str) -> str:
     unit = state.units.get(actor_id)
     if unit is None:
