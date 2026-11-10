@@ -448,7 +448,7 @@ class QueueEntry:
         value = self.elation_override_points
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
             raise ValueError("queue_elation_override_points_invalid")
-        admitted_states = {"alive_only", "alive_or_limbo", "alive_or_revivable"}
+        admitted_states = {"alive_only", "alive_or_limbo", "alive_or_revivable", "any"}
         if self.owner_alive_state not in admitted_states or self.target_alive_state not in admitted_states:
             raise ValueError("queue_entry_alive_state_not_admitted")
         if type(self.can_run_on_unselectable_target) is not bool:
@@ -780,6 +780,8 @@ class QueueTargetResolver:
         allow_unselectable_target: bool = False,
         deathrattle_admission: "DeathrattleQueueAdmission | None" = None,
         limbo_unit_id: str = "",
+        expression_target_ids: tuple[str, ...] | None = None,
+        expression_target_source: dict[str, JSONValue] | None = None,
     ) -> QueueTargetResolution:
         actor_id = self._resolve_single(state, detail, trigger_event, actor_alias, relative_actor_id="")
         if not actor_id:
@@ -834,6 +836,16 @@ class QueueTargetResolver:
                 )
         else:
             actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+            if not actor_ok and actor_reason == "summon_timeline_not_admitted":
+                # Queue inserts intentionally run off-timeline summons (for
+                # example a chain action). They still need a live, present actor.
+                actor = state.units.get(actor_id)
+                actor_ok = bool(
+                    actor is not None
+                    and self.lifecycle.status_of(actor) == "active"
+                    and float(actor.hp) > 0
+                )
+                actor_reason = "" if actor_ok else actor_reason
             if not actor_ok:
                 return QueueTargetResolution(
                     False,
@@ -844,17 +856,38 @@ class QueueTargetResolver:
                     f"queue_actor_{actor_reason}:{actor_id}",
                     source_trace,
                 )
-        target_ids = self._resolve_many(state, detail, trigger_event, target_alias, relative_actor_id=actor_id)
-        if target_alias and not target_ids:
-            return QueueTargetResolution(
-                False,
-                actor_id,
-                (),
-                actor_alias or "",
-                target_alias,
-                f"queue_target_not_resolved:{target_alias}",
-                source_trace,
-            )
+        if expression_target_ids is not None:
+            # The insert ability declared a full target expression; the caller
+            # already resolved it with the inserting caster context. It stands
+            # in place of the simple alias target, never in addition to it.
+            if expression_target_source is not None:
+                source_trace = {
+                    **(source_trace or {}),
+                    "expression_target_resolution": expression_target_source,
+                }
+            if not expression_target_ids:
+                return QueueTargetResolution(
+                    False,
+                    actor_id,
+                    (),
+                    actor_alias or "",
+                    target_alias or "target_expression",
+                    "queue_target_expression_empty",
+                    source_trace,
+                )
+            target_ids = tuple(expression_target_ids)
+        else:
+            target_ids = self._resolve_many(state, detail, trigger_event, target_alias, relative_actor_id=actor_id)
+            if target_alias and not target_ids:
+                return QueueTargetResolution(
+                    False,
+                    actor_id,
+                    (),
+                    actor_alias or "",
+                    target_alias,
+                    f"queue_target_not_resolved:{target_alias}",
+                    source_trace,
+                )
         missing_targets = tuple(target_id for target_id in target_ids if target_id not in state.units)
         if missing_targets:
             return QueueTargetResolution(
@@ -954,6 +987,40 @@ class QueueTargetResolver:
                 payload.get("target_ids"),
                 payload.get("current_hit_target_id"),
             )
+        if alias in {"BattleEventCaster", "CasterServant", "CasterSummoner"}:
+            caster_id = str(detail.get("caster_id") or detail.get("owner_id") or "")
+            if not caster_id or caster_id not in state.units:
+                return ()
+            # BattleEventCaster is the event's creator, not the event itself.
+            # Keep queue and formal TargetFetchBattleEventCaster semantics equal.
+            if (alias == "BattleEventCaster"
+                    and state.units[caster_id].flags.get("entity_type") != "battle_event"):
+                return ()
+            from .unit_relation import EntityRelationResolver, TargetEvaluationContext
+
+            relation = {
+                "BattleEventCaster": "entity.creator",
+                "CasterServant": "summon.owned",
+                "CasterSummoner": "summon.summoner",
+            }[alias]
+            resolved = EntityRelationResolver().resolve(
+                state,
+                relation,
+                TargetEvaluationContext(caster_id=caster_id),
+                subject_ids=(caster_id,),
+            )
+            return tuple(resolved.target_ids) if resolved.resolved else ()
+        if alias in {"AllDarkTeam", "AllLightTeam"}:
+            from .unit_relation import EntityRelationResolver, TargetEvaluationContext
+
+            caster_id = relative_actor_id or str(detail.get("caster_id") or detail.get("owner_id") or "")
+            if caster_id not in state.units:
+                return ()
+            resolved = EntityRelationResolver().resolve(
+                state, "team.dark" if alias == "AllDarkTeam" else "team.light",
+                TargetEvaluationContext(caster_id=caster_id), subject_ids=(caster_id,),
+            )
+            return tuple(resolved.target_ids) if resolved.resolved else ()
         if alias == "AllEnemy":
             return _units_by_relative_side(state, relative_actor_id, enemy=True)
         if alias in {"AllTeamMember", "AllLightTeam"}:
@@ -1552,11 +1619,95 @@ class QueueSystem:
         if not actor_id or actor_id not in state.units:
             return {"ok": False, "blocked_reason": "queue_action_actor_missing"}
         actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok and actor_reason == "summon_timeline_not_admitted":
+            queue_actor = state.units.get(actor_id)
+            actor_ok = bool(
+                queue_actor is not None
+                and self.lifecycle.status_of(queue_actor) == "active"
+                and float(queue_actor.hp) > 0
+            )
+            actor_reason = "" if actor_ok else actor_reason
         if not actor_ok:
             return {"ok": False, "blocked_reason": f"queue_action_actor_{actor_reason}"}
         actor = state.units[actor_id]
         if not actor.template_id:
             return {"ok": False, "blocked_reason": "queue_action_actor_template_missing"}
+        selection_mode = str(
+            resolution.resolved_ids.get("action_selection") or ""
+        )
+        if selection_mode == "actor_action_set_single_executable_action":
+            if rules is None:
+                return {
+                    "ok": False,
+                    "blocked_reason": "queue_chain_action_selection_requires_rules",
+                }
+            action_set = rules.combatant_action_set(actor.template_id)
+            if action_set is None:
+                return {
+                    "ok": False,
+                    "blocked_reason": (
+                        "queue_chain_action_action_set_missing:"
+                        f"{actor.template_id}"
+                    ),
+                }
+            executable_entries = [
+                (str(skill_index), entry)
+                for skill_index, entry in action_set.skill_index_map.items()
+                if isinstance(entry, dict)
+                and entry.get("coverage_status") == "executable"
+            ]
+            entries = [
+                (skill_index, entry)
+                for skill_index, entry in executable_entries
+                if entry.get("servant_action_role") == "required_action"
+            ] or [
+                (skill_index, entry)
+                for skill_index, entry in executable_entries
+                if entry.get("servant_action_role") not in {"passive", "lifecycle"}
+            ]
+            if len(entries) != 1:
+                return {
+                    "ok": False,
+                    "blocked_reason": (
+                        "queue_chain_action_selection_ambiguous:"
+                        f"{actor.template_id}:{len(entries)}"
+                    ),
+                }
+            skill_index_key, slot = entries[0]
+            chain_action_id = slot.get("action_ref")
+            chain_action_level = slot.get("default_level")
+            levels = actor.flags.get("effective_skill_levels_by_action_id")
+            if isinstance(levels, dict) and isinstance(
+                levels.get(chain_action_id), int,
+            ) and not isinstance(levels.get(chain_action_id), bool):
+                chain_action_level = levels[chain_action_id]
+            if not isinstance(chain_action_id, str) or not chain_action_id:
+                return {"ok": False, "blocked_reason": "queue_action_ref_missing"}
+            if not isinstance(chain_action_level, int):
+                return {"ok": False, "blocked_reason": "queue_action_level_missing"}
+            if rules.action_definition(chain_action_id, int(chain_action_level)) is None:
+                return {
+                    "ok": False,
+                    "blocked_reason": (
+                        "queue_action_effective_definition_missing:"
+                        f"{chain_action_id}:{chain_action_level}"
+                    ),
+                }
+            target_ids = entry.get("target_ids")
+            if (
+                not isinstance(target_ids, list)
+                or any(not isinstance(item, str) or not item for item in target_ids)
+                or len(target_ids) != len(set(target_ids))
+            ):
+                return {"ok": False, "blocked_reason": "queue_action_target_payload_malformed"}
+            return {
+                "ok": True,
+                "action_id": chain_action_id,
+                "action_level": int(chain_action_level),
+                "level_source": "actor_action_set_single_executable_action",
+                "combatant_action_set_id": action_set.combatant_action_set_id,
+                "skill_index": skill_index_key,
+            }
         candidates = resolution.resolved_ids.get("action_set_candidates")
         if not isinstance(candidates, list):
             return {"ok": False, "blocked_reason": "queue_action_set_candidates_missing"}
@@ -1975,6 +2126,7 @@ class QueueSystem:
         *,
         reason: str,
         source_trace: dict[str, JSONValue],
+        include_source_owned: bool = False,
     ) -> tuple[tuple[Mutation, ...], tuple[GameEvent, ...], tuple[dict[str, JSONValue], ...]]:
         """Cancel the not-yet-started insert entries owned by one unit.
 
@@ -1995,7 +2147,8 @@ class QueueSystem:
             for entry in current:
                 if not isinstance(entry, dict):
                     continue
-                if str(entry.get("actor_id") or "") != unit_id:
+                if (str(entry.get("actor_id") or "") != unit_id
+                        and not (include_source_owned and str(entry.get("owner_id") or "") == unit_id)):
                     continue
                 entry_id = str(entry.get("entry_id") or "")
                 if not entry_id:
@@ -2031,7 +2184,8 @@ class QueueSystem:
                     ("queues", queue_name),
                     list(kept),
                     list(updated),
-                    "abort unused insert ability of the force-killed unit",
+                    "cancel insert ability of a departing source unit" if include_source_owned
+                    else "abort unused insert ability of the force-killed unit",
                     "queue_system",
                     before_exists=queue_name in state.queues,
                     metadata={
@@ -2185,6 +2339,8 @@ def unit_alive_state_blocked_reason(
         return f"queue_{role}_alive_state_unit_missing:{unit_id}"
     status = UnitLifecycleSystem().status_of(unit)
     if status == "active":
+        return ""
+    if mask == "any":
         return ""
     if mask == "alive_or_limbo" and status == "limbo":
         return ""
@@ -2405,6 +2561,32 @@ def _is_gameplay_abort(state: BattleState, entry: dict[str, JSONValue], reason: 
             # this decision.
             return _revivable_branch_cancellable(state, reason)
         return True
+    if reason == "action_target_candidates_empty":
+        # A mandatory insert/chain action whose target contract resolves no
+        # candidate because every opposing unit is already defeated is ordinary
+        # queue obsolescence: the action cannot execute and the fight continues
+        # to its terminal resolution. A transient empty query while opponents
+        # are alive still blocks with the entry retained.
+        queued_actor_id = str(entry.get("actor_id") or "")
+        queued_actor = state.units.get(queued_actor_id)
+        if queued_actor is None:
+            return False
+
+        def effective_side(unit: object) -> str:
+            side = str(getattr(unit, "side", "") or "")
+            if side in {"ally", "enemy"}:
+                return side
+            owner = state.units.get(
+                str(getattr(unit, "flags", {}).get("owner_id") or "")
+            )
+            owner_side = str(owner.side or "") if owner is not None else ""
+            return owner_side if owner_side in {"ally", "enemy"} else side
+
+        actor_side = effective_side(queued_actor)
+        return not any(
+            effective_side(unit) != actor_side and float(unit.hp or 0.0) > 0
+            for unit in state.units.values()
+        )
     actor_id = str(entry.get("actor_id") or "")
     targets = QueueActionTerminalFact.accepted_entry_target_ids(entry)
     if (actor_id not in state.units or targets is None

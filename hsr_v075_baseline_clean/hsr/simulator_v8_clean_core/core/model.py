@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
@@ -31,7 +31,11 @@ def current_max_hp(unit: Any) -> float:
 
 
 if TYPE_CHECKING:
-    from ..systems.mutation_events import HealEventFact
+    from ..systems.battle_event import BattleEventExecutionFact, BattleEventRetirementFact
+    from ..systems.unit_spawn import UnitBirthFact
+    from ..systems.effect import EffectExecutionFact
+    from ..systems.mutation_events import EnergyChangeEventFact, HealEventFact, HPChangeEventFact, HPOverflowFact
+    from ..systems.ability_property_watchers import AbilityPropertyChangeFact
     from ..systems.shield import ShieldExhaustionFact
     from ..systems.status import StatusLifecyclePlan
     from ..systems.action_event_contract import (
@@ -611,6 +615,68 @@ _QUEUE_ACTION_TERMINAL_PRODUCER = object()
 _QUEUE_ACTION_START_PRODUCER = object()
 _STANCE_COUNT_DOWN_PRODUCER = object()
 _STATUS_IMMUNITY_PRODUCER = object()
+_HIT_WINDOW_INVOCATION_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class HitWindowInvocationFact:
+    """One natively produced hit window and its hit-all callback-stack position.
+
+    The damage-window producers are the only authority. The payload marker stays
+    a transport copy for the archived event and can never establish the fact.
+    """
+
+    event_id: str
+    event_type: str
+    attacker_id: str
+    target_id: str
+    sequence_id: str
+    in_callback_stack: bool
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._producer_token is not _HIT_WINDOW_INVOCATION_PRODUCER:
+            raise ValueError("hit window fact requires its damage window producer")
+        if (
+            not all(isinstance(value, str) and value for value in
+                    (self.event_id, self.event_type, self.attacker_id, self.target_id))
+            or not isinstance(self.sequence_id, str)
+            or type(self.in_callback_stack) is not bool
+        ):
+            raise ValueError("hit window fact identity is invalid")
+
+    def matches(self, event: GameEvent) -> bool:
+        """Bind the fact to this exact event, invocation and transport copy."""
+
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        return (
+            event.event_id == self.event_id
+            and event.event_type == self.event_type
+            and event.window == self.event_type
+            and event.source_id == self.attacker_id
+            and event.target_id == self.target_id
+            and (payload.get("damage_sequence_source_task_id") or "") == self.sequence_id
+            and payload.get("hit_all_callback_stack", False) is self.in_callback_stack
+        )
+
+
+def with_hit_window_invocation_fact(
+    event: GameEvent,
+    *,
+    sequence_id: str,
+    in_callback_stack: bool,
+) -> GameEvent:
+    """Attach the native hit-window fact; called only by window producers."""
+
+    return replace(event, hit_window_invocation_fact=HitWindowInvocationFact(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        attacker_id=str(event.source_id or ""),
+        target_id=str(event.target_id or ""),
+        sequence_id=sequence_id,
+        in_callback_stack=in_callback_stack,
+        _producer_token=_HIT_WINDOW_INVOCATION_PRODUCER,
+    ))
 
 
 @dataclass(frozen=True)
@@ -1011,7 +1077,15 @@ class StatusLifecycleFact:
             and self.status_id in unit.statuses
         )
 
-    def matches(self, state: BattleState, event: GameEvent) -> bool:
+    def matches_event(self, event: GameEvent) -> bool:
+        """Return whether the event is the produced notification itself.
+
+        This is the immutable event/fact identity contract. It deliberately
+        does not consult the live battle state; a status that a synchronous
+        listener removed later in the same dispatch chain still produced this
+        notification, and the dispatcher marks that case explicitly.
+        """
+
         return (
             event.event_type == "status.lifecycle"
             and event.event_id == self.event_id
@@ -1033,8 +1107,10 @@ class StatusLifecycleFact:
                 event.payload.get(key) == value
                 for key, value in self.stack_change.items()
             )
-            and self.matches_state(state)
         )
+
+    def matches(self, state: BattleState, event: GameEvent) -> bool:
+        return self.matches_event(event) and self.matches_state(state)
 
 
 @dataclass(frozen=True)
@@ -1075,6 +1151,12 @@ class GameEvent:
     status_lifecycle_fact: StatusLifecycleFact | None = field(
         default=None, repr=False, compare=False,
     )
+    # Set by the dispatcher only when a listener removed this event's status
+    # instance earlier in the same synchronous dispatch chain. The produced
+    # fact stays authoritative; the mark lets the remaining lifecycle
+    # notifications fire as the game queues them instead of treating the
+    # already-removed instance as a forged event.
+    lifecycle_instance_gone: bool = field(default=False, repr=False, compare=False)
     status_immunity_fact: StatusImmunityFact | None = field(
         default=None, repr=False, compare=False,
     )
@@ -1088,6 +1170,21 @@ class GameEvent:
         default=None, repr=False, compare=False,
     )
     heal_event_fact: HealEventFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    hp_change_event_fact: HPChangeEventFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    ability_property_change_fact: AbilityPropertyChangeFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    hit_window_invocation_fact: HitWindowInvocationFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    energy_change_event_fact: EnergyChangeEventFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    hp_overflow_fact: HPOverflowFact | None = field(
         default=None, repr=False, compare=False,
     )
 
@@ -1252,6 +1349,9 @@ class Mutation:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     mutation_id: str = ""
     status_hp_clamp_fact: StatusHPClampFact | None = field(default=None, repr=False, compare=False)
+    unit_birth_fact: UnitBirthFact | None = field(default=None, repr=False, compare=False)
+    battle_event_fact: BattleEventExecutionFact | BattleEventRetirementFact | None = field(default=None, repr=False, compare=False)
+    effect_execution_fact: EffectExecutionFact | None = field(default=None, repr=False, compare=False)
     _stable_id_cache: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -1268,6 +1368,21 @@ class Mutation:
             raise TypeError("mutation_id must be a string")
         if self.status_hp_clamp_fact is not None and type(self.status_hp_clamp_fact) is not StatusHPClampFact:
             raise TypeError("mutation HP clamp fact must be produced by StatusSystem")
+        if self.unit_birth_fact is not None:
+            from ..systems.unit_spawn import UnitBirthFact
+
+            if type(self.unit_birth_fact) is not UnitBirthFact:
+                raise TypeError("mutation birth fact must be produced by UnitSpawnSystem")
+        if self.battle_event_fact is not None:
+            from ..systems.battle_event import BattleEventExecutionFact, BattleEventRetirementFact
+
+            if type(self.battle_event_fact) not in {BattleEventExecutionFact, BattleEventRetirementFact}:
+                raise TypeError("mutation event fact must be produced by BattleEventSystem")
+        if self.effect_execution_fact is not None:
+            from ..systems.effect import EffectExecutionFact
+
+            if type(self.effect_execution_fact) is not EffectExecutionFact:
+                raise TypeError("mutation effect fact must be produced by EffectRegistry")
         before = freeze_json(self.before)
         after = freeze_json(self.after)
         metadata = freeze_json(self.metadata)

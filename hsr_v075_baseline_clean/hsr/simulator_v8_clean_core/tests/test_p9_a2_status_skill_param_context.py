@@ -196,32 +196,30 @@ def test_callback_sources_use_caster_and_keep_current_status_shadowing() -> None
 
     assert sources == (current, character)
     assert calls == [
-        (("caster",), {"excluded_hashes": ("shadowed",), "excluded_names": ("shadowed",)})
+        (("caster",), {
+            "excluded_hashes": ("shadowed",),
+            "excluded_names": ("shadowed",),
+            "include_unowned_rank_defaults": True,
+        })
     ]
 
 
 def test_declared_skill_param_shadows_ambient_even_when_slot_is_missing() -> None:
-    captured: dict[str, object] = {}
+    from dataclasses import replace
+    from hsr.simulator_v8_clean_core.rules.evaluator import NumericEvaluationContext, RuleEvaluator
+    from hsr.simulator_v8_clean_core.rules.expression_ir import numeric_dynamic_hash
+    from hsr.simulator_v8_clean_core.systems.dynamic_values import binding_source_from_store, upsert_dynamic_value
 
-    def fake_store(_store, **kwargs):
-        captured.update(kwargs)
-        return {"entries": {}, "by_hash": {}, "by_name": {}}
-
-    with patch(
-        "hsr.simulator_v8_clean_core.systems.status_callbacks.binding_source_from_store",
-        fake_store,
-    ):
-        _callback_binding_sources(
-            _rules(()),
-            _battle_state(),
-            _detail(),
-            None,
-            "status:1",
-            (),
-            (),
-        )
-
-    assert "passive" in captured["excluded_hashes"]
+    store = upsert_dynamic_value(None, scope="unit", owner_id="caster", hash_key="passive", value_name="ambient", value=999, source_id="fixture:ambient")
+    state = replace(_battle_state(), global_flags={"dynamic_value_store": store})
+    expression = numeric_dynamic_hash("passive")
+    evaluator = RuleEvaluator()
+    ambient = evaluator.evaluate_numeric(expression, NumericEvaluationContext(
+        binding_sources=(binding_source_from_store(store),)))
+    assert ambient.ok and ambient.value == 999
+    sources = _callback_binding_sources(_rules(()), state, _detail(), None, "status:1", (), ())
+    result = evaluator.evaluate_numeric(expression, NumericEvaluationContext(binding_sources=sources))
+    assert not result.ok and "dynamic_hash_unbound" in result.blocked_reason
 
 
 def test_effect_condition_and_numeric_consumers_share_caster_bindings() -> None:
@@ -240,14 +238,11 @@ def test_effect_condition_and_numeric_consumers_share_caster_bindings() -> None:
         return SimpleNamespace(ok=True, value=2.5)
 
     with patch(
-        "hsr.simulator_v8_clean_core.systems.status_callbacks.engine_numeric_binding_source",
-        return_value=(None, ""),
-    ), patch(
         "hsr.simulator_v8_clean_core.systems.status_callbacks.resolve_runtime_numeric_expression",
         fake_resolve,
     ):
         numeric = _evaluate_callback_numeric(
-            {"fixture": "numeric"}, state, detail, task, object(), rules
+            {"fixture": "numeric"}, state, detail, task, rules
         )
 
     for sources in (

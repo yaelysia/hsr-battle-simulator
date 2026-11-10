@@ -253,6 +253,17 @@ class CommittedConditionFactProvider:
     ) -> ConditionOperandResolution:
         unit = state.units[request.subject_ids[0]]
         flags = unit.flags
+        if flags.get("entity_type") == "battle_event" or flags.get("summon_kind") == "servant":
+            # A battle-event ability checks its creator's character build
+            # selectors (ranks/skill points), and a character servant's own
+            # passive checks its master's: neither derived entity owns a build.
+            owner_id = flags.get("summoner_id") or (
+                flags.get("owner_id") if flags.get("summon_kind") == "servant" else None
+            )
+            owner_unit = state.units.get(str(owner_id or ""))
+            if owner_unit is not None:
+                unit = owner_unit
+                flags = unit.flags
         if (
             self.rules is None
             or flags.get("build_mode") != "assembled_character_build"
@@ -280,6 +291,19 @@ class CommittedConditionFactProvider:
             and relation.selector_hash == key_hash
         )
         mappings = {(relation.selection_kind, relation.selection_ref_ids) for relation in relations}
+        if not mappings and kind == "rank" and key_hash is not None:
+            # Servant abilities check the master's activated rank. Their source
+            # is not part of the character-owned selector ledger, so resolve
+            # the hash directly against this card's eidolon definitions.
+            fallback_refs = tuple(
+                slot.eidolon_slot_id
+                for slot in self.rules.character_eidolon_slots_for_card(
+                    card.card_id
+                )
+                if slot.semantics.get("trigger_hash") == key_hash
+            )
+            if fallback_refs:
+                mappings.add(("eidolon", fallback_refs))
         if not mappings and kind == "skill_point":
             refs = tuple(node.trace_node_id for node in self.rules.character_trace_nodes_for_card(card.card_id)
                          if node.activation_key == key)
@@ -562,10 +586,23 @@ class CommittedConditionFactProvider:
             if self._finite(value):
                 values.append(float(value))
         if not values:
+            # 配置声明的可变槽位（ReadInfo.Type=None）在首次写入前读作 0。
+            if self._declared_unit_slot_is_unset(state, unit_id, name):
+                return self._number(request, 0.0, f"unit:{unit_id}:declared_slot:{name}")
             return self._blocked(request, f"unit_dynamic_value_missing:{name}")
         if len(set(values)) > 1:
             return self._blocked(request, f"unit_dynamic_value_ambiguous:{name}")
         return self._number(request, values[-1], f"unit:{unit_id}:dynamic:{name}")
+
+    def _declared_unit_slot_is_unset(self, state: BattleState, unit_id: str, name: str) -> bool:
+        if self.rules is None:
+            return False
+        from .dynamic_values import character_declared_dynamic_binding_source
+        from ..rules.evaluator import _dynamic_key_identity
+
+        declared = character_declared_dynamic_binding_source(self.rules, state, unit_id)
+        by_hash = declared.get("by_hash") if isinstance(declared, dict) else None
+        return isinstance(by_hash, dict) and str(_dynamic_key_identity(name)) in by_hash
 
     def _lifecycle(
         self, state: BattleState, request: ConditionOperandRequest

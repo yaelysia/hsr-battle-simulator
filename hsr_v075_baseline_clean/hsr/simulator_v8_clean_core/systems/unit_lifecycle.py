@@ -27,7 +27,11 @@ from ..core.unit_state_codec import unit_state_to_payload
 from .mutation_events import mutation_backed_event_id
 
 
+# 致命伤阶段只在目标身上有状态监听 OnBeforeMortallyWonded 时作为窗口起点；
+# 其余情况下窗口仍从 before_dying 开始（见 DamageSystem._with_pending_defeat）。
+MORTAL_WOUND_EVENT = "unit.before_mortally_wounded"
 LIMBO_CALLBACKS = (
+    (MORTAL_WOUND_EVENT, "OnBeforeMortallyWonded", "before_mortally_wounded"),
     ("unit.before_dying", "OnBeforeDying", "before_dying"),
     ("unit.being_limbo", "OnBeingLimbo", "limbo"),
     ("unit.limbo_wait_heal", "OnLimboWaitHeal", "limbo_waiting"),

@@ -22,6 +22,7 @@ NodeKind = Literal[
     "loop",
     "target_scope",
     "template_call",
+    "parallel_templates",
     "ability_call",
     "template_parameter",
     "sequence",
@@ -29,6 +30,31 @@ NodeKind = Literal[
 ]
 ReferenceKind = Literal["condition", "target", "numeric", "effect", "ability", "template"]
 ResolutionStatus = Literal["resolved", "deferred", "blocked"]
+
+
+def single_projectile_impact_contract_admitted(standard: object) -> bool:
+    """One selected impact; target closure metadata is proof, not extra behavior."""
+    if not isinstance(standard, Mapping):
+        return False
+    target_fields = {
+        "target_expression_refs", "target_expression_id", "target_expression_kind",
+        "target_expression_coverage_status", "target_expression_blocked_reason", "target_expression_source",
+    }
+    contract = {key: value for key, value in standard.items() if key not in target_fields}
+    if contract != {
+        "operation": "selected_single_projectile_impact", "target_count": 1,
+        "wait_for_finish": True, "completion_branch": "projectile_hit",
+    }:
+        return False
+    if "target_expression_id" in standard:
+        refs = standard.get("target_expression_refs")
+        target = refs.get("TargetType") if isinstance(refs, Mapping) else None
+        if (standard.get("target_expression_coverage_status") != "executable"
+                or standard.get("target_expression_blocked_reason")
+                or not isinstance(target, Mapping) or target.get("coverage_status") != "executable"
+                or target.get("target_expression_id") != standard.get("target_expression_id")):
+            return False
+    return True
 
 
 def _id(prefix: str, *parts: object) -> str:
@@ -505,7 +531,7 @@ class TaskGraphNodeIR:
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphNodeIR:
             raise TypeError("task graph node must not be subclassed")
-        if self.node_kind not in {"leaf", "branch", "loop", "target_scope", "template_call", "ability_call", "template_parameter", "sequence", "deferred"}:
+        if self.node_kind not in {"leaf", "branch", "loop", "target_scope", "template_call", "parallel_templates", "ability_call", "template_parameter", "sequence", "deferred"}:
             raise ValueError("task graph node kind is invalid")
         if self.materialization_status not in {"materialized", "deferred"}:
             raise ValueError("task graph node materialization status is invalid")

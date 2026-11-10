@@ -50,6 +50,32 @@ def test_template_target_binding_inheritance_empty_shadow_and_continuation():
     ]
 
 
+def test_native_hp_event_survives_nested_template_and_continuation_without_json_rebuild():
+    from simulator_v8_clean_core.core.model import Mutation
+    from simulator_v8_clean_core.systems.mutation_events import events_for_mutation, native_hp_change_value
+    event = events_for_mutation(Mutation('set', ('units', 'owner', 'hp'), 10., 6., 'cost', 'fixture'),
+                                actor_id='owner', source_id='cost')[0]
+    graph = _graph('native-event-template', {
+        'outer': {'kind': 'template_call', 'refs': (('template', 'outer'),),
+                  'branches': (('template_body', 'outer', ('inner',)),)},
+        'inner': {'kind': 'template_call', 'refs': (('template', 'inner'),),
+                  'branches': (('template_body', 'inner', ('read',)),)},
+        'read': {'kind': 'leaf'},
+    }, ('outer',))
+    seen = []
+    def leaf(request, _state):
+        assert request.trigger_event is event
+        child = TaskGraphContinuation.from_hook_request(request).child_context('child', {'plain': 'data'})
+        assert child.trigger_event is event and dict(child.values) == {'plain': 'data'}
+        assert native_hp_change_value(child.trigger_event) == (-4., '')
+        seen.append(request.formal_task_id)
+        return TaskGraphLeafResult('resolved')
+    result = TaskGraphExecutor().execute(BattleState(), graph,
+        TaskGraphExecutionContext('native-event', trigger_event=event), TaskGraphExecutionHooks(leaf=leaf))
+    assert result.ok, result.errors
+    assert seen == ['task:read']
+
+
 def test_consumed_template_body_skips_children_and_keeps_domain_acknowledgement():
     graph = _graph("consumed-template", {
         "include": {"kind": "template_call", "refs": (("template", "consumed"),),

@@ -4,7 +4,9 @@ from typing import Literal
 
 from ..rules.ir import AbilityTaskIR
 from ..rules.rulebook import RuleBook
-from ..rules.task_graph import TaskGraphDefinitionReferenceIR, TaskGraphNodeIR
+from ..rules.task_graph import (
+    TaskGraphDefinitionReferenceIR, TaskGraphNodeIR, single_projectile_impact_contract_admitted,
+)
 
 
 def is_process_only_ability_task(task: AbilityTaskIR) -> bool:
@@ -222,10 +224,12 @@ def ability_task_runtime_blocked_reason(
                 return "retarget_child_parent_mismatch"
         return ""
     if task.opcode == "LoopExecuteTaskListWithInterval":
+        runtime_count = task.source.evidence.get("repeat_count_runtime_bound") is True
+        if topology_authority == "task_graph" and (task.repeat_count > 0 or runtime_count):
+            # 任务图循环节点自行解析次数表达式（count_expression）。
+            return ""
         if task.repeat_count <= 0:
             return "fixed_positive_loop_count_required"
-        if topology_authority == "task_graph":
-            return ""
         if not task.child_task_ids:
             return "loop_task_list_missing_or_empty"
         for child_task_id in task.child_task_ids:
@@ -240,16 +244,13 @@ def ability_task_runtime_blocked_reason(
         and topology_authority == "external_legacy"
     ):
         return _anim_wrapper_task_blocked_reason(rules, task)
-    if task.opcode == "FireProjectile":
+    if task.opcode in {"FireProjectile", "NewFireProjectile"}:
         effect = rules.effect(task.effect_id)
         standard = effect.payload.get("standard") if effect is not None else None
-        contract = {key: value for key, value in standard.items() if key != "target_expression_refs"} if isinstance(standard, dict) else None
         if topology_authority != "task_graph":
             return "projectile_requires_formal_task_graph"
-        if effect is None or effect.coverage_status != "executable" or contract != {
-            "operation": "selected_single_projectile_impact", "target_count": 1,
-            "wait_for_finish": True, "completion_branch": "projectile_hit",
-        }:
+        if (effect is None or effect.coverage_status != "executable"
+                or not single_projectile_impact_contract_admitted(standard)):
             return "projectile_impact_contract_not_admitted"
         return ""
     if task.opcode == "SummonMonster":

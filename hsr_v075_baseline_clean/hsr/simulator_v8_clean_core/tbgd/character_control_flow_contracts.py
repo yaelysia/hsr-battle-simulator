@@ -44,6 +44,7 @@ _NON_GAMEPLAY_SEMANTICS = frozenset(
 # occurrences carrying one of these continuation fields join the task graph.
 _HYBRID_BRANCH_FIELDS: dict[str, tuple[str, ...]] = {
     "AddBuffPerform": ("TaskList",),
+    "PredicateTaskList": ("SuccessTaskList", "FailedTaskList"),
     "AddModifier": ("SuccessTaskList", "FailTaskList"),
     "AddWeakByTeamAttackType": ("OnNoNewWeak",),
     "CharacterChangeModel": ("OnSuccess",),
@@ -115,6 +116,7 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("downstream_gameplay", "p9_s9", "AllowDuplicate", "EventID", "IsDynamicPreload", "PropertyFromTarget", "SpecifyCaster", "Team"),
         **_rules("child_graph", "p9_s8b", "OnBattleEventCreate"),
     },
+    "WaitSkillPerformAbilityFinish": {},
     "CreateServant": {
         **_rules("numeric_contract", "p9_s4", "ServantID"),
         **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
@@ -211,7 +213,10 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
         **_rules("child_graph", "p9_s8b", "TaskList"),
     },
-    "SwitchByCommandType": {},
+    "SwitchByCommandType": {
+        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("child_graph", "p9_s8b", "CaseTaskList", "DefaultTaskList"),
+    },
     "SwitchCaseByAttackDamageType": {
         **_rules("child_graph", "p9_s8b", "CaseTaskList"),
         **_rules("target_contract", "p9_s5b", "Source"),
@@ -223,11 +228,18 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("control_structure", "p9_s8b", "CompareType"),
     },
     "TriggerAbility": {
+        # DynamicValues 不会转发给子能力；运行时只允许被调能力为无玩法空操作。
+        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
         **_rules("ability_source_contract", "p9_s8b", "AbilityName"),
         **_rules("control_structure", "p9_s8b", "IsSkillPerform"),
         **_rules("target_contract", "p9_s5b", "AbilityInherentTargetType", "TargetType"),
     },
-    "TriggerParallelTaskListTemplate": _rules("control_structure", "p9_s8c", "Templates"),
+    "TriggerParallelTaskListTemplate": {
+        # The trigger only invokes template bodies; hit-random sequencing belongs
+        # to the child tasks, so this field is task-graph execution territory.
+        **_rules("control_structure", "p9_s8b", "Templates"),
+        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
+    },
     "TriggerParallelAbility": _rules("ability_source_contract", "p9_s8b", "ParallelAbilityList"),
     "WaitParallelTimeStamp": _rules("numeric_contract", "p9_s4", "WaitTime"),
     "TriggerSkipDeadHandler": {},
@@ -238,6 +250,7 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         **_rules("target_contract", "p9_s5b", "AutoCastTargetType", "TargetType"),
         **_rules("control_structure", "p9_s13", "AbortBehaviorFlags", "AutoCast", "CanInsertUltraSkill", "CopyAbortContext", "CustomTag", "FollowSameTagNormalAction", "IgnoreBPDec", "PrepareAbilityName", "SkillIndex", "SkillType"),
         **_rules("child_graph", "p9_s8b", "OnInsertAbort"),
+        **_rules("presentation_excluded", "excluded", "PlayReadyAnim"),
     },
     "TurnInsertAbilityCondition": _rules("downstream_gameplay", "p9_s13", "Count", "Type"),
     "WaitAnimState": _rules(
@@ -251,7 +264,10 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
         "TargetType",
         "WaitForFrameEnd",
     ),
-    "WaitFor": _rules("condition_contract", "p9_s8c", "Predicate"),
+    # The death-animation wait only synchronizes the presentation timeline; the
+    # runtime records it as a process-only barrier and never evaluates the
+    # predicate as a battle condition.
+    "WaitFor": _rules("presentation_excluded", "excluded", "Predicate"),
     "WaitFrame": _rules("presentation_excluded", "excluded", "RealFrame", "WaitFrameCount"),
     "WaitFrameForBattleServer": {},
     "WaitCustomString": _rules("control_structure", "p9_s8c", "CustomString", "GoNextImmediately"),
@@ -309,6 +325,7 @@ _ROLE_BY_FAMILY = {
     "TurnInsertAbilityCondition": "queue_condition",
     "WaitAnimState": "presentation_barrier",
     "WaitFor": "condition_barrier",
+    "WaitSkillPerformAbilityFinish": "presentation_barrier",
     "WaitFrame": "presentation_barrier",
     "WaitFrameForBattleServer": "server_sync_barrier",
     "WaitCustomString": "custom_sync_barrier",
@@ -336,13 +353,15 @@ _ROLE_OWNER = {
     "ability_trigger": "p9_s8b",
     "parallel_abilities": "p9_s8b",
     "parallel_time_barrier": "p9_s8b",
-    "condition_barrier": "p9_s8c",
+    # Death-animation waits are recorded as process-only barriers when their
+    # source shape is admitted; their resolution belongs to task execution.
+    "condition_barrier": "p9_s8b",
     "delayed_sequence": "p9_s8c",
     "custom_sync_barrier": "p9_s8c",
     "server_sync_barrier": "p9_s8c",
     "projectile_sequence": "p9_s8c",
     "random_branch": "p9_s8c",
-    "parallel_templates": "p9_s8c",
+    "parallel_templates": "p9_s8b",
     "target_cursor": "p9_s8c",
     "presentation_barrier": "p9_s8c",
     "presentation_child_wrapper": "excluded",
@@ -1255,6 +1274,20 @@ def _template_candidates(
     document = tuple(item for item in same_source if item.scope_kind == "document_global")
     if document:
         return document
+    # Avatar and its servant ability documents form one source group: a servant
+    # include may name a template declared in the owner avatar's document-global
+    # template list. Accept only a unique cross-document match.
+    # A template problem is only meaningful inside its own document; an
+    # unrelated caller's problem must not shadow a valid shared template.
+    cross_document = tuple(
+        item
+        for item in drafts
+        if item.scope_kind == "document_global"
+        and item.name == name
+        and (type(item) is _TemplateDraft or item.source_path == source_path)
+    )
+    if cross_document:
+        return cross_document
     return tuple(item for item in drafts if item.scope_kind == "shared_global" and item.name == name)
 
 

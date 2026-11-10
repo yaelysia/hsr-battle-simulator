@@ -47,12 +47,7 @@ from ..rules.ir import (
     StatusDamageEmissionIR,
     TargetExpressionNodeIR,
 )
-from ..rules.engine_rule_registry import (
-    RANGE_ZERO_FLOOR_DYNAMIC_HASH,
-    ZERO_FLOOR_DYNAMIC_HASH,
-    build_engine_rule_registry,
-    engine_numeric_binding_source,
-)
+from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import (
     ScenarioStateBuilder,
@@ -1080,10 +1075,6 @@ def _dot_additive_term_contract_matrix() -> dict[str, Any]:
 
 
 def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
-    zero_floor_hashes = (
-        ZERO_FLOOR_DYNAMIC_HASH,
-        RANGE_ZERO_FLOOR_DYNAMIC_HASH,
-    )
     expressions: list[tuple[str, object, dict[str, Any]]] = []
     for task in bundle["callback_tasks"]:
         for path, expression in _numeric_expressions(task.task_payload):
@@ -1096,21 +1087,15 @@ def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
             expressions.append((condition.condition_id, expression, {"path": path, "source": condition.source.to_json()}))
     evaluator = RuleEvaluator()
     rows: list[dict[str, Any]] = []
-    zero_floor_rows: list[dict[str, Any]] = []
-    registry = bundle["rules"].engine_rule_registry()
     for task_id, expression, evidence in expressions:
         hashes = numeric_dynamic_hashes(expression)
-        dynamic_values = {
-            str(value_hash): 1.0
-            for value_hash in hashes
-            if int(value_hash) not in zero_floor_hashes
-        }
-        engine_binding, engine_reason = engine_numeric_binding_source(expression, registry)
+        # Since R07 a function symbol is lowering input, never a runtime
+        # binding: every remaining dynamic hash is fed a probe value.
+        dynamic_values = {str(value_hash): 1.0 for value_hash in hashes}
         result = evaluator.evaluate_numeric(
             expression,
             NumericEvaluationContext(
                 dynamic_values=dynamic_values,
-                binding_sources=((engine_binding,) if engine_binding is not None else ()),
                 source_trace=evidence,
             ),
         )
@@ -1119,8 +1104,6 @@ def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
             "expression_path": evidence["path"],
             "kind": expression.get("kind") if isinstance(expression, dict) else "invalid",
             "dynamic_hash_count": len(hashes),
-            "engine_binding_applicable": engine_binding is not None,
-            "engine_binding_reason": engine_reason,
             "has_variadic_max": bool(
                 isinstance(expression, dict)
                 and isinstance(expression.get("instructions"), list)
@@ -1135,84 +1118,6 @@ def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
             "source": evidence["source"],
         }
         rows.append(row)
-        present_zero_floor_hashes = tuple(
-            value_hash
-            for value_hash in zero_floor_hashes
-            if value_hash in hashes
-        )
-        if present_zero_floor_hashes:
-            for zero_floor_hash in present_zero_floor_hashes:
-                without_rule_dynamic_values = {
-                    **dynamic_values,
-                    **{
-                        str(other_hash): 0.0
-                        for other_hash in present_zero_floor_hashes
-                        if other_hash != zero_floor_hash
-                    },
-                }
-                without_rule = evaluator.evaluate_numeric(
-                    expression,
-                    NumericEvaluationContext(
-                        dynamic_values=without_rule_dynamic_values,
-                        source_trace=evidence,
-                    ),
-                )
-                zero_floor_rows.append(
-                    {
-                        **row,
-                        "zero_floor_hash": zero_floor_hash,
-                        "without_rule_blocked": not without_rule.ok
-                        and str(zero_floor_hash) in without_rule.blocked_reason,
-                    }
-                )
-    forged_unrelated_max_rows = []
-    for zero_floor_hash in zero_floor_hashes:
-        forged_unrelated_max = {
-            "schema_version": "hsr.numeric_expression.v1",
-            "kind": "program",
-            "supported": True,
-            "instructions": [
-                {"opcode": "push_dynamic", "hash": zero_floor_hash},
-                {"opcode": "push_fixed", "value": 1.0},
-                {"opcode": "add"},
-                {"opcode": "push_fixed", "value": 2.0},
-                {"opcode": "push_fixed", "value": 3.0},
-                {"opcode": "max", "operand_count": 2},
-                {"opcode": "add"},
-                {"opcode": "end"},
-            ],
-        }
-        forged_binding, forged_reason = engine_numeric_binding_source(
-            forged_unrelated_max,
-            registry,
-        )
-        forged_result = evaluator.evaluate_numeric(
-            forged_unrelated_max,
-            NumericEvaluationContext(
-                dynamic_values={},
-                binding_sources=(),
-                source_trace={
-                    "validation": "unrelated_max_must_not_bind_zero",
-                    "zero_floor_hash": zero_floor_hash,
-                },
-            ),
-        )
-        forged_unrelated_max_rows.append(
-            {
-                "zero_floor_hash": zero_floor_hash,
-                "binding_created": forged_binding is not None,
-                "binding_reason": forged_reason,
-                "evaluation_ok": forged_result.ok,
-                "blocked_reason": forged_result.blocked_reason,
-                "ok": (
-                    forged_binding is None
-                    and forged_reason
-                    == "engine_zero_floor_program_shape_not_admitted"
-                    and not forged_result.ok
-                    and str(zero_floor_hash) in forged_result.blocked_reason
-                ),
-            }
-        )
     family_predicates = {
         "fixed_numeric": lambda row: row["kind"] == "fixed",
         "postfix_numeric": lambda row: row["kind"] in {"dynamic_hash", "program"},
@@ -1236,17 +1141,6 @@ def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
     checks = {
         "real_numeric_expressions_nonempty": bool(rows),
         "all_real_numeric_expressions_evaluate": all(row["ok"] for row in rows),
-        "zero_floor_source_present": (
-            {row["zero_floor_hash"] for row in zero_floor_rows}
-            == set(zero_floor_hashes)
-        ),
-        "zero_floor_requires_explicit_engine_rule": all(
-            row["engine_binding_applicable"] and row["without_rule_blocked"]
-            for row in zero_floor_rows
-        ),
-        "zero_floor_binding_proves_direct_max_operand_relation": (
-            all(row["ok"] for row in forged_unrelated_max_rows)
-        ),
         "every_numeric_family_has_exact_evidence": all(
             row["ok"] for row in family_rows
         ),
@@ -1263,21 +1157,10 @@ def _numeric_contract_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
         "ok": checks["ok"],
         "checks": checks,
         "expression_count": len(rows),
-        "zero_floor_expression_count": len(zero_floor_rows),
         "family_rows": family_rows,
         "internal_dynamic_slots": internal_dynamic_slots,
         "dot_additive_terms": dot_additive_terms,
-        "zero_floor_expression_counts_by_hash": dict(
-            sorted(
-                Counter(
-                    str(row["zero_floor_hash"])
-                    for row in zero_floor_rows
-                ).items()
-            )
-        ),
-        "forged_unrelated_max": forged_unrelated_max_rows,
         "failures": [row for row in rows if not row["ok"]][:20],
-        "zero_floor_rows": zero_floor_rows[:20],
     }
 
 
@@ -4546,9 +4429,6 @@ def run_numeric_contract_validation(
         ok=numeric["ok"],
         counts={
             "numeric_expressions": numeric["expression_count"],
-            "zero_floor_expressions": numeric[
-                "zero_floor_expression_count"
-            ],
         },
         resource_scope=_focused_resource_scope(
             runtime_matrices_executed=False,

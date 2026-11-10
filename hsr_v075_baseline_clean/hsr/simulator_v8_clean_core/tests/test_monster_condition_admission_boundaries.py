@@ -270,13 +270,16 @@ def test_real_common_servant_forcekill_leaf_admits_formal_forced_death():
             "executable",
         ),
         (
+            # The muted retirement executor now consumes the abort-cleanup flag
+            # (unused insert entries are cleared), so the explicit-true shape is
+            # an admitted muted retirement rather than an unimplemented mix.
             {
                 "MuteHpChange": True,
                 "MuteAllTriggerDeath": True,
                 "AbortUnusedInsertAbility": True,
             },
             "muted_unit_retirement",
-            "blocked",
+            "executable",
         ),
         (
             {

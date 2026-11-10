@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..unit_eligibility import (
+    runtime_unit_combat_team,
+    runtime_unit_is_active,
+    runtime_unit_is_battle_event_entity,
+    runtime_unit_is_on_field,
     runtime_unit_is_dark_team,
     runtime_unit_is_light_team,
     runtime_unit_is_target_candidate,
@@ -30,6 +34,8 @@ from .condition_state import (
 from .expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
     NUMERIC_EXPRESSION_SCHEMA,
+    NUMERIC_UNARY_OPERATIONS,
+    numeric_unary_value,
     is_typed_numeric_expression,
     numeric_dynamic_hash,
     numeric_fixed,
@@ -120,6 +126,7 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareAliveEnemyNumber",
     "ByCompareCharacterID",
     "ByCompareDynamicValue",
+    "ByNamedBooleanFlag",
     "ByCompareCharacterNumber",
     "ByCompareCurrentModifierStatusType",
     "ByCompareHPRatio",
@@ -149,9 +156,16 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByCurrentSkillName",
     "ByCurrentSkillType",
     "ByIsContainModifier",
+    "ByTargetLockHP",
+    "ByIsEnableNegativeHP",
+    "ByIsInCharacterIDGroup",
+    "ByIsAutoBattle",
     "ByHaveEnemyAlive",
+    "ByDieAnimFinished",
+    "ByCheckFightFinish",
     "ByIsCurrentSkillActive",
     "ByIsInsertAction",
+    "ByIsHitAllCallBackStack",
     "ByIsTeammate",
     "ByIsTurnOwnerEntity",
     "ByNot",
@@ -425,8 +439,58 @@ def _evaluate_dynamic_hash(
         if value is not None:
             target = fallback_matches if is_fallback else matches
             target.append((value, binding))
+    # Declared mutable slots carry an initial-zero baseline, not a committed
+    # write. A compiled expression fallback is the authored formula value and
+    # must win while no committed runtime writer exists.
+    declared_default_matches = [
+        match
+        for match in matches
+        if match[1].get("binding_role") == "declared_mutable_slot_default"
+    ]
+    committed_matches = [
+        match
+        for match in matches
+        if match[1].get("binding_role") != "declared_mutable_slot_default"
+    ]
+    declared_default_conflict = bool(
+        not committed_matches
+        and len(declared_default_matches) > 1
+        and len({value for value, _ in declared_default_matches}) > 1
+    )
+    if len(committed_matches) > 1:
+        # 同一条已提交记录经多个来源到达时仍是一个事实，不构成冲突。
+        unique_matches: dict[tuple[float, str], tuple[float, dict[str, Any]]] = {}
+        for match in committed_matches:
+            entry_key = str(match[1].get("entry_key") or "")
+            unique_matches.setdefault(
+                (match[0], entry_key or f"anonymous:{len(unique_matches)}"), match
+            )
+        committed_matches = list(unique_matches.values())
+    if len(committed_matches) > 1:
+        # The same dynamic slot name can exist both as the context-local
+        # status/ability value and as another unit's committed unit-scope
+        # value (servants share slot names with their owner's bookkeeping
+        # modifiers). A contextual read belongs to the current unit, so
+        # foreign unit entries are not competitors of the local value.
+        preferred_owner = str(
+            getattr(context, "owner_id", None)
+            or getattr(context, "target_id", None)
+            or ""
+        )
+        local_matches = [
+            match
+            for match in committed_matches
+            if _binding_context_rank(match[1], preferred_owner) == 0
+        ]
+        if local_matches:
+            committed_matches = local_matches
     sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
-    if ambiguous_matches or len(matches) > 1 or len(fallback_matches) > 1:
+    if (
+        ambiguous_matches
+        or len(committed_matches) > 1
+        or len(fallback_matches) > 1
+        or declared_default_conflict
+    ):
         return NumericEvaluationResult(
             ok=False,
             value=None,
@@ -446,8 +510,8 @@ def _evaluate_dynamic_hash(
             source_trace=source_trace,
             blocked_reason=f"dynamic_hash_binding_ambiguous:{key}",
         )
-    if matches:
-        value, binding = matches[0]
+    if committed_matches:
+        value, binding = committed_matches[0]
         if fallback_matches and fallback_matches[0][0] != value:
             return NumericEvaluationResult(
                 ok=False,
@@ -494,6 +558,21 @@ def _evaluate_dynamic_hash(
                 "value": value,
                 **binding,
                 "binding_role": "compiled_expression_fallback",
+            },
+            source_trace=source_trace,
+        )
+    if declared_default_matches:
+        value, binding = declared_default_matches[0]
+        return NumericEvaluationResult(
+            ok=True,
+            value=value,
+            expression_kind="dynamic_hash",
+            bindings={
+                "hash": hash_value,
+                "key": key,
+                "value": value,
+                **binding,
+                "binding_role": "declared_mutable_slot_default",
             },
             source_trace=source_trace,
         )
@@ -560,27 +639,28 @@ def _evaluate_numeric_program(
                 )
             stack.append(float(result.value))
             continue
-        if opcode == "negate":
+        if opcode in NUMERIC_UNARY_OPERATIONS:
             if not stack:
                 return _numeric_program_blocked(
                     "numeric_program_stack_underflow",
                     source_trace,
                     index,
                 )
-            stack[-1] = -stack[-1]
-            if not math.isfinite(stack[-1]):
+            try:
+                stack[-1] = numeric_unary_value(opcode, stack[-1])
+            except (OverflowError, ValueError):
                 return _numeric_program_blocked(
                     "numeric_program_non_finite_result",
                     source_trace,
                     index,
                 )
             continue
-        if opcode == "max":
+        if opcode in {"min", "max"}:
             operand_count = instruction.get("operand_count")
             if (
                 not isinstance(operand_count, int)
                 or isinstance(operand_count, bool)
-                or operand_count < 2
+                or operand_count < 1
             ):
                 return _numeric_program_blocked(
                     "numeric_program_variadic_operand_count_invalid",
@@ -595,7 +675,7 @@ def _evaluate_numeric_program(
                 )
             operands = stack[-operand_count:]
             del stack[-operand_count:]
-            stack.append(max(operands))
+            stack.append(max(operands) if opcode == "max" else min(operands))
             continue
         if opcode not in {"add", "sub", "mul", "div"}:
             return _numeric_program_blocked("numeric_program_opcode_not_admitted", source_trace, index)
@@ -651,6 +731,21 @@ def _numeric_program_blocked(
         source_trace=source_trace,
         blocked_reason=reason,
     )
+
+
+def _dynamic_key_identity(key: str) -> int:
+    """Resolve a TBGD DynamicKey name to its numeric dynamic hash.
+
+    Source conditions name dynamic values; binding sources index them by the
+    TBGD hash. A key already written as a numeric hash string is kept as that
+    number.
+    """
+
+    stripped = key.strip()
+    try:
+        return int(stripped)
+    except ValueError:
+        return tbgd_dynamic_key_hash(key)
 
 
 def _evaluate_condition_payload(
@@ -1276,13 +1371,69 @@ def _evaluate_condition_payload(
             },
             source_trace,
         )
-    if opcode == "ByIsContainModifier":
+    if opcode == "ByIsAutoBattle":
+        # 模拟器由外部推演器逐步提交操作，等同玩家手动操作，不存在客户端自动战斗。
+        if set(payload) - {"$type"}:
+            return _condition_blocked(condition_id, opcode, "auto_battle_payload_not_admitted", {"payload": payload}, source_trace)
+        return _condition_result(False, condition_id, opcode, "externally_controlled_battle_is_manual",
+            {"control": "external_command"}, source_trace)
+    if opcode == "ByIsInCharacterIDGroup":
+        # 角色 ID 组由编译期从 GameCoreConstValue.CharacterIDGroups 附加；缺失即阻断。
+        ids = payload.get("CharacterIDList")
+        if not isinstance(ids, list) or any(type(item) is not int for item in ids):
+            return _condition_blocked(condition_id, opcode, "character_id_group_not_compiled", {"group": payload.get("Group")}, source_trace)
         target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
-        if target_id is None:
-            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "character_id_group_target_missing", target_details, source_trace)
+        actual = _unit_character_id(unit)
+        member = actual is not None and actual in ids
+        if payload.get("Inverse") is True:
+            member = not member
+        return _condition_result(member, condition_id, opcode, "character_id_group_checked",
+            {"target_id": target_id, "character_id": actual, "group": payload.get("Group"),
+             "inverse": payload.get("Inverse") is True}, source_trace)
+    if opcode == "ByIsEnableNegativeHP":
+        # 负生命只能由 EnableNegativeHP 写入的已提交标记开启；该效果尚未接入，
+        # 因而所有单位均读到未开启，不会伪造负生命值。
+        if set(payload) - {"$type", "TargetType", "Inverse"} or type(payload.get("Inverse", False)) is not bool:
+            return _condition_blocked(condition_id, opcode, "negative_hp_payload_not_admitted", {"payload": payload}, source_trace)
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "negative_hp_target_missing", target_details, source_trace)
+        enabled = getattr(unit, "flags", {}).get("negative_hp_enabled") is True
+        if payload.get("Inverse") is True:
+            enabled = not enabled
+        return _condition_result(enabled, condition_id, opcode, "negative_hp_checked",
+            {"target_id": target_id, "inverse": payload.get("Inverse") is True}, source_trace)
+    if opcode == "ByTargetLockHP":
+        # 读取已提交的锁血记录；可选 LockKey 限定某一把锁。
+        lock_key = payload.get("LockKey")
+        if lock_key is not None and (not isinstance(lock_key, str) or not lock_key):
+            return _condition_blocked(condition_id, opcode, "hp_lock_key_invalid", {"payload": payload}, source_trace)
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "hp_lock_target_missing", target_details, source_trace)
+        locks = getattr(unit, "flags", {}).get("hp_locks")
+        locks = locks if isinstance(locks, dict) else {}
+        locked = bool(locks) if lock_key is None else lock_key in locks
+        if payload.get("Inverse") is True:
+            locked = not locked
+        return _condition_result(locked, condition_id, opcode, "hp_lock_checked",
+            {"target_id": target_id, "lock_key": lock_key, "inverse": payload.get("Inverse") is True},
+            source_trace)
+    if opcode == "ByIsContainModifier":
         modifier_name = _value_field(payload.get("ModifierName"))
         if not isinstance(modifier_name, str) or not modifier_name:
             return _condition_blocked(condition_id, opcode, "modifier_name_missing", {"payload": payload}, source_trace)
+        target_ids, details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids == ():
+            return _condition_result(False, condition_id, opcode, "modifier_presence_on_empty_group", details, source_trace)
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
         contains = _unit_has_modifier(context, target_id, modifier_name)
         return _condition_result(
             contains,
@@ -1351,7 +1502,23 @@ def _evaluate_condition_payload(
             if opcode == "ByCompareChangeValue"
             else ("param_value", "change_value", "delta", "value")
         )
-        actual = _first_event_number(event_payload, keys)
+        trigger = context.trigger_event
+        if opcode == "ByCompareChangeValue" and (
+                (trigger is not None and trigger.ability_property_change_fact is not None)
+                or "ability_property_change_value" in event_payload):
+            from ..systems.ability_property_watchers import AbilityPropertyChangeFact
+            fact = trigger.ability_property_change_fact if trigger is not None else None
+            if type(fact) is not AbilityPropertyChangeFact or not fact.matches_event(trigger):
+                return _condition_blocked(condition_id, opcode, "property_change_fact_missing_or_mismatched", {}, source_trace)
+            actual = fact.delta
+        elif ((trigger is not None and trigger.event_type in {"hp.change", "heal.after", "unit.hp_overflow"})
+                or event_payload.get("event_type") in {"hp.change", "heal.after"}):
+            from ..systems.mutation_events import native_hp_change_value
+            actual, reason = native_hp_change_value(trigger)
+            if reason:
+                return _condition_blocked(condition_id, opcode, reason, {}, source_trace)
+        else:
+            actual = _first_event_number(event_payload, keys)
         expected = evaluator.evaluate_numeric(
             payload.get("CompareValue"),
             NumericEvaluationContext(
@@ -1430,7 +1597,11 @@ def _evaluate_condition_payload(
         unit = _state_unit(context, target_id) if target_id else None
         if unit is None:
             return _condition_result(False, condition_id, opcode, "target_missing", target_details, source_trace)
-        valid = runtime_unit_is_target_candidate(unit)
+        # Validity is entity existence, not selectability: unselectable or
+        # untargetable entities such as battle events remain valid while alive.
+        valid = runtime_unit_is_active(unit) and (
+            runtime_unit_is_on_field(unit) or runtime_unit_is_battle_event_entity(unit)
+        )
         return _condition_result(valid, condition_id, opcode, "target_validity_checked", {"target_id": target_id}, source_trace)
     if opcode == "ByIsTopActionDelayTarget":
         target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
@@ -1498,6 +1669,9 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByHaveEnemyAlive":
+        target_ids, details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids == ():
+            return _condition_result(False, condition_id, opcode, "enemy_presence_on_empty_group", details, source_trace)
         target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
         if target_id is None:
             return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
@@ -1506,11 +1680,11 @@ def _evaluate_condition_payload(
         actor = _state_unit(context, target_id)
         if not isinstance(units, dict) or actor is None:
             return _condition_blocked(condition_id, opcode, "state_or_actor_missing", {"target_id": target_id}, source_trace)
-        actor_side = getattr(actor, "side", None)
         alive_enemies = [
             unit_id
             for unit_id, unit in units.items()
-            if getattr(unit, "side", None) != actor_side and float(getattr(unit, "hp", 0.0) or 0.0) > 0
+            if runtime_units_are_opposing_combat_teams(actor, unit)
+            and _unit_is_alive(unit) and float(getattr(unit, "hp", 0.0) or 0.0) > 0
         ]
         matched = bool(alive_enemies)
         if payload.get("Inverse") is True:
@@ -1522,6 +1696,68 @@ def _evaluate_condition_payload(
             "enemy_alive_checked",
             {"target_id": target_id, "alive_enemy_ids": alive_enemies, "inverse": payload.get("Inverse") is True},
             source_trace,
+        )
+    if opcode == "ByDieAnimFinished":
+        team = payload.get("TeamTypeMask")
+        entity = payload.get("EntityTypeMask")
+        side = _TEAM_LOCATION_INDEX_TEAM_SIDES.get(str(team or ""))
+        if side is None or entity != "Mask_TeamCharacters":
+            return _condition_blocked(
+                condition_id, opcode, "die_anim_masks_not_admitted",
+                {"team_type_mask": team, "entity_type_mask": entity}, source_trace,
+            )
+        state = context.state
+        units = getattr(state, "units", None)
+        if not isinstance(units, dict):
+            return _condition_blocked(condition_id, opcode, "state_units_missing", {}, source_trace)
+        pending = [
+            unit_id
+            for unit_id, unit in units.items()
+            if getattr(unit, "side", None) == side
+            and not unit.flags.get("owner_id")
+            and not unit.flags.get("servant_definition_id")
+            and getattr(unit, "lifecycle_status", "active") == "limbo"
+        ]
+        finished = not pending
+        if payload.get("Inverse") is True:
+            finished = not finished
+        return _condition_result(
+            finished, condition_id, opcode, "die_animation_finished_checked",
+            {"side": side, "pending_unit_ids": pending,
+             "inverse": payload.get("Inverse") is True}, source_trace,
+        )
+    if opcode == "ByCheckFightFinish":
+        state = context.state
+        units = getattr(state, "units", None)
+        actor = _state_unit(context, context.actor_id)
+        if not isinstance(units, dict) or actor is None:
+            return _condition_blocked(
+                condition_id, opcode, "state_or_actor_missing",
+                {"actor_id": context.actor_id}, source_trace,
+            )
+        # Opposition is the shared combat-team relation: an owner's servant
+        # and neutral containers differ in side but are not enemies.
+        if runtime_unit_combat_team(actor) == "neutral":
+            return _condition_blocked(
+                condition_id, opcode, "fight_finish_actor_team_not_admitted",
+                {"actor_id": context.actor_id}, source_trace,
+            )
+        alive_opponents = [
+            unit_id
+            for unit_id, unit in units.items()
+            if runtime_units_are_opposing_combat_teams(actor, unit)
+            and not runtime_unit_is_battle_event_entity(unit)
+            and runtime_unit_is_active(unit)
+            and runtime_unit_is_on_field(unit)
+            and float(getattr(unit, "hp", 0.0) or 0.0) > 0
+        ]
+        finished = not alive_opponents
+        if payload.get("Inverse") is True:
+            finished = not finished
+        return _condition_result(
+            finished, condition_id, opcode, "fight_finish_checked",
+            {"alive_opponent_ids": alive_opponents,
+             "inverse": payload.get("Inverse") is True}, source_trace,
         )
     if opcode == "ByCompareAliveEnemyNumber":
         target_id, target_details = _resolve_condition_target(
@@ -1629,11 +1865,29 @@ def _evaluate_condition_payload(
             )
         actual = float(getattr(unit, "hp", 0.0) or 0.0) / max_hp
         return _comparison_condition(condition_id, opcode, actual, payload.get("CompareType"), compare_value.value, source_trace)
+    if opcode == "ByNamedBooleanFlag":
+        from ..systems.named_boolean_flags import read_named_flag, resolve_named_key
+        target_id, details = _resolve_condition_target(payload.get("TargetType"), context)
+        key, reason = resolve_named_key(payload.get("KeyExpression"), context.binding_sources)
+        if reason:
+            return _condition_blocked(condition_id, opcode, reason, details, source_trace)
+        value, reason = read_named_flag(_state_unit(context, target_id) if target_id else None, key)
+        if reason:
+            return _condition_blocked(condition_id, opcode, reason, details, source_trace)
+        return _condition_result(value, condition_id, opcode, "named_boolean_read",
+            {"target_id": target_id, "key": key, "value": value}, source_trace)
     if opcode == "ByCompareDynamicValue":
         key = _value_field(payload.get("DynamicKey"))
         if not isinstance(key, str) or not key:
             return _condition_blocked(condition_id, opcode, "dynamic_key_missing", {"payload": payload}, source_trace)
-        if str(payload.get("ContextScope") or "") == "TargetEntity":
+        target_alias_value = _target_alias(payload.get("TargetType")) if payload.get("TargetType") is not None else None
+        if str(payload.get("ContextScope") or "") == "TargetEntity" or (
+            # An explicit non-owner target without a scope reads that entity too;
+            # the owner form remains the status-local read handled below.
+            not payload.get("ContextScope")
+            and payload.get("TargetType") is not None
+            and target_alias_value != "ModifierOwnerEntity"
+        ):
             # TargetEntity names one formal unit scope.  An explicitly present
             # target that cannot resolve to exactly one entity is not a licence
             # to read the owner, a status instance, or ambient dynamic values.
@@ -1671,23 +1925,56 @@ def _evaluate_condition_payload(
                 )
             actual_value = float(operand.value)
         else:
-            actual = evaluator.evaluate_numeric(
-                numeric_dynamic_hash(key),
-                NumericEvaluationContext(
-                    dynamic_values=context.dynamic_values,
-                    binding_sources=context.binding_sources,
-                    source_trace=source_trace,
-                ),
+            scoped_sources = _scope_filtered_binding_sources(
+                context.binding_sources, str(payload.get("ContextScope") or "")
             )
-            if not actual.ok or actual.value is None:
-                return _condition_blocked(
-                    condition_id,
-                    opcode,
-                    f"dynamic_value_blocked:{actual.blocked_reason}",
-                    {"dynamic_key": key, "numeric_evaluation": actual.to_json()},
-                    source_trace,
+            numeric_context = NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=scoped_sources,
+                source_trace=source_trace,
+            )
+            if scoped_sources != tuple(context.binding_sources or ()):
+                # 能力实例内优先读本实例条目；没有能力实例（如装配监听）时
+                # 模板槽位写在单位作用域，退回原来源读取。
+                probe = evaluator.evaluate_numeric(
+                    numeric_dynamic_hash(_dynamic_key_identity(key)), numeric_context,
                 )
-            actual_value = float(actual.value)
+                by_name = evaluator.evaluate_numeric(numeric_dynamic_hash(key), numeric_context)
+                if not (probe.ok or by_name.ok):
+                    numeric_context = replace(numeric_context, binding_sources=tuple(context.binding_sources or ()))
+            # An explicitly supplied dynamic value keeps its source name; a
+            # source condition naming a TBGD dynamic key additionally resolves
+            # through the numeric hash used by binding sources.
+            actual = evaluator.evaluate_numeric(numeric_dynamic_hash(key), numeric_context)
+            if not actual.ok:
+                hashed_key = _dynamic_key_identity(key)
+                if str(hashed_key) != key:
+                    retried = evaluator.evaluate_numeric(
+                        numeric_dynamic_hash(hashed_key), numeric_context,
+                    )
+                    if retried.ok:
+                        actual = retried
+            if (
+                (not actual.ok or actual.value is None)
+                and str(payload.get("ContextScope") or "") == "AITag"
+                and str(actual.blocked_reason or "").startswith(
+                    "dynamic_hash_unbound:"
+                )
+            ):
+                # AI tag variables are engine AI metadata, not a battle
+                # producer.  The source uses the read-then-set pattern as an
+                # initialize-once guard, so an unset tag is its default zero.
+                actual_value = 0.0
+            else:
+                if not actual.ok or actual.value is None:
+                    return _condition_blocked(
+                        condition_id,
+                        opcode,
+                        f"dynamic_value_blocked:{actual.blocked_reason}",
+                        {"dynamic_key": key, "numeric_evaluation": actual.to_json()},
+                        source_trace,
+                    )
+                actual_value = float(actual.value)
         compare_value = evaluator.evaluate_numeric(
             payload.get("CompareValue"),
             NumericEvaluationContext(
@@ -1842,6 +2129,48 @@ def _evaluate_condition_payload(
         if actual is None:
             return _condition_blocked(condition_id, opcode, "target_monster_id_missing", {"target_id": target_id}, source_trace)
         return _comparison_condition(condition_id, opcode, float(actual), payload.get("CompareType") or "Equal", expected.value, source_trace)
+    if opcode == "ByIsHitAllCallBackStack":
+        # Re-entrancy guard used by OnAfterHitAll callbacks that deal an extra
+        # hit.  Only the damage-window producer establishes the stack position,
+        # through the typed fact bound to this invocation and event.  The
+        # payload marker is a transport copy that must agree, never an input.
+        if payload:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "hit_all_callback_stack_shape_not_admitted",
+                {"payload": payload},
+                source_trace,
+            )
+        from ..core.model import HitWindowInvocationFact
+
+        trigger_event = context.trigger_event
+        fact = trigger_event.hit_window_invocation_fact if trigger_event is not None else None
+        if type(fact) is not HitWindowInvocationFact or not fact.matches(trigger_event):
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "hit_all_callback_stack_native_fact_missing_or_mismatched",
+                {"event_id": trigger_event.event_id if trigger_event is not None else None},
+                source_trace,
+            )
+        in_stack = fact.in_callback_stack
+        if (context.event_payload or {}).get("hit_all_callback_stack", False) is not in_stack:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "hit_all_callback_stack_transport_mismatch",
+                {"event_id": trigger_event.event_id},
+                source_trace,
+            )
+        return _condition_result(
+            in_stack,
+            condition_id,
+            opcode,
+            "hit_all_callback_stack_compared",
+            {"hit_all_callback_stack": in_stack},
+            source_trace,
+        )
     if opcode == "ByCompareDamageCustomName":
         expected = _value_field(payload.get("CustomName"))
         if not isinstance(expected, str) or not expected:
@@ -3112,6 +3441,24 @@ def _resolve_condition_target(alias_value: object, context: EvaluationContext) -
             "target_key": key, "target_ids": list(targets), "source": "pre_resolved_target_expression",
         }
     alias = _target_alias(alias_value)
+    if alias == "CasterSelfCreateBattleEvent":
+        # The battle event this caster created, through the committed
+        # entity.created_battle_events relation, matching the runtime
+        # TargetAlias semantics used by status callbacks and effects.
+        state = context.state
+        caster_id = context.actor_id
+        if state is None or not isinstance(caster_id, str) or caster_id not in state.units:
+            return None, {"alias": alias, "reason": "caster_missing"}
+        from ..systems.target import resolve_created_battle_event_targets
+
+        target_ids = resolve_created_battle_event_targets(state, caster_id)
+        if len(target_ids) == 1:
+            return target_ids[0], {"alias": alias, "source": "entity.created_battle_events"}
+        return None, {
+            "alias": alias,
+            "target_ids": list(target_ids),
+            "blocked_reason": "created_battle_event_missing" if not target_ids else "created_battle_event_ambiguous",
+        }
     payload = context.event_payload or {}
     mapping = {
         "Caster": context.actor_id,
@@ -3139,6 +3486,13 @@ def _resolve_condition_target(alias_value: object, context: EvaluationContext) -
         "CurrentTurnOwnerEntity": _first_string(
             payload,
             "turn_owner_id",
+            "actor_id",
+            "event_source_id",
+        ),
+        "CurrentTurnActionEntity": _first_string(
+            payload,
+            "turn_owner_id",
+            "turn_action_entity_id",
             "actor_id",
             "event_source_id",
         ),
@@ -3417,22 +3771,8 @@ def _unit_ability_property(unit: Any | None, property_name: object) -> float | N
 
 
 def _unit_character_id(unit: Any | None) -> int | None:
-    if unit is None:
-        return None
-    flags = getattr(unit, "flags", {})
-    if isinstance(flags, dict):
-        for key in ("character_id", "avatar_id", "profile_id"):
-            value = flags.get(key)
-            if isinstance(value, int) and not isinstance(value, bool):
-                return value
-            if isinstance(value, str) and value.isdigit():
-                return int(value)
-    template_id = str(getattr(unit, "template_id", "") or "")
-    if template_id.startswith("avatar:"):
-        tail = template_id.rsplit(":", 1)[-1]
-        if tail.isdigit():
-            return int(tail)
-    return None
+    from .combatant_identity import combatant_character_id
+    return combatant_character_id(unit)
 
 
 def _unit_is_alive(unit: Any | None) -> bool:
@@ -3607,13 +3947,15 @@ def _modifier_value_for_condition(
     value_type: object,
 ) -> tuple[float | None, str]:
     details: list[dict[str, Any]] = []
-    if isinstance(context.status_detail, dict):
+    if (isinstance(context.status_detail, dict)
+            and context.status_detail.get("owner_id", context.owner_id) == target_id):
         details.append(context.status_detail)
     unit = _state_unit(context, target_id)
     flags = getattr(unit, "flags", {}) if unit is not None else {}
     raw_details = flags.get("status_details", ()) if isinstance(flags, dict) else ()
     if isinstance(raw_details, (list, tuple)):
         details.extend(item for item in raw_details if isinstance(item, dict))
+    matched = False
     for detail in details:
         if (
             isinstance(modifier_name, str)
@@ -3621,7 +3963,8 @@ def _modifier_value_for_condition(
             and detail.get("modifier_name") != modifier_name
         ):
             continue
-        if value_type == "Layer" and isinstance(detail.get("stacks"), (int, float)):
+        matched = True
+        if value_type == "Layer" and type(detail.get("stacks")) in (int, float):
             return float(detail["stacks"]), "ok"
         if value_type == "LifeTime":
             for key in ("remaining_duration", "duration"):
@@ -3629,7 +3972,49 @@ def _modifier_value_for_condition(
                     return float(detail[key]), "ok"
         if value_type == "MaxLayer" and isinstance(detail.get("max_stacks"), (int, float)):
             return float(detail["max_stacks"]), "ok"
+    if (value_type == "Layer" and isinstance(modifier_name, str) and modifier_name
+            and unit is not None and isinstance(raw_details, (list, tuple)) and not matched):
+        # A count over the actual target's empty matching instance set is zero.
+        # This is not a fallback for missing units, malformed instances, or
+        # scalar lifetime/max-layer fields whose definition is still required.
+        return 0.0, "ok"
     return None, f"modifier_value_not_available:{modifier_name}:{value_type}"
+
+
+# 声明了能力/模板作用域的读取只看能力作用域条目；同名单位槽位属于另一作用域。
+_ABILITY_CONTEXT_SCOPES = frozenset({"ContextAbility", "ContextTaskTemplate"})
+
+
+def _scope_filtered_binding_sources(
+    sources: tuple[dict[str, Any], ...] | None, context_scope: str,
+) -> tuple[dict[str, Any], ...]:
+    if context_scope not in _ABILITY_CONTEXT_SCOPES:
+        return tuple(sources or ())
+    filtered: list[dict[str, Any]] = []
+    for source in sources or ():
+        entries = source.get("entries") if isinstance(source, dict) else None
+        if not isinstance(entries, dict) or not any(
+            isinstance(entry, dict) and "scope" in entry for entry in entries.values()
+        ):
+            filtered.append(source)
+            continue
+        kept = {
+            key: entry for key, entry in entries.items()
+            if isinstance(entry, dict) and entry.get("scope") == "ability"
+        }
+        by_hash: dict[str, list[str]] = {}
+        by_name: dict[str, list[str]] = {}
+        for key, entry in kept.items():
+            if entry.get("hash") is not None:
+                by_hash.setdefault(str(entry["hash"]), []).append(key)
+            if entry.get("name"):
+                by_name.setdefault(str(entry["name"]), []).append(key)
+        filtered.append({
+            **{name: value for name, value in source.items()
+               if name not in {"entries", "by_hash", "by_name", "values"}},
+            "entries": kept, "by_hash": by_hash, "by_name": by_name,
+        })
+    return tuple(filtered)
 
 
 def _lookup_binding_source(source: dict[str, Any], key: str) -> tuple[float | None, dict[str, Any]]:
@@ -3705,6 +4090,21 @@ def _ambiguous_binding_metadata(
     }
 
 
+def _binding_context_rank(binding: dict[str, Any], owner_id: str) -> int:
+    """Prefer context-local values over another unit's unit-scope entry."""
+
+    entry = binding.get("entry")
+    if not isinstance(entry, dict):
+        return 0
+    scope_kind = str(entry.get("scope_kind") or entry.get("scope") or "")
+    if scope_kind not in {"unit", "combat"}:
+        return 0
+    target_id = str(entry.get("target_id") or entry.get("owner_id") or "")
+    if not target_id:
+        return 0
+    return 0 if owner_id and target_id == owner_id else 1
+
+
 def _binding_metadata(
     source: dict[str, Any],
     entry_key: str | None,
@@ -3716,6 +4116,8 @@ def _binding_metadata(
         "source_type": str(source.get("source_type") or "binding_source"),
         "matched_by": matched_by,
     }
+    if isinstance(source.get("binding_role"), str):
+        metadata["binding_role"] = source["binding_role"]
     if entry_key is not None:
         metadata["entry_key"] = entry_key
     if entry is not None:

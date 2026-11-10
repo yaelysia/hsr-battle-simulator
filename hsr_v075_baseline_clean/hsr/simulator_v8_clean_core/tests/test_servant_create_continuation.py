@@ -67,9 +67,10 @@ def test_created_servant_continuation_runs_after_initialization_and_rolls_back(m
     # The existing servant route verifies full source-bound birth/initialization.
     # This fixture keeps the actual effect -> plan.unit_ids -> graph handoff and
     # substitutes only the costly servant build and startup input assembly.
-    def plan_spawn(self, current, candidate, *, owner_id, spawn_source):
+    def plan_spawn(self, current, candidate, *, owner_id, spawn_source, initial_values=None):
         assert current == state and candidate == definition
         assert owner_id == 'owner' and spawn_source == source
+        assert initial_values == {'initial': {'value': 7.0, 'hash': '17'}}
         calls.append('plan')
         return SummonTransitionPlan(True, 'servant_spawn', actor_id=owner_id,
                                     owner_id=owner_id, unit_ids=('newborn',))

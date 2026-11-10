@@ -808,18 +808,35 @@ class DamageSystem:
             return result
         hp = next((mutation for mutation in result.mutations
                    if mutation.path == ("units", packet.target_id, "hp")), None)
+        if state.units[packet.target_id].flags.get("hp_locks"):
+            # 已锁血的单位再次受致命伤需要在伤害路由内钳制；该路由尚未接入，失败关闭。
+            return _damage_error(packet, "hp_lock_lethal_damage_route_not_admitted")
         frame = source_frame_for_packet(packet)
         try:
             plan = PendingDefeatPlan(packet.target_id, state.event_index, hp, frame.owner_id,
                                      frame.to_json(), packet.source_trace, terminal)
             lifecycle = UnitLifecycleSystem()
             mutations = lifecycle.begin_limbo_mutations(state, plan)
-            root_event = lifecycle.limbo_events(plan)[0]
+            stages = lifecycle.limbo_events(plan)
+            root_event = stages[0] if self._listens_for_mortal_wound(state, packet.target_id) else stages[1]
         except (TypeError, ValueError) as exc:
             return _damage_error(packet, str(exc))
         return replace(result, mutations=(*result.mutations, *mutations),
             events=tuple(root_event if event is terminal else event for event in result.events),
             records=(*result.records, *lifecycle_settlement_records(mutations)))
+
+    def _listens_for_mortal_wound(self, state: BattleState, unit_id: str) -> bool:
+        """True when a status on the dying unit declares an OnBeforeMortallyWonded callback."""
+        if self.rules is None:
+            return False
+        unit = state.units.get(unit_id)
+        details = unit.flags.get("status_details") if unit is not None else None
+        return any(
+            isinstance(detail, dict)
+            and self.rules.status_callbacks_for_modifier_event(
+                str(detail.get("modifier_name") or ""), "OnBeforeMortallyWonded")
+            for detail in (details if isinstance(details, (list, tuple)) else ())
+        )
 
     def kill_energy_artifacts(
         self, state: BattleState, plan: PendingDefeatPlan, defeat: GameEvent,

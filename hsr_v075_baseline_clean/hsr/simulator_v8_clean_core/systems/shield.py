@@ -255,6 +255,11 @@ class ShieldSystem:
                     "capacity": next_capacity,
                     "stack_policy": policy,
                     "source_trace": source_trace,
+                    # A re-applied owner status gets a new instance; the merged
+                    # shield now belongs to that instance's lifecycle.
+                    **({"status_instance_id": status_instance_id}
+                       if status_instance_id and owner_modifier_name == current.get("owner_modifier_name")
+                       else {}),
                 }
         after = _ordered(after)
         if after == before:

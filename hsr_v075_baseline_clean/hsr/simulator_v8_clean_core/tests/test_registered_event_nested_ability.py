@@ -19,6 +19,40 @@ from simulator_v8_clean_core.tools.validate_p9_s8b5c_cross_entry_runtime_transpo
 )
 
 
+def test_registered_empty_callback_is_a_native_noop_not_an_empty_graph_query():
+    from simulator_v8_clean_core.rules.ir import IRSource, StatusCallbackIR
+    source = IRSource('validation_fixture/empty-callback', 'Modifiers', 'marker', {'json_path': '$.Modifiers.marker'})
+    callback = StatusCallbackIR('empty', 'marker', 'OnEnterBattle', (), source, (0, 0),
+        coverage_status='executable', admission_status='executable', scope_kind='global_listener',
+        source_mode='mainline_avatar_ability')
+    family = StatusEventFamilyIR('family:empty', 'OnEnterBattle', 'battle', 'global_listener',
+        ('battle.start',), 'fixture', source, coverage_status='executable', admission_status='executable')
+    rules = RuleBook(CanonicalIR('empty-callback', status_callbacks=(callback,), status_event_families=(family,)))
+    detail = {'instance_id': 'instance', 'status_id': 'status', 'modifier_name': 'marker',
+        'owner_id': 'owner', 'caster_id': 'owner', 'source_id': 'fixture', 'lifecycle_state': 'active',
+        'trigger_ids_by_event': {'OnEnterBattle': ['empty']}, 'ability_property_watcher_ids': [],
+        'source_trace': source.to_json()}
+    state = BattleState(units={'owner': UnitState('owner', 'ally', 'fixture:owner', hp=10, max_hp=10,
+        statuses=('status',), flags={'status_details': [detail]})})
+    registry = EffectRegistry(StatusSystem(rules))
+    dispatcher = EventDispatchSystem(rules, registry)
+    event = GameEvent('battle.start', 'fixture', target_id='owner', event_id='battle:start', window='OnEnterBattle',
+        process_only=True, payload={'callback_events': ['OnEnterBattle'], 'listener_scope': 'global_listener'})
+    result = dispatcher.dispatch_event(state, event=event)
+    assert not result.errors, result.errors
+    assert not result.mutations and result.after_state == state
+    assert any(record.get('record_type') == 'status_callback' and record.get('payload', {}).get('callback_id') == 'empty'
+               for record in result.records)
+    broken = replace(state, units={'owner': replace(state.units['owner'], flags={'status_details': [
+        {**detail, 'trigger_ids_by_event': {'OnEnterBattle': ['not-empty']}}]})})
+    # A direct selected callback with a mismatched instance ledger still fails.
+    provider = dispatcher._registered_event_nested_provider
+    rejected = dispatcher.status_callbacks.execute_registered_event_formal_root(broken, callback_id='empty',
+        unit_id='owner', modifier_name='marker', event='OnEnterBattle', trigger_event=event,
+        nested_ability_provider=provider)
+    assert not rejected.ok and not rejected.mutations
+
+
 def test_registered_root_injects_nested_hooks_without_action_capability(monkeypatch):
     empty = RuleBook(CanonicalIR("registered-nested-check"))
 

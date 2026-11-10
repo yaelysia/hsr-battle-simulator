@@ -17,6 +17,8 @@ from .action_preflight import (
     action_resource_blocked_reason,
     action_resource_plan,
     combined_blocked_reason,
+    special_resource_ultimate_blocked_reason,
+    special_resource_ultimate_gate,
 )
 from .action_contract import ActionContractSystem
 from .action_selection import ActionTargetQuery, ActionTargetSelectionSystem
@@ -507,6 +509,30 @@ class ActionAvailabilitySystem:
                     )
                     choices = (*choices, *requests)
                     blocked = (*blocked, *request_blocked)
+            if not choices and _battle_event_auto_turn_actor(actor):
+                # Auto-action battle events have no external action surface. Their
+                # turn is resolved by the scheduler: queued source inserts first,
+                # then a formal turn end.
+                return ActionAvailabilityView(
+                    schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
+                    mode="blocked",
+                    state_phase=state_phase,
+                    current_window=current_window,
+                    turn_owner_id=turn_owner_id,
+                    requires_scheduler_step=True,
+                    ordinary_input_blocked=False,
+                    ordinary_input_blocked_reason="battle_event_auto_turn_pending",
+                    queue=queue,
+                    actor=actor_availability,
+                    choices=(),
+                    blocked=blocked,
+                    coverage={
+                        "actor_side": actor.side,
+                        "choice_count": 0,
+                        "blocked_count": len(blocked),
+                        "selection_controller": "battle_event_auto_turn",
+                    },
+                )
             mode: ActionAvailabilityMode = "external_selectable" if choices else "blocked"
             return ActionAvailabilityView(
                 schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
@@ -546,6 +572,20 @@ class ActionAvailabilitySystem:
                 "timeline_tie_priority_missing",
                 "timeline_tie_priority_ambiguous",
             } and timeline_plan.tied_actor_ids:
+                if wave_plan.status == "start_current_wave":
+                    # 并列选择属于已开始的波次；否则下一条指令会被波次开始吞掉。
+                    return ActionAvailabilityView(
+                        schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
+                        mode="scheduler_required",
+                        state_phase=state_phase,
+                        current_window=current_window,
+                        turn_owner_id="",
+                        requires_scheduler_step=True,
+                        ordinary_input_blocked=True,
+                        ordinary_input_blocked_reason="wave_start_requires_scheduler_step",
+                        queue=queue,
+                        coverage={"wave_transition": wave_plan.to_json()},
+                    )
                 choices = tuple(
                     self._timeline_actor_choice(state, timeline_rule, timeline_plan, actor_id)
                     for actor_id in timeline_plan.tied_actor_ids
@@ -706,6 +746,15 @@ class ActionAvailabilitySystem:
         if not actor_id or actor_id not in state.units:
             return "queue_action_actor_missing"
         actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok and actor_reason == "summon_timeline_not_admitted":
+            # Queue-drained inserts run off-timeline summons; liveness is the
+            # only requirement for that queue-owned action window.
+            actor = state.units[actor_id]
+            actor_ok = (
+                self.lifecycle.status_of(actor) == "active"
+                and float(actor.hp) > 0
+            )
+            actor_reason = "" if actor_ok else actor_reason
         if not actor_ok:
             return f"queue_action_actor_{actor_reason}"
         control_gate = _control_gate_for_actor(state, state.units[actor_id])
@@ -721,6 +770,10 @@ class ActionAvailabilitySystem:
         target_query = self.action_targets.query(state, actor_id, action_id, action_level)
         if not target_query.resolved:
             return target_query.blocked_reason or "queue_action_target_query_blocked"
+        if target_query.selection_mode == "automatic":
+            # Automatic targets are derived by the action contract; queue
+            # entries only carry advisory target payloads for explicit modes.
+            target_ids = ()
         target_decision = self.action_targets.accept(state, target_query, target_ids)
         if not target_decision.accepted:
             requires_external_targets = (
@@ -768,7 +821,12 @@ class ActionAvailabilitySystem:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
             actor = state.units[actor_id]
-            energy_reason = ultimate_energy_blocked_reason(actor, definition.sp_need)
+            special_gate = special_resource_ultimate_gate(state, actor_id)
+            energy_reason = (
+                special_resource_ultimate_blocked_reason(special_gate)
+                if special_gate is not None
+                else ultimate_energy_blocked_reason(actor, definition.sp_need)
+            )
             if energy_reason:
                 return energy_reason
         if (plan.queue_window or {}).get("ok") is not True:
@@ -1917,11 +1975,18 @@ def _selectable_resource_preflight(rules: RuleBook, state: BattleState, plan: Qu
         requires_action_choice = not action_id or action_level is None
         definition = rules.action_definition(action_id, action_level) if not requires_action_choice else None
         cost = definition.sp_need if definition is not None else None
+        special_gate = (
+            special_resource_ultimate_gate(state, actor_id)
+            if actor is not None and not requires_action_choice
+            else None
+        )
         reason = (
             "queue_action_actor_missing"
             if actor is None
             else ""
             if requires_action_choice
+            else special_resource_ultimate_blocked_reason(special_gate)
+            if special_gate is not None
             else ultimate_energy_blocked_reason(actor, cost)
         )
         return {
@@ -1933,6 +1998,7 @@ def _selectable_resource_preflight(rules: RuleBook, state: BattleState, plan: Qu
             "ok": not reason,
             "blocked_reason": reason,
             "requires_action_command_before_action_resource_preflight": requires_action_choice,
+            **({"special_resource_ultimate_gate": special_gate} if special_gate is not None else {}),
         }
     if window_family == "extra_turn":
         return {
@@ -2017,6 +2083,15 @@ def _compact_actor_data_card(actor_data_card: dict[str, JSONValue]) -> dict[str,
         "owner_entity_ref": actor_data_card.get("owner_entity_ref"),
         "coverage_status": actor_data_card.get("coverage_status"),
     }
+
+
+def _battle_event_auto_turn_actor(actor: UnitState) -> bool:
+    """Whether the actor resolves its turn through the scheduler, not a query."""
+
+    return (
+        actor.flags.get("entity_type") == "battle_event"
+        and actor.flags.get("timeline_admitted") is not False
+    )
 
 
 def _control_gate_for_actor(state: BattleState, actor: UnitState) -> BlockedActionReason | None:

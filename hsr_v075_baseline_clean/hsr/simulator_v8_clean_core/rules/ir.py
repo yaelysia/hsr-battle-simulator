@@ -2304,7 +2304,9 @@ class CharacterAbilitySourceGraphCatalogIR:
                 or graph is None
                 or binding.binding_id not in graph.binding_ids
                 or definition.ability_name != binding.ability_name
-                or definition.owner_avatar_id not in {"", binding.owner_avatar_id}
+                or definition.owner_avatar_id not in {"", binding.owner_avatar_id, *(
+                    graphs_by_id[shared_id].owner_avatar_id for shared_id in graph.shared_graph_ids
+                )}
                 or (binding.action_source_id and action is None)
                 or (action is not None and action.owner_avatar_id != binding.owner_avatar_id)
                 or binding.action_source_id in ambiguous_action_source_ids
@@ -3659,14 +3661,22 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetFetchModifierOwner": frozenset({"name", "unique_name"}),
     "TargetFetchOwner": frozenset({"name", "unique_name"}),
     "TargetFetchAbilityTarget": frozenset({"name", "unique_name"}),
+    "TargetFetchAbilityGroup": frozenset({"name", "unique_name"}),
     "TargetFetchCurrentActionTarget": frozenset({"name", "unique_name"}),
     "TargetFetchParamEntity": frozenset({"name", "unique_name"}),
     "TargetFetchParamEntityList": frozenset({"name", "unique_name"}),
     "TargetFetchTemplateEntityList": frozenset({"name", "unique_name"}),
     "TargetFetchTeamEntity": frozenset({"team_type"}),
     "TargetFetchBattleEventEntityList": frozenset(),
+    "EventDefinitionReference": frozenset({"definition_ref"}),
     "TargetFetchBattleEventCaster": frozenset(),
+    # The explicit externally submitted target selection plays the role of the
+    # client's current aim targets.
+    "TargetFetchAimAtTargetList": frozenset(),
     "TargetFetchTurnOwnerEntity": frozenset(),
+    # The scheduler executes every action of a regular or inserted turn as its
+    # committed turn owner, so the turn's action entity is that owner.
+    "TargetFetchTurnActionEntity": frozenset(),
     "TargetFetchLevelEntity": frozenset(),
     "TargetFetchNone": frozenset(),
     "TargetFetchActualOwner": frozenset({"name", "unique_name"}),
@@ -3704,7 +3714,7 @@ _TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
     "TargetUnsupported": frozenset({"original_kind", "blocked_reason"}),
 }
 
-_TARGET_SORT_PROPERTY_KEYS = frozenset({"CurrentHP", "MaxHP", "CurrentStance", "MaxStance", "Shield", "BreakDamageAddedRatio"})
+_TARGET_SORT_PROPERTY_KEYS = frozenset({"CurrentHP", "MaxHP", "CurrentStance", "MaxStance", "Shield", "BreakDamageAddedRatio", "Level"})
 _TARGET_SORT_RATIO_KEYS = frozenset({"HPRatio", "StanceRatio"})
 
 
@@ -4016,13 +4026,18 @@ def _validate_target_node_payload(
             "alias", "entity_type_mask", "alive_state_mask", "name", "unique_name",
             "side", "counting_option", "index_type", "sort_key", "team_type", "max_rank",
             "modifier_name", "value_type", "buff_status", "compute_type", "original_kind",
-            "presentation_key", "blocked_reason",
+            "presentation_key", "blocked_reason", "definition_ref",
         }:
             if not isinstance(value, str):
                 raise TypeError(f"target node {field_name} must be a string")
             normalized[field_name] = value
         else:
             raise ValueError(f"unknown target node field:{field_name}")
+    if expression_kind == "EventDefinitionReference":
+        reference = normalized["definition_ref"]
+        namespace, separator, identifier = reference.partition(":")
+        if namespace != "battle_event" or separator != ":" or not identifier.isdecimal() or int(identifier) <= 0:
+            raise ValueError("event definition reference must be a canonical positive event id")
     if expression_kind == "TargetAlias" and not normalized["alias"]:
         raise ValueError("target alias cannot be empty")
     if expression_kind == "TargetFilter" and normalized["predicate"] is None:
@@ -4219,32 +4234,59 @@ def _validate_condition_target_sources(condition: ConditionIR) -> None:
             raise ValueError("nested condition target requires an exact parent source")
         return
 
-    def source_closes(source: IRSource, expected_path: str) -> bool:
+    def source_closes(parent: ConditionIR, source: IRSource, expected_path: str) -> bool:
+        # Lineage is exact raw location plus a registered child relation. A
+        # typed target-language projection records the parent relation in the
+        # source evidence instead of prefixing the parent raw id; nested
+        # conditions remain untyped payload rows, so the relation must also
+        # accept a child condition source below the parent raw id.
+        parent_source = parent.source
+        evidence_raw_id = source.evidence.get("source_raw_id")
+        evidence_raw_type = source.evidence.get("source_raw_type")
+        lineage = (
+            source.raw_id.startswith(parent_source.raw_id + ":")
+            or (
+                isinstance(evidence_raw_id, str)
+                and evidence_raw_type in {parent_source.raw_type, "Condition", "TargetPredicate"}
+                and (
+                    evidence_raw_id == parent_source.raw_id
+                    or evidence_raw_id.startswith(parent_source.raw_id + ":")
+                )
+            )
+        )
         return (
-            source.source_path == condition.source.source_path
+            source.source_path == parent_source.source_path
             and source.evidence.get("json_path") == expected_path
-            and source.raw_id.startswith(condition.source.raw_id + ":")
+            and lineage
         )
 
-    def visit(value: object, expected_path: str) -> None:
+    def visit(
+        parent: ConditionIR,
+        value: object,
+        expected_path: str,
+    ) -> None:
         if type(value) is TargetExpressionNodeIR:
-            if not source_closes(value.source, expected_path):
+            if not source_closes(parent, value.source, expected_path):
                 raise ValueError("nested condition target source does not close")
             return
         if type(value) is ConditionIR:
-            if not source_closes(value.source, expected_path):
+            if not source_closes(parent, value.source, expected_path):
                 raise ValueError("nested condition source does not close")
+            child_path = value.source.evidence.get("json_path")
+            if not isinstance(child_path, str) or not child_path.startswith("$"):
+                raise ValueError("nested condition source requires an exact raw location")
+            visit(value, value.payload, child_path)
             return
         if isinstance(value, Mapping):
             for key, child in value.items():
                 if not isinstance(key, str):
                     raise TypeError("condition payload keys must be strings")
-                visit(child, f"{expected_path}.{key}")
+                visit(parent, child, f"{expected_path}.{key}")
         elif isinstance(value, (list, tuple)):
             for index, child in enumerate(value):
-                visit(child, f"{expected_path}[{index}]")
+                visit(parent, child, f"{expected_path}[{index}]")
 
-    visit(condition.payload, parent_path)
+    visit(condition, condition.payload, parent_path)
 
 
 def _condition_payload_contains_target(*, value: object) -> bool:
@@ -4606,7 +4648,6 @@ class SpecialResourceInitializerIR:
     maximum_value_dynamic_hash: int
     level_dynamic_key: str
     level_dynamic_hash: int
-    zero_floor_dynamic_hash: int
     world_level_threshold: int
     low_world_level_expression: dict[str, JSONValue]
     high_world_level_expression: dict[str, JSONValue]
@@ -4628,7 +4669,6 @@ class SpecialResourceInitializerIR:
             "maximum_value_dynamic_hash": self.maximum_value_dynamic_hash,
             "level_dynamic_key": self.level_dynamic_key,
             "level_dynamic_hash": self.level_dynamic_hash,
-            "zero_floor_dynamic_hash": self.zero_floor_dynamic_hash,
             "world_level_threshold": self.world_level_threshold,
             "low_world_level_expression": self.low_world_level_expression,
             "high_world_level_expression": self.high_world_level_expression,
@@ -6251,6 +6291,10 @@ class DamageEmissionIR:
     damage_tags: tuple[str, ...] = ()
     hit_energy_gain: float | None = None
     toughness_emission_required: bool = True
+    # Source overrides of who attacks, whose stats scale and whose element applies.
+    attacker_target_expression_id: str = ""
+    property_source_target_expression_id: str = ""
+    element_source_target_expression_id: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -6283,6 +6327,12 @@ class DamageEmissionIR:
             "damage_tags": list(self.damage_tags),
             "hit_energy_gain": self.hit_energy_gain,
             "toughness_emission_required": self.toughness_emission_required,
+            **({
+                "attacker_target_expression_id": self.attacker_target_expression_id,
+                "property_source_target_expression_id": self.property_source_target_expression_id,
+                "element_source_target_expression_id": self.element_source_target_expression_id,
+            } if (self.attacker_target_expression_id or self.property_source_target_expression_id
+                  or self.element_source_target_expression_id) else {}),
         }
 
 
@@ -6538,6 +6588,9 @@ class AbilityPropertyRangeIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    # Native "OnChange" value-branch: fires when the watched property value
+    # changes during the triggering event, independent of range membership.
+    change_callback_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6550,6 +6603,7 @@ class AbilityPropertyRangeIR:
             "maximum_inclusive": self.maximum_inclusive,
             "enter_callback_id": self.enter_callback_id,
             "exit_callback_id": self.exit_callback_id,
+            "change_callback_id": self.change_callback_id,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -6691,6 +6745,10 @@ class ActionDelayEmissionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    # A source-local/composite target (for example a team alias filtered by a
+    # modifier) is resolved through the target language; target_alias remains
+    # the simple-alias fallback used by older sources.
+    target_expression_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -6706,6 +6764,7 @@ class ActionDelayEmissionIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "target_expression_id": self.target_expression_id,
         }
 
 
@@ -6729,19 +6788,25 @@ class QueueIntentIR:
     blocked_reason: str = ""
     elation_point_override_expr: dict[str, JSONValue] | None = None
     owner_alive_state: Literal[
-        "alive_only", "alive_or_limbo", "alive_or_revivable"
+        "alive_only", "alive_or_limbo", "alive_or_revivable", "any"
     ] = "alive_only"
     target_alive_state: Literal[
-        "alive_only", "alive_or_limbo", "alive_or_revivable"
+        "alive_only", "alive_or_limbo", "alive_or_revivable", "any"
     ] = "alive_only"
     can_run_on_unselectable_target: bool = False
     custom_tag: str = ""
+    # A queue ability target may be a full target expression (for example a
+    # filtered team/enemy list) instead of one simple alias. The expression is
+    # resolved at enqueue time with the inserting caster context.
+    ability_target_expression_id: str = ""
 
     def __post_init__(self) -> None:
         for name in ("owner_alive_state", "target_alive_state"):
             _require_string_enum(
                 getattr(self, name),
-                frozenset({"alive_only", "alive_or_limbo", "alive_or_revivable"}),
+                frozenset(
+                    {"alive_only", "alive_or_limbo", "alive_or_revivable", "any"}
+                ),
                 name,
             )
         if type(self.can_run_on_unselectable_target) is not bool:
@@ -6774,6 +6839,7 @@ class QueueIntentIR:
             "target_alive_state": self.target_alive_state,
             "can_run_on_unselectable_target": self.can_run_on_unselectable_target,
             "custom_tag": self.custom_tag,
+            "ability_target_expression_id": self.ability_target_expression_id,
         }
 
 
@@ -7038,6 +7104,9 @@ class AbilityPhaseIR:
     coverage_status: CoverageStatus = "audit_only"
     blocked_reason: str = ""
     task_ids: tuple[str, ...] = ()
+    # Source-declared ability-local mutable dynamic slots; unset slots read as
+    # their declared zero baseline at runtime.
+    dynamic_value_bindings: dict[str, JSONValue] = field(default_factory=dict)
     invocation_role: Literal[
         "action_root",
         "nested_only",
@@ -7085,6 +7154,7 @@ class AbilityPhaseIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "task_ids": list(self.task_ids),
+            "dynamic_value_bindings": self.dynamic_value_bindings,
             "invocation_role": self.invocation_role,
         }
 
@@ -8386,7 +8456,8 @@ class CanonicalIR:
                 ):
                     raise ValueError("owned character graph ref is inconsistent")
                 if ref.reference_kind == "shared" and (
-                    graph.source_kind != "character_shared" or graph.owner_avatar_id
+                    graph.source_kind not in {"character_shared", "character_main"}
+                    or graph.graph_id not in expected_owned_graph.shared_graph_ids
                 ):
                     raise ValueError("shared character graph ref is inconsistent")
                 ref_evidence = ref.source.evidence

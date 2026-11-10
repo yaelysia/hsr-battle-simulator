@@ -17,7 +17,7 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import (
 )
 
 
-def test_real_additional_damage_omission_is_admitted_but_insert_is_not():
+def test_real_additional_damage_and_insert_splash_omission_are_admitted_but_ordinary_hit_is_not():
     root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
     path = 'Config/ConfigAbility/Avatar/Avatar_Hook_00_Ability.json'
     content = (root / path).read_bytes()
@@ -73,7 +73,16 @@ def test_real_additional_damage_omission_is_admitted_but_insert_is_not():
 
     insert_payload = deepcopy(effect.payload)
     insert_payload['AttackProperty']['AttackType'] = 'Insert'
-    damage, toughness, refused = lower(replace(effect, payload=insert_payload))
+    damage, toughness, admitted = lower(replace(effect, payload=insert_payload))
+    # TBGD AttackData.StanceValue is a per-hit optional field: the pinned
+    # sources declare it on 321 Insert hits and omit it on 113, including the
+    # real Jing Yuan insert splash branch. An omitted field is the zero value,
+    # the same conclusion adopted for ordinary additional damage.
+    assert admitted.coverage_status == 'executable', admitted.blocked_reason
+    assert not damage[0].toughness_emission_required and not toughness
+    ordinary_payload = deepcopy(effect.payload)
+    ordinary_payload['AttackProperty']['AttackType'] = 'Normal'
+    damage, toughness, refused = lower(replace(effect, payload=ordinary_payload))
     assert damage[0].toughness_emission_required and refused.coverage_status == 'blocked'
     assert toughness[0].blocked_reason == 'attack_property_stance_value_missing'
     explicit_payload = deepcopy(effect.payload)

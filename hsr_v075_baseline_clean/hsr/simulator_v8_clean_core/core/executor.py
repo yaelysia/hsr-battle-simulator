@@ -55,11 +55,13 @@ from ..systems.action_event_contract import (
     derived_post_action_listener_event as _derived_post_action_listener_event,
 )
 from ..systems.action_preflight import (
+    SPECIAL_RESOURCE_ULTIMATE_GATE_KEY,
     action_binding_blocked_reason,
     action_energy_gain,
     action_event_blocked_reason,
     action_skill_point_delta,
     combined_blocked_reason,
+    special_resource_ultimate_gate,
 )
 from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamageModifierContribution, DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
@@ -653,6 +655,18 @@ class CombatExecutor:
             "effective_action_level_source": command.metadata.get("effective_action_level_source", {}),
         }
         actor_lifecycle_ok, actor_lifecycle_reason = self.lifecycle.can_act(state, command.actor_id)
+        if not actor_lifecycle_ok and actor_lifecycle_reason == "summon_timeline_not_admitted":
+            # Queue-inserted chain actions execute off-timeline summons; their
+            # liveness is required, timeline participation is not.
+            actor_unit = state.units.get(command.actor_id)
+            actor_lifecycle_ok = bool(
+                actor_unit is not None
+                and self.lifecycle.status_of(actor_unit) == "active"
+                and float(actor_unit.hp) > 0
+            )
+            actor_lifecycle_reason = (
+                "" if actor_lifecycle_ok else actor_lifecycle_reason
+            )
         action_event = GameEvent(
             "action.requested",
             source_id=command.actor_id,
@@ -1844,7 +1858,7 @@ class CombatExecutor:
         owner_cleanup_node_results: list[ExecutionNodeResult] = []
         owner_cleanup_rng_events: list[RNGEvent] = []
         for owner_id, owner in sorted(current_state.units.items()):
-            if self.lifecycle.status_of(owner) == "active":
+            if self.lifecycle.status_of(owner) not in {"defeated", "removed"}:
                 continue
             cleanup_plan = self.summons.plan_owner_cleanup(current_state, owner_id)
             if not cleanup_plan.ok:
@@ -2535,6 +2549,14 @@ def _summon_execution_blocked_reason(state: BattleState, command: ActionCommand)
     if actor is None or not actor.flags.get("summon_kind"):
         return ""
     if actor.flags.get("timeline_admitted") is not True:
+        if (
+            command.source == "queue"
+            and actor.lifecycle_status == "active"
+            and float(actor.hp) > 0
+        ):
+            # A queue-inserted chain action is the summon's only action window;
+            # its admission is owned by the queue path, not the timeline.
+            return ""
         return "summon_timeline_not_admitted"
     if actor.flags.get("summon_action_admitted") is not True:
         return "summon_action_admission_missing"
@@ -2761,7 +2783,11 @@ def _action_resource_plan_with_value_resolution(
     blocked_reasons: list[str] = []
     values: dict[str, float] = {}
     fields = ("bp_need", "bp_add", "sp_base")
-    if action_definition.attack_type == "Ultra":
+    if action_definition.attack_type == "Ultra" and (
+        action_definition.sp_need is not None
+        # 特殊资源终结技的来源不声明标准能量消耗，由下方门禁负责。
+        or special_resource_ultimate_gate(state, command.actor_id) is None
+    ):
         fields += ("sp_need",)
     for field_name in fields:
         resolution = _action_definition_numeric_field_resolution(
@@ -2778,8 +2804,11 @@ def _action_resource_plan_with_value_resolution(
                 "resource_value_resolution_blocked:"
                 f"{field_name}:{resolution.blocked_reason or 'unknown'}"
             )
+    special_gate = None
     if action_definition.attack_type == "Ultra" and values.get("sp_need", 0.0) <= 0.0:
-        blocked_reasons.append("ultimate_energy_cost_invalid")
+        special_gate = special_resource_ultimate_gate(state, command.actor_id)
+        if special_gate is None:
+            blocked_reasons.append("ultimate_energy_cost_invalid")
     overrides = resolve_skill_property_overrides(
         state, command.actor_id, _condition_skill_type(action_definition)
     ) if state is not None else None
@@ -2807,7 +2836,10 @@ def _action_resource_plan_with_value_resolution(
         ResourcePlan(
             skill_point_delta=skill_point_delta,
             energy_gain=energy_gain,
-            energy_cost=values.get("sp_need") if action_definition.attack_type == "Ultra" else 0.0,
+            energy_cost=(
+                0.0 if special_gate is not None
+                else values.get("sp_need") if action_definition.attack_type == "Ultra" else 0.0
+            ),
             source="combat_executor.resources",
             metadata={
                 **metadata,
@@ -2818,6 +2850,8 @@ def _action_resource_plan_with_value_resolution(
                     if overrides is not None else {}
                 ),
                 "value_resolver_admitted": not blocked_reasons,
+                **({SPECIAL_RESOURCE_ULTIMATE_GATE_KEY: special_gate}
+                   if special_gate is not None else {}),
             },
             blocked_reason=override_blocked_reason,
         ),

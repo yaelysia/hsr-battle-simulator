@@ -20,6 +20,7 @@ KNOWN_AUDIT_EFFECTS = {
     "StackShield",
     "ModifyShield",
     "LoseHPByRatio",
+    "LoseHP",
     "DamageByAttackProperty",
     "ModifyDamageData",
     "SetDynamicValue",
@@ -76,10 +77,39 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "RadialBlurEffect",
         "SetEntityVisible",
         "SetNoShadowCaster",
+        # Client-only dynamic values drive the UI/preview layer; every action
+        # kind admits only the exact source shape and never writes battle state.
+        "SetDynamicValueClientOnly",
+        "SetDynamicValueByPropertyClientOnly",
         "SetCameraRootFollow",
         "SetTeamFormation",
         "SetTeamRootOffset",
         "SetSkillTargetFormationByPos",
+        # Entity action-state toggles only drive the model/action-bar state; the
+        # combat result never reads them. Lowering admits the strict
+        # unique-name/boolean shape as presentation.
+        "SetEntityActionState",
+        # Client input projection: the simulator submits an explicit target
+        # with every action, so toggling a temporary lock-on hint changes no
+        # combat state. Strict shape admission lives in the ability lowering.
+        "SetUseTemporaryLockTarget",
+        # Unsets an out-of-combat skill-property override (e.g. a maze free
+        # cast) on the skill that just executed.  The strict source shape is
+        # checked by lowering; the simulator has no maze modifier state to
+        # cancel at battle entry, so the admitted shape is presentation.
+        "ModifySkillPropertyByName",
+        # 死龙技能按钮的显示等级/特效与多角色站位排除只驱动客户端界面与站位；
+        # 战斗结算不读取它们。字段形状由 lowering 严格校验。
+        "SetDeathDragonSkillButtonState",
+        "SetExcludeInMultiCharacterFormation",
+        # 昔涟终结技/德谬歌中的混淆指令：只带布尔、目标别名、镜像资源名、
+        # 坐标或命中框尺寸，周边全是表现任务；终结技的召唤、额外回合与充能
+        # 均由具名任务产生（Fandom/Icy Veins/Prydwen 昔涟页面）。用户 2026-11-09
+        # 同意按表现处理；字段形状由 lowering 严格校验。
+        # 等待服务器同步的帧屏障，不产生战斗边界。
+        "WaitFrameForBattleServer",
+        "EJLHBEGHAME", "FCCIDFIMONC", "LAPKGFCDPCD", "LMHLABELCDJ",
+        "GIFBHKAGPEG", "LHOKPKHEBIK", "LDJMFMBBDFK",
         "ShowBattleUI",
         "ShowBossInfoBar",
         "HideLevelStage",
@@ -97,6 +127,10 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "WaitAnimState",
         "WaitSecond",
         "WaitTimelineFinish",
+        # Death-animation barriers only synchronize the presentation timeline.
+        "WaitFor",
+        # This barrier only waits for an already-triggered perform ability.
+        "WaitSkillPerformAbilityFinish",
     }
 )
 

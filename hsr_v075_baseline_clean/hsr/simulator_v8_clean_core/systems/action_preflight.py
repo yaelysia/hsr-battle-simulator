@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 from ..core.model import JSONValue
@@ -12,6 +13,61 @@ from .skill_properties import (
     skill_property_override_evidence,
     skill_property_override_plan,
 )
+
+
+SPECIAL_RESOURCE_ULTIMATE_GATE_KEY = "special_resource_ultimate_gate"
+
+
+def special_resource_ultimate_gate(state: Any | None, actor_id: str) -> dict[str, JSONValue] | None:
+    """Return the declared special-resource ultimate activation gate.
+
+    Only actors that carry the typed special-resource profile participate.
+    Castorice's pinned skill texts (TextMap 1839055890533251956 and
+    1449566153862151053, fixed TBGD 14c1d18f91a8101d610e6c523447a7517de3fae1)
+    state that the ultimate may be activated once 【新蕊】 reaches its maximum;
+    the same unit flags/keys are produced by that profile. The source declares
+    no standard energy cost; its passive synchronizes Skill03 SPNeed to the
+    resource maximum, so ResourceSystem debits that maximum when the
+    ultimate is cast (Newbud behaves like energy, Mobalytics Castorice guide).
+    """
+    unit = state.units.get(actor_id) if state is not None else None
+    if unit is None:
+        return None
+    definition_id = unit.flags.get("special_resource_definition_id")
+    if not isinstance(definition_id, str) or not definition_id:
+        return None
+    current_key = unit.flags.get("special_resource_current_key")
+    maximum_key = unit.flags.get("special_resource_maximum_key")
+    gate: dict[str, JSONValue] = {
+        "definition_id": definition_id,
+        "current_key": current_key if isinstance(current_key, str) else "",
+        "maximum_key": maximum_key if isinstance(maximum_key, str) else "",
+    }
+    if not gate["current_key"] or not gate["maximum_key"]:
+        return {**gate, "valid": False, "blocked_reason": "ultimate_special_resource_gate_keys_missing"}
+    current = unit.resources.get(gate["current_key"])
+    maximum = unit.resources.get(gate["maximum_key"])
+    numeric = (int, float)
+    if (
+        type(current) not in numeric or isinstance(current, bool) or not math.isfinite(float(current))
+        or type(maximum) not in numeric or isinstance(maximum, bool)
+        or not math.isfinite(float(maximum)) or float(maximum) <= 0
+    ):
+        return {**gate, "valid": False, "blocked_reason": "ultimate_special_resource_gate_values_invalid"}
+    return {
+        **gate,
+        "valid": True,
+        "current": float(current),
+        "maximum": float(maximum),
+        "required_ratio": 1.0,
+        "ready": float(current) >= float(maximum),
+    }
+
+
+def special_resource_ultimate_blocked_reason(gate: dict[str, JSONValue]) -> str:
+    if gate.get("valid") is not True:
+        return str(gate.get("blocked_reason") or "ultimate_special_resource_gate_invalid")
+    return "" if gate.get("ready") is True else "ultimate_special_resource_not_ready"
 
 
 def action_skill_point_delta(bp_need: float, bp_add: float) -> int:
@@ -29,6 +85,8 @@ def action_resource_blocked_reason(errors: tuple[str, ...]) -> str:
         if error.startswith("unknown actor_id"):
             return "resource_unknown_actor"
         if error.startswith("ultimate_energy_"):
+            return error
+        if error.startswith("ultimate_special_resource_"):
             return error
         if error.startswith("resource_skill_property_override_blocked:"):
             return error
@@ -77,10 +135,20 @@ def action_resource_plan(
                 "resource_skill_property_override_blocked:" + overrides.blocked_reason
             )
             metadata["skill_property_override_blocked_reason"] = overrides.blocked_reason
+    energy_cost = action_definition.sp_need if action_definition.attack_type == "Ultra" else 0.0
+    if action_definition.attack_type == "Ultra" and (
+        type(energy_cost) not in (int, float) or float(energy_cost) <= 0
+    ):
+        gate = special_resource_ultimate_gate(state, actor_id)
+        if gate is not None:
+            # The profile owns the ultimate activation resource; the ordinary
+            # energy cost is absent by source, not missing by lowering.
+            energy_cost = 0.0
+            metadata = {**(metadata or {}), SPECIAL_RESOURCE_ULTIMATE_GATE_KEY: gate}
     return ResourcePlan(
         skill_point_delta=skill_point_delta,
         energy_gain=energy_gain,
-        energy_cost=action_definition.sp_need if action_definition.attack_type == "Ultra" else 0.0,
+        energy_cost=energy_cost,
         source=source,
         metadata=metadata or {},
         blocked_reason=blocked_reason,

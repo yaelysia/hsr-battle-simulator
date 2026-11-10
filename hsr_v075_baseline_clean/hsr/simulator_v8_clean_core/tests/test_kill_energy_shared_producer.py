@@ -23,7 +23,12 @@ def test_source_stack_property_admission_keeps_unknown_semantics_blocked():
     source = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main/Config/ConfigAbility/Avatar/Avatar_Arlan_00_Ability.json"
     task = json.loads(source.read_text())["GlobalModifiers"]["MAvatar_Arlan_00_Passive_DamageUp"]["_CallbackList"][0]["CallbackConfig"][0]
     assert _status_callback_task_admission("OnStack", "StackProperty", task) == ("executable", "")
-    for changed in ({**task, "IsRefresh": True}, {**task, "UnknownField": True},
+    # A refresh-shaped stack property overwrites instead of accumulating and
+    # runs through the runtime refresh branch, so it is an admitted shape.
+    assert _status_callback_task_admission(
+        "OnStack", "StackProperty", {**task, "IsRefresh": True}
+    ) == ("executable", "")
+    for changed in ({**task, "UnknownField": True},
                     {**task, "TargetType": {"Alias": "Caster", "TaskList": []}}):
         status, reason = _status_callback_task_admission("OnStack", "StackProperty", changed)
         assert status == "blocked" and reason
@@ -182,7 +187,12 @@ def test_real_admitted_action_kill_energy_and_spbase_are_distinct_once(arlan_cas
     if action_id == "avatar_skill:100801":
         callbacks = [event for event in transition.transaction.events
                      if event.event_type == "status.callback" and event.window == "OnBeforeHitAll"]
-        assert len({event.payload["trigger_event_id"] for event in callbacks}) >= 2
+        # The lethal first hit defeats the target; the second hit of the same
+        # action is skipped as a corpse hit (no duplicate zero-HP packet). Both
+        # rank listeners therefore react to that one hit event: the trigger id
+        # is shared, while each callback event keeps its own identity.
+        assert len(callbacks) == 2
+        assert len({event.payload["trigger_event_id"] for event in callbacks}) == 1
         assert len({event.to_json()["event_id"] for event in callbacks}) == len(callbacks)
     else:
         from hsr.simulator_v8_clean_core.tests.test_character_passive_startup import _bonus

@@ -206,7 +206,10 @@ def test_no_payload_settlement_barrier_is_a_materialized_audit_leaf(family: str)
 @pytest.mark.parametrize(
     ("family", "payload", "reason"),
     (
-        ("DamagePerformFinish", {"IsFakeAvatarAttack": True}, "damage_perform_finish_settlement_payload_not_admitted"),
+        # The barrier shape stays admitted for the real battle-event marker
+        # (IsFakeAvatarAttack/SkipDeathSettlement=True); a false value blocks.
+        ("DamagePerformFinish", {"SkipDeathSettlement": False}, "damage_perform_finish_settlement_payload_not_admitted"),
+        ("DamagePerformFinish", {"SkipAttackSettlement": True}, "process_only_task_unknown_fields:SkipAttackSettlement"),
         ("SkillPerformFinish", {"SkipAttackSettlement": True}, "skill_perform_finish_settlement_payload_not_admitted"),
     ),
 )
@@ -218,6 +221,11 @@ def test_settlement_payload_source_shapes_remain_closed(
     ) == reason
     control = _control(family, peer_fields=tuple(payload))
     task = _task(family)
+    if family == "DamagePerformFinish" and payload == {"SkipDeathSettlement": False}:
+        # The source shape is the admitted settlement barrier; only the flag
+        # value is invalid, so the control stays structurally materialized.
+        assert _is_process_only_settlement_barrier_shape(control, task)
+        return
     assert not _is_process_only_settlement_barrier_shape(control, task)
     assert _node_status(control, task)[1:] == (
         "deferred",

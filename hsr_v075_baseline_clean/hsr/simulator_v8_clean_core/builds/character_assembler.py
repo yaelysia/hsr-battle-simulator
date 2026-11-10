@@ -28,9 +28,6 @@ from ..rules.ir import (
     CharacterTraceNodeIR,
     ServantDefinitionIR,
 )
-from ..rules.engine_rule_registry import (
-    special_resource_initializer_numeric_binding_source,
-)
 from ..rules.rulebook import RuleBook
 from .models import (
     CharacterBasePanel,
@@ -837,6 +834,7 @@ def validate_character_build_admission(
             errors.append(f"owned_combatant_build_not_admitted:{owned.owned_build_id}")
         expected_stat_bindings, stat_binding_errors = _owned_combatant_stat_bindings(
             rules, definition, (*result.effective_skill_levels, *owned.effective_skill_levels),
+            owner_entity_ref=owned.owner_entity_ref,
         )
         normalized_stat_bindings = tuple(
             sorted(expected_stat_bindings, key=lambda item: item.property_type)
@@ -1005,21 +1003,6 @@ def _character_resource_bindings(
             if initializer is not None and initializer.blocked_reason
             else "avatar_special_resource_initializer_not_executable",
         )
-    engine_bindings = tuple(
-        special_resource_initializer_numeric_binding_source(
-            expression,
-            initializer.zero_floor_dynamic_hash,
-        )
-        for expression in (
-            initializer.low_world_level_expression,
-            initializer.high_world_level_expression,
-        )
-    )
-    engine_errors = tuple(reason for source, reason in engine_bindings if source is None)
-    if engine_errors:
-        return (), tuple(sorted(set(engine_errors)))
-    if engine_bindings[0][0] != engine_bindings[1][0]:
-        return (), ("special_resource_initializer_engine_binding_conflict",)
     return (
         (
             CharacterResourceBinding(
@@ -1037,7 +1020,6 @@ def _character_resource_bindings(
                     maximum_value_dynamic_hash=initializer.maximum_value_dynamic_hash,
                     level_dynamic_key=initializer.level_dynamic_key,
                     level_dynamic_hash=initializer.level_dynamic_hash,
-                    zero_floor_dynamic_hash=initializer.zero_floor_dynamic_hash,
                     world_level_threshold=initializer.world_level_threshold,
                     low_world_level_expression=initializer.low_world_level_expression,
                     high_world_level_expression=initializer.high_world_level_expression,
@@ -1394,6 +1376,7 @@ def _assemble_owned_combatant_definition(
     reasons.extend(skill_reasons)
     stat_bindings, stat_reasons = _owned_combatant_stat_bindings(
         rules, definition, (*owner_skill_levels, *skill_levels),
+        owner_entity_ref=card.entity_ref,
     )
     reasons.extend(stat_reasons)
     lifecycle_sources, lifecycle_source_reasons = _ir_sources_from_json_rows(
@@ -1459,6 +1442,7 @@ def _owned_combatant_stat_bindings(
     rules: RuleBook,
     definition: ServantDefinitionIR,
     skill_levels: tuple[CharacterSkillLevelResolution, ...],
+    *, owner_entity_ref: str,
 ) -> tuple[tuple[OwnedCombatantStatBinding, ...], tuple[str, ...]]:
     components = definition.stat_source.get("components")
     if not isinstance(components, Mapping):
@@ -1488,7 +1472,10 @@ def _owned_combatant_stat_bindings(
         try:
             for key, component in ((base_key, base_component), (inherit_key, inherit_component)):
                 if component.get("source_kind") == "param_ref":
-                    levels = [item for item in skill_levels if item.skill_id == component.get("skill_id")]
+                    owner_skills = component.get("skill_id_by_owner", {})
+                    skill_id = (owner_skills.get(owner_entity_ref, component.get("skill_id"))
+                                if isinstance(owner_skills, Mapping) else component.get("skill_id"))
+                    levels = [item for item in skill_levels if item.skill_id == skill_id]
                     if len(levels) != 1:
                         raise ValueError("owned_combatant_stat_skill_level_not_unique")
                     level = levels[0]
@@ -1516,7 +1503,21 @@ def _owned_combatant_stat_bindings(
             f"owned_combatant_stat_source:{property_type}",
         )
         reasons.extend(source_reasons)
-        if Decimal(offset) <= 0 and Decimal(scale) <= 0:
+        creation_hp_parameter = str(
+            definition.stat_source.get("creation_max_hp_parameter") or ""
+        )
+        timeline_policy = (
+            definition.stat_source.get("timeline_policy")
+            if isinstance(definition.stat_source.get("timeline_policy"), dict)
+            else {}
+        )
+        zero_speed_declared = (
+            timeline_policy.get("mode") == "source_declared_zero_speed_not_scheduled"
+        )
+        if Decimal(offset) <= 0 and Decimal(scale) <= 0 and not (
+            (property_type == "max_hp" and creation_hp_parameter)
+            or (property_type == "speed" and zero_speed_declared)
+        ):
             reasons.append(f"owned_combatant_stat_formula_nonpositive:{property_type}")
         try:
             bindings.append(

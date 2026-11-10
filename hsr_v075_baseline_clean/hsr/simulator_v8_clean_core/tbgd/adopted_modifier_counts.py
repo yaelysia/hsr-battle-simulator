@@ -95,6 +95,31 @@ for path, function, value in (
         "version": "unspecified", "condition": "ordinary weakness-break Entanglement",
     }
 
+LINGSHA_SOURCE = "Config/ConfigAbility/Avatar/Avatar_Lingsha_00_Ability.json"
+LINGSHA_MODIFIER = "MAvatar_Lingsha_BPSkill_BattleEvent_LifeTime"
+LINGSHA_RESEARCH = (
+    "TBGD fixed source shape: the modifier's own OnPhase1 SetModifierValue{ModifyFunction:Add} "
+    "with omitted target/modifier/value type is the battle-event attack-time counter; the same "
+    "callback reads hash 652368890 into _AttackTime/Lingsha_AttackTime and ShowAttackTime"
+)
+ADOPTED_MODIFIER_COUNTS[(
+    LINGSHA_SOURCE,
+    f"$.GlobalModifiers.{LINGSHA_MODIFIER}._CallbackList[1].CallbackConfig[0]",
+)] = {
+    "expected_task": {"$type": "RPG.GameCore.SetModifierValue", "ModifyFunction": "Add"},
+    "operation": "Add",
+    "amount": 1,
+    "bootstrap_single_instance": True,
+    "modifier_name": LINGSHA_MODIFIER,
+    "target_alias": "ModifierOwnerEntity",
+    "research": LINGSHA_RESEARCH,
+    "version": "fixed TBGD 14c1d18f91a8101d610e6c523447a7517de3fae1",
+    "condition": (
+        "attack-time counter increments by one per phase; omitted target/modifier "
+        "resolve to the callback's own modifier on its owner"
+    ),
+}
+
 ADOPTED_MODIFIER_INITIAL_VALUES = {
     (ENTANGLE_SOURCE, ENTANGLE_MODIFIER): {
         "expected_slot": {"ReadInfo": {"Type": "None", "Index": 0}},

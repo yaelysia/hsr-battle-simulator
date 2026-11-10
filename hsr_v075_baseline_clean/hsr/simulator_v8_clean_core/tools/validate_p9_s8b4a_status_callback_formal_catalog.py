@@ -69,7 +69,11 @@ def _raw_callback_paths(document: Mapping[str, Any]) -> set[str]:
                             f"{path}.OnAbilityPropertyChange[{watcher_index}]"
                             f".Ranges[{range_index}]"
                         )
-                        for branch in ("OnEnterRange", "OnExitRange"):
+                        for branch in (
+                            "OnEnterRange",
+                            "OnExitRange",
+                            "OnChange",
+                        ):
                             tasks = item.get(branch)
                             if (
                                 isinstance(tasks, Sequence)

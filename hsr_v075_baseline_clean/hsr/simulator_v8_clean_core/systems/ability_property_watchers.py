@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
-from ..rules.ir import AbilityPropertyRangeIR
+from ..rules.ir import AbilityPropertyRangeIR, AbilityPropertyWatcherIR
 from ..rules.rulebook import RuleBook
 from .dynamic_values import status_binding_sources
 from .status_callbacks import StatusCallbackExecutionResult, StatusCallbackSystem
@@ -20,6 +20,58 @@ from .unit_stats import ability_property_value
 
 
 WATCHER_STATE_FIELD = "ability_property_watcher_state"
+_PROPERTY_CHANGE_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class AbilityPropertyChangeFact:
+    """A watcher-native before/after read and its exact callback event."""
+    before_state: BattleState
+    after_state: BattleState
+    watcher: AbilityPropertyWatcherIR
+    range_id: str
+    unit_id: str
+    before: float
+    after: float
+    event_id: str
+    event_source_id: str
+    event_target_id: str | None
+    _producer_token: object
+    _issued: tuple[object, ...]
+    _event_signature: tuple[object, ...]
+
+    def __post_init__(self) -> None:
+        import math
+        issued = (id(self.before_state), id(self.after_state), id(self.watcher), self.range_id,
+                  self.unit_id, self.before, self.after, self.event_id, self.event_source_id, self.event_target_id, self._event_signature)
+        if self._producer_token is not _PROPERTY_CHANGE_PRODUCER or self._issued != issued:
+            raise ValueError("property change fact requires its issued native reads")
+        if (type(self.watcher) is not AbilityPropertyWatcherIR
+                or type(self.before_state) is not BattleState or type(self.after_state) is not BattleState
+                or type(self.before) not in (int, float) or type(self.after) not in (int, float)
+                or not math.isfinite(self.before) or not math.isfinite(self.after) or self.before == self.after
+                or self.unit_id not in self.before_state.units or self.unit_id not in self.after_state.units
+                or self.range_id not in self.watcher.range_ids):
+            raise ValueError("property change fact source is incomplete")
+        before, before_reason = _watcher_property_value(self.before_state, self.before_state.units[self.unit_id], self.watcher)
+        after, after_reason = _watcher_property_value(self.after_state, self.after_state.units[self.unit_id], self.watcher)
+        if before_reason or after_reason or before != self.before or after != self.after:
+            raise ValueError("property change fact must match its native state reads")
+
+    @property
+    def delta(self) -> float:
+        return self.after - self.before
+
+    def matches_event(self, event: GameEvent) -> bool:
+        data = event.payload.get("ability_property_change_value") if isinstance(event.payload, dict) else None
+        return bool(type(event) is GameEvent and event.ability_property_change_fact is self
+            and event.event_id == self.event_id and event.source_id == self.event_source_id
+            and event.target_id == self.event_target_id
+            and (event.event_type, event.event_id, event.source_id, event.target_id, event.window, event.process_only) == self._event_signature
+            and isinstance(data, dict)
+            and data == {"before": self.before, "after": self.after, "delta": self.delta,
+                         "watcher_id": self.watcher.watcher_id, "range_id": self.range_id, "unit_id": self.unit_id})
+
 
 
 @dataclass(frozen=True)
@@ -73,6 +125,7 @@ class AbilityPropertyWatcherSystem:
         trigger_event: GameEvent,
         task_graph_continuation: TaskGraphContinuation | None = None,
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
+        before_state: BattleState | None = None,
     ) -> AbilityPropertyWatcherResult:
         original_state = state
         current_state = state
@@ -91,6 +144,7 @@ class AbilityPropertyWatcherSystem:
                 trigger_event=trigger_event,
                 task_graph_continuation=task_graph_continuation,
                 nested_ability_hooks=nested_ability_hooks,
+                before_state=before_state,
             )
             if not result.ok:
                 return AbilityPropertyWatcherResult(
@@ -128,6 +182,7 @@ class AbilityPropertyWatcherSystem:
         trigger_event: GameEvent,
         task_graph_continuation: TaskGraphContinuation | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
+        before_state: BattleState | None = None,
     ) -> AbilityPropertyWatcherResult:
         unit = state.units.get(unit_id)
         if unit is None:
@@ -226,8 +281,9 @@ class AbilityPropertyWatcherSystem:
                         watcher.blocked_reason
                         or "ability_property_watcher_not_executable",
                     )
+                property_read_state = current_state
                 property_value, value_reason = _watcher_property_value(
-                    current_state,
+                    property_read_state,
                     current_state.units[unit_id],
                     watcher,
                 )
@@ -263,6 +319,29 @@ class AbilityPropertyWatcherSystem:
                     if member:
                         active_ids.append(property_range.range_id)
 
+                changed_range_ids: list[str] = []
+                if before_state is not None and active_ids:
+                    previous_unit = before_state.units.get(unit_id)
+                    if previous_unit is not None:
+                        previous_value, previous_reason = (
+                            _watcher_property_value(
+                                before_state,
+                                previous_unit,
+                                watcher,
+                            )
+                        )
+                        if previous_reason:
+                            return _blocked(state, previous_reason)
+                        if (
+                            previous_value is not None
+                            and previous_value != property_value
+                        ):
+                            changed_range_ids = [
+                                property_range.range_id
+                                for property_range in ranges
+                                if property_range.change_callback_id
+                                and property_range.range_id in active_ids
+                            ]
                 prior_ids = next_state.get(watcher.watcher_id)
                 if prior_ids is not None:
                     known_ids = set(watcher.range_ids)
@@ -285,6 +364,7 @@ class AbilityPropertyWatcherSystem:
                     for range_id, branch in (
                         *((item, "exit") for item in exits),
                         *((item, "enter") for item in enters),
+                        *((item, "change") for item in changed_range_ids),
                     ):
                         property_range = self.rules.ability_property_range(
                             range_id
@@ -297,6 +377,8 @@ class AbilityPropertyWatcherSystem:
                         callback_id = (
                             property_range.exit_callback_id
                             if branch == "exit"
+                            else property_range.change_callback_id
+                            if branch == "change"
                             else property_range.enter_callback_id
                         )
                         if not callback_id:
@@ -311,6 +393,34 @@ class AbilityPropertyWatcherSystem:
                                 state,
                                 "ability_property_watcher_status_instance_missing",
                             )
+                        callback_trigger_event = trigger_event
+                        if branch == "change" and trigger_event is not None:
+                            change_payload = (
+                                dict(trigger_event.payload)
+                                if isinstance(trigger_event.payload, dict)
+                                else {}
+                            )
+                            change_payload["ability_property_change_value"] = {
+                                "before": previous_value,
+                                "after": property_value,
+                                "delta": property_value - previous_value,
+                                "watcher_id": watcher.watcher_id,
+                                "range_id": property_range.range_id,
+                                "unit_id": unit_id,
+                            }
+                            issued = (id(before_state), id(property_read_state), id(watcher), property_range.range_id,
+                                      unit_id, previous_value, property_value, trigger_event.event_id,
+                                      trigger_event.source_id, trigger_event.target_id,
+                                      (trigger_event.event_type, trigger_event.event_id, trigger_event.source_id,
+                                       trigger_event.target_id, trigger_event.window, trigger_event.process_only))
+                            property_fact = AbilityPropertyChangeFact(before_state, property_read_state, watcher,
+                                property_range.range_id, unit_id, previous_value, property_value,
+                                trigger_event.event_id, trigger_event.source_id, trigger_event.target_id,
+                                _PROPERTY_CHANGE_PRODUCER, issued, (trigger_event.event_type, trigger_event.event_id,
+                                    trigger_event.source_id, trigger_event.target_id, trigger_event.window, trigger_event.process_only))
+                            callback_trigger_event = replace(
+                                trigger_event, payload=change_payload, ability_property_change_fact=property_fact,
+                            )
                         callback_result = (
                             self.status_callbacks.execute_callback_id(
                                 current_state,
@@ -320,7 +430,7 @@ class AbilityPropertyWatcherSystem:
                                 branch=branch,
                                 unit_id=unit_id,
                                 modifier_name=modifier_name,
-                                trigger_event=trigger_event,
+                                trigger_event=callback_trigger_event,
                                 detail_override=current_detail,
                                 task_graph_continuation=task_graph_continuation,
                                 nested_ability_hooks=nested_ability_hooks,

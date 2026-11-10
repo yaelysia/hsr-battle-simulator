@@ -11,6 +11,30 @@ from ..immutable_json import freeze_json, thaw_json
 from ..ir_types import IRSource, JSONValue
 
 
+NUMERIC_UNARY_OPERATIONS = frozenset({"negate", "floor", "ceil", "truncate", "absolute"})
+
+
+def numeric_unary_value(opcode: str, value: float) -> float:
+    """Shared finite scalar semantics for compilation folding and runtime."""
+    if not math.isfinite(value):
+        raise ValueError("numeric unary operand must be finite")
+    if opcode == "negate":
+        result = -value
+    elif opcode == "floor":
+        result = float(math.floor(value))
+    elif opcode == "ceil":
+        result = float(math.ceil(value))
+    elif opcode == "truncate":
+        result = float(math.trunc(value))
+    elif opcode == "absolute":
+        result = abs(value)
+    else:
+        raise ValueError("numeric unary opcode not admitted")
+    if not math.isfinite(result):
+        raise ValueError("numeric unary result must be finite")
+    return result
+
+
 NUMERIC_EXPRESSION_SCHEMA = "hsr.numeric_expression.v1"
 NUMERIC_OPERAND_SCHEMA = "hsr.numeric_operand.v1"
 DYNAMIC_VALUE_OPERATION_SCHEMA = "hsr.dynamic_value_operation.v1"
@@ -23,6 +47,7 @@ _NUMERIC_OPERAND_KINDS = frozenset(
         "expression",
         "dynamic_value",
         "unit_property",
+        "unit_identity",
         "modifier_value",
         "status_count",
         "hp_ratio",
@@ -39,7 +64,9 @@ _NUMERIC_OPERAND_KINDS = frozenset(
         "random_range",
         "formation_index",
         "wave_stage_count",
+        "world_level",
         "team_center_distance",
+        "slot_adsorption",
         "blocked_external",
     }
 )
@@ -53,6 +80,7 @@ _NUMERIC_OPERAND_PARAMETER_SCHEMAS: dict[str, dict[str, str]] = {
         "source_modifier": "optional_str",
     },
     "unit_property": {"source_target_alias": "str", "property_name": "str"},
+    "unit_identity": {"source_target_alias": "str", "identity_kind": "str"},
     "modifier_value": {
         "source_target_alias": "str",
         "modifier_name": "str",
@@ -77,6 +105,7 @@ _NUMERIC_OPERAND_PARAMETER_SCHEMAS: dict[str, dict[str, str]] = {
         "event_kind": "str",
         "property_name": "optional_str",
         "value_type": "optional_str",
+        "variate_type": "optional_str",
         "source_target_alias": "optional_str",
         "attacker_alias": "optional_str",
     },
@@ -91,10 +120,12 @@ _NUMERIC_OPERAND_PARAMETER_SCHEMAS: dict[str, dict[str, str]] = {
     },
     "formation_index": {"source_target_alias": "str"},
     "wave_stage_count": {"source_kind": "battle_wave_stage"},
+    "world_level": {},
     "team_center_distance": {
         "source_target_alias": "str",
         "alive_only": "optional_bool",
     },
+    "slot_adsorption": {"threshold_json": "str"},
     "blocked_external": {
         "source_family": "str",
         "source_descriptor_json": "str",
@@ -237,6 +268,11 @@ def _validate_numeric_operand_parameters(
     parameters: Mapping[str, Any],
 ) -> None:
     schema = _NUMERIC_OPERAND_PARAMETER_SCHEMAS.get(operand_kind)
+    if (schema is not None and "source_target_alias" in schema
+            and "source_target_expression_id" not in schema and "source_target_expression_id" in parameters):
+        schema = {**schema, "source_target_expression_id": "str"}
+        if not parameters["source_target_expression_id"]:
+            raise ValueError("source target expression identity must not be empty")
     if schema is None or set(parameters) != set(schema):
         raise ValueError(f"numeric operand parameter schema is invalid:{operand_kind}")
     for field_name, field_type in schema.items():
@@ -591,7 +627,7 @@ def is_exact_numeric_expression(value: object) -> bool:
                 return False
             stack_depth += 1
             continue
-        if opcode == "negate":
+        if opcode in NUMERIC_UNARY_OPERATIONS:
             if set(instruction) != {"opcode"} or stack_depth < 1:
                 return False
             continue
@@ -600,13 +636,13 @@ def is_exact_numeric_expression(value: object) -> bool:
                 return False
             stack_depth -= 1
             continue
-        if opcode == "max":
+        if opcode in {"min", "max"}:
             operand_count = instruction.get("operand_count")
             if (
                 set(instruction) != {"opcode", "operand_count"}
                 or not isinstance(operand_count, int)
                 or isinstance(operand_count, bool)
-                or operand_count < 2
+                or operand_count < 1
                 or stack_depth < operand_count
             ):
                 return False

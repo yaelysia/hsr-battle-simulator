@@ -62,6 +62,11 @@ def resolve_scaling_basis(
 
     unit_ref = str(basis.get("unit_ref") or "")
     unit_id = _resolve_unit_id(unit_ref, attacker_id, target_id)
+    if unit_ref == "attacker_summoner":
+        # 召唤者是结构身份：读取攻击者已提交的 summoner 关系。
+        attacker = state.units.get(attacker_id)
+        summoner_id = attacker.flags.get("summoner_id") if attacker is not None else None
+        unit_id = summoner_id if isinstance(summoner_id, str) and summoner_id in state.units else ""
     if not unit_id:
         return _blocked(f"scaling_basis_unit_ref_not_supported:{unit_ref or 'missing'}", trace, basis_kind=kind, unit_ref=unit_ref)
     unit = state.units.get(unit_id)

@@ -9,6 +9,8 @@ from typing import Any
 from ..rules.expression_ir import (
     DYNAMIC_VALUE_OPERATION_SCHEMA,
     NUMERIC_EXPRESSION_SCHEMA,
+    NUMERIC_UNARY_OPERATIONS,
+    numeric_unary_value,
     NumericOperandIR,
     is_exact_numeric_expression,
     numeric_dynamic_hash,
@@ -29,6 +31,8 @@ _DYNAMIC_RUNTIME_TARGET_ALIASES = frozenset(
         "LevelEntity",
         "ModifierOwnerEntity",
         "ParamEntity",
+        # Battle-event callbacks write values on the event's committed creator.
+        "BattleEventCaster",
     }
 )
 
@@ -93,7 +97,7 @@ def lower_dynamic_value_operation_spec(
             if target_alias == "<missing>"
             else "",
             f"unsupported_dynamic_target_alias:{target_alias}"
-            if target_alias not in _DYNAMIC_RUNTIME_TARGET_ALIASES
+            if target_alias not in _DYNAMIC_RUNTIME_TARGET_ALIASES and not standard.get("target_expression_id")
             else "",
             operand.blocked_reason if operand.coverage_status == "blocked" else "",
             minimum.blocked_reason
@@ -195,6 +199,18 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
                 required_producer="non_gameplay_excluded",
             )
         return _expression_operand("value", standard.get("value_expr"))
+    if opcode == "SetDynamicValueByAdsorption":
+        # Snaps the destination slot to a near integer, removing float noise.
+        threshold = standard.get("adsorption_threshold")
+        admitted = type(threshold) in (int, float) and math.isfinite(threshold) and threshold > 0
+        return NumericOperandIR(
+            operand_id="operand:slot_adsorption",
+            operand_kind="slot_adsorption",
+            parameters={"threshold_json": json.dumps(threshold)},
+            coverage_status="executable" if admitted else "blocked",
+            blocked_reason="" if admitted else "adsorption_threshold_not_admitted",
+            required_producer="" if admitted else "source_lowering",
+        )
     if opcode == "SetDynamicValueByAddValue":
         return _expression_operand("add_value", standard.get("add_value"))
     if opcode == "SetDynamicValueByModifierValue":
@@ -203,6 +219,8 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
             "modifier_name": str(standard.get("source_modifier") or ""),
             "modifier_value_name": str(standard.get("source_value_name") or ""),
         }
+        if standard.get("source_target_expression_id"):
+            parameters["source_target_expression_id"] = standard["source_target_expression_id"]
         scale_expression = standard.get("multiplier")
         valid = all(
             isinstance(value, str) and bool(value) for value in parameters.values()
@@ -225,12 +243,17 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
     raw_parameters = standard.get("operand_parameters")
     if not isinstance(raw_parameters, Mapping):
         raw_parameters = {}
+    if opcode == "SetDynamicValueByVariateType" and raw_parameters.get("variate_type") == "TargetCharacterID":
+        operand_kind = "unit_identity"
     parameters = _typed_operand_parameters(opcode, operand_kind, raw_parameters)
+    if raw_parameters.get("source_target_expression_id") and "source_target_alias" in parameters:
+        parameters["source_target_expression_id"] = raw_parameters["source_target_expression_id"]
     source_alias = parameters.get("source_target_alias")
     source_alias_supported = (
         not source_alias or source_alias in _DYNAMIC_RUNTIME_TARGET_ALIASES
         or (operand_kind == "unit_property" and source_alias == "SnapshotPropertyEntity")
-        or (operand_kind == "character_count" and bool(parameters.get("source_target_expression_id")))
+        or bool(parameters.get("source_target_expression_id"))
+        and (operand_kind == "character_count" or raw_parameters.get("source_target_expression_admitted") is True)
     )
     # The heal-data reader is the first effect-event value producer to close.
     # The formal heal mutation projection publishes the realized heal amount and
@@ -239,17 +262,37 @@ def _dynamic_operand(opcode: str, standard: Mapping[str, Any]) -> NumericOperand
     # family keeps its blocked record until it has a typed producer of its own.
     event_value_producer_admitted = (
         operand_kind == "event_value"
-        and opcode == "SetDynamicValueByHealDataProperty"
+        and (
+            opcode == "SetDynamicValueByHealDataProperty"
+            # HP-change variate reads publish the committed HP delta.
+            or (
+                opcode == "SetDynamicValueByVariateType"
+                and parameters.get("variate_type") == "ParamValue"
+            )
+            # Ability-property change callbacks publish the committed delta.
+            or opcode == "SetDynamicValueByChangeValue"
+            # Hit-window events publish the committed final damage of the hit;
+            # the OnAfterHitAll true-damage callbacks read it as their base.
+            or (
+                opcode == "SetDynamicValueByDamageDataProperty"
+                and parameters.get("property_name")
+                in {"Result_FinalDamageBase", "Result_FinalDamage"}
+            )
+        )
     )
     executable = (
         operand_kind in {
             "dynamic_value",
             "unit_property",
+            "unit_identity",
             "status_count",
             "hp_ratio",
             "shield_value",
             "team_resource",
             "character_count",
+            # Battle setup world level is a typed global fact read by the
+            # dynamic value executor.
+            "world_level",
         }
         or event_value_producer_admitted
     ) and _generic_operand_parameters_complete(operand_kind, parameters)
@@ -334,6 +377,7 @@ def _dynamic_operand_kind(opcode: str) -> str:
         ("BPChange", "event_value"),
         ("CurrentBP", "team_resource"),
         ("MaxBP", "team_resource"),
+        ("WorldLevel", "world_level"),
         ("ChangeValue", "event_value"),
         ("VariateType", "event_value"),
     )
@@ -347,12 +391,14 @@ def _generic_operand_parameters_complete(
     required = {
         "dynamic_value": ("source_key", "source_target_alias"),
         "unit_property": ("property_name", "source_target_alias"),
+        "unit_identity": ("identity_kind", "source_target_alias"),
         "status_count": ("count_mode", "source_target_alias"),
         "hp_ratio": ("source_target_alias",),
         "shield_value": ("source_target_alias",),
         "team_resource": ("resource_name",),
         "character_count": ("source_target_expression_id",),
         "event_value": ("event_kind", "source_target_alias"),
+        "world_level": (),
     }[operand_kind]
     return all(isinstance(parameters.get(key), str) and parameters.get(key) for key in required)
 
@@ -376,6 +422,8 @@ def _typed_operand_parameters(
         }
     if operand_kind == "unit_property":
         return {"source_target_alias": source_alias, "property_name": string("property_name")}
+    if operand_kind == "unit_identity":
+        return {"source_target_alias": source_alias, "identity_kind": "character_id"}
     if operand_kind == "modifier_value":
         return {"source_target_alias": source_alias, "modifier_name": string("modifier_name"),
                 "modifier_value_name": string("modifier_value_name")}
@@ -411,6 +459,7 @@ def _typed_operand_parameters(
             "event_kind": opcode,
             "property_name": optional_string("event_property"),
             "value_type": optional_string("value_type"),
+            "variate_type": optional_string("variate_type"),
             "source_target_alias": optional_string("source_target_alias"),
             "attacker_alias": optional_string("attacker_alias"),
         }
@@ -431,6 +480,8 @@ def _typed_operand_parameters(
             "maximum": maximum if isinstance(maximum, Mapping) else numeric_missing("random_maximum_missing"),
             "integer_only": raw.get("integer_only") is True,
         }
+    if operand_kind == "world_level":
+        return {}
     if operand_kind == "wave_stage_count":
         return {"source_kind": "battle_wave_stage"}
     if operand_kind == "team_center_distance":
@@ -481,6 +532,8 @@ def _optional_expression_operand(
 
 
 def _lower_postfix_program(postfix: dict[str, Any]) -> dict[str, JSONValue]:
+    from ..dynamic_key_hash import tbgd_dynamic_key_hash
+
     opcodes = _decode_opcodes(postfix.get("OpCodes"))
     if opcodes is None:
         return numeric_unsupported("postfix_opcodes_decode_failed")
@@ -488,14 +541,20 @@ def _lower_postfix_program(postfix: dict[str, Any]) -> dict[str, JSONValue]:
     if fixed_values is None:
         return numeric_unsupported("fixed_operand_non_finite_or_invalid")
     dynamic_hashes = postfix.get("DynamicHashes") if isinstance(postfix.get("DynamicHashes"), list) else []
-    instructions: list[dict[str, JSONValue]] = []
+    # Opcode 16 calls the function symbol below N numeric arguments. Its first
+    # stack operand is NOT a numeric variable or a zero-floor placeholder.
+    # Resolve the TBGD-hashed symbol at this L0 boundary, never in runtime.
+    functions = {tbgd_dynamic_key_hash(name): (operation, arity) for name, operation, arity in (
+        ("max", "max", None), ("min", "min", None),
+        ("floor", "floor", 1), ("ceil", "ceil", 1),
+        ("int", "truncate", 1), ("abs", "absolute", 1),
+    )}
+    stack: list[list[dict[str, JSONValue]]] = []
     index = 0
     ended = False
-    stack_depth = 0
     while index < len(opcodes):
         opcode = opcodes[index]
         if opcode == 17:
-            instructions.append({"opcode": "end"})
             ended = True
             index += 1
             if index != len(opcodes):
@@ -508,75 +567,68 @@ def _lower_postfix_program(postfix: dict[str, Any]) -> dict[str, JSONValue]:
             if opcode == 0:
                 if operand_index < 0 or operand_index >= len(fixed_values):
                     return numeric_unsupported("fixed_operand_unresolved")
-                instructions.append({"opcode": "push_fixed", "value": fixed_values[operand_index]})
+                stack.append([{"opcode": "push_fixed", "value": fixed_values[operand_index]}])
             else:
                 if operand_index < 0 or operand_index >= len(dynamic_hashes):
                     return numeric_unsupported("dynamic_operand_unresolved")
                 hash_value = _json_scalar(dynamic_hashes[operand_index])
                 if isinstance(hash_value, bool):
                     return numeric_unsupported("dynamic_operand_hash_bool")
-                instructions.append({"opcode": "push_dynamic", "hash": hash_value})
-            stack_depth += 1
+                stack.append([{"opcode": "push_dynamic", "hash": hash_value}])
             index += 2
             continue
         if opcode == 16:
             if index + 1 >= len(opcodes):
-                return numeric_unsupported("postfix_variadic_operand_count_missing")
-            # GameCore's variadic Max stores the number of *additional*
-            # operands in the following byte.  The same raw formulas in the
-            # preserved pre-enum-expansion mirror use opcode 9; current data
-            # shifted it to 16 together with the end opcode (10 -> 17).
-            additional_operands = int(opcodes[index + 1])
-            operand_count = additional_operands + 1
-            if additional_operands < 1:
-                return numeric_unsupported("postfix_variadic_operand_count_invalid")
-            if stack_depth < operand_count:
+                return numeric_unsupported("postfix_call_operand_count_missing")
+            operand_count = int(opcodes[index + 1])
+            if operand_count < 1:
+                return numeric_unsupported("postfix_call_operand_count_invalid")
+            if len(stack) < operand_count + 1:
                 return numeric_unsupported("postfix_stack_underflow")
-            instructions.append(
-                {"opcode": "max", "operand_count": operand_count}
-            )
-            stack_depth -= operand_count - 1
+            symbol = stack[-operand_count - 1]
+            if len(symbol) != 1 or symbol[0].get("opcode") != "push_dynamic":
+                return numeric_unsupported("postfix_call_function_symbol_missing")
+            function = functions.get(symbol[0].get("hash"))
+            if function is None:
+                return numeric_unsupported("postfix_call_function_not_admitted")
+            operation, arity = function
+            if arity is not None and operand_count != arity:
+                return numeric_unsupported("postfix_call_function_arity_mismatch")
+            operands = stack[-operand_count:]
+            del stack[-operand_count - 1:]
+            instruction = {"opcode": operation}
+            if operation in {"min", "max"}:
+                instruction["operand_count"] = operand_count
+            stack.append([item for operand in operands for item in operand] + [instruction])
             index += 2
             continue
-        operation = {
-            2: "add",
-            3: "sub",
-            4: "mul",
-            5: "div",
-            # GameCore postfix opcode 14 is unary negation.  Current equipment
-            # sources use it for reductions such as defence and speed down.
-            14: "negate",
-        }.get(opcode)
+        operation = {2: "add", 3: "sub", 4: "mul", 5: "div", 14: "negate"}.get(opcode)
         if operation is None:
             return numeric_unsupported(f"unsupported_postfix_opcode:{opcode}")
         if operation == "negate":
-            if stack_depth < 1:
+            if not stack:
                 return numeric_unsupported("postfix_stack_underflow")
-            instructions.append({"opcode": operation})
-            index += 1
-            continue
-        if stack_depth < 2:
-            return numeric_unsupported("postfix_stack_underflow")
-        instructions.append({"opcode": operation})
-        stack_depth -= 1
+            stack[-1] = [*stack[-1], {"opcode": operation}]
+        else:
+            if len(stack) < 2:
+                return numeric_unsupported("postfix_stack_underflow")
+            rhs = stack.pop()
+            lhs = stack.pop()
+            stack.append([*lhs, *rhs, {"opcode": operation}])
         index += 1
     if not ended:
         return numeric_unsupported("postfix_missing_end_opcode")
-    if stack_depth != 1:
+    if len(stack) != 1:
         return numeric_unsupported("postfix_final_stack_size")
+    instructions = [*stack[0], {"opcode": "end"}]
     if all(item["opcode"] != "push_dynamic" for item in instructions):
         folded = _fold_fixed_program(tuple(instructions))
         if folded is not None:
             return numeric_fixed(folded)
     if len(instructions) == 2 and instructions[0].get("opcode") == "push_dynamic":
         return numeric_dynamic_hash(instructions[0].get("hash"))
-    return {
-        "schema_version": NUMERIC_EXPRESSION_SCHEMA,
-        "kind": "program",
-        "supported": True,
-        "instructions": instructions,
-    }
-
+    return {"schema_version": NUMERIC_EXPRESSION_SCHEMA, "kind": "program",
+            "supported": True, "instructions": instructions}
 
 def _fold_fixed_program(instructions: tuple[dict[str, JSONValue], ...]) -> float | None:
     stack: list[float] = []
@@ -590,25 +642,26 @@ def _fold_fixed_program(instructions: tuple[dict[str, JSONValue], ...]) -> float
                 return None
             stack.append(float(value))
             continue
-        if opcode == "negate":
+        if opcode in NUMERIC_UNARY_OPERATIONS:
             if not stack:
                 return None
-            stack[-1] = -stack[-1]
-            if not math.isfinite(stack[-1]):
+            try:
+                stack[-1] = numeric_unary_value(opcode, stack[-1])
+            except (OverflowError, ValueError):
                 return None
             continue
-        if opcode == "max":
+        if opcode in {"min", "max"}:
             operand_count = instruction.get("operand_count")
             if (
                 not isinstance(operand_count, int)
                 or isinstance(operand_count, bool)
-                or operand_count < 2
+                or operand_count < 1
                 or len(stack) < operand_count
             ):
                 return None
             operands = stack[-operand_count:]
             del stack[-operand_count:]
-            stack.append(max(operands))
+            stack.append(max(operands) if opcode == "max" else min(operands))
             continue
         if len(stack) < 2:
             return None

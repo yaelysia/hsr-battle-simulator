@@ -20,6 +20,8 @@ from .mutation_events import (
     MUTATION_BACKED_EVENT_TYPES,
     PRE_MUTATION_BLOCK_REASON,
     HealEventFact,
+    native_energy_change_value,
+    native_hp_change_value,
     mutation_backed_event_id,
 )
 from .phase_machine import CombatPhaseMachine
@@ -337,6 +339,16 @@ class EventDispatchSystem:
                 return self.dispatch_blocked(state, event=event, listener_kind="status_immunity_dispatch",
                     scope="owner_local", reason=reason)
             unit_id, modifier_name = fact.target_id, fact.protection_modifier_name
+        if event.event_type == "energy.change":
+            _, energy_reason = native_energy_change_value(event)
+            if energy_reason:
+                return self.dispatch_blocked(state, event=event, listener_kind="energy_change_event_dispatch",
+                    scope=_event_scope_kind(event), reason=energy_reason)
+        if event.event_type == "hp.change":
+            _, hp_reason = native_hp_change_value(event)
+            if hp_reason:
+                return self.dispatch_blocked(state, event=event, listener_kind="hp_change_event_dispatch",
+                    scope=_event_scope_kind(event), reason=hp_reason)
         if event.event_type in {"heal.after", "heal.snapshot.created"}:
             heal_fact = event.heal_event_fact
             heal_reason = ""
@@ -485,11 +497,46 @@ class EventDispatchSystem:
             task_graph_continuation=task_graph_continuation, nested_ability_hooks=nested_ability_hooks,
             status_nested_ability_provider=status_nested_ability_provider,
         )
+        result = self._complete_battle_event_dependencies(state, result, event)
         return _with_controlled_event_normalization(
             _with_event_dispatch_node_result(result, event),
             before=event_before_normalization,
             after=event,
         )
+
+    def _complete_battle_event_dependencies(
+        self, before: BattleState, result: EventDispatchResult, event: GameEvent,
+    ) -> EventDispatchResult:
+        if result.errors or event.event_type not in {"unit.defeated", "unit.removed"}:
+            return result
+        from .battle_event import retire_battle_event
+
+        dependency_id = str(event.target_id or "")
+        if dependency_id not in result.after_state.units:
+            return result
+        for unit_id in sorted(result.after_state.units):
+            unit = result.after_state.units[unit_id]
+            if (unit.flags.get("entity_type") != "battle_event"
+                    or unit.lifecycle_status == "removed"
+                    or not unit.flags.get("battle_event_creation_effect_id")):
+                continue
+            cleanup = retire_battle_event(self.rules, result.after_state, unit_id, dependency_id)
+            if cleanup.unsupported:
+                return _atomic_dispatch_failure(before, replace(result,
+                    errors=(*result.errors, *cleanup.unsupported)))
+            if not cleanup.mutations:
+                continue
+            reduced = self.reducer.apply_all_result(result.after_state, cleanup.mutations)
+            if not reduced.ok:
+                return _atomic_dispatch_failure(before, replace(result,
+                    errors=(*result.errors, "battle_event_retirement_commit_failed")))
+            result = replace(result, after_state=reduced.after_state,
+                mutations=(*result.mutations, *cleanup.mutations),
+                events=(*result.events, *cleanup.events),
+                records=(*result.records, *cleanup.records),
+                rng_events=(*result.rng_events, *cleanup.rng_events),
+                dispatched_event_ids=result.dispatched_event_ids | cleanup.dispatched_event_ids)
+        return result
 
     def _complete_limbo_window(
         self, before: BattleState, result: EventDispatchResult, *, event: GameEvent,
@@ -504,6 +551,11 @@ class EventDispatchSystem:
         plan = event.pending_defeat_plan
         lifecycle = UnitLifecycleSystem()
         try:
+            rescued_unit = result.after_state.units.get(plan.unit_id)
+            if (rescued_unit is not None and "pending_defeat" not in rescued_unit.flags
+                    and rescued_unit.lifecycle_status == "active" and rescued_unit.hp > 0):
+                # 窗口内已被正式救回（如锁血）：窗口关闭，后续回调的队列变化照常生效。
+                return result
             # A limbo wait window may enqueue one admitted turn-insert rescue.
             # The committing executor runs it before publishing this transition,
             # so the window stays open here instead of finalizing the defeat.
@@ -569,6 +621,13 @@ class EventDispatchSystem:
                     damage_window_ledger=damage_window_ledger,
                     task_graph_continuation=task_graph_continuation, nested_ability_hooks=nested_ability_hooks,
                     status_nested_ability_provider=status_nested_ability_provider)
+                if dispatched.errors:
+                    # A failed child rolls the whole window back; its partial
+                    # projections must not be merged into the failure result.
+                    return _atomic_dispatch_failure(before, replace(
+                        result, errors=(*result.errors, *dispatched.errors),
+                        task_graph_projections=(), damage_modifiers=(),
+                    ))
                 result = replace(result, after_state=dispatched.after_state,
                     mutations=(*result.mutations, *dispatched.mutations),
                     events=(*result.events, *dispatched.events),
@@ -587,7 +646,10 @@ class EventDispatchSystem:
                     damage_window_ledger.record_defeat_event(child)
             return result
         except ValueError as exc:
-            return _atomic_dispatch_failure(before, replace(result, errors=(*result.errors, str(exc))))
+            return _atomic_dispatch_failure(before, replace(
+                result, errors=(*result.errors, str(exc)),
+                task_graph_projections=(), damage_modifiers=(),
+            ))
 
     def _remove_exhausted_shield_owners(
         self,
@@ -715,6 +777,7 @@ class EventDispatchSystem:
             trigger_event=event,
             task_graph_continuation=task_graph_continuation,
             nested_ability_hooks=nested_ability_hooks,
+            before_state=before_state,
         )
         if not watcher_result.ok:
             return _atomic_dispatch_failure(
@@ -1005,6 +1068,11 @@ class EventDispatchSystem:
         task_graph_projections: list[TaskGraphNodeProjection] = []
         damage_modifiers: list[DamageModifierContribution] = []
         dispatched_event_ids: set[str] = set()
+        # A synchronous listener may remove a status whose remaining add
+        # lifecycle notifications are still queued in this same batch. Track
+        # the instances retired here so those notifications keep their
+        # produced fact instead of looking like forged events.
+        removed_lifecycle_instances: set[str] = set()
         for match in matches:
             listener_record = _listener_record(
                 event,
@@ -1088,6 +1156,10 @@ class EventDispatchSystem:
                     nested_ability_hooks=nested_ability_hooks,
                 )
             current_state = result.after_state
+            for produced_event in result.events:
+                removed_instance = _lifecycle_removed_instance(produced_event)
+                if removed_instance:
+                    removed_lifecycle_instances.add(removed_instance)
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
             records.extend(result.records)
@@ -1151,6 +1223,12 @@ class EventDispatchSystem:
                         )
                     if child_event.event_type == "status.lifecycle" and event.break_notification_fact is not None:
                         child_event = replace(child_event, break_notification_fact=event.break_notification_fact)
+                    produced_fact = child_event.status_lifecycle_fact
+                    if (
+                        produced_fact is not None
+                        and produced_fact.status_instance_id in removed_lifecycle_instances
+                    ):
+                        child_event = replace(child_event, lifecycle_instance_gone=True)
                     child_result = self.dispatch_event(
                         current_state,
                         event=child_event,
@@ -1158,6 +1236,10 @@ class EventDispatchSystem:
                         task_graph_continuation=task_graph_continuation,
                         nested_ability_hooks=nested_ability_hooks,
                     )
+                    for dispatched_event in child_result.events:
+                        removed_instance = _lifecycle_removed_instance(dispatched_event)
+                        if removed_instance:
+                            removed_lifecycle_instances.add(removed_instance)
                     current_state = child_result.after_state
                     mutations.extend(child_result.mutations)
                     rng_events.extend(child_result.rng_events)
@@ -1649,11 +1731,20 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "unit.before_dying": (
         ("OnBeforeDying", "owner_local", ""),
     ),
+    "unit.before_mortally_wounded": (
+        ("OnBeforeMortallyWonded", "owner_local", ""),
+    ),
+    "unit.hp_overflow": (
+        ("OnHPOverflow", "being_hit_target_local", ""),
+    ),
     "unit.being_limbo": (("OnBeingLimbo", "being_hit_target_local", ""),),
     "unit.limbo_wait_heal": (("OnLimboWaitHeal", "being_hit_target_local", ""),),
     "damage.hit": (
         ("OnHit", "per_hit_target_local", ""),
         ("OnBeingHit", "being_hit_target_local", ""),
+    ),
+    "energy.change": (
+        ("OnSPChange", "being_hit_target_local", ""),
     ),
     "damage.attacker_hit": (
         ("OnAfterHit", "actor_local", ""),
@@ -1710,6 +1801,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 
 CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
     "unit.before_dying",
+    "unit.hp_overflow",
     "unit.defeated",
     "custom.event",
     "status.lifecycle",
@@ -1742,6 +1834,11 @@ def _lifecycle_event_payload_block_reason(
     event: GameEvent,
 ) -> str:
     payload = event.payload
+    if event.event_type == "unit.hp_overflow":
+        from .mutation_events import HPOverflowFact
+        fact = event.hp_overflow_fact
+        if type(fact) is not HPOverflowFact or not fact.matches_event(event):
+            return "hp_overflow_fact_missing_or_mismatched"
     if event.event_type in {item[0] for item in LIMBO_CALLBACKS}:
         plan = event.pending_defeat_plan
         if type(plan) is not PendingDefeatPlan:
@@ -1983,6 +2080,22 @@ def _battle_state_transition_event_block_reason(
     return ""
 
 
+_REMOVE_LIFECYCLE_OPERATIONS = frozenset(
+    {"remove", "expire", "dispel", "stack_reduce_remove"}
+)
+
+
+def _lifecycle_removed_instance(event: GameEvent) -> str:
+    """Return the status instance a dispatched removal notification retired."""
+
+    if event.event_type != "status.lifecycle" or not isinstance(event.payload, dict):
+        return ""
+    if event.payload.get("lifecycle_operation") not in _REMOVE_LIFECYCLE_OPERATIONS:
+        return ""
+    instance_id = event.payload.get("status_instance_id")
+    return instance_id if isinstance(instance_id, str) else ""
+
+
 def _detached_status_detail(event: GameEvent) -> dict[str, JSONValue] | None:
     if event.event_type != "status.lifecycle" or event.window != "OnDestroy" or event.payload.get(
         "lifecycle_operation"
@@ -2004,7 +2117,15 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
             return ()
         callbacks = ()
         if fact.queue_kind == "turn_insert_ability" and fact.window_family == "insert_ability":
-            callbacks = ("OnListenInsertAbilityStart",)
+            callbacks = (
+                "OnListenInsertAbilityStart",
+                *(
+                    ("OnInsertAbilityStart",)
+                    if rules is not None
+                    and rules.status_event_family("OnInsertAbilityStart") is not None
+                    else ()
+                ),
+            )
         elif fact.queue_kind == "turn_insert_action" and fact.window_family == "insert_action":
             callbacks = ("OnBeforeInsertActionPrepare", "OnInsertActionStart")
         return tuple(_event_alias_for_callback(event, callback, "queue_action_start_fact", rules)
@@ -2221,6 +2342,7 @@ def _event_scope_kind(event: GameEvent) -> str:
         return "being_hit_target_local"
     if event.event_type in {
         "hp.change",
+        "energy.change",
         "heal.after",
         "shield.change",
         "shield.exhausted",
@@ -2300,6 +2422,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "actor_local"
     if callback_event in {
         "OnHPChange",
+        "OnSPChange",
         "OnHPOverflow",
         "OnAfterBeingHeal",
         "OnBeforeBeingHeal",
@@ -2343,7 +2466,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "actor_local"
     if callback_event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle"}:
         return "owner_local"
-    if callback_event == "OnBeforeDying":
+    if callback_event in {"OnBeforeDying", "OnBeforeMortallyWonded"}:
         return "owner_local"
     if callback_event in {
         "OnStack",

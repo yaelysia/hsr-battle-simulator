@@ -70,8 +70,16 @@ def test_real_dot_properties_follow_living_caster_buffs_and_require_source_ident
                 state = replace(state, units={**state.units, "caster": caster})
 
         next_request = replace(request, operation_event_id="next-tick")
-        for unavailable in (None, replace(caster, hp=0.0, lifecycle_status="defeated"),
-                            replace(caster, lifecycle_status="removed")):
+        # A defeated source still on the field reads the properties it had when
+        # it went down (user-adopted rule, 2026-11-09); later buffs cannot reach it.
+        defeated = replace(state.units["caster"], hp=0.0, lifecycle_status="defeated")
+        frozen = plan_dynamic_value_operation(
+            replace(state, units={**state.units, "caster": defeated}), operation, next_request,
+        )
+        assert frozen.ok, frozen.blocked_reason
+        assert frozen.result_value == expected[1]
+        assert frozen.evaluation["bindings"]["source_unit_id"] == "caster"
+        for unavailable in (None, replace(caster, lifecycle_status="removed")):
             units = {"target": state.units["target"]}
             if unavailable is not None:
                 units["caster"] = unavailable

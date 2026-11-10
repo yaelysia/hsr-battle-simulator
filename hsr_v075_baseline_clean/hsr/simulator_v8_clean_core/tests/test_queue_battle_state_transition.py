@@ -36,9 +36,11 @@ def test_queue_life_scope_lowering_preserves_explicit_permissions_and_rejects_un
     assert normalized.owner_alive_state == "alive_or_limbo" and normalized.target_alive_state == "alive_only"
     assert normalized.to_json()["can_run_on_unselectable_target"] is True
     assert all(normalized.abort_policy[key] == value for key, value in raw.items())
+    # "Anyone" is the admitted any-state mask (native listeners use it); the
+    # non-bool flag still blocks the intent.
     invalid = lower({**raw, "OwnerAliveState": "Anyone", "CanRunOnUnselectableTarget": 1})
     assert invalid.coverage_status == "blocked"
-    assert "owneralivestate_not_admitted" in invalid.blocked_reason
+    assert invalid.owner_alive_state == "any"
     assert "can_run_on_unselectable_target_not_bool" in invalid.blocked_reason
 
 

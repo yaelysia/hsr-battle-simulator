@@ -18,6 +18,7 @@ from ..unit_presence import departure_source_count
 
 MUTATION_BACKED_EVENT_TYPES = frozenset({
     "hp.change",
+    "energy.change",
     "heal.after",
     "heal.snapshot.created",
     "shield.change",
@@ -37,6 +38,166 @@ MUTATION_BACKED_EVENT_TYPES = frozenset({
 }) | resource_production_event_types()
 
 PRE_MUTATION_BLOCK_REASON = "pre_mutation_listener_recompute_not_admitted"
+
+_HP_CHANGE_EVENT_FACT_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class HPChangeEventFact:
+    """One issued HP mutation and its exact event; no payload supplies the value."""
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_source_id: str
+    target_id: str
+    _producer_token: object = field(repr=False, compare=False)
+    _issued_mutation: Mutation = field(repr=False, compare=False)
+    _issued_identity: tuple[str, str, str] = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        if self._producer_token is not _HP_CHANGE_EVENT_FACT_PRODUCER or mutation is not self._issued_mutation:
+            raise ValueError("HP change fact requires the issued immutable mutation")
+        if self._issued_identity != (self.event_id, self.event_source_id, self.target_id):
+            raise ValueError("HP change fact event identity was replaced")
+        if (type(mutation) is not Mutation or mutation.op != "set"
+                or mutation.path != ("units", self.target_id, "hp")
+                or not all(isinstance(value, str) and value for value in self._issued_identity)
+                or type(mutation.before) not in (int, float) or type(mutation.after) not in (int, float)
+                or not math.isfinite(mutation.before) or not math.isfinite(mutation.after)
+                or mutation.before == mutation.after):
+            raise ValueError("HP change fact requires a finite committed HP change")
+
+    @property
+    def delta(self) -> float:
+        return float(self.source_mutation.after) - float(self.source_mutation.before)
+
+    def matches_event(self, event: GameEvent) -> bool:
+        mutation = self.source_mutation
+        payload = event.payload
+        return bool(type(event) is GameEvent and event.hp_change_event_fact is self
+            and event.event_type == "hp.change" and event.event_id == self.event_id
+            and event.source_id == self.event_source_id and event.target_id == self.target_id
+            and event.window == "OnHPChange" and event.process_only
+            and isinstance(payload, dict) and payload.get("mutation_id") == mutation.stable_id()
+            and payload.get("target_id") == self.target_id
+            and payload.get("listener_scope") == "being_hit_target_local"
+            and payload.get("callback_events") == ["OnHPChange", "OnListenHPChange"]
+            and type(payload.get("hp_before")) in (int, float) and payload["hp_before"] == mutation.before
+            and type(payload.get("hp_after")) in (int, float) and payload["hp_after"] == mutation.after
+            and type(payload.get("hp_change_amount")) in (int, float) and payload["hp_change_amount"] == self.delta)
+
+
+_ENERGY_CHANGE_EVENT_FACT_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class EnergyChangeEventFact:
+    """One issued energy mutation and its exact event; no payload supplies the value."""
+    source_mutation: Mutation = field(repr=False)
+    event_id: str
+    event_source_id: str
+    target_id: str
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.source_mutation
+        if (self._producer_token is not _ENERGY_CHANGE_EVENT_FACT_PRODUCER
+                or type(mutation) is not Mutation or mutation.op != "set"
+                or mutation.path != ("units", self.target_id, "energy")
+                or type(mutation.before) not in (int, float) or type(mutation.after) not in (int, float)
+                or not math.isfinite(mutation.before) or not math.isfinite(mutation.after)
+                or mutation.before == mutation.after):
+            raise ValueError("energy change fact requires a finite committed energy change")
+
+    @property
+    def delta(self) -> float:
+        return float(self.source_mutation.after) - float(self.source_mutation.before)
+
+    def matches_event(self, event: GameEvent) -> bool:
+        payload = event.payload
+        return bool(type(event) is GameEvent and event.energy_change_event_fact is self
+            and event.event_type == "energy.change" and event.event_id == self.event_id
+            and event.source_id == self.event_source_id and event.target_id == self.target_id
+            and event.window == "OnSPChange" and event.process_only
+            and isinstance(payload, dict) and payload.get("mutation_id") == self.source_mutation.stable_id()
+            and payload.get("sp_change_amount") == self.delta)
+
+
+_HP_OVERFLOW_FACT_PRODUCER = object()
+
+
+@dataclass(frozen=True)
+class HPOverflowFact:
+    """Damage beyond an HP lock floor; produced only by the lock that rescued the unit."""
+    rescue_mutation: Mutation = field(repr=False)
+    overflow_amount: float
+    event_id: str
+    target_id: str
+    pending_defeat_id: str
+    _producer_token: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        mutation = self.rescue_mutation
+        if (self._producer_token is not _HP_OVERFLOW_FACT_PRODUCER
+                or type(mutation) is not Mutation or mutation.op != "set"
+                or mutation.path != ("units", self.target_id, "hp")
+                or type(self.overflow_amount) is not float
+                or not math.isfinite(self.overflow_amount) or self.overflow_amount <= 0):
+            raise ValueError("hp overflow fact requires a committed lock rescue and positive overflow")
+
+    def matches_event(self, event: GameEvent) -> bool:
+        return bool(type(event) is GameEvent and event.hp_overflow_fact is self
+            and event.event_type == "unit.hp_overflow" and event.event_id == self.event_id
+            and event.target_id == self.target_id and event.window == "OnHPOverflow")
+
+
+def hp_overflow_event(
+    rescue_mutation: Mutation, overflow_amount: float, *, target_id: str, source_id: str,
+    pending_defeat_id: str, metadata: dict[str, JSONValue],
+) -> GameEvent:
+    event_id = mutation_backed_event_id(rescue_mutation.stable_id(), "unit.hp_overflow")
+    fact = HPOverflowFact(rescue_mutation, float(overflow_amount), event_id, target_id,
+                          pending_defeat_id, _HP_OVERFLOW_FACT_PRODUCER)
+    return GameEvent(
+        "unit.hp_overflow", source_id=source_id, target_id=target_id, event_id=event_id,
+        window="OnHPOverflow", process_only=True,
+        payload={**metadata, "callback_events": ["OnHPOverflow"], "listener_scope": "being_hit_target_local",
+                 "overflow_amount": float(overflow_amount), "pending_defeat_id": pending_defeat_id,
+                 "mutation_id": rescue_mutation.stable_id()},
+        hp_overflow_fact=fact,
+    )
+
+
+def native_energy_change_value(event: GameEvent | None) -> tuple[float | None, str]:
+    """Read the signed realized energy difference from the actual domain event."""
+    fact = event.energy_change_event_fact if type(event) is GameEvent else None
+    if type(fact) is not EnergyChangeEventFact or not fact.matches_event(event):
+        return None, "energy_change_event_fact_missing_or_mismatched"
+    return fact.delta, ""
+
+
+def native_hp_change_value(event: GameEvent | None) -> tuple[float | None, str]:
+    """Read a signed realized HP difference from the actual domain event."""
+    if type(event) is not GameEvent:
+        return None, "hp_change_native_event_missing"
+    if event.event_type == "unit.hp_overflow":
+        # 锁血溢出的变化值为被锁下限截掉的那部分伤害（负值）。
+        fact = event.hp_overflow_fact
+        if type(fact) is not HPOverflowFact or not fact.matches_event(event):
+            return None, "hp_overflow_fact_missing_or_mismatched"
+        return -fact.overflow_amount, ""
+    if event.event_type == "hp.change":
+        fact = event.hp_change_event_fact
+        if type(fact) is not HPChangeEventFact or not fact.matches_event(event):
+            return None, "hp_change_event_fact_missing_or_mismatched"
+        return fact.delta, ""
+    if event.event_type == "heal.after":
+        fact = event.heal_event_fact
+        if type(fact) is not HealEventFact or not fact.matches_heal_after(event):
+            return None, "heal_event_fact_missing_or_mismatched"
+        return float(fact.heal_amount), ""
+    return None, "hp_change_event_kind_not_admitted"
+
 
 _HEAL_EVENT_FACT_PRODUCER = object()
 _HEAL_WINDOW = "OnAfterBeingHeal"
@@ -499,6 +660,33 @@ def events_for_mutation(
             ),
         )
 
+    if len(path) == 3 and path[0] == "units" and path[2] == "energy" and mutation.op == "set":
+        delta = _numeric_delta(mutation.before, mutation.after)
+        if delta is None or delta == 0:
+            return ()
+        event_id = f"{event_id_prefix}:energy_change"
+        return (
+            GameEvent(
+                event_type="energy.change",
+                energy_change_event_fact=EnergyChangeEventFact(
+                    mutation, event_id, event_source_id, target_id,
+                    _ENERGY_CHANGE_EVENT_FACT_PRODUCER,
+                ),
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=event_id,
+                window="OnSPChange",
+                process_only=True,
+                payload={
+                    **payload,
+                    "sp_before": float(mutation.before),
+                    "sp_after": float(mutation.after),
+                    "sp_change_amount": delta,
+                    "callback_events": ["OnSPChange"],
+                    "listener_scope": "being_hit_target_local",
+                },
+            ),
+        )
     if _is_unit_hp_path(path):
         delta = _numeric_delta(mutation.before, mutation.after)
         if delta is None or delta == 0:
@@ -586,9 +774,34 @@ def events_for_mutation(
                 },
             )
             return (heal_event, snapshot_event)
+        hp_before = (
+            float(mutation.before)
+            if isinstance(mutation.before, (int, float))
+            and not isinstance(mutation.before, bool)
+            else None
+        )
+        hp_after = (
+            float(mutation.after)
+            if isinstance(mutation.after, (int, float))
+            and not isinstance(mutation.after, bool)
+            else None
+        )
+        hp_fact = HPChangeEventFact(mutation, f"{event_id_prefix}:hp_change", event_source_id, target_id,
+            _HP_CHANGE_EVENT_FACT_PRODUCER, mutation,
+            (f"{event_id_prefix}:hp_change", event_source_id, target_id))
+        hp_change_facts = (
+            {
+                "hp_before": hp_before,
+                "hp_after": hp_after,
+                "hp_change_amount": hp_after - hp_before,
+            }
+            if hp_before is not None and hp_after is not None
+            else {}
+        )
         return (
             GameEvent(
                 event_type="hp.change",
+                hp_change_event_fact=hp_fact,
                 source_id=event_source_id,
                 target_id=target_id,
                 event_id=f"{event_id_prefix}:hp_change",
@@ -596,6 +809,7 @@ def events_for_mutation(
                 process_only=True,
                 payload={
                     **payload,
+                    **hp_change_facts,
                     "callback_events": ["OnHPChange", "OnListenHPChange"],
                     "listener_scope": "being_hit_target_local",
                 },

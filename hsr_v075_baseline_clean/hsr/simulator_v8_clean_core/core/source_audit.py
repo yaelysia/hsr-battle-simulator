@@ -170,6 +170,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["monster_data_card_id", "source_trace"],
         "coverage_required": "source-bound passive startup admission",
     },
+    "battle_event_system": {
+        "required_ir": ["Executable CreateBattleEvent EffectIR + native invocation"],
+        "required_metadata": ["effect_id", "source_trace"],
+        "coverage_required": "complete native event birth plan and settlement",
+    },
     "summon_system": {
         "required_ir": ["SummonMonsterIntentIR or ServantDefinitionIR"],
         "required_metadata": ["summon_operation", "summon_plan or intent_id", "source_trace"],
@@ -249,8 +254,18 @@ class RuntimeSourceAuditor:
         forced_death_units = _formal_forced_death_units(
             records_by_mutation, mutations_by_id
         )
+        battle_event_results: dict[int, Any] = {}
+        native_effect_results: dict[int, Any] = {}
+        servant_births_checked: set[int] = set()
         for mutation in mutations:
             mutation_records = records_by_mutation.get(mutation.stable_id(), ())
+            if (mutation.op == "spawn" and len(mutation.path) == 2 and mutation.path[0] == "units"
+                    and mutation.source not in {"summon_system", "wave_system", "battle_event_system"}):
+                violations.append(_violation(mutation, "unit_spawn_native_producer_mismatch"))
+            if self._is_servant_birth_write(mutation):
+                self._audit_servant_birth_execution(
+                    mutation, mutations, records_by_mutation, violations, servant_births_checked,
+                )
             if not mutation_records:
                 violations.append(_violation(mutation, "mutation_has_no_settlement_record"))
                 continue
@@ -259,6 +274,14 @@ class RuntimeSourceAuditor:
                         "unit_enter_limbo", "unit_defeat", "unit_defeat_record", "unit_pending_defeat_closed"}):
                 trace = self._audit_damage_lifecycle_mutation(
                     mutation, mutation_records, mutations_by_id, violations,
+                )
+            elif self._is_battle_event_write(mutation, mutation_records):
+                trace = self._audit_battle_event_write(
+                    mutation, mutation_records, violations, mutations, battle_event_results,
+                )
+            elif self._is_native_effect_write(mutation):
+                trace = self._audit_native_effect_write(
+                    mutation, mutation_records, violations, mutations, native_effect_results,
                 )
             else:
                 trace = self._audit_mutation(
@@ -289,6 +312,235 @@ class RuntimeSourceAuditor:
             violations=tuple(violations),
             traces=tuple(traces),
         )
+
+    def _is_native_effect_write(self, mutation: Mutation) -> bool:
+        from ..systems.effect import effect_requires_native_fact
+        effect = self.rules.effect(str(mutation.metadata.get("effect_id") or ""))
+        path = mutation.path
+        named_flag_write = path[:1] == ("units",) and path[2:4] == ("flags", "named_boolean_flags")
+        if mutation.op == "set" and path[:1] == ("units",) and (len(path) == 2 or len(path) == 3 and path[2] == "flags"):
+            before, after = mutation.before, mutation.after
+            if len(path) == 2:
+                before = before.get("flags") if isinstance(before, dict) else None
+                after = after.get("flags") if isinstance(after, dict) else None
+            before_flags = before if isinstance(before, dict) else {}
+            after_flags = after if isinstance(after, dict) else {}
+            named_flag_write = (("named_boolean_flags" in before_flags) != ("named_boolean_flags" in after_flags)
+                or before_flags.get("named_boolean_flags") != after_flags.get("named_boolean_flags"))
+        return named_flag_write or mutation.effect_execution_fact is not None or (
+            mutation.source == "effect_system" and effect_requires_native_fact(effect)
+        )
+
+    def _native_effect_target_variant(self, effect: Any, context: Any, registry: Any) -> Any:
+        """Validate the caller's ParamEntity instantiation against the formal target.
+
+        Do not pick an audit path from mutation labels or copied metadata. Only
+        an equivalent, source-resolved per-target invocation is an alternative.
+        """
+        from dataclasses import replace
+        from ..systems.effect import _resolve_target_alias
+        from ..systems.unit_relation import TargetEvaluationContext, committed_turn_owner_id
+        standard = effect.payload.get("standard", {})
+        alias = standard.get("target_alias")
+        target_id = context.param_entity_id
+        if (not target_id or context.current_action_target_id != target_id or not alias
+                or alias == "ParamEntity" or "dynamic_operation" in standard):
+            return None
+        direct = _resolve_target_alias(alias, caster_id=context.caster_id, owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id, current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution, state=context.state)
+        if direct != target_id:
+            expression, reason = self.rules.target_expression_resolution(str(standard.get("target_expression_id") or ""))
+            if reason or expression is None or expression.alias != alias or registry.targets is None:
+                return None
+            resolution = registry.targets.resolve_target_expression(context.state, expression,
+                context=TargetEvaluationContext(caster_id=context.caster_id, effect_owner_id=context.owner_id,
+                    template_entity_ids=context.template_target_ids,
+                    parameter_entity_ids=(target_id,),
+                    selected_target_ids=(context.target_resolution.selected if context.target_resolution else ()),
+                    current_target_id=context.current_action_target_id,
+                    turn_owner_id=committed_turn_owner_id(context.state),
+                    admitted_action_target_fact=context.admitted_action_target_fact,
+                    expected_action_window_scope=context.expected_action_window_scope),
+                target_resolution=context.target_resolution, condition_event_payload=context.event_payload,
+                dynamic_values=context.dynamic_values, binding_sources=context.binding_sources)
+            if not resolution.resolved or resolution.rng_events or target_id not in resolution.target_ids:
+                return None
+        return replace(effect, payload={**effect.payload, "standard": {**standard, "target_alias": "ParamEntity"}})
+
+    def _audit_native_effect_write(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation], mutations: tuple[Mutation, ...], results: dict[int, Any],
+    ) -> dict[str, JSONValue]:
+        from ..systems.effect import EffectExecutionFact, EffectRegistry, effect_requires_native_fact
+        from ..systems.status import StatusSystem
+        fact = mutation.effect_execution_fact
+        if type(fact) is not EffectExecutionFact:
+            violations.append(_violation(mutation, "effect_native_invocation_missing"))
+            return _trace(mutation, records, {})
+        effect = self.rules.effect(fact.effect_id)
+        if effect is None or not effect_requires_native_fact(effect) or effect.coverage_status != "executable":
+            violations.append(_violation(mutation, "effect_native_definition_not_admitted"))
+            return _trace(mutation, records, {})
+        if id(fact) not in results:
+            actual_group = tuple(item for item in mutations if item.effect_execution_fact is fact)
+            actual_json = [item.to_json() for item in actual_group]
+            registry = EffectRegistry(StatusSystem(self.rules))
+            candidate = registry.execute(effect, fact.context)
+            group = tuple(item for item in candidate.mutations if item.effect_execution_fact is not None
+                          and item.effect_execution_fact.effect_id == fact.effect_id)
+            group_matches = (not candidate.unsupported and bool(group)
+                             and _audit_value_equal([item.to_json() for item in group], actual_json))
+            if not group_matches:
+                variant = self._native_effect_target_variant(effect, fact.context, registry)
+                if variant is not None:
+                    bound = registry.execute(variant, fact.context)
+                    bound_group = tuple(item for item in bound.mutations if item.effect_execution_fact is not None
+                                        and item.effect_execution_fact.effect_id == fact.effect_id)
+                    if not bound.unsupported and bound_group and _audit_value_equal(
+                            [item.to_json() for item in bound_group], actual_json):
+                        candidate, group_matches = bound, True
+            # One immutable native invocation has one complete group. Check it
+            # once, retain the record index, and avoid quadratic serialization
+            # or retaining a duplicate graph of native pre-state snapshots.
+            results[id(fact)] = (group_matches, _records_by_mutation_id(candidate.records))
+        group_matches, expected_by_mutation = results[id(fact)]
+        if not group_matches:
+            violations.append(_violation(mutation, "effect_native_write_group_mismatch"))
+        expected_records = expected_by_mutation.get(mutation.stable_id(), ())
+        if not expected_records or not _audit_value_equal(list(expected_records), list(records)):
+            violations.append(_violation(mutation, "effect_native_settlement_mismatch"))
+        return _trace(mutation, records, {"effect_id": effect.effect_id})
+
+    def _is_servant_birth_write(self, mutation: Mutation) -> bool:
+        if mutation.unit_birth_fact is not None:
+            return True
+        if mutation.op != "spawn" or len(mutation.path) != 2 or mutation.path[0] != "units":
+            return False
+        after = mutation.after if isinstance(mutation.after, Mapping) else {}
+        flags = after.get("flags") if isinstance(after.get("flags"), Mapping) else {}
+        return bool(
+            flags.get("summon_kind") == "servant" or flags.get("servant_definition_id")
+            or any(item.servant_ref == after.get("template_id") for item in self.rules.ir.servant_definitions)
+        )
+
+    def _audit_servant_birth_execution(
+        self, mutation: Mutation, mutations: tuple[Mutation, ...],
+        records_by_mutation: Mapping[str, tuple[dict[str, JSONValue], ...]],
+        violations: list[SourceAuditViolation], checked: set[int],
+    ) -> None:
+        from ..systems.summon import SummonSystem
+        from ..systems.unit_spawn import UnitBirthFact
+
+        fact = mutation.unit_birth_fact
+        if type(fact) is not UnitBirthFact:
+            violations.append(_violation(mutation, "servant_spawn_native_birth_fact_missing"))
+            return
+        if id(fact) in checked:
+            return
+        checked.add(id(fact))
+        if fact.owner.flags.get("build_mode") == "assembled_character_build":
+            from ..systems.effect import EffectExecutionFact
+            anchor = next((item for item in mutations if item.unit_birth_fact is fact
+                           and item.op == "spawn" and item.path == ("units", fact.request.unit_id)), None)
+            invocation = anchor.effect_execution_fact if anchor is not None else None
+            creation = self.rules.effect(invocation.effect_id) if type(invocation) is EffectExecutionFact else None
+            if (creation is None or creation.opcode != "CreateServant"
+                    or creation.payload.get("standard", {}).get("spawn_source") != fact.request.source_trace
+                    or invocation.context.caster_id != fact.owner.unit_id
+                    or invocation.context.state != fact.state):
+                violations.append(_violation(mutation, "servant_birth_native_creation_invocation_missing"))
+        definition = self.rules.servant_definition(fact.request.source_id)
+        if definition is None or definition.coverage_status != "executable":
+            violations.append(_violation(mutation, "servant_birth_native_definition_missing"))
+            return
+        sources = tuple(source for source in definition.spawn_sources
+                        if source.to_json() == fact.request.source_trace)
+        if len(sources) != 1 and fact.request.source_trace != definition.source.to_json():
+            violations.append(_violation(mutation, "servant_birth_native_source_not_declared"))
+            return
+        system = SummonSystem(self.rules)
+        plan = system.plan_spawn_servant(
+            fact.state, definition, owner_id=fact.owner.unit_id,
+            spawn_source=sources[0] if len(sources) == 1 else None,
+            initial_values=fact.initial_values,
+        )
+        if not plan.ok or plan.spawn_requests != (fact.request,):
+            violations.append(_violation(mutation, "servant_birth_native_request_mismatch"))
+            return
+        expected = system.apply_spawn_servant(fact.state, plan, initial_values=fact.initial_values)
+        native_spawn = next((item for item in expected.mutations
+                             if item.op == "spawn" and item.path == ("units", fact.request.unit_id)), None)
+        if not expected.plan.ok or native_spawn is None:
+            violations.append(_violation(mutation, "servant_birth_native_execution_blocked"))
+            return
+        expected_group = tuple(item for item in expected.mutations
+                               if item.unit_birth_fact is native_spawn.unit_birth_fact)
+        actual_group = tuple(item for item in mutations if item.unit_birth_fact is fact)
+        if not _audit_value_equal([item.to_json() for item in expected_group],
+                                  [item.to_json() for item in actual_group]):
+            violations.append(_violation(mutation, "servant_birth_native_group_mismatch"))
+        expected_records = _records_by_mutation_id(expected.records)
+        for item in expected_group:
+            wanted = expected_records.get(item.stable_id(), ())
+            actual = records_by_mutation.get(item.stable_id(), ())
+            if not wanted or not _audit_value_equal(list(wanted), list(actual)):
+                violations.append(_violation(mutation, "servant_birth_native_settlement_mismatch"))
+                break
+
+    def _is_battle_event_write(self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...]) -> bool:
+        effect = self.rules.effect(str(mutation.metadata.get("effect_id") or ""))
+        after = mutation.after if isinstance(mutation.after, Mapping) else {}
+        flags = after.get("flags") if isinstance(after.get("flags"), Mapping) else {}
+        return (
+            mutation.battle_event_fact is not None
+            or mutation.op == "spawn" and flags.get("entity_type") == "battle_event"
+            or mutation.source == "battle_event_system"
+            or effect is not None and effect.opcode in {"CreateBattleEvent", "ChangeBattleEventOwner"}
+            or any(record.get("record_type") in {"battle_event_birth", "battle_event_owner_change"}
+                   for record in records)
+        )
+
+    def _audit_battle_event_write(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation], mutations: tuple[Mutation, ...],
+        results: dict[int, Any],
+    ) -> dict[str, JSONValue]:
+        from ..systems.battle_event import BattleEventExecutionFact, BattleEventRetirementFact, retire_battle_event
+        from ..systems.effect import EffectRegistry
+        from ..systems.status import StatusSystem
+
+        fact = mutation.battle_event_fact
+        if type(fact) not in {BattleEventExecutionFact, BattleEventRetirementFact}:
+            violations.append(_violation(mutation, "battle_event_native_invocation_missing"))
+            return _trace(mutation, records, {})
+        effect = self.rules.effect(fact.effect_id)
+        if (effect is None or effect.coverage_status != "executable"
+                or effect.opcode not in {"CreateBattleEvent", "ChangeBattleEventOwner"}):
+            violations.append(_violation(mutation, "battle_event_formal_effect_not_admitted"))
+            return _trace(mutation, records, {})
+        _audit_source(effect.source, effect.coverage_status, mutation, violations, executable_required=True)
+        key = id(fact)
+        if key not in results:
+            # Pure re-execution from the native immutable invocation. Runtime
+            # never reads this audit fact or a settlement/trace copy as input.
+            results[key] = (retire_battle_event(self.rules, fact.state, fact.unit_id, fact.dependency_id)
+                            if type(fact) is BattleEventRetirementFact
+                            else EffectRegistry(StatusSystem(self.rules)).execute(effect, fact.context))
+        expected = results[key]
+        source = "battle_event_system" if effect.opcode == "CreateBattleEvent" else "effect_system"
+        expected_group = (expected.mutations if type(fact) is BattleEventRetirementFact
+                          else tuple(item for item in expected.mutations if item.source == source))
+        actual_group = tuple(item for item in mutations if item.battle_event_fact is fact)
+        if (expected.unsupported or not expected_group
+                or not _audit_value_equal([item.to_json() for item in expected_group],
+                                          [item.to_json() for item in actual_group])):
+            violations.append(_violation(mutation, "battle_event_native_plan_mismatch"))
+        expected_records = tuple(record for record in expected.records
+                                 if record.get("mutation_id") == mutation.stable_id())
+        if not expected_records or not _audit_value_equal(list(expected_records), list(records)):
+            violations.append(_violation(mutation, "battle_event_native_settlement_mismatch"))
+        return _trace(mutation, records, {"effect_id": effect.effect_id})
 
     def policy_matrix(self) -> dict[str, JSONValue]:
         return {source: dict(policy) for source, policy in sorted(MUTATION_SOURCE_POLICIES.items())}
@@ -517,6 +769,10 @@ class RuntimeSourceAuditor:
             return self._audit_wave_mutation(mutation, records, violations)
         if mutation.source == "monster_startup":
             return self._audit_monster_startup_mutation(mutation, records, violations)
+        if mutation.source == "servant_startup":
+            return self._audit_servant_creation_values(
+                mutation, records, violations, mutations_by_id or {},
+            )
         if mutation.source == "summon_system":
             return self._audit_summon_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
@@ -2047,6 +2303,47 @@ class RuntimeSourceAuditor:
                         )
                     )
 
+    def _audit_servant_creation_values(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation], mutations_by_id: Mapping[str, Mutation],
+    ) -> dict[str, JSONValue]:
+        from ..systems.dynamic_values import empty_dynamic_value_store, upsert_dynamic_value
+        from ..systems.unit_spawn import UnitBirthFact
+
+        unit_id = str(mutation.metadata.get("unit_id") or "")
+        births = tuple(item for item in mutations_by_id.values()
+                       if item.op == "spawn" and item.path == ("units", unit_id)
+                       and item.source == "summon_system"
+                       and type(item.unit_birth_fact) is UnitBirthFact)
+        if (len(births) != 1 or mutation.op != "set"
+                or mutation.path != ("global_flags", "dynamic_value_store")):
+            violations.append(_violation(mutation, "servant_creation_values_native_birth_missing"))
+            return _trace(mutation, records, {})
+        fact = births[0].unit_birth_fact
+        expected = mutation.before if mutation.before_exists else empty_dynamic_value_store()
+        try:
+            for name, entry in fact.initial_values.items():
+                expected = upsert_dynamic_value(
+                    expected, scope="unit", owner_id=unit_id, value_name=name,
+                    hash_key=entry["hash"], value=entry["value"], source_id=unit_id,
+                    source_trace=fact.request.source_trace,
+                )
+        except (KeyError, TypeError, ValueError):
+            violations.append(_violation(mutation, "servant_creation_values_inputs_invalid"))
+            return _trace(mutation, records, {})
+        if (not fact.initial_values or not _audit_value_equal(expected, mutation.after)
+                or mutation.metadata.get("values") != fact.initial_values):
+            violations.append(_violation(mutation, "servant_creation_values_native_input_mismatch"))
+        if len(records) != 1 or any(
+            record.get("source") != "servant_startup"
+            or record.get("record_type") != "dynamic_value_store"
+            or record.get("process_only") is not False
+            or record.get("payload") != mutation.metadata
+            for record in records
+        ):
+            violations.append(_violation(mutation, "servant_creation_values_native_settlement_invalid"))
+        return _trace(mutation, records, {"unit_id": unit_id})
+
     def _audit_servant_spawn_mutation(
         self,
         mutation: Mutation,
@@ -2079,6 +2376,38 @@ class RuntimeSourceAuditor:
             )
             return
         _audit_source(definition.source, definition.coverage_status, mutation, violations, executable_required=True)
+        # Only the runtime birth producer can supply these immutable inputs.
+        # Settlement metadata is checked below, never used to authorize a birth.
+        from ..systems.unit_spawn import UnitBirthFact, UnitSpawnSystem
+
+        fact = mutation.unit_birth_fact
+        if type(fact) is not UnitBirthFact:
+            violations.append(_violation(mutation, "servant_spawn_native_birth_fact_missing"))
+        else:
+            request = fact.request
+            template = self.rules.unit_birth_template(definition.birth_template_id)
+            expected = None
+            if (template is not None and request.birth_template_id == definition.birth_template_id
+                    and request.source_id == definition.servant_definition_id
+                    and request.entry_id == definition.servant_definition_id
+                    and request.spawn_kind == "servant"
+                    and request.entity_ref == definition.servant_ref
+                    and request.unit_id == mutation.path[1]
+                    and definition.owner_relation_for(fact.owner.template_id) is not None):
+                expected = UnitSpawnSystem().plan(
+                    template, request, owner=fact.owner, parameter_values=fact.parameter_values,
+                )
+            if expected is None or not expected.ok:
+                violations.append(_violation(mutation, "servant_spawn_formal_birth_inputs_invalid"))
+            else:
+                unit = expected.to_unit(
+                    expected_request=request, expected_template=template,
+                    owner=fact.owner, parameter_values=fact.parameter_values,
+                )
+                from .unit_state_codec import unit_state_to_payload
+
+                if not _audit_value_equal(unit_state_to_payload(unit), after):
+                    violations.append(_violation(mutation, "servant_spawn_formal_birth_payload_mismatch"))
         if (
             _first_str(flags.get("servant_ref")) != definition.servant_ref
             or after.get("template_id") != definition.servant_ref
@@ -3374,6 +3703,14 @@ class RuntimeSourceAuditor:
                                    and record.get("mutation_id") == mutation.stable_id() for record in records)):
                     violations.append(_violation(mutation, "ordinary_stance_reset_contract_mismatch"))
             return _trace(mutation, records, {"callback_id": metadata.get("callback_id"), "task_id": metadata.get("task_id")})
+        if (any(record.get("record_type") == "status_skill_type_disable" for record in records)
+                or len(mutation.path) == 4 and mutation.path[2:] == ("flags", "status_details")
+                and isinstance(mutation.before, (list, tuple)) and isinstance(mutation.after, (list, tuple))
+                and {item.get("instance_id"): item.get("disabled_skill_types") for item in mutation.before
+                    if isinstance(item, dict) and item.get("disabled_skill_types")}
+                != {item.get("instance_id"): item.get("disabled_skill_types") for item in mutation.after
+                    if isinstance(item, dict) and item.get("disabled_skill_types")}):
+            return self._audit_status_skill_type_disable(mutation, records, violations)
         if metadata.get("dynamic_key") or metadata.get("property"):
             return self._audit_status_callback_dynamic_value_mutation(mutation, records, violations)
         if any(
@@ -3447,6 +3784,43 @@ class RuntimeSourceAuditor:
                 "action_delay_emission_id": delay_id or "",
             },
         )
+
+    def _audit_status_skill_type_disable(
+        self, mutation: Mutation, records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        callback = self.rules.status_callback(str(metadata.get("callback_id") or ""))
+        task = self.rules.status_callback_task(str(metadata.get("task_id") or ""))
+        contract = task.task_payload.get("skill_disable_contract", {}) if task is not None else {}
+        types = contract.get("skill_types") if isinstance(contract, Mapping) else None
+        instance_id = metadata.get("status_instance_id")
+        before = mutation.before if isinstance(mutation.before, (list, tuple)) else ()
+        details = tuple(item for item in before if isinstance(item, Mapping) and item.get("instance_id") == instance_id)
+        if (callback is None or task is None or task.opcode != "AttachSkillTypeDisable"
+                or task.coverage_status != "executable" or callback.coverage_status != "executable"
+                or task.callback_id != callback.callback_id or task.event != callback.event or task.event != "OnStack"
+                or not isinstance(types, (list, tuple)) or not types
+                or any(not isinstance(value, str) or value not in {"Normal", "Skill", "Ultra"} for value in types)
+                or any(not isinstance(item, Mapping) for item in before)
+                or contract.get("operation") != "attach_status_skill_type_disable"
+                or contract.get("source_shape_admitted") is not True or len(details) != 1):
+            violations.append(_violation(mutation, "status_skill_disable_formal_source_missing"))
+            return _trace(mutation, records, {})
+        detail = details[0]
+        expected = [{**item, "disabled_skill_types": sorted(set(item.get("disabled_skill_types", ())) | set(types))}
+                    if item.get("instance_id") == instance_id else item for item in before]
+        if (mutation.op != "set" or mutation.path != ("units", detail.get("owner_id"), "flags", "status_details")
+                or detail.get("modifier_name") != task.modifier_name or callback.modifier_name != task.modifier_name
+                or detail.get("lifecycle_state") != "active"
+                or not (contract.get("target_alias") == "ModifierOwnerEntity" or
+                        contract.get("target_alias") == "Caster" and detail.get("caster_id") == detail.get("owner_id"))
+                or not _audit_value_equal(expected, mutation.after)):
+            violations.append(_violation(mutation, "status_skill_disable_write_mismatch"))
+        if len(records) != 1 or records[0].get("record_type") != "status_skill_type_disable" or records[0].get("payload") != {
+                "status_instance_id": instance_id, "skill_types": list(types)}:
+            violations.append(_violation(mutation, "status_skill_disable_settlement_mismatch"))
+        return _trace(mutation, records, {"callback_id": callback.callback_id, "task_id": task.task_id})
 
     def _audit_status_callback_dynamic_value_mutation(
         self,
@@ -6630,10 +7004,44 @@ class RuntimeSourceAuditor:
         if not resolution_valid:
             problems.append("queue_resolution")
         else:
+            entry_ref = str(entry.get("action_or_ability_ref") or "")
+            resolution_ref = str(resolution.action_or_ability_ref or "")
+            resolved_ids = (
+                resolution.resolved_ids
+                if isinstance(resolution.resolved_ids, Mapping)
+                else {}
+            )
+            skill_index_expr = resolved_ids.get("skill_index_expr")
+            dynamic_chain_ref = (
+                not entry_ref
+                and resolution_ref == "chain_action:actor_action_set"
+                and resolved_ids.get("action_selection")
+                == "actor_action_set_single_executable_action"
+            )
+            dynamic_skill_ref = (
+                isinstance(skill_index_expr, Mapping)
+                and str(skill_index_expr.get("kind") or "") == "skill_type"
+                and entry_ref.startswith("skill_type:")
+                and resolution_ref.startswith("skill_index:")
+                and str(skill_index_expr.get("value") or "")
+                == entry_ref.split(":", 1)[1]
+            )
+            chain_action_admitted = False
+            if dynamic_chain_ref or dynamic_skill_ref:
+                candidates = resolved_ids.get("action_set_candidates")
+                chain_action_admitted = isinstance(candidates, list) and any(
+                    isinstance(candidate, Mapping)
+                    and candidate.get("action_ref") == plan.get("resolved_action_id")
+                    and (
+                        dynamic_skill_ref
+                        or candidate.get("action_level")
+                        == plan.get("resolved_action_level")
+                    )
+                    for candidate in candidates
+                )
             if (
                 resolution.queue_intent_id != intent_id
-                or resolution.action_or_ability_ref
-                != entry.get("action_or_ability_ref")
+                or (resolution_ref != entry_ref and not chain_action_admitted)
                 or resolution.resolved_kind != resolved_kind
             ):
                 problems.append("queue_resolution.identity")

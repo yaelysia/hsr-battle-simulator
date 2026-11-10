@@ -272,7 +272,6 @@ class CharacterResourceInitializerBinding:
     maximum_value_dynamic_hash: int
     level_dynamic_key: str
     level_dynamic_hash: int
-    zero_floor_dynamic_hash: int
     world_level_threshold: int
     low_world_level_expression: dict[str, JSONValue]
     high_world_level_expression: dict[str, JSONValue]
@@ -306,7 +305,6 @@ class CharacterResourceInitializerBinding:
         for field_name in (
             "maximum_value_dynamic_hash",
             "level_dynamic_hash",
-            "zero_floor_dynamic_hash",
             "world_level_threshold",
             "initial_current_binding_hash",
         ):
@@ -350,7 +348,6 @@ class CharacterResourceInitializerBinding:
             "maximum_value_dynamic_hash": self.maximum_value_dynamic_hash,
             "level_dynamic_key": self.level_dynamic_key,
             "level_dynamic_hash": self.level_dynamic_hash,
-            "zero_floor_dynamic_hash": self.zero_floor_dynamic_hash,
             "world_level_threshold": self.world_level_threshold,
             "low_world_level_expression": thaw_json(self.low_world_level_expression),
             "high_world_level_expression": thaw_json(self.high_world_level_expression),
@@ -375,7 +372,6 @@ class CharacterResourceInitializerBinding:
                 "maximum_value_dynamic_hash",
                 "level_dynamic_key",
                 "level_dynamic_hash",
-                "zero_floor_dynamic_hash",
                 "world_level_threshold",
                 "low_world_level_expression",
                 "high_world_level_expression",
@@ -413,9 +409,6 @@ class CharacterResourceInitializerBinding:
             ),
             level_dynamic_key=require_text(row.get("level_dynamic_key"), "level_dynamic_key"),
             level_dynamic_hash=require_int(row.get("level_dynamic_hash"), "level_dynamic_hash"),
-            zero_floor_dynamic_hash=require_int(
-                row.get("zero_floor_dynamic_hash"), "zero_floor_dynamic_hash"
-            ),
             world_level_threshold=require_int(
                 row.get("world_level_threshold"), "world_level_threshold"
             ),

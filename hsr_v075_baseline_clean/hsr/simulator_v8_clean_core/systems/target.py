@@ -29,7 +29,7 @@ from ..rules.ir import (
     TargetExpressionNodeIR,
 )
 from ..rules.rulebook import RuleBook
-from ..unit_eligibility import runtime_unit_is_unselectable
+from ..unit_eligibility import runtime_unit_is_unselectable, runtime_unit_is_unselectable_for
 from .rng import rng_choices_from_payload, rng_mode_from_payload
 from .condition_state import CommittedConditionFactProvider
 from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
@@ -306,6 +306,14 @@ class TargetSystem:
                 language_lookup() if callable(language_lookup) else rules.target_expressions()
             )
             for definition in definitions:
+                if definition.expression_kind == "EventDefinitionReference":
+                    name = definition.alias
+                    if not name:
+                        continue
+                    if name in self.alias_definitions:
+                        duplicate_names.add(name)
+                    self.alias_definitions[name] = definition
+                    continue
                 source_path = definition.source.source_path
                 name = definition.source.evidence.get("source_raw_id")
                 if not isinstance(name, str) or not name:
@@ -654,7 +662,7 @@ class TargetSystem:
             for unit_id, unit in sorted(state.units.items())
             if is_opposing_combat_team(actor, unit)
             and self.lifecycle.can_target(state, unit_id)[0]
-            and not runtime_unit_is_unselectable(unit)
+            and not runtime_unit_is_unselectable_for(unit, actor)
         )
         selection_strategy = bounce_policy.selection_strategy
         if selection_strategy not in {"prefer_unhit_then_random", "random_live_targets"}:
@@ -1069,7 +1077,8 @@ def _resolve_inline_expression(
         children = _inline_children(raw, expression_kind)
         if not children:
             return _inline_result(path, expression_kind, alias, (), f"target_expression_children_missing:{expression_kind}")
-        selected: tuple[str, ...] = ()
+        # 作为点号操作（如 GetServant）展开时，序列从上一步的候选集出发。
+        selected: tuple[str, ...] = tuple(previous_targets)
         steps: list[JSONValue] = []
         rng_events: list[RNGEvent] = []
         for index, child in enumerate(children):
@@ -1161,7 +1170,7 @@ def _resolve_inline_expression(
             path=path,
             relation_runtime=relation_runtime,
         )
-    if expression_kind.startswith("TargetFetch"):
+    if expression_kind.startswith("TargetFetch") or expression_kind == "EventDefinitionReference":
         return _resolve_fetch_expression(
             state,
             raw,
@@ -1758,9 +1767,15 @@ def _resolve_fetch_expression(
         return _inline_result(path, expression_kind, "", targets if not reason else (), reason)
     if expression_kind in {"TargetFetchModifierOwner", "TargetFetchOwner"}:
         return _resolve_context_relation(state, expression_kind, "context.owner", path, relation_runtime)
-    if expression_kind in {"TargetFetchAbilityTarget", "TargetFetchCurrentActionTarget"}:
+    if expression_kind in {"TargetFetchAbilityTarget", "TargetFetchAbilityGroup", "TargetFetchCurrentActionTarget"}:
         relation = "context.current" if expression_kind == "TargetFetchCurrentActionTarget" else "context.selected"
         return _resolve_context_relation(state, expression_kind, relation, path, relation_runtime)
+    if expression_kind == "TargetFetchAimAtTargetList":
+        # The externally submitted action target selection is the simulator's
+        # formal counterpart of the client's current aim targets.
+        return _resolve_context_relation(
+            state, expression_kind, "context.selected", path, relation_runtime
+        )
     if expression_kind == "TargetFetchParamEntity":
         return _resolve_context_relation(state, expression_kind, "context.parameter", path, relation_runtime)
     if expression_kind == "TargetFetchTemplateEntityList":
@@ -1818,12 +1833,26 @@ def _resolve_fetch_expression(
             state, "entity.creator", relation_runtime.context, subject_ids=(caster_id,),
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
+    if expression_kind == "EventDefinitionReference":
+        result = relation_runtime.relations.resolve(state, "entity.battle_event", relation_runtime.context)
+        if result.blocked:
+            return _inline_result(path, expression_kind, "", (), result.blocked_reason)
+        matches = tuple(unit_id for unit_id in result.target_ids
+                        if state.units[unit_id].template_id == raw.payload["definition_ref"])
+        if len(matches) > 1:
+            return _inline_result(path, expression_kind, "", (), "event_definition_reference_ambiguous")
+        return _inline_result(path, expression_kind, "", matches, "")
     if expression_kind == "TargetFetchBattleEventEntityList":
         result = relation_runtime.relations.resolve(
             state, "entity.battle_event", relation_runtime.context
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
-    if expression_kind == "TargetFetchTurnOwnerEntity":
+    if expression_kind in {
+        "TargetFetchTurnOwnerEntity",
+        "TargetFetchTurnActionEntity",
+    }:
+        # Every scheduled action belongs to the committed turn owner; the
+        # action-entity alias therefore shares that single committed relation.
         result = relation_runtime.relations.resolve(
             state, "context.turn_owner", relation_runtime.context
         )
@@ -2095,7 +2124,14 @@ def _resolve_transform_expression(
             "summon.summoner",
             relation_runtime.context,
             subject_ids=candidate_targets,
-            options={"recursive": raw.recursive_summoner},
+            options={
+                "recursive": raw.recursive_summoner,
+                # The summoner relation is structural identity. A dying or
+                # defeated summoner still owns the mapping; consumers gate
+                # their own effect targets by lifecycle instead of failing the
+                # whole damage/dispatch transaction.
+                "allow_defeated": True,
+            },
         )
         return _inline_result(path, expression_kind, "", result.target_ids, result.blocked_reason)
     if expression_kind == "TargetMapCreatedBattleEvent":
@@ -2146,6 +2182,45 @@ def _resolve_transform_expression(
     return _inline_result(path, expression_kind, "", (), f"target_transform_not_supported:{expression_kind}")
 
 
+def resolve_created_battle_event_targets(
+    state: BattleState,
+    caster_id: str | None,
+) -> tuple[str, ...]:
+    """The battle event(s) this caster created.
+
+    A battle-event unit acts as its own created event when the own ability is
+    executed with that unit as caster, so the creator relation falls back to
+    that unit itself; the alias then names the same committed event.
+    """
+
+    if not isinstance(caster_id, str) or not caster_id:
+        return ()
+    unit = state.units.get(caster_id)
+    if unit is None:
+        return ()
+    resolved = EntityRelationResolver().resolve(
+        state,
+        "entity.created_battle_events",
+        TargetEvaluationContext(caster_id=caster_id),
+        subject_ids=(caster_id,),
+    )
+    created = tuple(resolved.target_ids) if resolved.resolved else ()
+    if created:
+        return created
+    if unit.flags.get("entity_type") == "battle_event":
+        return (caster_id,)
+    return ()
+
+
+# Language aliases whose source definition depends on a typed event/entity
+# producer: they bind only to the identity that producer placed in the context.
+_CONTEXT_PRODUCER_ALIAS_RELATIONS = {
+    "DamageAttackerEntity": "context.damage_attacker",
+    "DamageDefenderEntity": "context.damage_defender",
+    "ParamEntity2": "context.passive_entity",
+}
+
+
 def _resolve_target_alias_resolution(
     state: BattleState,
     alias: str,
@@ -2165,6 +2240,16 @@ def _resolve_target_alias_resolution(
         return _inline_result(path, "TargetAlias", "", (), "target_alias_missing")
     if alias in relation_runtime.alias_stack:
         return _inline_result(path, "TargetAlias", alias, (), f"target_alias_cycle:{alias}")
+    if alias == "CasterSelfCreateBattleEvent":
+        # The battle event this caster created; the source alias names the
+        # creator relation directly instead of an enumerable config alias.
+        created_ids = resolve_created_battle_event_targets(
+            state, relation_runtime.context.caster_id
+        )
+        return _inline_result(
+            path, "TargetAlias", alias, created_ids,
+            "" if created_ids else "created_battle_event_missing",
+        )
     if alias.startswith("(") and ")." in alias:
         closing = alias.find(").")
         inner_alias = alias[1:closing]
@@ -2345,6 +2430,13 @@ def _resolve_target_alias_resolution(
     definition = relation_runtime.scoped_alias_definitions.get(
         (relation_runtime.definition_source_path, alias)
     ) or relation_runtime.alias_definitions.get(alias)
+    producer_relation = _CONTEXT_PRODUCER_ALIAS_RELATIONS.get(alias)
+    if producer_relation is not None and (
+        definition is None or definition.coverage_status != "executable"
+    ):
+        return _resolve_context_relation(
+            state, "TargetAlias", producer_relation, path, relation_runtime,
+        )
     if definition is None:
         return _inline_result(
             path, "TargetAlias", alias, (), f"target_alias_definition_missing:{alias}"
@@ -2571,6 +2663,8 @@ def _modifier_status_count_sort_value(unit: Any, buff_status: str) -> tuple[floa
 def _property_sort_value(unit: Any, sort_key: str) -> tuple[float, str]:
     if sort_key == "CurrentHP":
         return float(unit.hp), ""
+    if sort_key == "Level":
+        return float(unit.level), ""
     if sort_key == "MaxHP":
         maximum = current_max_hp(unit)
         if maximum <= 0:

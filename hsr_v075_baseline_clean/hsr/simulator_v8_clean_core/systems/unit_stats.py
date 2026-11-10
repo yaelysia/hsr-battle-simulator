@@ -69,12 +69,22 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
     "elation_damage_added_ratio": ("damage_bonus", "elation_damage_added_ratio"),
     "elation_damage_extra_added_ratio": ("damage_bonus", "elation_damage_extra_added_ratio"),
     "elation_echo_point": ("resource", "elation_echo_point"),
+    # Extra special SP capacity is a resource stat extended by status
+    # modifiers (StackProperty MaxExtraSpecialSP).
+    "max_extra_special_sp": ("resource", "max_extra_special_sp"),
+    "special_sp": ("resource", "special_sp"),
+    "max_special_sp": ("resource", "max_special_sp"),
+    "cur_extra_special_sp": ("resource", "cur_extra_special_sp"),
 }
 
 
 def status_modifier_has_direct_combat_consumer(bucket: str, key: str) -> bool:
     """Whether this runtime modifier key is consumed by the S7 stat layer."""
-    if bucket == "attribute" and key == "hp_convert":
+    if bucket == "attribute" and key in {
+        "hp_convert",
+        "speed_convert",
+        "speed_override",
+    }:
         return True
     return any(
         bucket == configured_bucket and key in configured_keys
@@ -128,11 +138,30 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
         flat_delta, flat_terms = _status_modifier_total(unit, bucket, (flat_key,))
         convert_delta = 0.0
         convert_terms: tuple[dict[str, JSONValue], ...] = ()
-        if stat == "max_hp":
+        if stat == "speed":
+            override_value, override_terms = _status_modifier_total(
+                unit, bucket, ("speed_override",)
+            )
+            if override_value > 0:
+                base_value = override_value
+                convert_terms = override_terms
+        if stat in {"max_hp", "attack"}:
             convert_delta, convert_terms = _status_modifier_total(
-                unit, bucket, ("hp_convert",)
+                unit, bucket, ("hp_convert" if stat == "max_hp" else "attack_convert",)
             )
         base_delta, base_terms = _status_modifier_total(unit, bucket, (f"{stat}_base_delta",))
+        reinit = _property_reinit_components(unit, stat)
+        if "base_value" in reinit:
+            # ReinitProperty 改写基础值；此后的基础增量仍按来源叠加。
+            base_value = reinit["base_value"]["value"]
+            static_ratio = 0.0
+            static_flat = 0.0
+        if "ratio" in reinit:
+            ratio_delta = _bounded(static_ratio + ratio_delta, reinit["ratio"]) - static_ratio
+        if "flat" in reinit:
+            flat_delta = _bounded(static_flat + flat_delta, reinit["flat"]) - static_flat
+        if "convert" in reinit:
+            convert_delta = _bounded(convert_delta, reinit["convert"])
         value = (
             (base_value + base_delta) * (1.0 + static_ratio + ratio_delta)
             + static_flat
@@ -150,8 +179,8 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
             source_terms=(*base_terms, *ratio_terms, *flat_terms, *convert_terms),
         )
 
-    if stat == "hp_convert":
-        flat_delta, terms = _status_modifier_total(unit, "attribute", ("hp_convert",))
+    if stat in {"hp_convert", "attack_convert", "defense_convert", "speed_convert", "critical_damage_convert"}:
+        flat_delta, terms = _status_modifier_total(unit, "crit" if stat == "critical_damage_convert" else "attribute", (stat,))
         return EffectiveUnitStat(
             stat=stat,
             base_value=0.0,
@@ -167,7 +196,8 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
     if resource_config is not None:
         bucket, key = resource_config
         base_value = _resource_value(unit, stat)
-        flat_delta, terms = _status_modifier_total(unit, bucket, (key,))
+        modifier_keys = (key, "critical_damage_convert") if stat == "critical_damage" else (key,)
+        flat_delta, terms = _status_modifier_total(unit, bucket, modifier_keys)
         return EffectiveUnitStat(
             stat=stat,
             base_value=base_value,
@@ -280,9 +310,100 @@ def effective_status_resistance(
     )
 
 
+def _property_reinit_components(unit: UnitState, stat: str) -> dict[str, dict]:
+    entries = unit.flags.get("property_reinit")
+    if not isinstance(entries, dict):
+        return {}
+    return {
+        str(entry.get("component")): entry for entry in entries.values()
+        if isinstance(entry, dict) and entry.get("stat") == stat
+    }
+
+
+def _bounded(current: float, entry: dict) -> float:
+    lower, upper = entry.get("min"), entry.get("max")
+    value = float(current)
+    if isinstance(lower, (int, float)):
+        value = max(float(lower), value)
+    if isinstance(upper, (int, float)):
+        value = min(float(upper), value)
+    return value
+
+
+_COMPONENT_PROPERTY_ALIASES: dict[str, tuple[str, str]] = {
+    "BaseHP": ("max_hp", "base_value"),
+    "HPAddedRatio": ("max_hp", "ratio_delta"),
+    "HPDelta": ("max_hp", "flat_delta"),
+    "BaseAttack": ("attack", "base_value"),
+    "AttackAddedRatio": ("attack", "ratio_delta"),
+    "AttackDelta": ("attack", "flat_delta"),
+    "BaseDefense": ("defense", "base_value"),
+    "DefenseAddedRatio": ("defense", "ratio_delta"),
+    "DefenseDelta": ("defense", "flat_delta"),
+    "BaseDefence": ("defense", "base_value"),
+    "DefenceAddedRatio": ("defense", "ratio_delta"),
+    "DefenceDelta": ("defense", "flat_delta"),
+    "DefenceConvert": ("defense_convert", "flat_delta"),
+    "BaseSpeed": ("speed", "base_value"),
+    "SpeedAddedRatio": ("speed", "ratio_delta"),
+    "SpeedDelta": ("speed", "flat_delta"),
+    "SpeedConvert": ("speed_convert", "flat_delta"),
+}
+
+
 def ability_property_value(unit: UnitState, property_name: object) -> float | None:
+    component = (
+        _COMPONENT_PROPERTY_ALIASES.get(property_name)
+        if isinstance(property_name, str)
+        else None
+    )
+    if component is not None:
+        stat, attribute = component
+        return float(getattr(effective_unit_stat(unit, stat), attribute))
+    if property_name == "CriticalDamageBase":
+        # StackProperty(CriticalDamageBase) and cross-entity conversion grants
+        # are distinct native properties. Sampling the former must not feed a
+        # previous CriticalDamageConvert grant back into another conversion.
+        direct, _ = _status_modifier_total(unit, "crit", ("critical_damage",))
+        return _resource_value(unit, "critical_damage") + direct
     if property_name == "BaseHP":
         return effective_unit_stat(unit, "max_hp").base_value
+    if property_name == "Level":
+        level = unit.level
+        if isinstance(level, bool) or not isinstance(level, (int, float)):
+            return None
+        return float(level)
+    if property_name == "NegativeHP":
+        # 未开启负生命的单位负生命恒为 0；开启后的数值没有生产者，保持不可读。
+        return None if unit.flags.get("negative_hp_enabled") is True else 0.0
+    if property_name == "CurExtraSpecialSP":
+        value = unit.resources.get("cur_extra_special_sp", 0.0)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+    if property_name in {"CurrentSpecialSP", "MaxSpecialSP"}:
+        # The special resource keys are declared by the character profile and
+        # stored on the unit resources map; failure to bind stays unreadable.
+        key_name = (
+            "special_resource_current_key"
+            if property_name == "CurrentSpecialSP"
+            else "special_resource_maximum_key"
+        )
+        key = unit.flags.get(key_name)
+        if not isinstance(key, str) or not key:
+            # Unbound profiles keep the engine special-SP pool under the
+            # generic resource keys; reads default to zero.
+            key = (
+                "special_sp"
+                if property_name == "CurrentSpecialSP"
+                else "max_special_sp"
+            )
+        value = unit.resources.get(key, 0.0)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
     if property_name == "Shield":
         return sum(
             float(item.get("remaining", 0.0))

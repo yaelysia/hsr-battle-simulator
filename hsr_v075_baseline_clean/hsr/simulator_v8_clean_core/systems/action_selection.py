@@ -479,6 +479,14 @@ class ActionTargetSelectionSystem:
                 "action_target_actor_missing",
             )
         actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok and actor_reason == "summon_timeline_not_admitted":
+            # Queue-inserted chain actions query targets for off-timeline
+            # summons; their liveness, not timeline participation, is required.
+            actor_ok = (
+                self.lifecycle.status_of(actor) == "active"
+                and float(actor.hp) > 0
+            )
+            actor_reason = "" if actor_ok else actor_reason
         if not actor_ok:
             return self._blocked_query(
                 actor_id,

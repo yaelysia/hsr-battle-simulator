@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
+from ..unit_eligibility import runtime_regarded_attack_type
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
@@ -19,7 +20,9 @@ from .mutation_events import before_toughness_calculation_event
 from .dynamic_values import (
     binding_source_from_store,
     character_skill_param_binding_sources,
+    ability_declared_dynamic_binding_source,
     character_declared_dynamic_binding_source,
+    servant_declared_dynamic_binding_source,
     monster_skill_param_binding_sources,
     monster_standalone_skill_param_binding_sources,
     store_from_state,
@@ -277,6 +280,7 @@ class _FormalAbilityInvocation:
     param_status_scope: TaskGraphStatusScope | None = None
     template_target_ids: tuple[str, ...] | None = None
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
+    trigger_event: GameEvent | None = field(default=None, compare=False, repr=False)
     damage_window_ledger: DamageWindowLedger = field(default_factory=DamageWindowLedger, compare=False, repr=False)
     # Assigned on first use so every task of one invocation shares one
     # execution identity even while nested events advance the state index.
@@ -530,9 +534,29 @@ class AbilityTaskSystem:
                                    reason="battle_event_startup", source="ability_task_system")
         invocation = _FormalAbilityInvocation("battle_event_startup", actor_id, state.units[actor_id].template_id, 0, targets)
         phases = tuple(self.rules.ability_phase(phase_id) for phase_id in phase_ids)
-        if not phases or any(phase is None or phase.invocation_role != "build_startup" for phase in phases):
+        if not phases or any(
+            phase is None
+            or phase.invocation_role not in {"build_startup", "non_gameplay_noop"}
+            for phase in phases
+        ):
             return self._formal_callback_blocked(state, "OnAdd", invocation, "battle_event_startup_phase_not_admitted")
-        return self._execute_formal_entries(state, entries=tuple((phase, "OnAdd") for phase in phases), invocation=invocation)
+        # A creation start-up ability that lowers to process-only tasks has no
+        # gameplay body; its phase is non_gameplay_noop and executes no entry.
+        # An admitted phase without OnAdd tasks contributes nothing to creation.
+        gameplay_phases = tuple(
+            phase
+            for phase in phases
+            if phase.invocation_role == "build_startup"
+            and any(
+                task.callback_kind == "OnAdd"
+                for task in self.rules.ability_tasks_for_phase(phase.phase_id)
+            )
+        )
+        return self._execute_formal_entries(
+            state,
+            entries=tuple((phase, "OnAdd") for phase in gameplay_phases),
+            invocation=invocation,
+        )
 
     def execute_stage_startup(
         self, state: BattleState, *, actor_id: str, wave_definition_id: str,
@@ -601,16 +625,99 @@ class AbilityTaskSystem:
                 return blocked("servant_startup_entry_phase_not_unique")
             formal = replace(formal, ability_id=level.action_id, ability_level=level.effective_level, action_definition=action)
         else:
-            graphs = tuple(graph for graph in self.rules.standalone_ability_graphs_by_name(ability_name)
-                           if graph.coverage_status == "executable")
-            if len(graphs) != 1:
-                return blocked("servant_startup_common_graph_missing_or_ambiguous:" + ability_name)
-            phases = tuple(self.rules.ability_phase(phase_id) for phase_id in graphs[0].phase_ids)
+            # A start-up passive can own an ability that also exists as a mainline
+            # action phase (the joint owner/servant sequence). Prefer that phase:
+            # it carries the skill formula bindings and the action-scale context,
+            # while the standalone duplicate only mirrors the task tree.
+            mainline_phases = tuple(
+                phase
+                for phase in self.rules.ir.ability_phases
+                if phase.ability_name == ability_name
+                and phase.action_id.startswith("avatar_skill:")
+                and phase.coverage_status in {"executable", "lowered"}
+                and not phase.blocked_reason
+            )
+            mainline_action_ids = {phase.action_id for phase in mainline_phases}
+            mainline_action = None
+            if len(mainline_action_ids) == 1 and owner is not None:
+                mainline_action_id = next(iter(mainline_action_ids))
+                levels = owner.flags.get("effective_skill_levels_by_action_id")
+                level = levels.get(mainline_action_id) if isinstance(levels, dict) else None
+                if type(level) is int and level > 0:
+                    action = self.rules.action_definition(mainline_action_id, level)
+                    selected = tuple(
+                        phase for phase in mainline_phases if phase.level == level
+                    )
+                    if action is not None and action.coverage_status == "executable" and selected:
+                        phases = selected
+                        formal = replace(
+                            formal,
+                            ability_id=mainline_action_id,
+                            ability_level=level,
+                            action_definition=action,
+                        )
+                        mainline_action = action
+            if mainline_action is None:
+                graphs = tuple(
+                    graph
+                    for graph in self.rules.standalone_ability_graphs_by_name(ability_name)
+                    if graph.coverage_status == "executable"
+                    or (
+                        graph.coverage_status == "blocked"
+                        and graph.blocked_reason == "standalone_ability_has_no_tasks"
+                    )
+                )
+                if len(graphs) != 1:
+                    return blocked("servant_startup_common_graph_missing_or_ambiguous:" + ability_name)
+                phases = tuple(self.rules.ability_phase(phase_id) for phase_id in graphs[0].phase_ids)
         if not phases or any(phase is None for phase in phases):
             return blocked("servant_startup_phase_missing")
-        if any(task.callback_kind != "OnStart" for phase in phases for task in self.rules.ability_tasks_for_phase(phase.phase_id)):
+        # A declared start-up passive whose body lowers to process-only tasks has
+        # no gameplay entries; its phase is non_gameplay_noop and stays empty.
+        gameplay_phases = tuple(
+            phase for phase in phases if phase.invocation_role != "non_gameplay_noop"
+        )
+        if any(
+            phase.invocation_role
+            not in {
+                "action_root",
+                "nested_only",
+                "standalone_root",
+                "build_startup",
+                "unbound_definition",
+            }
+            for phase in gameplay_phases
+        ):
+            return blocked("servant_startup_phase_invocation_role_not_admitted")
+        if any(
+            task.callback_kind != "OnStart"
+            for phase in gameplay_phases
+            for task in self.rules.ability_tasks_for_phase(phase.phase_id)
+        ):
             return blocked("servant_startup_phase_lifecycle_not_admitted")
-        return self._execute_formal_entries(state, entries=tuple((phase, "OnStart") for phase in phases), invocation=formal)
+        if not gameplay_phases:
+            # 全部为已证明表现任务的被动：显式完成且不产生任何状态变化。
+            return AbilityTaskExecutionResult(
+                after_state=state,
+                records=(SettlementRecord(
+                    record_type="servant_startup_non_gameplay_noop", source="ability_task_system",
+                    process_only=True,
+                    payload={"actor_id": actor_id, "ability_name": ability_name,
+                             "phase_ids": [phase.phase_id for phase in phases]},
+                    trace={"phase_sources": [phase.source.to_json() for phase in phases]},
+                ).to_json(),),
+                node_results=(ExecutionNodeResult(
+                    node_kind="ability_task_graph_callback",
+                    node_id=f"ability_task_graph_callback:{state.event_index}:{actor_id}:{ability_name}:OnStart",
+                    status="complete",
+                    reason_code="servant_startup_non_gameplay_noop",
+                ),),
+            )
+        return self._execute_formal_entries(
+            state,
+            entries=tuple((phase, "OnStart") for phase in gameplay_phases),
+            invocation=formal,
+        )
 
     def execute_character_build_startup(
         self, state: BattleState, *, invocation: CharacterBuildStartupInvocation,
@@ -664,6 +771,7 @@ class AbilityTaskSystem:
         admitted_action_target_fact: AdmittedActionTargetFact | None = None,
         action_execution_token: object | None = None,
     ) -> AbilityTaskExecutionResult:
+        # The same formal roles as admission; audit source paths have no say.
         roles = {phase.invocation_role for phase in phases}
         formal_roles = {"action_root", "nested_only"}
         formal_invocation = None
@@ -1075,6 +1183,7 @@ class AbilityTaskSystem:
             graph=lambda request, state: self._resolve_formal_nested_graph(
                 request,
                 state,
+                invocation=invocation,
             ),
             weighted_selection=lambda request, selection, state: self._resolve_formal_weighted_selection(
                 request,
@@ -1159,7 +1268,7 @@ class AbilityTaskSystem:
             invocation, reason = invocation_for(request, state)
             if invocation is None:
                 return TaskGraphGraphResult("blocked", blocked_reason=reason)
-            return self._resolve_formal_nested_graph(request, state)
+            return self._resolve_formal_nested_graph(request, state, invocation=invocation)
 
         def weighted_selection(
             request: TaskGraphHookRequest,
@@ -1306,6 +1415,7 @@ class AbilityTaskSystem:
                 admitted_action_target_fact=context.admitted_action_target_fact,
                 expected_action_window_scope=context.expected_action_window_scope,
                 param_status_scope=request.status_scope,
+                trigger_event=request.trigger_event,
             ),
             "",
         )
@@ -1347,6 +1457,7 @@ class AbilityTaskSystem:
                             self.rules, state, invocation.actor_id, scoped.primary,
                             action_level=invocation.ability_level,
                             action_id=invocation.ability_id,
+                            ability_name=task.ability_name,
                             current_action_trigger_key=_formal_action_trigger_key(invocation),
                             ability_instance_id=_ability_instance_id(state, invocation),
                             template_binding_sources=invocation.template_binding_sources,
@@ -1427,7 +1538,7 @@ class AbilityTaskSystem:
         scoped_resolution = _task_graph_target_resolution(
             request, invocation.target_resolution
         )
-        if task.opcode == "FireProjectile" and task.execution_mode == "runtime_effect":
+        if task.opcode in {"FireProjectile", "NewFireProjectile"} and task.execution_mode == "runtime_effect":
             reason = ability_task_runtime_blocked_reason(self.rules, task, topology_authority="task_graph")
             if reason or len(scoped_resolution.selected) != 1 or scoped_resolution.selected[0] not in state.units:
                 return TaskGraphLeafResult(
@@ -1642,6 +1753,56 @@ class AbilityTaskSystem:
                 break
         return current, mutations, events, rng_events, records, projections
 
+    def _resolve_task_action_definition(
+        self,
+        task: AbilityTaskIR,
+        invocation: _FormalAbilityInvocation,
+        state: BattleState,
+    ) -> ActionDefinitionIR | None:
+        """Resolve the action-scale context for an effect leaf.
+
+        A startup or standalone invocation can run a nested phase whose source
+        formulas read action properties (for example SPBase). Use the invocation's
+        own action first, then the task's action, then the unique mainline action
+        binding of the same source ability name. Anything ambiguous stays None.
+        """
+
+        if invocation.action_definition is not None:
+            return invocation.action_definition
+        if task.action_id and task.level:
+            action = self.rules.action_definition(task.action_id, task.level)
+            if action is not None:
+                return action
+        phase = self.rules.ability_phase(task.phase_id)
+        if phase is None:
+            return None
+        action_ids = {
+            candidate.action_id
+            for candidate in self.rules.ir.ability_phases
+            if candidate.ability_name == phase.ability_name
+            and candidate.action_id.startswith("avatar_skill:")
+            and candidate.level > 0
+        }
+        if len(action_ids) != 1:
+            return None
+        action_id = next(iter(action_ids))
+        units = [state.units.get(invocation.actor_id)]
+        caster = units[0]
+        if caster is not None:
+            owner_id = caster.flags.get("owner_id")
+            if isinstance(owner_id, str) and owner_id:
+                units.append(state.units.get(owner_id))
+        for unit in units:
+            if unit is None:
+                continue
+            levels = unit.flags.get("effective_skill_levels_by_action_id")
+            if not isinstance(levels, dict):
+                continue
+            level = levels.get(action_id)
+            if type(level) is int and level > 0:
+                return self.rules.action_definition(action_id, level)
+        return None
+
     def _execute_effect_leaf_task(
         self,
         state: BattleState,
@@ -1688,13 +1849,14 @@ class AbilityTaskSystem:
             and invocation.standalone is not None
             else ""
         )
+        action_definition = self._resolve_task_action_definition(task, invocation, state)
         result = self.effect_registry.execute(
             effect,
             EffectExecutionContext(
                 state=state,
                 caster_id=invocation.actor_id,
                 source_id=f"ability_task:{task.task_id}",
-                action_definition=invocation.action_definition,
+                action_definition=action_definition,
                 ability_instance_id=ability_instance_id,
                 application_instance_id=application_instance_id,
                 owner_id=invocation.actor_id,
@@ -1702,6 +1864,7 @@ class AbilityTaskSystem:
                 param_entity_id=primary_target or invocation.actor_id,
                 current_action_target_id=primary_target,
                 target_resolution=target_resolution,
+                trigger_event=invocation.trigger_event,
                 event_payload={
                     **_formal_effect_event_payload(
                         invocation, primary_target, target_resolution
@@ -1719,6 +1882,7 @@ class AbilityTaskSystem:
                     primary_target,
                     action_level=invocation.ability_level,
                     action_id=invocation.ability_id,
+                    ability_name=task.ability_name,
                     current_action_trigger_key=_formal_action_trigger_key(invocation),
                     ability_instance_id=ability_instance_id,
                     template_binding_sources=invocation.template_binding_sources,
@@ -1785,7 +1949,7 @@ class AbilityTaskSystem:
         )
         result = self.evaluator.evaluate_condition_result(
             condition,
-            self.targets.condition_evaluation_context(
+            replace(self.targets.condition_evaluation_context(
                 state,
                 condition,
                 context=target_context,
@@ -1805,6 +1969,7 @@ class AbilityTaskSystem:
                     primary_target,
                     action_level=invocation.ability_level,
                     action_id=invocation.ability_id,
+                    ability_name=task.ability_name,
                     current_action_trigger_key=_formal_action_trigger_key(
                         invocation
                     ),
@@ -1818,7 +1983,7 @@ class AbilityTaskSystem:
                     target_resolution,
                     task.task_id,
                 ),
-            ),
+            ), trigger_event=invocation.trigger_event),
         )
         evidence = cast(dict[str, JSONValue], result.to_json())
         if not result.ok or result.result is None:
@@ -1839,6 +2004,10 @@ class AbilityTaskSystem:
         task, reason = self._formal_task_for_request(request)
         if task is None:
             return TaskGraphConditionResult("blocked", blocked_reason=reason)
+        if task.opcode == "SwitchByCommandType" and not task.condition_id:
+            # A bare command-type switch carries no predicate; it is a
+            # command-phase marker whose implicit branch always runs.
+            return TaskGraphConditionResult("resolved", value=True)
         condition_refs = tuple(
             reference
             for reference in request.references
@@ -1858,7 +2027,7 @@ class AbilityTaskSystem:
                                     param_status_scope=request.status_scope,
                                     template_target_ids=request.template_target_ids,
                                     template_binding_sources=request.template_binding_sources)
-        value, blocker, _evidence = self._evaluate_formal_ability_condition(
+        value, blocker, evidence = self._evaluate_formal_ability_condition(
             state,
             task,
             invocation=scoped_invocation,
@@ -1867,7 +2036,12 @@ class AbilityTaskSystem:
         )
         if value is None:
             return TaskGraphConditionResult("blocked", blocked_reason=blocker)
-        return TaskGraphConditionResult("resolved", value)
+        condition = self.rules.condition(task.condition_id) if task.condition_id else None
+        return TaskGraphConditionResult(
+            "resolved",
+            value,
+            progress_remaining=_dynamic_condition_progress(condition, evidence),
+        )
 
     def _resolve_formal_count(
         self,
@@ -1906,6 +2080,7 @@ class AbilityTaskSystem:
                     scoped.primary,
                     action_level=invocation.ability_level,
                     action_id=invocation.ability_id,
+                    ability_name=task.ability_name,
                     current_action_trigger_key=_formal_action_trigger_key(invocation),
                     ability_instance_id=_ability_instance_id(state, invocation),
                     template_binding_sources=invocation.template_binding_sources,
@@ -1983,6 +2158,7 @@ class AbilityTaskSystem:
                 primary,
                 action_level=invocation.ability_level,
                 action_id=invocation.ability_id,
+                ability_name=task.ability_name,
                 current_action_trigger_key=_formal_action_trigger_key(invocation),
                 ability_instance_id=_ability_instance_id(state, invocation),
                 template_binding_sources=invocation.template_binding_sources,
@@ -2014,6 +2190,7 @@ class AbilityTaskSystem:
                 numeric = resolve_runtime_numeric_expression(query["MaxNumber"],
                     binding_sources=_binding_sources(self.rules, state, invocation.actor_id, primary,
                         action_id=invocation.ability_id, action_level=invocation.ability_level,
+                        ability_name=task.ability_name,
                         ability_instance_id=_ability_instance_id(state, invocation),
                         template_binding_sources=invocation.template_binding_sources),
                     source_trace=task.source.to_json())
@@ -2243,10 +2420,77 @@ class AbilityTaskSystem:
             tuple(records), child_projections=tuple(projections),
         )
 
+    def _nested_caster_invocation(
+        self,
+        request: TaskGraphHookRequest,
+        state: BattleState,
+        task: AbilityTaskIR,
+        invocation: _FormalAbilityInvocation,
+    ) -> tuple[_FormalAbilityInvocation | None, str]:
+        """TriggerAbility.TargetType names who casts the nested ability."""
+
+        effect = self.rules.effect(task.effect_id) if task.effect_id else None
+        standard = effect.payload.get("standard") if effect is not None else None
+        if not isinstance(standard, dict) or standard.get("target_alias") in {None, "", "Caster"}:
+            return None, ""
+        reference = (standard.get("target_expression_refs") or {}).get("TargetType")
+        expression_id = reference.get("target_expression_id") if isinstance(reference, dict) else None
+        expression = self.rules.target_expression(str(expression_id or ""))
+        if expression is None or expression.coverage_status != "executable":
+            return None, "ability_task_graph_nested_caster_expression_not_admitted"
+        scoped = _task_graph_target_resolution(request, invocation.target_resolution)
+        resolved = self.targets.resolve_target_expression(
+            state,
+            expression,
+            context=TargetEvaluationContext(
+                caster_id=invocation.actor_id,
+                effect_owner_id=invocation.actor_id,
+                parameter_entity_ids=((scoped.primary or invocation.actor_id),),
+                selected_target_ids=scoped.selected,
+                current_target_id=scoped.primary,
+                turn_owner_id=committed_turn_owner_id(state),
+                template_entity_ids=request.template_target_ids,
+            ),
+            target_resolution=scoped,
+            condition_event_payload=_formal_event_payload(invocation, scoped.primary, scoped),
+            binding_sources=_binding_sources(
+                self.rules, state, invocation.actor_id, scoped.primary,
+                action_level=invocation.ability_level, action_id=invocation.ability_id,
+                current_action_trigger_key=_formal_action_trigger_key(invocation),
+                ability_instance_id=_ability_instance_id(state, invocation),
+                template_binding_sources=invocation.template_binding_sources,
+            ),
+        )
+        if not resolved.resolved:
+            return None, resolved.blocked_reason or "ability_task_graph_nested_caster_unresolved"
+        if len(resolved.target_ids) > 1:
+            return None, "ability_task_graph_nested_caster_ambiguous"
+        if not resolved.target_ids or resolved.target_ids[0] == invocation.actor_id:
+            return None, ""
+        actor_id = resolved.target_ids[0]
+        return replace(
+            invocation,
+            actor_id=actor_id,
+            admitted_action_target_fact=None,
+            expected_action_window_scope=None,
+            action_damage_modifiers=(),
+            action_command=(
+                replace(invocation.action_command, actor_id=actor_id)
+                if invocation.action_command is not None else None
+            ),
+            # The queue entry identity is unchanged; only its nested caster moves.
+            standalone=(
+                replace(invocation.standalone, actor_id=actor_id)
+                if invocation.standalone is not None else None
+            ),
+        ), ""
+
     def _resolve_formal_nested_graph(
         self,
         request: TaskGraphHookRequest,
         _state: BattleState,
+        *,
+        invocation: _FormalAbilityInvocation | None = None,
     ) -> TaskGraphGraphResult:
         task, reason = self._formal_task_for_request(request)
         if task is None:
@@ -2318,6 +2562,19 @@ class AbilityTaskSystem:
                     or "ability_task_graph_nested_graph_missing",
                 )
             candidates.append(graph_result.value)
+        if not candidates and phase_ids and all(
+            (phase := self.rules.ability_phase(phase_id)) is not None
+            and phase.invocation_role == "non_gameplay_noop"
+            for phase_id in phase_ids
+        ):
+            return TaskGraphGraphResult("resolved", reference.definition_id, noop=True)
+        trigger_effect = self.rules.effect(task.effect_id) if task.effect_id else None
+        if (trigger_effect is not None and isinstance(trigger_effect.payload, dict)
+                and trigger_effect.payload.get("DynamicValues")):
+            # 调用参数不会转发给子能力，只能用于无玩法的表现能力。
+            return TaskGraphGraphResult(
+                "blocked", blocked_reason="trigger_ability_dynamic_values_not_forwarded",
+            )
         if len(candidates) != 1:
             return TaskGraphGraphResult(
                 "blocked",
@@ -2327,7 +2584,18 @@ class AbilityTaskSystem:
                     else "ability_task_graph_nested_callback_ambiguous"
                 ),
             )
-        return TaskGraphGraphResult("resolved", reference.definition_id, candidates[0])
+        nested_hooks = None
+        if invocation is not None:
+            nested_invocation, caster_reason = self._nested_caster_invocation(
+                request, _state, task, invocation,
+            )
+            if caster_reason:
+                return TaskGraphGraphResult("blocked", blocked_reason=caster_reason)
+            if nested_invocation is not None:
+                nested_hooks = self._formal_task_graph_hooks(invocation=nested_invocation)
+        return TaskGraphGraphResult(
+            "resolved", reference.definition_id, candidates[0], hooks=nested_hooks,
+        )
 
     def _formal_task_for_request(
         self,
@@ -3715,6 +3983,43 @@ class AbilityTaskSystem:
         )
         return result.after_state, list(result.mutations), list(result.events), list(result.rng_events), records
 
+    def _damage_emission_identity(
+        self, state: BattleState, emission, command: ActionCommand,
+        target_resolution: TargetResolution, primary_target: str | None,
+    ) -> tuple[str, str | None, str]:
+        """Resolve the source's attacker, property and element overrides."""
+
+        identities = {"attacker": command.actor_id, "property": command.actor_id, "element": ""}
+        for role, expression_id in (
+            ("attacker", emission.attacker_target_expression_id),
+            ("property", emission.property_source_target_expression_id),
+            ("element", emission.element_source_target_expression_id),
+        ):
+            if not expression_id:
+                continue
+            expression = self.rules.target_expression(expression_id)
+            resolved = None if expression is None else self.targets.resolve_target_expression(
+                state, expression,
+                context=TargetEvaluationContext(
+                    caster_id=command.actor_id, effect_owner_id=command.actor_id,
+                    parameter_entity_ids=((primary_target or command.actor_id),),
+                    selected_target_ids=target_resolution.selected, current_target_id=primary_target,
+                    turn_owner_id=committed_turn_owner_id(state),
+                ),
+                target_resolution=target_resolution,
+            )
+            if resolved is None or not resolved.resolved or len(resolved.target_ids) != 1 or resolved.rng_events:
+                return command.actor_id, None, f"damage_{role}_identity_not_unique_or_deterministic"
+            identities[role] = resolved.target_ids[0]
+        if identities["attacker"] != identities["property"]:
+            return command.actor_id, None, "damage_split_property_source_not_admitted"
+        element = None
+        if identities["element"]:
+            element = str(state.units[identities["element"]].flags.get("damage_type") or "")
+            if element not in {"Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary"}:
+                return command.actor_id, None, "damage_element_source_not_admitted"
+        return identities["attacker"], element, ""
+
     def _execute_damage_task(
         self,
         state: BattleState,
@@ -3870,6 +4175,26 @@ class AbilityTaskSystem:
                 state=current,
                 attacker_id=command.actor_id,
             )
+            if target_ids:
+                # A repeated hit (multi-hit action or loop task) may run after
+                # an earlier hit already defeated the target. The corpse must
+                # not receive another damage packet: it would emit a duplicate
+                # zero-HP damage event identity and fake settlement records.
+                damageable_targets = tuple(
+                    target_id
+                    for target_id in target_ids
+                    if UnitLifecycleSystem().can_receive_damage(current, target_id)[0]
+                )
+                if not damageable_targets:
+                    records.append(
+                        _task_process_record(
+                            task,
+                            ok=True,
+                            blocked_reason="damage_target_no_longer_damageable",
+                        )
+                    )
+                    continue
+                target_ids = damageable_targets
             if not target_ids:
                 # A relative-side group (the caster's whole team) is a valid
                 # source target even when every member is already defeated.
@@ -3893,6 +4218,13 @@ class AbilityTaskSystem:
                     )
                 )
                 continue
+            attacker_id, element_override, identity_reason = self._damage_emission_identity(
+                current, emission, command, target_resolution, primary_target,
+            )
+            if identity_reason:
+                records.append(_task_process_record(task, ok=False, blocked_reason=identity_reason))
+                return current, mutations, events, rng_events, records, task_graph_projections
+            window_command = replace(command, actor_id=attacker_id) if attacker_id != command.actor_id else command
             for target_id in target_ids:
                 execution_path = str(
                     command.metadata.get("ability_task_execution_path") or ""
@@ -3922,12 +4254,14 @@ class AbilityTaskSystem:
                     )
                 )
                 packet = DamagePacket(
-                    attacker_id=command.actor_id,
+                    attacker_id=attacker_id,
                     target_id=target_id,
-                    attack_type=action_definition.attack_type,
+                    attack_type=runtime_regarded_attack_type(
+                        current.units.get(attacker_id), action_definition.attack_type,
+                    ),
                     damage_formula_family=emission.damage_formula_family,
                     damage_kind="hp_damage",
-                    element_type=emission.element_type,
+                    element_type=element_override or emission.element_type,
                     action_definition=action_definition,
                     damage_emission_id=emission.damage_emission_id,
                     hit_energy_gain=emission.hit_energy_gain,
@@ -3938,7 +4272,7 @@ class AbilityTaskSystem:
                     hit_source_trace=profile.source.to_json(),
                     source_trace=emission.source.to_json(),
                     source_frame=DamageSourceFrame(
-                        owner_id=command.actor_id,
+                        owner_id=attacker_id,
                         source_id=damage_source_id,
                         source_kind=damage_source_kind,
                         sequence_id=packet_sequence_id or damage_sequence_id,
@@ -3979,7 +4313,7 @@ class AbilityTaskSystem:
                     before_errors = dispatch_damage_event(
                         damage_listener_window_event(
                             current,
-                            command,
+                            window_command,
                             action_definition,
                             event_type="damage.hit_sequence.before",
                             target_id=target_id,
@@ -4029,7 +4363,7 @@ class AbilityTaskSystem:
                     modifier_start = len(damage_modifiers)
                     before_errors = dispatch_damage_event(
                         damage_listener_window_event(
-                            current, command, action_definition,
+                            current, window_command, action_definition,
                             event_type=event_type, target_id=target_id,
                             selected_target_ids=target_resolution.selected,
                             primary_target_id=primary_target,
@@ -4820,6 +5154,39 @@ def _formal_effect_event_payload(
     }
 
 
+def _dynamic_condition_progress(
+    condition: object | None,
+    evidence: Mapping[str, JSONValue] | None,
+) -> int | None:
+    """Return the compared dynamic value as loop progress for source loops.
+
+    A conditional loop body that decrements the dynamic value compared by its
+    predicate proves termination at runtime: progress_remaining must strictly
+    decrease each iteration or the executor blocks.
+    """
+
+    if condition is None or getattr(condition, "opcode", None) != "ByCompareDynamicValue":
+        return None
+    if not isinstance(evidence, Mapping):
+        return None
+    details = evidence.get("details")
+    if not isinstance(details, Mapping):
+        return None
+    evaluation = details.get("numeric_evaluation")
+    bindings = evaluation.get("bindings") if isinstance(evaluation, Mapping) else None
+    value = bindings.get("value") if isinstance(bindings, Mapping) else None
+    if value is None:
+        # The typed comparison evidence publishes the compared dynamic value
+        # directly; it proves loop progress just like a numeric binding.
+        value = details.get("actual")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+    return int(math.floor(numeric))
+
+
 def _formal_action_trigger_key(
     invocation: _FormalAbilityInvocation,
 ) -> str | None:
@@ -4872,6 +5239,7 @@ def _binding_sources(
     action_id: str = "",
     current_action_trigger_key: str | None = None,
     ability_instance_id: str = "",
+    ability_name: str = "",
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
 ) -> tuple[dict[str, JSONValue], ...]:
     store_binding = binding_source_from_store(
@@ -4882,6 +5250,12 @@ def _binding_sources(
         rules, state, actor_id, ability_instance_id=ability_instance_id,
         excluded_hashes=tuple(store_binding.get("by_hash", {})),
     )
+    if initial is None:
+        initial = servant_declared_dynamic_binding_source(
+            rules, state, actor_id, ability_instance_id=ability_instance_id,
+            excluded_hashes=tuple(store_binding.get("by_hash", {})),
+        )
+
     sources = (
         store_binding,
         *character_skill_param_binding_sources(
@@ -4890,11 +5264,34 @@ def _binding_sources(
             (actor_id,),
             action_level=action_level,
             current_action_trigger_key=current_action_trigger_key,
+            include_unowned_rank_defaults=True,
         ),
         *monster_skill_param_binding_sources(rules, state, actor_id, action_id, action_level),
         *monster_standalone_skill_param_binding_sources(rules, state, actor_id, action_id),
         *((initial,) if initial else ()),
     )
+    # Ability-local declared slots only fill values no other source provides;
+    # a declared skill parameter or committed writer must win over the zero
+    # baseline.
+    declared_hashes = {
+        str(key)
+        for source in sources
+        for key in (
+            source.get("by_hash", {}).keys()
+            if isinstance(source.get("by_hash"), dict)
+            else ()
+        )
+    }
+    ability_initial = (
+        ability_declared_dynamic_binding_source(
+            rules, state, ability_name, actor_id,
+            ability_instance_id=ability_instance_id,
+            excluded_hashes=tuple(sorted(declared_hashes)),
+        )
+        if ability_name
+        else None
+    )
+    sources = (*sources, *((ability_initial,) if ability_initial else ()))
     # The same action parameter occurs in multiple hit profiles. Bind it once;
     # committed values take precedence and conflicting profile values stay unbound.
     values: dict[str, set[float]] = {}

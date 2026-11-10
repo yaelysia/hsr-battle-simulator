@@ -2118,7 +2118,8 @@ class RuleBook:
             tuple(
                 expression
                 for expression in self.ir.target_expressions
-                if expression.source.source_path in {
+                if expression.expression_kind == "EventDefinitionReference"
+                or expression.source.source_path in {
                     "Config/GlobalConfig/TargetAliasConfig.json",
                     "Config/GlobalConfig/TargetOperationConfig.json",
                 }
@@ -2388,6 +2389,19 @@ class RuleBook:
         if not isinstance(bindings, dict):
             return {}
         return _json_object_copy(bindings)
+
+    def ability_phase_dynamic_value_bindings(
+        self, ability_name: str,
+    ) -> dict[str, JSONValue]:
+        """Declared ability-local mutable slots of the named ability phase."""
+        if not isinstance(ability_name, str) or not ability_name:
+            return {}
+        for phase in self.ir.ability_phases:
+            if phase.ability_name != ability_name:
+                continue
+            if isinstance(phase.dynamic_value_bindings, dict) and phase.dynamic_value_bindings:
+                return _json_object_copy(phase.dynamic_value_bindings)
+        return {}
 
     def monster_data_card(self, card_id: str) -> MonsterDataCardIR | None:
         return self._monster_data_cards.get(card_id)
@@ -3840,6 +3854,11 @@ def _ability_property_watcher_contract_error(
                     "OnExitRange",
                     property_range.exit_callback_id,
                     "OnAbilityPropertyRangeExit",
+                ),
+                (
+                    "OnChange",
+                    property_range.change_callback_id,
+                    "OnAbilityPropertyChange",
                 ),
             ):
                 if not callback_id:

@@ -242,7 +242,12 @@ def _validate_payload_identity(payload: dict[str, Any]) -> None:
 
 def _validate_unit_values(payload: dict[str, Any]) -> None:
     values = {field_name: _finite_number(payload.get(field_name), field_name) for field_name in UNIT_STATE_FLOAT_FIELDS}
-    if values["speed"] <= 0:
+    zero_speed_servant = (
+        isinstance(payload.get("flags"), dict)
+        and payload["flags"].get("zero_speed_not_scheduled") is True
+        and payload.get("side") == "summon"
+    )
+    if values["speed"] < 0 or (values["speed"] == 0 and not zero_speed_servant):
         raise ValueError("unit state payload speed must be positive")
     if values["energy"] < 0 or values["max_energy"] < 0:
         raise ValueError("unit state payload energy must be non-negative")

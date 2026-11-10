@@ -119,9 +119,9 @@ def test_invalid_eidolon_modifier_rolls_back_the_whole_action(monkeypatch):
     snapshot = before.snapshot().to_json()
     original_execute = StatusCallbackSystem._execute_damage_modifier_task
 
-    def invalid_source(self, state, callback, task, detail):
+    def invalid_source(self, state, callback, task, detail, **kwargs):
         task = replace(task, source=replace(task.source, raw_id='invalid-source-fixture'))
-        return original_execute(self, state, callback, task, detail)
+        return original_execute(self, state, callback, task, detail, **kwargs)
 
     monkeypatch.setattr(StatusCallbackSystem, '_execute_damage_modifier_task', invalid_source)
     target_id = next(uid for uid, unit in before.units.items() if unit.side == 'enemy')

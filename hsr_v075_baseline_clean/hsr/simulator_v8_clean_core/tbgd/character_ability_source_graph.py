@@ -53,6 +53,7 @@ class _InventoryRow:
     skill_ids: tuple[str, ...]
     selected_version: Literal["base", "enhanced"]
     ability_source_path: str
+    avatar_base_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,7 @@ def _inventory_rows(snapshot: CharacterAbilityRawSnapshot) -> tuple[_InventoryRo
                 skill_ids=skill_ids,
                 selected_version=cast(Literal["base", "enhanced"], selected_version),
                 ability_source_path=ability_source_path,
+                avatar_base_type=str(row.get("AvatarBaseType") or ""),
             )
         )
     return tuple(
@@ -526,6 +528,19 @@ def build_character_ability_source_graph(
     for config_path in sorted({row.config_path for row in inventory_rows}):
         if load_relation(config_path, required=False) is None:
             missing_config_paths.add(config_path)
+
+    # Alternate playable representations may explicitly name an ability in the
+    # other representation's document. Only the same declared base avatar AND
+    # combat path can share such references; unrelated foreign cards stay closed.
+    path_avatars = load_relation("ExcelOutput/MultiplePathAvatarConfig.json", required=False)
+    bases = {str(row["AvatarID"]): str(row["BaseAvatarID"])
+             for row in (path_avatars.document if path_avatars is not None else ())
+             if isinstance(row, Mapping) and row.get("AvatarID") and row.get("BaseAvatarID")}
+    peers_by_avatar = {row.avatar_id: {peer.avatar_id for peer in inventory_rows
+        if row.avatar_id in bases and bases.get(peer.avatar_id) == bases[row.avatar_id]
+        and row.avatar_base_type and peer.avatar_base_type == row.avatar_base_type}
+        for row in inventory_rows}
+    borrowed_owners: dict[str, set[str]] = defaultdict(set)
 
     selected_skill_ids = {
         skill_id for row in inventory_rows for skill_id in row.skill_ids
@@ -1097,7 +1112,7 @@ def build_character_ability_source_graph(
             definition
             for definition in candidates
             if definition.definition_kind in {"character_main", "character_shared"}
-            and definition.owner_avatar_id in {"", owner_avatar_id}
+            and definition.owner_avatar_id in {"", owner_avatar_id, *peers_by_avatar.get(owner_avatar_id, ())}
         )
         presentation = tuple(
             definition
@@ -1146,17 +1161,31 @@ def build_character_ability_source_graph(
             return None
         if gameplay:
             definition = gameplay[0]
+            if definition.owner_avatar_id not in {"", owner_avatar_id}:
+                borrowed_owners[owner_avatar_id].add(definition.owner_avatar_id)
             resolved_kind: CharacterAbilityBindingKind = binding_kind
         elif presentation:
             definition = presentation[0]
             resolved_kind = "presentation"
         elif foreign:
+            # A listed phase no ability of this character triggers is a leftover
+            # list entry: keep the audit gap, but it cannot gate the action.
+            own_documents = {
+                definition.source.source_path
+                for rows in definitions_by_name.values()
+                for definition in rows
+                if definition.owner_avatar_id == owner_avatar_id
+            }
+            referenced = binding_kind != "phase" or any(
+                ability_name in json.dumps(snapshot.documents[path], ensure_ascii=False)
+                for path in own_documents if path in snapshot.documents
+            )
             add_gap(
                 graph_id=graph_id,
                 owner_avatar_id=owner_avatar_id,
                 action_source_id=action_source_id,
                 requested_ability_name=ability_name,
-                expected_binding_kind=binding_kind,
+                expected_binding_kind=binding_kind if referenced else "presentation",
                 gap_kind="cross_character_blocked",
                 candidate_definition_ids=(
                     definition.definition_id for definition in foreign
@@ -1519,7 +1548,8 @@ def build_character_ability_source_graph(
                 selected_skill_ids=selected_skill_ids,
                 inventory_source=inventory_source,
                 shared_graph_ids=(
-                    shared_graph_ids
+                    tuple(sorted({*shared_graph_ids, *(graph_id_by_avatar[owner]
+                        for owner in borrowed_owners.get(source.avatar_id, ())) }))
                     if source.source_kind == "character_main"
                     else ()
                 ),

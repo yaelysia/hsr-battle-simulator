@@ -107,6 +107,15 @@ class CombatPhaseMachine:
         actor = state.units.get(str(state.global_flags.get("turn_owner_id") or ""))
         if current == AWAITING_DECISION and actor is not None and actor.hp <= 0:
             return (*allowed, TURN_END)
+        if (
+            current == AWAITING_DECISION
+            and actor is not None
+            and actor.flags.get("entity_type") == "battle_event"
+            and actor.flags.get("timeline_admitted") is not False
+        ):
+            # A battle-event unit takes its scheduler-driven turn without an
+            # external decision, so it closes that turn from the decision phase.
+            return (*allowed, TURN_END)
         return allowed
 
     def operation_blocked_reason(self, state: BattleState, operation: str) -> str:

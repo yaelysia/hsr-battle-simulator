@@ -8,7 +8,9 @@ from ..core.model import (
     GameEvent,
     JSONValue,
     TargetResolution,
+    with_hit_window_invocation_fact,
 )
+from ..unit_eligibility import runtime_regarded_attack_type
 from ..rules.condition_state import (
     TransientConditionOperandRequest,
     TransientConditionOperandResolution,
@@ -814,7 +816,7 @@ def damage_listener_window_event(
 ) -> GameEvent:
     event_token = event_type.replace(".", "_")
     sequence_token = f":{sequence_id}" if sequence_id else ""
-    return GameEvent(
+    event = GameEvent(
         event_type=event_type,
         source_id=command.actor_id,
         target_id=target_id,
@@ -840,7 +842,9 @@ def damage_listener_window_event(
             "target_id": target_id,
             "selected_target_ids": list(selected_target_ids),
             "target_ids": list(selected_target_ids),
-            "attack_type": action_definition.attack_type,
+            "attack_type": runtime_regarded_attack_type(
+                state.units.get(command.actor_id), action_definition.attack_type,
+            ),
             "skill_type": condition_skill_type(action_definition),
             "SkillType": condition_skill_type(action_definition),
             "skill_effect": action_definition.skill_effect,
@@ -854,4 +858,8 @@ def damage_listener_window_event(
             "damage_sequence_source_task_id": sequence_id,
             "source_trace": source_trace,
         },
+    )
+    # An action's own hit window is the outer window of its callback stack.
+    return with_hit_window_invocation_fact(
+        event, sequence_id=sequence_id, in_callback_stack=False,
     )

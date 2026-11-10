@@ -18,6 +18,8 @@ from .action_preflight import (
     action_event_blocked_reason,
     action_resource_blocked_reason,
     action_resource_plan,
+    special_resource_ultimate_blocked_reason,
+    special_resource_ultimate_gate,
     combined_blocked_reason,
 )
 from .resource import ResourceSystem, ultimate_energy_blocked_reason
@@ -319,6 +321,8 @@ def _formal_action_task_graph_projection(
             key=lambda item: item.phase_id,
         )
     )
+    # Admission reads only the formal invocation role. L0 drops pure presentation
+    # abilities or marks them non_gameplay_noop; audit source paths have no say.
     roles = {phase.invocation_role for phase in action_phases}
     if "action_root" in roles:
         invalid_roles = sorted(
@@ -706,6 +710,13 @@ def _formal_action_task_graph_projection(
                     continue
                 candidates.append((nested_graph, phase_id))
 
+            # A callee L0 classified as having no gameplay body is a legal no-op.
+            if not candidates and phase_ids and all(
+                (phase := rules.ability_phase(phase_id)) is not None
+                and phase.invocation_role == "non_gameplay_noop"
+                for phase_id in phase_ids
+            ):
+                continue
             if len(candidates) != 1:
                 block(
                     "ability_task_graph_nested_callback_missing"
@@ -846,6 +857,14 @@ class ActionContractSystem:
                     metadata={"authorization_source_id": authorization.source_id},
                 )
         actor_ok, actor_reason = self.lifecycle.can_act(state, actor.unit_id)
+        if not actor_ok and actor_reason == "summon_timeline_not_admitted":
+            # Queue-inserted chain actions run off-timeline summons; their
+            # liveness, not timeline participation, is required.
+            actor_ok = (
+                self.lifecycle.status_of(actor) == "active"
+                and float(actor.hp) > 0
+            )
+            actor_reason = "" if actor_ok else actor_reason
         if not actor_ok:
             return ActionContractDecision(
                 **base,
@@ -924,8 +943,15 @@ class ActionContractSystem:
         control_gate = status_control_gate_for_actor(actor, skill_type={"BPSkill": "Skill"}.get(definition.attack_type, definition.attack_type))
         if control_gate is not None:
             return ActionContractDecision(**base, ok=False, admission=admission, blocked_reason=str(control_gate["reason"]))
+        special_gate = (
+            special_resource_ultimate_gate(state, actor.unit_id)
+            if admission.resource_gate_kind == "ultimate_energy"
+            else None
+        )
         energy_reason = (
-            ultimate_energy_blocked_reason(actor, definition.sp_need)
+            special_resource_ultimate_blocked_reason(special_gate)
+            if special_gate is not None
+            else ultimate_energy_blocked_reason(actor, definition.sp_need)
             if admission.resource_gate_kind == "ultimate_energy"
             else ""
         )
@@ -937,7 +963,8 @@ class ActionContractSystem:
                 blocked_reason=energy_reason,
                 resource_status="blocked",
                 resource_blocked_reason=energy_reason,
-                metadata={"energy": actor.energy, "max_energy": actor.max_energy, "sp_need": definition.sp_need},
+                metadata={"energy": actor.energy, "max_energy": actor.max_energy, "sp_need": definition.sp_need,
+                          **({"special_resource_ultimate_gate": special_gate} if special_gate is not None else {})},
             )
         resource_result = self.resources.plan_action_resources(
             state,

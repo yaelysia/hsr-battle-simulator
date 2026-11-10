@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..builds.models import OwnedCombatantBuildAssemblyResult
-from ..core.model import JSONValue, UnitState
+from ..core.model import BattleState, JSONValue, UnitState, current_max_hp, freeze_json
 from ..core.unit_state_codec import unit_state_from_payload
 from ..rules.ir import UnitBirthTemplateIR
 
@@ -94,6 +94,46 @@ class UnitSpawnRequest:
 
 
 @dataclass(frozen=True)
+class UnitBirthFact:
+    """Native spawn inputs, not reconstructed from plan/settlement JSON.
+
+    The caller supplies evaluated creation inputs separately at consumption.
+    Keeping these on the mutation lets audit re-materialize the formal template
+    with the actual immutable owner instead of comparing two audited copies.
+    """
+
+    request: UnitSpawnRequest
+    owner: UnitState
+    state: BattleState
+    initial_values: Mapping[str, JSONValue] = field(default_factory=dict)
+
+    @property
+    def parameter_values(self) -> dict[str, float]:
+        return {name: entry["value"] for name, entry in self.initial_values.items()}
+
+    def __post_init__(self) -> None:
+        if type(self.request) is not UnitSpawnRequest or type(self.owner) is not UnitState:
+            raise TypeError("unit birth fact requires native request and owner")
+        if self.request.owner_id != self.owner.unit_id:
+            raise ValueError("unit birth fact owner mismatch")
+        if type(self.state) is not BattleState or self.state.units.get(self.owner.unit_id) != self.owner:
+            raise ValueError("unit birth fact requires the native pre-birth state")
+        values = dict(self.initial_values)
+        if any(not isinstance(key, str) or not key or not isinstance(entry, dict)
+               or type(entry.get("value")) not in (int, float)
+               or not math.isfinite(entry["value"])
+               or not isinstance(entry.get("hash"), str) or not entry["hash"]
+               for key, entry in values.items()):
+            raise ValueError("unit birth fact parameters invalid")
+        object.__setattr__(self, "initial_values", freeze_json(values))
+        object.__setattr__(self, "request", replace(self.request,
+            source_trace=freeze_json(self.request.source_trace),
+            entry_source_trace=freeze_json(self.request.entry_source_trace),
+            level_context=freeze_json(self.request.level_context),
+        ))
+
+
+@dataclass(frozen=True)
 class UnitSpawnPlan:
     ok: bool
     unit_id: str = ""
@@ -136,6 +176,7 @@ class UnitSpawnPlan:
         expected_request: UnitSpawnRequest,
         expected_template: UnitBirthTemplateIR,
         owner: UnitState | None,
+        parameter_values: Mapping[str, float] | None = None,
     ) -> UnitState:
         if not self.ok:
             raise ValueError(self.blocked_reason or "unit_spawn_plan_blocked")
@@ -160,6 +201,7 @@ class UnitSpawnPlan:
             expected_template,
             expected_request,
             owner,
+            parameter_values=parameter_values,
         )
         if template_reason:
             raise ValueError(f"unit_spawn_plan_expected_template_invalid:{template_reason}")
@@ -172,6 +214,7 @@ class UnitSpawnPlan:
             expected_template,
             expected_request,
             owner,
+            parameter_values=parameter_values,
         )
         _validate_nested_source_proofs(self.unit, "unit")
         _validate_nested_source_proofs(expected_unit, "expected_unit")
@@ -195,8 +238,14 @@ class UnitSpawnSystem:
         request: UnitSpawnRequest,
         *,
         owner: UnitState | None = None,
+        parameter_values: Mapping[str, float] | None = None,
     ) -> UnitSpawnPlan:
-        request_reason = _template_request_blocked_reason(template, request, owner)
+        request_reason = _template_request_blocked_reason(
+            template,
+            request,
+            owner,
+            parameter_values=parameter_values,
+        )
         if request_reason:
             return self._blocked(request_reason, request=request, source_trace=request.entry_source_trace)
         if template.coverage_status != "executable":
@@ -206,7 +255,12 @@ class UnitSpawnSystem:
                 source_trace=request.entry_source_trace,
             )
         try:
-            unit = _materialize_unit_payload(template, request, owner)
+            unit = _materialize_unit_payload(
+                template,
+                request,
+                owner,
+                parameter_values=parameter_values,
+            )
             plan = UnitSpawnPlan(
                 ok=True,
                 unit_id=request.unit_id,
@@ -227,6 +281,7 @@ class UnitSpawnSystem:
                 expected_request=request,
                 expected_template=template,
                 owner=owner,
+                parameter_values=parameter_values,
             )
             return plan
         except ValueError as exc:
@@ -346,6 +401,8 @@ def _template_request_blocked_reason(
     template: UnitBirthTemplateIR,
     request: UnitSpawnRequest,
     owner: UnitState | None,
+    *,
+    parameter_values: Mapping[str, float] | None = None,
 ) -> str:
     try:
         _validate_spawn_request_complete(request)
@@ -398,6 +455,29 @@ def _template_request_blocked_reason(
     expected_source_role = "source" if request.spawn_kind == "wave_enemy" else "entry"
     if source_role != expected_source_role:
         return "unit_birth_template_source_role_mismatch"
+    creation_bindings = template.request_contract.get("creation_parameter_bindings")
+    if creation_bindings:
+        if not isinstance(creation_bindings, Mapping):
+            return "unit_birth_template_creation_parameter_bindings_invalid"
+        max_hp_name = str(creation_bindings.get("max_hp") or "")
+        if not max_hp_name:
+            return "unit_birth_template_creation_max_hp_parameter_missing"
+        max_hp_value = _strict_number((parameter_values or {}).get(max_hp_name))
+        if (
+            max_hp_value is None
+            or not math.isfinite(max_hp_value)
+            or max_hp_value <= 0
+        ):
+            return "unit_birth_template_creation_max_hp_parameter_missing_or_nonpositive"
+        current_hp_name = str(creation_bindings.get("current_hp") or "")
+        if current_hp_name:
+            current_hp_value = _strict_number((parameter_values or {}).get(current_hp_name))
+            if (
+                current_hp_value is None
+                or not math.isfinite(current_hp_value)
+                or current_hp_value <= 0
+            ):
+                return "unit_birth_template_creation_current_hp_parameter_invalid"
     return ""
 
 
@@ -405,6 +485,7 @@ def _materialize_unit_payload(
     template: UnitBirthTemplateIR,
     request: UnitSpawnRequest,
     owner: UnitState | None,
+    parameter_values: Mapping[str, float] | None = None,
 ) -> dict[str, JSONValue]:
     fields: dict[str, JSONValue] = {"unit_id": request.unit_id}
     for field_name in (
@@ -429,13 +510,26 @@ def _materialize_unit_payload(
             request=request,
             owner=owner,
             fields=fields,
+            parameters=parameter_values,
         )
     flags = {
-        key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
+        key: _resolve_spec(
+            spec,
+            request=request,
+            owner=owner,
+            fields=fields,
+            parameters=parameter_values,
+        )
         for key, spec in template.flag_specs.items()
     }
     resources = {
-        key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
+        key: _resolve_spec(
+            spec,
+            request=request,
+            owner=owner,
+            fields=fields,
+            parameters=parameter_values,
+        )
         for key, spec in template.resource_specs.items()
     }
     return {
@@ -475,6 +569,7 @@ def _resolve_spec(
     request: UnitSpawnRequest,
     owner: UnitState | None,
     fields: dict[str, JSONValue],
+    parameters: Mapping[str, float] | None = None,
 ) -> JSONValue:
     if not isinstance(spec, dict) or not isinstance(spec.get("binding_kind"), str):
         return _json_copy(spec)
@@ -493,6 +588,30 @@ def _resolve_spec(
         if field_name not in fields:
             raise ValueError(f"unit_birth_binding_unit_field_missing:{field_name}")
         return _json_copy(fields[field_name])
+    if kind == "creation_parameter":
+        parameter_name = str(spec.get("parameter_name") or "")
+        parameter_family = str(spec.get("parameter_family") or "")
+        value = _strict_number((parameters or {}).get(parameter_name))
+        if (
+            parameter_name
+            and parameter_family in {"max_hp", "current_hp"}
+            and value is not None
+            and math.isfinite(value)
+            and value > 0
+        ):
+            return value
+        fallback = spec.get("fallback")
+        if isinstance(fallback, dict):
+            return _resolve_spec(
+                fallback,
+                request=request,
+                owner=owner,
+                fields=fields,
+                parameters=parameters,
+            )
+        raise ValueError(
+            f"unit_birth_binding_creation_parameter_missing:{parameter_name}"
+        )
     if kind == "owner_linear":
         if owner is None:
             raise ValueError("unit_birth_binding_owner_missing")
@@ -672,6 +791,21 @@ def _resolve_spec(
                 bindings[property_type].to_json() for property_type in required
             ],
         }
+    if kind == "not_scheduled_timeline_trace":
+        if spec.get("timeline_admitted") is not False:
+            raise ValueError("unit_birth_binding_not_scheduled_trace_invalid")
+        return {
+            **{
+                key: _json_copy(value)
+                for key, value in spec.items()
+                if key != "binding_kind"
+            },
+            "speed": 0.0,
+            "base_action_value": 0.0,
+            "delay_ratio": 0.0,
+            "initial_action_value": 0.0,
+            "scheduled": False,
+        }
     if kind == "timeline_trace":
         speed = _strict_number(fields.get("speed"))
         action_value = _strict_number(fields.get("action_value"))
@@ -740,6 +874,18 @@ def _owned_combatant_stat_binding(
     return matches[0]
 
 
+def _owned_owner_stat(owner: UnitState, field_name: str) -> float | None:
+    """Resolve inherited combat stats at birth from the shared stat authority."""
+    from .unit_stats import effective_unit_stat
+
+    if field_name == "max_hp":
+        return current_max_hp(owner)
+    if field_name in {"attack", "defense", "speed", "critical_chance", "critical_damage"}:
+        value = effective_unit_stat(owner, field_name).value
+        return value if math.isfinite(value) else None
+    return None
+
+
 def _resolve_owned_combatant_stat(
     owner: UnitState | None,
     result: OwnedCombatantBuildAssemblyResult,
@@ -751,7 +897,7 @@ def _resolve_owned_combatant_stat(
         raise ValueError("unit_birth_binding_owner_missing")
     binding = _owned_combatant_stat_binding(result, property_type)
     if binding.binding_kind == "owner_linear":
-        owner_value = _strict_number(getattr(owner, binding.owner_field, None))
+        owner_value = _owned_owner_stat(owner, binding.owner_field)
         scale = _finite_decimal_number(binding.scale)
         offset = _finite_decimal_number(binding.offset)
         if owner_value is None or scale is None or offset is None:
@@ -760,14 +906,14 @@ def _resolve_owned_combatant_stat(
             )
         return owner_value * scale + offset
     if binding.binding_kind == "owner_field":
-        value = _strict_number(getattr(owner, binding.owner_field, None))
+        value = _owned_owner_stat(owner, binding.owner_field)
         if value is None:
             raise ValueError(
                 f"unit_birth_binding_owned_combatant_owner_field_invalid:{property_type}"
             )
         return value
     if binding.binding_kind == "owner_resource":
-        value = _strict_number(owner.resources.get(binding.owner_field))
+        value = _owned_owner_stat(owner, binding.owner_field)
         if value is None:
             raise ValueError(
                 f"unit_birth_binding_owned_combatant_owner_resource_missing:{property_type}"

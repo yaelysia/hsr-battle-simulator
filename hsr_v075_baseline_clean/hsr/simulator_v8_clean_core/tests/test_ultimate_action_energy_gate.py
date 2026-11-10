@@ -92,3 +92,56 @@ def test_resolved_queue_definition_wins_over_entry_and_trace_hints():
                    source_trace={"sp_need": 1000})
     result = _selectable_resource_preflight(_rules(100), _state(100.0, 200.0), plan)
     assert result["ok"] and result["sp_need"] == 100
+
+def _special_state(current, maximum, *, keys=True):
+    flags = {"special_resource_definition_id": "special_resource_definition:synthetic"}
+    resources = {}
+    if keys:
+        flags.update(special_resource_current_key="current_special_s_p",
+                     special_resource_maximum_key="max_special_s_p")
+        resources = {"current_special_s_p": current, "max_special_s_p": maximum}
+    return BattleState(units={"actor": UnitState("actor", "ally", "synthetic:actor", energy=0.0,
+                                                 max_energy=0, resources=resources, flags=flags)},
+                       global_flags={"current_window": "ultimate"})
+
+
+@pytest.mark.parametrize("current,maximum,reason", [
+    (34000.0, 34000.0, ""),
+    (10200.0, 34000.0, "ultimate_special_resource_not_ready"),
+    (0.0, 34000.0, "ultimate_special_resource_not_ready"),
+])
+def test_special_resource_ultimate_activates_at_its_declared_maximum(current, maximum, reason):
+    state, rules = _special_state(current, maximum), _rules(None)
+    before = state.snapshot().to_json()
+    decision = ActionContractSystem(rules).evaluate(
+        state, ActionCommand("actor", "synthetic:ultimate", 1), submission_mode="insert_window",
+    )
+    assert decision.resource_status == ("blocked" if reason else "ok")
+    assert decision.resource_blocked_reason == reason
+    assert decision.metadata.get("sp_need") is None
+    if reason:
+        assert decision.metadata["special_resource_ultimate_gate"]["maximum"] == maximum
+    preflight = _selectable_resource_preflight(rules, state, _plan())
+    assert preflight["ok"] is (not reason)
+    assert preflight["blocked_reason"] == reason
+    assert preflight["special_resource_ultimate_gate"]["current"] == current
+    assert state.snapshot().to_json() == before
+
+
+@pytest.mark.parametrize("state,reason", [
+    (_special_state(0.0, 0.0), "ultimate_special_resource_gate_values_invalid"),
+    (_special_state(0.0, 0.0, keys=False), "ultimate_special_resource_gate_keys_missing"),
+])
+def test_special_resource_gate_fails_closed_on_incomplete_declaration(state, reason):
+    rules = _rules(None)
+    decision = ActionContractSystem(rules).evaluate(
+        state, ActionCommand("actor", "synthetic:ultimate", 1), submission_mode="insert_window",
+    )
+    assert decision.resource_status == "blocked"
+    assert decision.resource_blocked_reason == reason
+    assert _selectable_resource_preflight(rules, state, _plan())["blocked_reason"] == reason
+
+
+def test_ordinary_avatar_without_special_resource_keeps_energy_cost_gate():
+    rules = _rules(None)
+    assert _selectable_resource_preflight(rules, _state(200.0, 200.0), _plan())["blocked_reason"] == "ultimate_energy_cost_invalid"

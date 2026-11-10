@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, cast
 
-from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, PendingDefeatPlan, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution, current_max_hp
+from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, PendingDefeatPlan, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution, current_max_hp, with_hit_window_invocation_fact
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -18,10 +18,6 @@ from ..rules.evaluator import (
 )
 from ..rules.expression_ir import numeric_dynamic_hashes, numeric_fixed, numeric_missing
 from ..rules.condition_state import TransientConditionOperandProvider, TransientConditionOperandRequest, TransientConditionOperandResolution
-from ..rules.engine_rule_registry import (
-    EngineRuleRegistry,
-    engine_numeric_binding_source,
-)
 from ..rules.ir import ActionDelayEmissionIR, ConditionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..rules.task_graph import (
@@ -51,6 +47,9 @@ from .dynamic_values import (
     binding_source_from_status_detail,
     binding_source_from_store_for_units,
     binding_source_from_store,
+    character_declared_dynamic_binding_source,
+    servant_declared_dynamic_binding_source,
+    servant_declared_dynamic_binding_source_for_owner,
     character_skill_param_declared_keys,
     character_skill_param_binding_sources,
     find_status_detail,
@@ -82,6 +81,7 @@ from .rng import (
     rng_mode_from_payload,
 )
 from .status import (
+    StatusLifecyclePlan,
     StatusSystem,
     _hp_cap_clamp_after_attribute_write,
     _map_stack_property,
@@ -113,6 +113,31 @@ from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 from .timeline import TimelineSystem
 from .toughness_state import read_toughness_segments
 from .unit_stats import effective_unit_stat
+
+
+# Callback events whose damage windows execute while a hit-all callback stack
+# is active.  Extra hit windows produced inside them are marked so the source
+# ByIsHitAllCallBackStack guard can stop recursive re-application.
+HIT_ALL_CALLBACK_EVENTS = frozenset({
+    "OnBeforeHitAll",
+    "OnAfterHitAll",
+    "OnBeforeBeingHitAll",
+    "OnAfterBeingHitAll",
+})
+
+# Windows whose GameEvent source and target are the attacker and defender of
+# one damage request; other events never supply the damage target aliases.
+_DAMAGE_ROLE_EVENT_TYPES = frozenset({
+    "damage.before_hit",
+    "damage.hit",
+    "damage.attacker_hit",
+    "damage.hit_sequence.before",
+    "damage.hit_sequence.after",
+    "damage.target_attack.before",
+    "damage.target_attack.after",
+    "damage.target_hit_sequence.before",
+    "damage.target_hit_sequence.after",
+})
 
 
 @dataclass(frozen=True)
@@ -724,6 +749,20 @@ class StatusCallbackSystem:
                 "status_callback_not_attached_to_instance",
             )
         tasks = tuple(self.rules.status_callback_tasks_for_callback(callback_id))
+        if not tasks:
+            if expected_window_scope is not None:
+                resolution, reason = _status_action_window_target_resolution(state, trigger_event, detail)
+                if resolution is None:
+                    return _selected_callback_blocked(state, callback_id, reason)
+            # Empty native CallbackConfig is an admitted observation, not a
+            # request to materialize an empty graph. The common callback path
+            # still checks the empty root ledger and emits its native envelope.
+            result = self._execute_callback(state, callback, detail, trigger_event,
+                damage_window_ledger, None, None)
+            if not result.ok:
+                return result
+            return replace(result, node_results=(ExecutionNodeResult(
+                node_kind="status_callback", node_id=callback_id, status="complete"),))
         graph_result = self.rules.query_formal_task_graph(
             "status_callback",
             callback_id,
@@ -838,6 +877,7 @@ class StatusCallbackSystem:
         expected_event = {
             "enter": "OnAbilityPropertyRangeEnter",
             "exit": "OnAbilityPropertyRangeExit",
+            "change": "OnAbilityPropertyChange",
         }.get(branch)
         evidence = callback.source.evidence
         if (
@@ -848,7 +888,11 @@ class StatusCallbackSystem:
             or evidence.get("ability_property_range_id") != range_id
             or evidence.get("ability_property_range_branch")
             != (
-                "OnEnterRange" if branch == "enter" else "OnExitRange"
+                "OnEnterRange"
+                if branch == "enter"
+                else "OnExitRange"
+                if branch == "exit"
+                else "OnChange"
             )
         ):
             return _selected_callback_blocked(
@@ -1078,12 +1122,30 @@ class StatusCallbackSystem:
                 errors=(reason,),
             )
         lifecycle_fact = trigger_event.status_lifecycle_fact if trigger_event is not None else None
-        if lifecycle_fact is not None and (
-            type(lifecycle_fact) is not StatusLifecycleFact
-            or not _status_callback_event_matches_fact(
+        # Ability-property watchers are their own change producer: they pass the
+        # resolved status detail and may execute from any state-mutating event.
+        if callback.scope_kind == "ability_property_range":
+            lifecycle_fact = None
+        lifecycle_instance_gone = bool(
+            getattr(trigger_event, "lifecycle_instance_gone", False)
+        )
+        lifecycle_fact_matches = lifecycle_fact is not None and (
+            type(lifecycle_fact) is StatusLifecycleFact
+            and _status_callback_event_matches_fact(
                 callback.event, lifecycle_fact.callback_event)
-            or not lifecycle_fact.matches(state, trigger_event)
-        ):
+            and (
+                lifecycle_fact.matches(state, trigger_event)
+                or (
+                    # A synchronous listener retired this instance while the
+                    # remaining lifecycle notifications of the same batch were
+                    # still queued. The producer fact and the exact event are
+                    # unchanged; only the live-instance check cannot hold.
+                    lifecycle_instance_gone
+                    and lifecycle_fact.matches_event(trigger_event)
+                )
+            )
+        )
+        if lifecycle_fact is not None and not lifecycle_fact_matches:
             # Producer facts are authoritative; a payload-only instance
             # identity is never allowed to satisfy this callback.
             reason = "status_lifecycle_fact_missing_or_mismatched"
@@ -1261,8 +1323,9 @@ class StatusCallbackSystem:
                 context_values,
             )
             if task_graph_continuation is not None
-            else TaskGraphExecutionContext(invocation_id, context_values)
+            else TaskGraphExecutionContext(invocation_id, context_values, trigger_event=trigger_event)
         )
+        execution_context = replace(execution_context, trigger_event=trigger_event)
         heal_ratios: list[float] = []
         damage_modifiers: list[DamageModifierContribution] = []
         dispatched_event_ids: set[str] = set()
@@ -1911,6 +1974,10 @@ class StatusCallbackSystem:
         task, node, reason = self._formal_status_task_for_request(request, callback)
         if task is None or node is None:
             return TaskGraphConditionResult("blocked", blocked_reason=reason)
+        if task.opcode == "SwitchByCommandType" and not task.condition_id:
+            # A bare command-type switch carries no predicate; it is a
+            # command-phase marker whose implicit branch always runs.
+            return TaskGraphConditionResult("resolved", value=True)
         scoped_event = _formal_status_scope_event(request, trigger_event)
         if node.termination_kind == "condition_progress_required":
             return TaskGraphConditionResult(
@@ -2003,7 +2070,6 @@ class StatusCallbackSystem:
             state,
             detail,
             task,
-            self.rules.engine_rule_registry(),
             self.rules,
             template_binding_sources=request.template_binding_sources,
         )
@@ -2060,7 +2126,7 @@ class StatusCallbackSystem:
             maximum = None
             if "MaxNumber" in task.task_payload:
                 value = _evaluate_callback_numeric(task.task_payload["MaxNumber"], state, detail,
-                    task, self.rules.engine_rule_registry(), self.rules,
+                    task, self.rules,
                     template_binding_sources=request.template_binding_sources)
                 if (not value.ok or value.value is None or value.value < 0
                         or not float(value.value).is_integer()):
@@ -2103,8 +2169,7 @@ class StatusCallbackSystem:
         weights: list[float] = []
         for definition in selection.numeric_definitions:
             evaluation = _evaluate_callback_numeric(
-                definition.expression, state, detail, task,
-                self.rules.engine_rule_registry(), self.rules,
+                definition.expression, state, detail, task, self.rules,
                 template_binding_sources=request.template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None or not math.isfinite(evaluation.value):
@@ -2473,7 +2538,8 @@ class StatusCallbackSystem:
             mutation = None if after == before else Mutation(
                 "set", ("units", unit.unit_id, "flags", "status_details"), before, after,
                 "attach skill restrictions to their source status lifetime", "status_callback_system",
-                metadata={"source_trace": task.source.to_json(), "status_instance_id": detail["instance_id"]},
+                metadata={"callback_id": callback.callback_id, "task_id": task.task_id,
+                          "source_trace": task.source.to_json(), "status_instance_id": detail["instance_id"]},
             )
             after_state = self.reducer.apply_all(state, (mutation,)) if mutation is not None else state
             return StatusCallbackExecutionResult(True, after_state, mutations=(mutation,) if mutation is not None else (), records=(SettlementRecord(
@@ -2513,16 +2579,17 @@ class StatusCallbackSystem:
             holder_target = alias == "ModifierOwnerEntity" or (
                 alias == "Caster" and detail.get("caster_id") == detail.get("owner_id")
             )
+            refresh_shaped = task.task_payload.get("IsRefresh") is True
             if (task.coverage_status != "executable" or task.blocked_reason
-                    or task.event != "OnStack" or not holder_target or len(installed) > 1):
+                    or (task.event != "OnStack" and not refresh_shaped)
+                    or not holder_target or len(installed) > 1):
                 reason = "stack_property_installation_not_admitted"
                 return StatusCallbackExecutionResult(
                     ok=False, after_state=state, errors=(reason,),
                     records=(_task_blocked_record(callback, task, detail, reason),),
                 )
             value = _evaluate_callback_numeric(
-                task.task_payload.get("PropertyValue"), state, detail, task,
-                self.rules.engine_rule_registry(), self.rules,
+                task.task_payload.get("PropertyValue"), state, detail, task, self.rules,
                 template_binding_sources=template_binding_sources,
             )
             if not value.ok or value.value is None:
@@ -2779,7 +2846,6 @@ class StatusCallbackSystem:
                 state,
                 detail,
                 task,
-                self.rules.engine_rule_registry(),
                 self.rules,
             )
             if not evaluation.ok or evaluation.value is None:
@@ -2886,7 +2952,6 @@ class StatusCallbackSystem:
                 state,
                 detail,
                 task,
-                self.rules.engine_rule_registry(),
                 self.rules,
             )
             if not evaluation.ok or evaluation.value is None or evaluation.value < 0:
@@ -3224,7 +3289,6 @@ class StatusCallbackSystem:
             state,
             detail,
             task,
-            self.rules.engine_rule_registry(),
             self.rules,
             template_binding_sources=template_binding_sources,
         )
@@ -3632,10 +3696,19 @@ class StatusCallbackSystem:
         context = _effect_context(self.rules, state, task, detail, trigger_event, damage_window_ledger,
                                   status_scope, template_target_ids, template_binding_sources)
         if task_graph_continuation is not None:
+            # The task-graph path must stay unique per trigger occurrence. The
+            # same task node can run once per hit/window inside one parent
+            # invocation; keeping only parent path+task id would reuse one
+            # application instance (and status instance) for every occurrence,
+            # making repeated lifecycle mutations share a stable identity.
             context = replace(context, task_graph_continuation=task_graph_continuation,
                 application_instance_id=(
                     f"status_task:{task_graph_continuation.parent_invocation_id}:"
                     f"{task_graph_continuation.parent_execution_path}:{task.task_id}"
+                    + (
+                        f":{context.application_instance_id}"
+                        if context.application_instance_id else ""
+                    )
                 ))
         result = self.effect_registry.execute(effect, context)
         after_state = self.reducer.apply_all(state, result.mutations)
@@ -3729,7 +3802,6 @@ class StatusCallbackSystem:
             state,
             detail,
             task,
-            self.rules.engine_rule_registry(),
             self.rules,
             template_binding_sources=template_binding_sources,
         )
@@ -3828,7 +3900,6 @@ class StatusCallbackSystem:
             state,
             detail,
             task,
-            self.rules.engine_rule_registry(),
             self.rules,
         )
         if (
@@ -3960,7 +4031,7 @@ class StatusCallbackSystem:
         )
         reset_requested = task.task_payload.get("DoReset") is True
         deferred_init_task_ids: list[str] = []
-        if callback.event == "OnCreate" and not reset_requested and not matching:
+        if callback.event in {"OnCreate", "OnStack"} and not reset_requested and not matching:
             active_details = tuple(
                 item for item in unit.flags.get("status_details", ())
                 if isinstance(item, dict) and item.get("instance_id") == status_instance_id
@@ -3979,16 +4050,20 @@ class StatusCallbackSystem:
                         or stack_callback.admission_status != "executable"):
                     continue
                 for producer in self.rules.status_callback_tasks_for_callback(stack_callback.callback_id):
-                    if producer.opcode != "InitShield" or producer.parent_task_id or producer.coverage_status != "executable":
+                    if (producer.opcode not in ({"InitShield"} if callback.event == "OnCreate" else {"InitShield", "StackShield"})
+                            or producer.parent_task_id or producer.coverage_status != "executable"
+                            or callback.event == "OnStack" and (stack_callback.callback_id != callback.callback_id
+                                or producer.task_index <= task.task_index)):
                         continue
                     effect = self.rules.effect(producer.effect_id)
                     if (effect is not None and effect.owner_modifier_name == modifier_name
                             and self.effect_registry.coverage(effect) == "executable"
                             and effect.payload.get("standard", {}).get("target_alias") == "ModifierOwnerEntity"):
                         deferred_init_task_ids.append(producer.task_id)
-            # Status add already emits OnCreate then OnStack in one transaction.
-            # The latter owns shield creation; this task must not create a second pool.
-            # ponytail: conditional/multiple shield producers need a broader contract.
+            # OnCreate may defer to one OnStack InitShield. Inside OnStack only
+            # a later root producer in this very callback may supply the pool.
+            # Conditional/multiple producers remain blocked; never create a
+            # duplicate shield pool merely to acknowledge SetResilience.
             if len(deferred_init_task_ids) != 1:
                 reason = "shield_resilience_on_stack_producer_not_unique"
                 return StatusCallbackExecutionResult(
@@ -4299,7 +4374,6 @@ class StatusCallbackSystem:
             state,
             detail,
             task,
-            self.rules.engine_rule_registry(),
             self.rules,
             template_binding_sources=template_binding_sources,
         )
@@ -4397,8 +4471,7 @@ class StatusCallbackSystem:
         evaluations: list[dict[str, JSONValue]] = []
         for index, term in enumerate(modifier.modifier_terms):
             evaluation = _evaluate_callback_numeric(
-                term.get("numeric_expr"), state, detail, task,
-                self.rules.engine_rule_registry(), self.rules,
+                term.get("numeric_expr"), state, detail, task, self.rules,
                 template_binding_sources=template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None:
@@ -4458,12 +4531,22 @@ class StatusCallbackSystem:
                 errors=("pre_heal_standard_payload_missing",),
             )
         alias = str(standard.get("target_alias") or "")
-        target_id = _resolve_target_alias(
-            alias, caster_id=context.caster_id, owner_id=context.owner_id,
-            param_entity_id=context.param_entity_id,
-            current_action_target_id=context.current_action_target_id,
-            target_resolution=context.target_resolution,
+        selected = (
+            tuple(context.target_resolution.selected)
+            if context.target_resolution is not None
+            else ()
         )
+        if len(selected) == 1 and selected[0] in context.state.units:
+            # Group/composite heals resolve one target at a time in the group
+            # executor; the pre-heal window belongs to that resolved target.
+            target_id = selected[0]
+        else:
+            target_id = _resolve_target_alias(
+                alias, caster_id=context.caster_id, owner_id=context.owner_id,
+                param_entity_id=context.param_entity_id,
+                current_action_target_id=context.current_action_target_id,
+                target_resolution=context.target_resolution,
+            )
         if not isinstance(target_id, str) or target_id not in context.state.units:
             return PreHealDispatchResult(
                 ok=False,
@@ -4961,6 +5044,10 @@ class StatusCallbackSystem:
         if type(parent_depth) is not int or parent_depth < 0 or parent_depth >= MAX_CALLBACK_EMITTED_EVENT_DEPTH:
             reason = "status_damage_window_depth_exceeded"
             return StatusCallbackExecutionResult(ok=False, after_state=state, errors=(reason,))
+        # Extra damage dealt *from inside* a hit-all callback produces another
+        # hit window.  Mark those windows so ByIsHitAllCallBackStack can stop
+        # the callback from recursively applying its extra hit once more.
+        hit_all_callback_stack = callback.event in HIT_ALL_CALLBACK_EVENTS
         for target_id in target_ids:
             if target_id not in current_state.units:
                 reason = f"additional_damage_target_missing:{target_id}"
@@ -5073,7 +5160,8 @@ class StatusCallbackSystem:
             for window in ("damage.hit_sequence.before", "damage.before_hit"):
                 prepared = dispatcher.dispatch_event(current_state,
                     event=_status_damage_window_event(current_state, packet, window,
-                        emission.damage_custom_name, parent_depth + 1),
+                        emission.damage_custom_name, parent_depth + 1,
+                        hit_all_callback_stack=hit_all_callback_stack),
                     damage_window_ledger=damage_window_ledger)
                 if prepared.errors:
                     reason = "status_damage_pre_hit_blocked:" + prepared.errors[0]
@@ -5125,7 +5213,8 @@ class StatusCallbackSystem:
             rng_events.extend(damage_result.rng_events)
             completed = dispatcher.dispatch_event(current_state,
                 event=_status_damage_window_event(current_state, packet, "damage.hit_sequence.after",
-                    emission.damage_custom_name, parent_depth + 1), damage_window_ledger=damage_window_ledger)
+                    emission.damage_custom_name, parent_depth + 1,
+                    hit_all_callback_stack=hit_all_callback_stack), damage_window_ledger=damage_window_ledger)
             if completed.errors:
                 reason = "status_damage_after_hit_blocked:" + completed.errors[0]
                 return StatusCallbackExecutionResult(ok=False, after_state=state,
@@ -5293,30 +5382,56 @@ class StatusCallbackSystem:
                 errors.append(reason)
                 continue
             target_alias = str(emission.target_alias or "ModifierOwnerEntity")
-            target_ids = _callback_target_group(
-                current_state,
-                detail,
-                trigger_event,
-                target_alias,
-            )
-            group_alias = target_alias in {
-                "AllEnemy",
-                "AllEnemyWithUnSelectable",
-                "AllLightTeam",
-                "AllLightTeam.RemoveServant",
-                "AllDarkTeam",
-                "AllTeamMember",
-                "AllTeamMemberWithUnselectable",
-                "AllTeammate",
-            }
-            if not target_ids and not group_alias:
-                target_id = _resolve_callback_target_id(
+            expression_targets: tuple[str, ...] | None = None
+            if emission.target_expression_id:
+                (
+                    expression_targets,
+                    expression_reason,
+                    expression_source,
+                ) = self._callback_expression_targets(
+                    current_state, task, detail, trigger_event,
+                    emission.target_expression_id,
+                )
+                if expression_reason:
+                    records.append(_action_delay_blocked_record(
+                        callback, task, detail, emission, expression_reason,
+                    ))
+                    errors.append(expression_reason)
+                    continue
+                if not expression_targets:
+                    reason = "callback_target_expression_empty"
+                    records.append(_action_delay_blocked_record(
+                        callback, task, detail, emission, reason,
+                    ))
+                    errors.append(reason)
+                    continue
+                target_ids = expression_targets
+                group_alias = True
+            else:
+                target_ids = _callback_target_group(
                     current_state,
                     detail,
-                    target_alias,
                     trigger_event,
+                    target_alias,
                 )
-                target_ids = (target_id,) if target_id in current_state.units else ()
+                group_alias = target_alias in {
+                    "AllEnemy",
+                    "AllEnemyWithUnSelectable",
+                    "AllLightTeam",
+                    "AllLightTeam.RemoveServant",
+                    "AllDarkTeam",
+                    "AllTeamMember",
+                    "AllTeamMemberWithUnselectable",
+                    "AllTeammate",
+                }
+                if not target_ids and not group_alias:
+                    target_id = _resolve_callback_target_id(
+                        current_state,
+                        detail,
+                        target_alias,
+                        trigger_event,
+                    )
+                    target_ids = (target_id,) if target_id in current_state.units else ()
             if not target_ids and group_alias:
                 records.append(
                     _action_delay_blocked_record(
@@ -5334,8 +5449,7 @@ class StatusCallbackSystem:
                 errors.append(reason)
                 continue
             evaluation = _evaluate_callback_numeric(
-                emission.delay_expr, current_state, detail, task,
-                self.rules.engine_rule_registry(), self.rules,
+                emission.delay_expr, current_state, detail, task, self.rules,
                 template_binding_sources=template_binding_sources,
             )
             if not evaluation.ok or evaluation.value is None:
@@ -5512,6 +5626,8 @@ class StatusCallbackSystem:
                     store_from_state(state),
                     source_unit_ids,
                     excluded_status_instance_ids=mirrored_status_instance_ids,
+                    # 回调没有能力实例；已结束能力的作用域槽位不可见。
+                    excluded_scopes=("ability",),
                 ),
             )
             expression = emission.scaling_expr
@@ -5658,6 +5774,124 @@ class StatusCallbackSystem:
             "custom_tag": intent.custom_tag,
         }
 
+    def _callback_expression_targets(
+        self,
+        state: BattleState,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        expression_id: str,
+    ) -> tuple[tuple[str, ...] | None, str, dict[str, JSONValue]]:
+        """Resolve a callback task's target expression with its caster context.
+
+        Simple alias targets keep their alias path; this resolver only covers a
+        full target expression (a source-local alias or a composite/filtered
+        target) whose ids must be computed before the callback writes state.
+        """
+
+        expression = self.rules.target_expression(expression_id)
+        if expression is None:
+            return None, "callback_target_expression_missing", {}
+        if expression.coverage_status != "executable" or expression.blocked_reason:
+            return (
+                None,
+                "callback_target_expression_blocked:"
+                + str(expression.blocked_reason or expression.coverage_status),
+                {},
+            )
+        context = _effect_context(self.rules, state, task, detail, trigger_event)
+        target_context = TargetEvaluationContext(
+            caster_id=context.caster_id,
+            effect_owner_id=context.owner_id,
+            parameter_entity_ids=(
+                (context.param_entity_id,) if context.param_entity_id else ()
+            ),
+            selected_target_ids=(
+                (context.current_action_target_id,)
+                if context.current_action_target_id
+                else ()
+            ),
+            current_target_id=context.current_action_target_id,
+            event_source_id=(
+                trigger_event.source_id
+                if trigger_event is not None
+                and trigger_event.source_id in state.units
+                else None
+            ),
+            event_target_id=(
+                trigger_event.target_id if trigger_event is not None else None
+            ),
+            turn_owner_id=committed_turn_owner_id(state),
+            action_event_id=(
+                trigger_event.event_id
+                if trigger_event is not None
+                and trigger_event.event_id
+                and trigger_event.window
+                else None
+            ),
+            action_window=(
+                trigger_event.window
+                if trigger_event is not None
+                and trigger_event.event_id
+                and trigger_event.window
+                else None
+            ),
+            admitted_action_target_fact=(
+                trigger_event.admitted_action_target_fact
+                if trigger_event is not None
+                else None
+            ),
+            expected_action_window_scope=(
+                trigger_event.expected_action_window_scope
+                if trigger_event is not None
+                else None
+            ),
+        )
+        resolution = self.targets.resolve_target_expression(
+            state,
+            expression,
+            context=target_context,
+            target_resolution=context.target_resolution,
+            condition_event_payload=context.event_payload,
+            dynamic_values=context.dynamic_values,
+            binding_sources=context.binding_sources,
+        )
+        if not resolution.resolved:
+            return (
+                None,
+                "callback_target_expression_blocked:"
+                + (resolution.blocked_reason or "unresolved"),
+                resolution.to_json(),
+            )
+        return tuple(resolution.target_ids), "", resolution.to_json()
+
+    def _queue_expression_targets(
+        self,
+        state: BattleState,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        intent: QueueIntentIR,
+    ) -> tuple[tuple[str, ...] | None, str, dict[str, JSONValue]]:
+        """Resolve a queue insert's full AbilityTarget expression."""
+
+        expression_id = intent.ability_target_expression_id
+        if not expression_id:
+            return None, "", {}
+        targets, reason, source = self._callback_expression_targets(
+            state, task, detail, trigger_event, expression_id
+        )
+        if not reason:
+            return targets, "", source
+        if reason == "callback_target_expression_missing":
+            return None, "queue_ability_target_expression_missing", source
+        return (
+            None,
+            "queue_ability_target_expression_blocked:"
+            + reason.removeprefix("callback_target_expression_blocked:"),
+            source,
+        )
+
     def _execute_queue_intents(
         self,
         state: BattleState,
@@ -5712,6 +5946,17 @@ class StatusCallbackSystem:
                 ))
                 errors.append(limbo_admission_reason)
                 continue
+            expression_targets, expression_reason, expression_source = (
+                self._queue_expression_targets(
+                    current_state, task, detail, trigger_event, intent
+                )
+            )
+            if expression_reason:
+                records.append(_queue_intent_blocked_record(
+                    callback, task, detail, intent, expression_reason
+                ))
+                errors.append(expression_reason)
+                continue
             target_resolution = self.queue_targets.resolve(
                 current_state,
                 detail=detail,
@@ -5725,6 +5970,8 @@ class StatusCallbackSystem:
                 allow_unselectable_target=intent.can_run_on_unselectable_target,
                 deathrattle_admission=deathrattle_admission,
                 limbo_unit_id=limbo_unit_id,
+                expression_target_ids=expression_targets,
+                expression_target_source=expression_source or None,
             )
             if not target_resolution.ok:
                 reason = target_resolution.blocked_reason or "queue_target_resolution_failed"
@@ -5936,6 +6183,13 @@ class StatusCallbackSystem:
                 window = self.rules.queue_window_for_intent(intent.queue_intent_id)
                 if window is None or window.coverage_status != "executable":
                     continue
+                expression_targets, expression_reason, expression_source = (
+                    self._queue_expression_targets(
+                        state, child, detail, trigger_event, intent
+                    )
+                )
+                if expression_reason:
+                    continue
                 target_resolution = self.queue_targets.resolve(
                     state,
                     detail=detail,
@@ -5946,6 +6200,8 @@ class StatusCallbackSystem:
                         "queue_window_source": window.source.to_json(),
                         "queue_intent_source": intent.source.to_json(),
                     },
+                    expression_target_ids=expression_targets,
+                    expression_target_source=expression_source or None,
                 )
                 if not target_resolution.ok:
                     continue
@@ -6556,14 +6812,27 @@ def _resolve_callback_target_id(
         return _first_payload_str(payload, ("damage_attacker_id", "actor_id", "source_id")) or (
             str(event.source_id or "") if event is not None else ""
         )
-    if alias == "CurrentTurnOwnerEntity":
+    if alias in {"CurrentTurnOwnerEntity", "CurrentTurnActionEntity"}:
         payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
-        return _first_payload_str(payload, ("turn_owner_id", "actor_id")) or (
-            str(event.source_id or "") if event is not None else ""
-        )
+        return _first_payload_str(
+            payload, ("turn_owner_id", "turn_action_entity_id", "actor_id")
+        ) or (str(event.source_id or "") if event is not None else "")
     if alias == "ParamEntity2":
         payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
         return _first_payload_str(payload, ("param_entity_2_id", "param_entity2_id", "secondary_target_id"))
+    if "." in alias:
+        # 点号关系别名（Caster.GetSummoner 等）统一走 effect 层的关系解析。
+        return (
+            _resolve_target_alias(
+                alias,
+                caster_id=str(detail.get("caster_id") or ""),
+                owner_id=str(detail.get("owner_id") or ""),
+                param_entity_id=None,
+                current_action_target_id=None,
+                state=state,
+            )
+            or ""
+        )
     return ""
 
 
@@ -6938,7 +7207,6 @@ def _evaluate_callback_numeric(
     state: BattleState,
     detail: dict[str, JSONValue],
     task: StatusCallbackTaskIR,
-    engine_rules: EngineRuleRegistry,
     rules: RuleBook,
     *,
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = (),
@@ -6947,30 +7215,10 @@ def _evaluate_callback_numeric(
         "status_task_source": task.source.to_json(),
         "status_instance_source": _json_dict(detail.get("source_trace")),
     }
-    engine_binding, engine_reason = engine_numeric_binding_source(
-        expression,
-        engine_rules,
-    )
-    if engine_reason:
-        return NumericEvaluationResult(
-            False,
-            None,
-            (
-                str(expression.get("kind") or "unsupported")
-                if isinstance(expression, dict)
-                else "unsupported"
-            ),
-            {},
-            source_trace,
-            engine_reason,
-        )
     context = _condition_context(rules, state, detail, None, template_binding_sources=template_binding_sources)
     return resolve_runtime_numeric_expression(
         cast(JSONValue, expression),
-        binding_sources=(
-            *context.binding_sources,
-            *((engine_binding,) if engine_binding is not None else ()),
-        ),
+        binding_sources=context.binding_sources,
         source_trace=source_trace,
     )
 
@@ -7139,6 +7387,52 @@ def _strip_hashes_from_binding_source(
     }
 
 
+def _event_damage_identity_ids(
+    state: BattleState,
+    event: GameEvent | None,
+) -> tuple[str | None, str | None]:
+    """Damage roles from a damage window's own typed event identities."""
+
+    if event is None or event.event_type not in _DAMAGE_ROLE_EVENT_TYPES:
+        return None, None
+    # A committed hit's event source is the damage-source owner, not necessarily
+    # the attacker, so those windows name only the defender.
+    attacker_known = event.event_type not in {"damage.hit", "damage.attacker_hit"}
+    return (
+        event.source_id if attacker_known and event.source_id in state.units else None,
+        event.target_id if event.target_id in state.units else None,
+    )
+
+
+def _event_passive_entity_ids(
+    state: BattleState,
+    event: GameEvent | None,
+) -> tuple[str, ...] | None:
+    """The event's second entity from its native producer, or None without one.
+
+    An empty tuple means the producer ran and named no unit (for example a
+    defeat without a unit killer); None keeps the target fail-closed.
+    """
+
+    if event is None:
+        return None
+    if event.event_type == "unit.defeated":
+        entity_id = event.source_id
+    elif type(event.status_lifecycle_fact) is StatusLifecycleFact:
+        if not event.status_lifecycle_fact.matches_event(event):
+            return None
+        entity_id = event.status_lifecycle_fact.caster_id
+    elif (
+        type(event.status_lifecycle_plan) is StatusLifecyclePlan
+        and event.status_lifecycle_plan.target_id == event.target_id
+        and isinstance(event.status_lifecycle_plan.existing_detail, dict)
+    ):
+        entity_id = event.status_lifecycle_plan.existing_detail.get("caster_id")
+    else:
+        return None
+    return (entity_id,) if isinstance(entity_id, str) and entity_id in state.units else ()
+
+
 def _condition_context(
     rules: RuleBook,
     state: BattleState,
@@ -7158,6 +7452,7 @@ def _condition_context(
     if event is not None:
         payload.setdefault("event_id", event.event_id)
         payload.setdefault("event_source_id", event.source_id)
+        payload.setdefault("event_type", event.event_type)
         payload.setdefault("event_target_id", event.target_id)
         payload.setdefault("event_window", event.window)
     owner_id = str(detail.get("owner_id") or "")
@@ -7237,6 +7532,7 @@ def _condition_context(
         )
     callback_binding_sources = with_template_binding_sources(callback_binding_sources, template_binding_sources)
     if condition is not None and targets is not None:
+        damage_attacker_id, damage_defender_id = _event_damage_identity_ids(state, event)
         context = targets.condition_evaluation_context(
             state,
             condition,
@@ -7256,6 +7552,9 @@ def _condition_context(
                 event_source_id=(event.source_id if event is not None
                                  and event.source_id in state.units else None),
                 event_target_id=(event.target_id if event is not None else None),
+                damage_attacker_id=damage_attacker_id,
+                damage_defender_id=damage_defender_id,
+                passive_entity_ids=_event_passive_entity_ids(state, event),
                 turn_owner_id=committed_turn_owner_id(state),
                 action_event_id=(event.event_id if event is not None else None),
                 action_window=(event.window if event is not None else None),
@@ -7309,6 +7608,7 @@ def _effect_context(
     payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
     if event is not None:
         payload.setdefault("event_source_id", event.source_id)
+        payload.setdefault("event_type", event.event_type)
         payload.setdefault("event_target_id", event.target_id)
         payload.setdefault("event_window", event.window)
     payload.setdefault("status_instance_id", str(detail.get("instance_id") or ""))
@@ -7388,6 +7688,7 @@ def _effect_context(
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
         event_payload=payload,
+        trigger_event=event,
         heal_event_fact=(
             event.heal_event_fact if event is not None else None
         ),
@@ -7439,21 +7740,132 @@ def _callback_binding_sources(
     """Compose callback bindings without allowing outer-action ownership to leak in."""
 
     caster_id = str(detail.get("caster_id") or detail.get("owner_id") or "")
+    declared_source = None
+    if caster_id:
+        declared_source = character_declared_dynamic_binding_source(
+            rules,
+            state,
+            caster_id,
+            excluded_hashes=current_hashes,
+        ) or servant_declared_dynamic_binding_source(
+            rules,
+            state,
+            caster_id,
+            excluded_hashes=current_hashes,
+        )
     character_sources = character_skill_param_binding_sources(
         rules,
         state,
         (caster_id,) if caster_id else (),
         excluded_hashes=current_hashes,
         excluded_names=current_names,
+        include_unowned_rank_defaults=True,
     )
     declared_hashes, declared_names = character_skill_param_declared_keys(
         rules,
         state,
         caster_id,
     ) if caster_id else ((), ())
+    caster_character_hashes = tuple(
+        str(key)
+        for source in character_sources
+        for key in (
+            source.get("by_hash", {}).keys()
+            if isinstance(source.get("by_hash"), dict)
+            else ()
+        )
+    )
+    caster_character_names = tuple(
+        str(key)
+        for source in character_sources
+        for key in (
+            source.get("by_name", {}).keys()
+            if isinstance(source.get("by_name"), dict)
+            else ()
+        )
+    )
+    master_character_sources: tuple[dict[str, JSONValue], ...] = ()
+    caster_unit = state.units.get(caster_id) if caster_id else None
+    master_id = (
+        str(caster_unit.flags.get("owner_id") or "")
+        if caster_unit is not None and isinstance(caster_unit.flags, dict)
+        else ""
+    )
+    if master_id and master_id != caster_id:
+        # A servant's callbacks may read the master's declared skill-param and
+        # skill-rank slots (both configs declare the same hashes; only the
+        # character card owns the unowned-rank zero baseline).
+        master_character_sources = character_skill_param_binding_sources(
+            rules,
+            state,
+            (master_id,),
+            excluded_hashes=(*current_hashes, *caster_character_hashes),
+            excluded_names=(*current_names, *caster_character_names),
+            include_unowned_rank_defaults=True,
+        )
+    related_units = {
+        str(detail.get("target_id") or ""),
+        str(detail.get("owner_id") or ""),
+        str(detail.get("primary_target_id") or ""),
+        str(detail.get("current_hit_target_id") or ""),
+    } - {caster_id, ""}
+    caster_unit = state.units.get(caster_id)
+    if caster_unit is not None:
+        caster_owner_id = caster_unit.flags.get("owner_id")
+        if isinstance(caster_owner_id, str) and caster_owner_id:
+            related_units.add(caster_owner_id)
+    projected_sources: list[dict[str, JSONValue]] = []
+    projected_hashes: list[str] = []
+    for related_unit_id in sorted(related_units | {caster_id}):
+        if not related_unit_id:
+            continue
+        projected = character_declared_dynamic_binding_source(
+            rules,
+            state,
+            related_unit_id,
+            excluded_hashes=current_hashes,
+        )
+        if projected is None:
+            projected = servant_declared_dynamic_binding_source_for_owner(
+                rules,
+                state,
+                related_unit_id,
+                excluded_hashes=current_hashes,
+            )
+        if projected is None:
+            continue
+        projected_sources.append(projected)
+        projected_hashes.extend(
+            str(key)
+            for key in (
+                projected.get("by_hash", {}).keys()
+                if isinstance(projected.get("by_hash"), dict)
+                else ()
+            )
+        )
+    if projected_hashes:
+        # The projected target-unit baseline owns those declared slots; the
+        # caster-side declared source must not bind them a second time.
+        declared_source = character_declared_dynamic_binding_source(
+            rules,
+            state,
+            caster_id,
+            excluded_hashes=(*current_hashes, *projected_hashes),
+        ) or servant_declared_dynamic_binding_source(
+            rules,
+            state,
+            caster_id,
+            excluded_hashes=(*current_hashes, *projected_hashes),
+        )
+    declared_sources = (
+        ([declared_source] if declared_source is not None else [])
+        + projected_sources
+    )
     explicit_sources = (
         *((current_status_binding_source,) if current_status_binding_source is not None else ()),
+        *declared_sources,
         *character_sources,
+        *master_character_sources,
     )
     if not include_ambient:
         return explicit_sources
@@ -7933,22 +8345,30 @@ def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[st
 
 def _status_damage_window_event(
     state: BattleState, packet: DamagePacket, event_type: str, custom_name: str, depth: int,
+    *, hit_all_callback_stack: bool = False,
 ) -> GameEvent:
     """Produce a hit window from the formal packet, without creating an attack."""
     frame = packet.source_frame
     if type(frame) is not DamageSourceFrame:
         raise ValueError("status_damage_window_source_frame_missing")
-    return GameEvent(event_type, source_id=packet.attacker_id, target_id=packet.target_id,
-        event_id=f"event:{state.event_index}:{event_type}:{frame.sequence_id}:{packet.target_id}",
-        window=event_type, process_only=True, payload={
-            "actor_id": packet.attacker_id, "attacker_id": packet.attacker_id,
-            "damage_attacker_id": packet.attacker_id, "param_entity_id": packet.target_id,
-            "target_id": packet.target_id, "current_hit_target_id": packet.target_id,
-            "primary_target_id": packet.target_id, "selected_target_ids": [packet.target_id],
-            "attack_type": packet.attack_type, "damage_formula_family": packet.damage_formula_family,
-            "damage_custom_name": custom_name, "damage_sequence_source_task_id": packet.source_task_id,
-            "source_trace": packet.source_trace, "mutation_event_depth": depth,
-        })
+    payload = {
+        "actor_id": packet.attacker_id, "attacker_id": packet.attacker_id,
+        "damage_attacker_id": packet.attacker_id, "param_entity_id": packet.target_id,
+        "target_id": packet.target_id, "current_hit_target_id": packet.target_id,
+        "primary_target_id": packet.target_id, "selected_target_ids": [packet.target_id],
+        "attack_type": packet.attack_type, "damage_formula_family": packet.damage_formula_family,
+        "damage_custom_name": custom_name, "damage_sequence_source_task_id": packet.source_task_id,
+        "source_trace": packet.source_trace, "mutation_event_depth": depth,
+    }
+    if hit_all_callback_stack:
+        payload["hit_all_callback_stack"] = True
+    return with_hit_window_invocation_fact(
+        GameEvent(event_type, source_id=packet.attacker_id, target_id=packet.target_id,
+            event_id=f"event:{state.event_index}:{event_type}:{frame.sequence_id}:{packet.target_id}",
+            window=event_type, process_only=True, payload=payload),
+        sequence_id=packet.source_task_id or "",
+        in_callback_stack=hit_all_callback_stack,
+    )
 
 
 def _stage_damage_window_ledger(

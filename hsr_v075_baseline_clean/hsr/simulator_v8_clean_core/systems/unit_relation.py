@@ -14,6 +14,7 @@ from ..unit_eligibility import (
     runtime_units_share_combat_team as is_same_combat_team,
     runtime_unit_is_battle_event_entity,
     runtime_unit_is_unselectable,
+    runtime_unit_is_unselectable_for,
 )
 from .summon_runtime import validate_summon_runtime
 from .unit_lifecycle import UnitLifecycleSystem
@@ -48,6 +49,8 @@ class TargetEvaluationContext:
     expected_action_window_scope: ActionWindowExpectedScope | None = None
     parameter_entity_list_ids: tuple[str, ...] | None = None
     template_entity_ids: tuple[str, ...] | None = None
+    # None: no producer supplied this role. Empty: the producer named no unit.
+    passive_entity_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.caster_id, str) or not self.caster_id:
@@ -81,7 +84,7 @@ class TargetEvaluationContext:
             if len(values) != len(set(values)):
                 raise ValueError(f"target context {field_name} contains duplicate identities")
             object.__setattr__(self, field_name, values)
-        for field_name in ("parameter_entity_list_ids", "template_entity_ids"):
+        for field_name in ("parameter_entity_list_ids", "template_entity_ids", "passive_entity_ids"):
             values = getattr(self, field_name)
             if values is None:
                 continue
@@ -107,6 +110,7 @@ class TargetEvaluationContext:
             parameter_entity_ids=(unit_id,),
             parameter_entity_list_ids=self.parameter_entity_list_ids,
             template_entity_ids=self.template_entity_ids,
+            passive_entity_ids=self.passive_entity_ids,
             selected_target_ids=self.selected_target_ids,
             current_target_id=self.current_target_id,
             event_source_id=self.event_source_id,
@@ -137,7 +141,8 @@ EntityRelation = Literal[
     "context.caster", "context.owner", "context.parameter",
     "context.selected", "context.current", "context.event_source",
     "context.event_subject", "context.event_target",
-    "context.damage_attacker", "context.damage_defender", "context.turn_owner",
+    "context.damage_attacker", "context.damage_defender", "context.passive_entity",
+    "context.turn_owner",
     "team.same", "team.opposing", "team.light", "team.dark", "team.teammate",
     "summon.owner", "summon.summoner", "summon.owned",
     "formation.adjacent", "lifecycle.filter", "entity.servant",
@@ -166,6 +171,10 @@ class EntityRelationResolver:
         context_reason = self._validate_context(state, context)
         if context_reason:
             return self._blocked(context_reason, relation)
+        if relation == "context.passive_entity":
+            if context.passive_entity_ids is None:
+                return self._blocked("context_passive_entity_missing", relation)
+            return self._resolved(context.passive_entity_ids, relation)
         if isinstance(subject_ids, str):
             return self._blocked("relation_subjects_must_be_tuple", relation)
         subjects = tuple(subject_ids)
@@ -254,6 +263,7 @@ class EntityRelationResolver:
             *context.parameter_entity_ids,
             *(context.parameter_entity_list_ids or ()),
             *(context.template_entity_ids or ()),
+            *(context.passive_entity_ids or ()),
             *context.selected_target_ids,
             context.current_target_id,
             context.event_source_id,
@@ -310,7 +320,7 @@ class EntityRelationResolver:
                 isinstance(view.metadata, dict)
                 and view.metadata.get("targetable") is not False
             )
-            if not allow_unselectable and (runtime_unit_is_unselectable(unit) or not (
+            if not allow_unselectable and (runtime_unit_is_unselectable_for(unit, anchor) or not (
                 view.can_be_targeted_alive or (include_limbo and source_targetable)
             )):
                 continue
@@ -383,6 +393,11 @@ class EntityRelationResolver:
                     # An owned instance that was defeated is no longer a current
                     # target of its owner. It stays in the runtime audit ledger,
                     # but it must not fail the whole relation or block resummons.
+                    continue
+                if lifecycle_reason == "unit_limbo":
+                    # A unit awaiting its death resolution keeps its identity;
+                    # the ownership relation is a fact about it, not a targeting.
+                    current_targets.append(unit_id)
                     continue
                 return self._blocked(f"summon_relation_lifecycle_blocked:{lifecycle_reason}", relation)
             current_targets.append(unit_id)

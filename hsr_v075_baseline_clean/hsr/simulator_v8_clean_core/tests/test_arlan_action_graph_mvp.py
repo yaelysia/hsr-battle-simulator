@@ -353,6 +353,50 @@ def test_serval_visual_mount_and_empty_animation_range_reject_nested_gameplay():
         }, opcode)
 
 
+@pytest.mark.parametrize('gender', ['Boy', 'Girl'])
+def test_memory_skill_optional_mission_event_condition_closes_real_source_alias(selector_fixture, gender):
+    from hsr.simulator_v8_clean_core.ir_types import IRSource
+
+    _, _, _, lowerer = selector_fixture
+    relative = f"Config/ConfigAbility/Avatar/Avatar_Player{gender}_30_Ability.json"
+    document = json.loads((lowerer.tbgd_root / relative).read_text())
+    index, ability, task_index, task = next(
+        (i, ability, j, task) for i, ability in enumerate(document['AbilityList'])
+        for j, task in enumerate(ability.get('OnStart', ()))
+        if task.get('Predicate', {}).get('TargetType', {}).get('Alias') == 'BattleEvent60021')
+    source = IRSource(relative, 'AbilityTask', ability['Name'],
+        {'json_path': f'$.AbilityList[{index}].OnStart[{task_index}]'})
+    # The Boy document scopes its own TargetSequence alias; the Girl document
+    # declares none and resolves the same name through the canonical
+    # BattleEventConfig row 60021 registration. Neither path may be granted by
+    # syntax alone: the registered definition is the source of the admission.
+    registry = document.get('GlobalTargetAlias') or {}
+    condition = lowerer._lower_ability_task_condition(
+        task['Predicate'], source, f'component:optional-event:{gender}',
+        target_alias_registry=registry,
+    )
+    assert condition is not None and condition.coverage_status == 'executable', condition.to_json()
+    assert condition.payload['TargetType'].payload['alias'] == 'BattleEvent60021'
+    definitions = [item for item in lowerer._strict_target_language_definitions()
+                   if item.definition_kind == 'alias' and item.name == 'BattleEvent60021']
+    if gender == 'Boy':
+        assert 'BattleEvent60021' in registry
+    else:
+        assert 'BattleEvent60021' not in registry
+        canonical = [item for item in definitions
+                     if item.source.source_path == 'ExcelOutput/BattleEventConfig.json']
+        assert len(canonical) == 1
+        assert canonical[0].source.raw_id == '60021'
+        assert canonical[0].expression.expression_kind == 'EventDefinitionReference'
+    unknown = deepcopy(task['Predicate'])
+    unknown['TargetType']['Alias'] = 'UnregisteredOptionalEvent'
+    missing = lowerer._lower_ability_task_condition(
+        unknown, source, f'component:unknown-event:{gender}',
+        target_alias_registry=registry,
+    )
+    assert missing is None or missing.coverage_status != 'executable'
+
+
 def test_serval_passive_keeps_whole_retarget_and_shared_damage_source(selector_fixture):
     from hsr.simulator_v8_clean_core.tbgd.lowering import _status_callback_task_admission
     from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
@@ -478,6 +522,79 @@ def test_single_projectile_keeps_hit_tasks_and_blocks_async_or_collision_shapes(
         assert _effect_coverage_status("FireProjectile", _effect_payload(changed, "FireProjectile", "")) == "blocked"
 
 
+@pytest.mark.parametrize('gender', ['Boy', 'Girl'])
+def test_selected_trace_projectile_keeps_real_hit_branch_and_rejects_other_outcomes(gender):
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _effect_payload, _effect_coverage_status
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import _is_single_projectile_impact_shape
+    from types import SimpleNamespace
+
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    path = root / f'Config/ConfigAbility/Avatar/Avatar_Player{gender}_30_Ability.json'
+    data = json.loads(path.read_text())
+    projectile = next(task for ability in data['AbilityList'] for task in ability.get('OnStart', [])
+                      if task.get('$type') == 'RPG.GameCore.NewFireProjectile')
+    payload = _effect_payload(projectile, 'NewFireProjectile', '')
+    assert _effect_coverage_status('NewFireProjectile', payload) == 'executable', payload['standard'].get('blocked_reason', str(payload['standard']))
+    assert payload['OnProjectileHit'] == projectile['OnProjectileHit']
+    assert payload['NewProjectile'] == projectile['NewProjectile']
+    assert payload['standard']['completion_branch'] == 'projectile_hit'
+    control = SimpleNamespace(family='NewFireProjectile', control_role='projectile_sequence')
+    formal = SimpleNamespace(opcode='NewFireProjectile', family='NewFireProjectile',
+                             execution_mode='runtime_effect', coverage_status='executable')
+    assert _is_single_projectile_impact_shape(control, formal)
+    for changed in (
+        {**projectile, 'OnProjectileMiss': []},
+        {**projectile, 'WaitProjectileFinish': False},
+        {**projectile, 'MaxNumber': {'Value': 2}},
+        {**projectile, 'TargetType': {'$type': 'RPG.GameCore.TargetAlias', 'Alias': 'AllEnemy'}},
+        {**projectile, 'NewProjectile': {**projectile['NewProjectile'], 'IgnoreTargetHitbox': False}},
+        {**projectile, 'NewProjectile': {**projectile['NewProjectile'], 'CollisionTaskList': []}},
+    ):
+        assert _effect_coverage_status('NewFireProjectile',
+                                      _effect_payload(changed, 'NewFireProjectile', '')) == 'blocked'
+
+
+@pytest.mark.parametrize('action_id', ['avatar_skill:800701', 'avatar_skill:800801'])
+def test_memory_projectile_formal_parent_keeps_hit_children(selector_fixture, action_id):
+    from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
+        _DefinitionIndexes, _ability_task, _formal_source, _node_status, _references,
+    )
+
+    _, _, _, lowerer = selector_fixture
+    definition = next(d for d in lowerer._lower_action_definitions(action_ids=frozenset({action_id}))
+                      if d.level == 1)
+    _, _, lowered = lowerer._avatar_action_binding(definition)
+    from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
+    from hsr.simulator_v8_clean_core.tbgd.lowering import (
+        _synchronize_effect_target_expression_metadata, _readmit_target_closure_effects,
+        _readmit_target_closure_tasks,
+    )
+    targets = [close_target_expression_language(expression, lowerer._strict_target_language_definitions())
+               for expression in lowered.target_expressions]
+    synchronized = _synchronize_effect_target_expression_metadata(lowered.effects, targets)
+    readmitted, ids = _readmit_target_closure_effects(synchronized)
+    tasks = _readmit_target_closure_tasks(lowered.ability_tasks, ids)
+    parents = tuple(t for t in tasks if t.opcode == 'NewFireProjectile')
+    assert parents
+    effects = {effect.effect_id: (effect,) for effect in readmitted}
+    for task in parents:
+        assert task.coverage_status == 'executable' and task.execution_mode == 'runtime_effect', (task.blocked_reason, task.execution_mode, effects[task.effect_id][0].payload['standard'])
+        assert not task.child_task_ids  # Legacy topology is deliberately empty.
+        hit_path = task.source.evidence['json_path'] + '.OnProjectileHit['
+        assert any(child.opcode == 'DamageByAttackProperty'
+                   and child.source.evidence['json_path'].startswith(hit_path)
+                   for child in tasks)
+        formal = _ability_task(task)
+        control = lowerer._character_formal_task_source_context_cache.control_by_location[
+            (task.source.source_path, task.source.evidence['json_path'], 'NewFireProjectile')]
+        assert len(control.branches) == 1 and control.branches[0].branch_kind == 'projectile_hit'
+        assert control.branches[0].children
+        source = _formal_source(formal, {formal.source.source_path: control.source.evidence['content_sha256']})
+        references = _references(formal, control, 'test:projectile', source,
+                                 _DefinitionIndexes({}, {}, effects, {}), {})
+        assert _node_status(control, formal, references)[0:2] == ('sequence', 'materialized')
+
+
 def test_voice_only_retarget_is_excluded_but_healing_child_is_kept(selector_fixture):
     from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
 
@@ -580,3 +697,24 @@ def test_hp_loss_produces_one_mutation_backed_event_before_next_task():
     assert sum(event.event_type == "hp.change" for event in events) == 1
     unchanged = DamageSystem().apply_packet(state, replace(packet, amount=0))
     assert unchanged.ok and not any(event.event_type == "hp.change" for event in unchanged.events)
+
+def test_servant_camera_triggers_do_not_block_an_avatar_action_binding(selector_fixture):
+    # The ultimate triggers servant camera abilities that live in the servant's
+    # camera document. They are presentation graphs, not unresolved gameplay
+    # definitions, and the action binding stays executable.
+    _, _, _, lowerer = selector_fixture
+    definition = next(
+        item for item in lowerer._lower_action_definitions(
+            action_ids=frozenset({'avatar_skill:141503'}))
+        if item.level == 1
+    )
+    binding, phases, lowered = lowerer._avatar_action_binding(definition)
+    assert binding.coverage_status == 'executable', binding.blocked_reason
+    assert binding.blocked_reason == ''
+    assert phases and any(phase.coverage_status == 'lowered' for phase in phases)
+    client_names = {
+        effect.payload.get('client_only_ability_source', {}).get('ability_name')
+        for effect in lowered.effects
+        if isinstance(effect.payload.get('client_only_ability_source'), dict)
+    }
+    assert 'Servant_CyreneServant_00_Skill01_Ready_Camera' in client_names

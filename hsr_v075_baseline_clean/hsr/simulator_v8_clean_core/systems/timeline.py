@@ -295,6 +295,14 @@ class TimelineSystem:
             "mode": "single_minimum",
             "candidate_count": len(tied),
         }
+        if len(tied) > 1:
+            # SetActionDelayNearTarget 记录的同值先后关系只在双方仍并列时生效。
+            tied_ids = {item[1] for item in tied}
+            ordered = tuple(item for item in tied if not _near_target_yields(state, item[1], tied_ids))
+            if ordered and len(ordered) < len(tied):
+                tie_resolution = {"mode": "near_target_order", "candidate_count": len(tied),
+                                  "remaining": [item[1] for item in ordered]}
+                tied = ordered
         if len(tied) == 1:
             actor_id = tied[0][1]
         else:
@@ -492,6 +500,20 @@ class TimelineSystem:
                 mutation_id=f"mutation:timeline:turn_owner:{plan.plan_id}",
             ),
         )
+        actor = state.units.get(plan.actor_id)
+        if actor is not None and "timeline_near_target" in actor.flags:
+            # 同值先后关系在该单位开始回合后已经兑现，随即清除。
+            mutations = (*mutations, Mutation(
+                op="delete",
+                path=("units", plan.actor_id, "flags", "timeline_near_target"),
+                before=actor.flags.get("timeline_near_target"),
+                after=None,
+                after_exists=False,
+                reason="near-target tie order fulfilled at turn begin",
+                source="timeline_system",
+                metadata=metadata,
+                mutation_id=f"mutation:timeline:near_target_clear:{plan.plan_id}",
+            ))
         return TurnAdvanceResult(plan, mutations, ())
 
     def end_turn(self, state: BattleState, actor_id: str, rule: TimelineRuleIR, *, turn_kind: str = "regular") -> TurnAdvanceResult:
@@ -1007,6 +1029,21 @@ def _timeline_metadata_from_plan(plan: TurnAdvancePlan, phase: str, operation: s
         "operation": operation,
         "source_trace": plan.source_trace,
     }
+
+
+def _near_target_yields(state: BattleState, unit_id: str, tied_ids: set[str]) -> bool:
+    """True when the unit's typed near-target order puts another tied unit first."""
+
+    own = state.units[unit_id].flags.get("timeline_near_target")
+    if isinstance(own, dict) and own.get("near_type") == "After" and own.get("anchor_id") in tied_ids:
+        return True
+    for other_id in tied_ids:
+        if other_id == unit_id:
+            continue
+        other = state.units[other_id].flags.get("timeline_near_target")
+        if isinstance(other, dict) and other.get("near_type") == "Before" and other.get("anchor_id") == unit_id:
+            return True
+    return False
 
 
 def _timeline_priority(flags: dict[str, JSONValue]) -> dict[str, JSONValue] | None:

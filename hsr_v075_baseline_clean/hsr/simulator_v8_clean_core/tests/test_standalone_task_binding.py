@@ -127,14 +127,16 @@ def test_ashveil_insert_enhance_binds_each_task_independently():
     toughness = {emission.source_task_id: emission for emission in bundle["toughness"]}
     assert toughness["task:0"].coverage_status == "executable"
     assert toughness["task:0"].toughness_amount_expr["binding_source"]["values"]["1659254037"] == 15
-    # The failed branch omits StanceValue: its missing toughness binding blocks
-    # that task atomically instead of defaulting to the display stance table.
-    assert toughness["task:1"].blocked_reason == "attack_property_stance_value_missing"
+    # The failed branch omits StanceValue: inserted-action damage without a
+    # toughness source is ordinary zero-toughness damage, so it settles without
+    # borrowing the display stance table and without a toughness emission.
+    assert "task:1" not in toughness
+    damage_task1 = next(emission for emission in bundle["damage"]
+                        if emission.source_task_id == "task:1")
+    assert damage_task1.coverage_status == "executable"
+    assert not damage_task1.toughness_emission_required
     assert bundle["admitted"]["task:0"].coverage_status == "executable"
-    assert bundle["admitted"]["task:1"].coverage_status == "blocked"
-    assert "attack_property_stance_value_missing" in bundle["admitted"]["task:1"].blocked_reason
-    assert all(emission.coverage_status != "executable" for emission in bundle["damage"]
-               if emission.source_task_id == "task:1")
+    assert bundle["admitted"]["task:1"].coverage_status == "executable"
     # Skill levels stay independent: each multiplier only follows its own skill.
     def values_at(talent_level, ultimate_level):
         selected = {row["SkillTriggerKey"]: row for _, row in bundle["rows"]
@@ -204,7 +206,10 @@ def test_hook_skill21_phase02_tasks_block_without_cross_task_leakage():
                    if emission.source_task_id == task_id)
     profiles = {profile.target_selection_policy["task_id"]: profile for profile in bundle["profiles"]}
     assert profiles["task:0"].blocked_reason == "standalone_damage_skill_formula_binding_missing"
-    assert "standalone_damage_target_alias_not_admitted:AbilityTargetAdjoinEntity" in profiles["task:1"].blocked_reason
+    # The adjacent alias is admitted as an adjacent target group; the task still
+    # stays blocked because it has no own skill formula binding to borrow.
+    assert profiles["task:1"].target_group == "adjacent"
+    assert profiles["task:1"].blocked_reason == "standalone_damage_skill_formula_binding_missing"
 
 
 def test_yukong_skill01_phase02_multi_main_tasks_stay_unbound():

@@ -115,12 +115,25 @@ def runtime_unit_source_is_targetable(unit: RuntimeUnitView) -> bool:
 
 def runtime_unit_is_unselectable(unit: RuntimeUnitView) -> bool:
     """Normalize all admitted runtime spellings of the unselectable flag."""
+    teams = unit.flags.get("custom_unselectable_teams")
     return bool(
         unit.flags.get("unselectable") is True
         or unit.flags.get("target_unselectable") is True
         or unit.flags.get("is_unselectable") is True
         or unit.flags.get("selectable") is False
+        or (isinstance(teams, (list, tuple)) and "all" in teams)
     )
+
+
+def runtime_unit_is_unselectable_for(unit: RuntimeUnitView, selector: RuntimeUnitView | None) -> bool:
+    """Unselectable for this selector, including team-scoped custom unselectability."""
+    if runtime_unit_is_unselectable(unit):
+        return True
+    teams = unit.flags.get("custom_unselectable_teams")
+    if selector is None or not isinstance(teams, (list, tuple)):
+        return False
+    selector_team = {"ally": "TeamLight", "enemy": "TeamDark"}.get(runtime_unit_combat_team(selector))
+    return selector_team is not None and selector_team in teams
 
 
 def runtime_unit_is_target_candidate(
@@ -137,3 +150,11 @@ def runtime_unit_is_target_candidate(
             include_unselectable or not runtime_unit_is_unselectable(unit)
         )
     )
+
+
+def runtime_regarded_attack_type(unit: RuntimeUnitView | None, attack_type: str) -> str:
+    """The attack type this unit's attacks of ``attack_type`` count as."""
+    flags = getattr(unit, "flags", None)
+    mapping = flags.get("regard_attack_types") if isinstance(flags, Mapping) else None
+    regarded = mapping.get(attack_type) if isinstance(mapping, Mapping) else None
+    return regarded if isinstance(regarded, str) and regarded else attack_type

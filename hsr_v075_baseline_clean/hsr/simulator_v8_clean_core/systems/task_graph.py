@@ -74,6 +74,7 @@ class TaskGraphExecutionContext:
     status_scope: TaskGraphStatusScope | None = None
     template_target_ids: tuple[str, ...] | None = None
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
+    trigger_event: GameEvent | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphExecutionContext:
@@ -85,6 +86,8 @@ class TaskGraphExecutionContext:
         object.__setattr__(self, "values", _frozen_object(self.values, "task graph context"))
         object.__setattr__(self, "parent_execution_path", _strings(
             self.parent_execution_path, "task graph parent execution path", unique=False))
+        if self.trigger_event is not None and type(self.trigger_event) is not GameEvent:
+            raise TypeError("task graph trigger event must retain the native GameEvent")
         if self.status_scope is not None and type(self.status_scope) is not TaskGraphStatusScope:
             raise TypeError("task graph context status scope is invalid")
         if self.template_target_ids is not None:
@@ -112,6 +115,7 @@ class TaskGraphHookRequest:
     status_scope: TaskGraphStatusScope | None = None
     template_target_ids: tuple[str, ...] | None = None
     template_binding_sources: tuple[Mapping[str, JSONValue], ...] = ()
+    trigger_event: GameEvent | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphHookRequest:
@@ -147,6 +151,8 @@ class TaskGraphHookRequest:
         if not path:
             raise ValueError("task graph hook execution path is missing")
         object.__setattr__(self, "execution_path", path)
+        if self.trigger_event is not None and type(self.trigger_event) is not GameEvent:
+            raise TypeError("task graph trigger event must retain the native GameEvent")
         if self.status_scope is not None and type(self.status_scope) is not TaskGraphStatusScope:
             raise TypeError("task graph hook status scope is invalid")
         if self.template_target_ids is not None:
@@ -168,6 +174,7 @@ class TaskGraphContinuation:
     status_scope: TaskGraphStatusScope | None
     template_target_ids: tuple[str, ...] | None
     template_binding_sources: tuple[Mapping[str, JSONValue], ...]
+    trigger_event: GameEvent | None
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         raise TypeError("task graph continuation must be derived from a hook request")
@@ -187,6 +194,7 @@ class TaskGraphContinuation:
         object.__setattr__(value, "status_scope", request.status_scope)
         object.__setattr__(value, "template_target_ids", request.template_target_ids)
         object.__setattr__(value, "template_binding_sources", request.template_binding_sources)
+        object.__setattr__(value, "trigger_event", request.trigger_event)
         return value
 
     def child_context(
@@ -204,6 +212,7 @@ class TaskGraphContinuation:
             self.status_scope,
             self.template_target_ids,
             self.template_binding_sources,
+            self.trigger_event,
         )
 
 
@@ -559,6 +568,10 @@ class TaskGraphGraphResult:
     definition_id: str = ""
     graph: TaskGraphIR | None = None
     blocked_reason: str = ""
+    # Hooks of the nested invocation when the source call changes its caster.
+    hooks: "TaskGraphExecutionHooks | None" = field(default=None, repr=False, compare=False)
+    # The callee is a formal no-gameplay definition; nothing runs.
+    noop: bool = False
 
     def __post_init__(self) -> None:
         if type(self) is not TaskGraphGraphResult:
@@ -570,7 +583,7 @@ class TaskGraphGraphResult:
         if self.status == "resolved":
             if (
                 not self.definition_id
-                or type(self.graph) is not TaskGraphIR
+                or (type(self.graph) is not TaskGraphIR) is not self.noop
                 or self.blocked_reason
             ):
                 raise ValueError("resolved nested task graph is inconsistent")
@@ -957,6 +970,7 @@ class _TaskGraphRun:
                 "loop": self._execute_loop,
                 "target_scope": self._execute_target_scope,
                 "template_call": self._execute_template_call,
+                "parallel_templates": self._execute_parallel_templates,
                 "template_parameter": self._execute_template_parameter,
                 "ability_call": self._execute_ability_call,
             }.get(node.node_kind)
@@ -1009,6 +1023,7 @@ class _TaskGraphRun:
             self.status_stack[-1] if self.status_stack else self.context.status_scope,
             self.frames[-1].parameter_target_ids if self.frames else self.context.template_target_ids,
             self.frames[-1].parameter_binding_sources if self.frames else self.context.template_binding_sources,
+            self.context.trigger_event,
         )
 
     def call_hook(self, name: str, *args: object) -> object:
@@ -1504,6 +1519,62 @@ class _TaskGraphRun:
         finally:
             self.frames.pop()
 
+    def _execute_parallel_templates(
+        self,
+        graph: TaskGraphIR,
+        node: TaskGraphNodeIR,
+        node_by_id: Mapping[str, TaskGraphNodeIR],
+        path: tuple[str, ...],
+    ) -> None:
+        refs = tuple(item for item in node.references if item.reference_kind == "template")
+        if not refs or any(item.resolution_status != "resolved" for item in refs):
+            raise _ExecutionBlocked("task_graph_parallel_template_reference_not_resolved")
+        bodies = tuple(
+            item for item in node.branches if item.branch_kind == "template_body"
+        )
+        if len(bodies) != len(refs):
+            raise _ExecutionBlocked("task_graph_parallel_template_body_count_mismatch")
+        if {item.label for item in bodies} != {item.definition_id for item in refs}:
+            raise _ExecutionBlocked("task_graph_parallel_template_body_identity_mismatch")
+        parameter_sources = (
+            self.frames[-1].parameter_binding_sources
+            if self.frames
+            else self.context.template_binding_sources
+        )
+        parameter_targets = (
+            self.frames[-1].parameter_target_ids
+            if self.frames
+            else self.context.template_target_ids
+        )
+        # TBGD fires every listed template concurrently. The kernel executes the
+        # same bodies in source order: all effects still run exactly once, while
+        # a deterministic single-threaded order replaces host scheduling.
+        for body in bodies:
+            frame = _TemplateFrame(
+                _stable_id(
+                    "task_graph_template_frame",
+                    self.context.invocation_id,
+                    graph.graph_id,
+                    node.graph_node_id,
+                    *path,
+                    body.label,
+                ),
+                graph.graph_id,
+                MappingProxyType({}),
+                parameter_targets,
+                parameter_sources,
+            )
+            self.frames.append(frame)
+            try:
+                self._children(
+                    graph,
+                    node_by_id,
+                    body.child_node_ids,
+                    (*path, "parallel_template_body", body.label),
+                )
+            finally:
+                self.frames.pop()
+
     def _execute_template_parameter(
         self,
         graph: TaskGraphIR,
@@ -1545,9 +1616,14 @@ class _TaskGraphRun:
             raise _ExecutionBlocked("task_graph_graph_hook_result_type_invalid")
         if result.status == "blocked":
             raise _ExecutionBlocked(result.blocked_reason)
-        nested = cast(TaskGraphIR, result.graph)
         if result.definition_id != refs[0].definition_id:
             raise _ExecutionBlocked("task_graph_nested_definition_identity_mismatch")
+        if result.noop:
+            if node.branches:
+                children = self._branch_children(node, "success", allow_absent=True)
+                self._children(graph, node_by_id, children, (*path, "ability_continuation"))
+            return
+        nested = cast(TaskGraphIR, result.graph)
         if (
             nested.source_catalog_id != graph.source_catalog_id
             or nested.source_fingerprint != graph.source_fingerprint
@@ -1556,7 +1632,13 @@ class _TaskGraphRun:
         structure_reason = TaskGraphExecutor._graph_structure_reason(nested)
         if structure_reason:
             raise _ExecutionBlocked(structure_reason)
-        self.execute_graph(nested, (*path, f"ability:{refs[0].definition_id}"))
+        outer_hooks = self.hooks
+        if result.hooks is not None:
+            self.hooks = result.hooks
+        try:
+            self.execute_graph(nested, (*path, f"ability:{refs[0].definition_id}"))
+        finally:
+            self.hooks = outer_hooks
         if node.branches:
             children = self._branch_children(node, "success", allow_absent=True)
             self._children(graph, node_by_id, children, (*path, "ability_continuation"))

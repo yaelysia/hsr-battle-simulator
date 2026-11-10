@@ -38,7 +38,7 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
-from .dynamic_values import remove_status_instance_entries
+from .dynamic_values import binding_source_from_status_detail, remove_status_instance_entries
 from .target import TargetSystem
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext, committed_turn_owner_id
 from .unit_lifecycle import UnitLifecycleSystem
@@ -588,8 +588,42 @@ class StatusSystem:
             return StatusApplicationResult(False, unsupported=("modifier_value_instance_invalid",))
         value = int(amount) if function == "Set" else old + int(amount)
         if value_kind == "independent_count":
-            if value < 0 or function == "Add" and detail.get("stack_policy") != "independent_count":
+            if value < 0:
                 return StatusApplicationResult(False, unsupported=("modifier_count_state_not_admitted",))
+            if function == "Add" and detail.get("stack_policy") != "independent_count":
+                # An adopted count rule may be the source's first write: the
+                # TBGD row is a bare Add on a parameterless presence modifier
+                # (for example a battle-event attack-time counter). Convert the
+                # fresh single instance into an independent count with this
+                # write; later writes keep the incrementing policy. Permission
+                # comes from the executing effect's formal rule and is bound to
+                # this modifier; research links in metadata only record origin.
+                effect_id = metadata.get("effect_id")
+                effect = (
+                    self.rules.effect(effect_id)
+                    if self.rules is not None and isinstance(effect_id, str) and effect_id
+                    else None
+                )
+                standard = effect.payload.get("standard") if effect is not None else None
+                bootstrap = (
+                    effect is not None
+                    and effect.opcode == "SetModifierValue"
+                    and effect.coverage_status == "executable"
+                    and isinstance(standard, dict)
+                    and standard.get("count_bootstrap_policy") == "single_instance_presence"
+                    and standard.get("operation") == "modify_modifier_value"
+                    and standard.get("value_kind") == "independent_count"
+                    and standard.get("modify_function") == "Add"
+                    and standard.get("modifier_name") == modifier_name
+                    and detail.get("modifier_name") == modifier_name
+                    and detail.get("stack_policy") == "single_instance"
+                    and type(detail.get("max_stacks")) is int
+                    and detail.get("max_stacks") <= 1
+                )
+                if not bootstrap:
+                    return StatusApplicationResult(False, unsupported=("modifier_count_state_not_admitted",))
+                # The first adopted Add also establishes the independent-count
+                # representation; the arithmetic stays the ordinary Add.
         else:
             maximum = detail.get("max_stacks")
             if type(maximum) is not int or maximum <= 0 or detail.get("stack_policy") == "independent_count":
@@ -1060,6 +1094,7 @@ class StatusSystem:
                 {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
                 retained_runtime_hashes,
                 character_bindings=character_bindings,
+                request_binding_sources=_binding_sources_for_status_owner(binding_sources, caster_id),
             )
             on_create_dynamic_values, on_create_dynamic_reason = (
                 _on_create_define_dynamic_values(
@@ -1212,6 +1247,21 @@ class StatusSystem:
                     caster_id=caster_id,
                     standard=standard,
                 ),
+                same_definition_replace=_same_definition_permanent_reapplication(
+                    existing_detail,
+                    caster_id=caster_id,
+                    standard=standard,
+                    refresh_admission=refresh_admission,
+                    source_id=source_id,
+                ) or (
+                    # Omitted Stacking: another source task of this caster replaces.
+                    existing_detail is not None
+                    and not str(refresh_admission.get("stacking") or "")
+                    and existing_detail.get("caster_id") == caster_id
+                    and existing_detail.get("source_id") != source_id
+                    # 独立计数修饰器的层数由 SetModifierValue 管理；再次添加不替换实例。
+                    and existing_detail.get("stack_policy") != "independent_count"
+                ),
             )
             unsupported = [*unsupported, *partial_reasons]
             trigger_ids_by_event = _trigger_ids_by_event(
@@ -1297,6 +1347,23 @@ class StatusSystem:
             if not chance_check.allowed:
                 continue
             stacks = _stack_plan_stacks_after(stack_plan)
+            initial_max_stacks = _stack_plan_max_stacks(stack_plan)
+            count_expr = standard.get("count")
+            if existing_detail is None and isinstance(count_expr, dict) and not _is_missing_numeric_expr(count_expr):
+                # AddModifier.Count：首次添加时的层数（如死龙寿命 3 层）；求值失败则整次失败关闭。
+                count_dynamic_values, count_binding_sources = _status_numeric_context(
+                    count_expr, resolved_dynamic_values, binding_sources,
+                )
+                count_result = RuleEvaluator().evaluate_numeric(count_expr, NumericEvaluationContext(
+                    dynamic_values=count_dynamic_values, binding_sources=count_binding_sources,
+                    source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+                ))
+                if (not count_result.ok or count_result.value is None or count_result.value <= 0
+                        or int(count_result.value) != float(count_result.value)):
+                    blocked_reasons.append(count_result.blocked_reason or "add_modifier_count_invalid")
+                    continue
+                stacks = int(count_result.value)
+                initial_max_stacks = max(int(initial_max_stacks or 1), stacks)
             remaining_duration = _refresh_plan_remaining_after(refresh_plan, duration)
             status_duration = _refresh_plan_duration(refresh_plan, duration)
             status_instance = StatusInstance(
@@ -1307,7 +1374,7 @@ class StatusSystem:
                 source_id=source_id,
                 caster_id=caster_id,
                 stacks=stacks,
-                max_stacks=_stack_plan_max_stacks(stack_plan),
+                max_stacks=initial_max_stacks,
                 duration=status_duration,
                 dynamic_values=resolved_dynamic_values,
                 formula_bindings=formula_bindings,
@@ -1333,6 +1400,16 @@ class StatusSystem:
                     "source_stack_key": source_stack_key,
                     "status_formula_bindings": [dict(item) for item in formula_bindings],
                     "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
+                    # One source effect may be applied several times inside one
+                    # action (for example once per loop-iteration hit). The
+                    # application identity must stay in the produced instance so
+                    # repeated lifecycle writes do not collapse into one stable
+                    # mutation identity; the deterministic instance id itself
+                    # keeps its event-independent seed.
+                    **(
+                        {"application_instance_id": application_instance_id}
+                        if application_instance_id else {}
+                    ),
                     **(
                         {"halo_projection": dict(_halo_projection)}
                         if isinstance(_halo_projection, dict)
@@ -1509,6 +1586,17 @@ class StatusSystem:
                     combined_rng_events.extend(halo_result.rng_events)
                     combined_records.extend(halo_result.records)
                     dispatched_event_ids.update(halo_result.dispatched_event_ids)
+                continue
+            parent_details = [item.to_json() for item in status_instances[:1]]
+            gate, gate_reason = self._addition_predicate_allows(
+                working_state, addition_effect, caster_id=caster_id,
+                owner_id=owner_id or caster_id,
+                parent_detail=parent_details[0] if parent_details else None,
+                binding_sources=binding_sources,
+            )
+            if gate_reason:
+                return _unsupported_result(effect, gate_reason)
+            if not gate:
                 continue
             addition_result = self.apply_add_modifier(
                 working_state,
@@ -1695,6 +1783,46 @@ class StatusSystem:
             records=tuple(records),
         )
 
+    def _addition_predicate_allows(
+        self,
+        state: BattleState,
+        effect: EffectIR,
+        *,
+        caster_id: str,
+        owner_id: str,
+        parent_detail: dict[str, JSONValue] | None,
+        binding_sources: tuple[dict[str, JSONValue], ...],
+    ) -> tuple[bool, str]:
+        """Evaluate the sub-modifier's source Predicate in its parent's scope."""
+
+        standard = effect.payload.get("standard")
+        condition_id = standard.get("addition_condition_id") if isinstance(standard, dict) else None
+        if not condition_id:
+            return True, ""
+        condition = self.rules.condition(condition_id) if self.rules is not None else None
+        if condition is None or self.targets is None or caster_id not in state.units:
+            return False, "modifier_addition_predicate_definition_missing"
+        parent_source = (
+            binding_source_from_status_detail(parent_detail, parent_detail.get("dynamic_values"))
+            if parent_detail is not None else None
+        )
+        context = self.targets.condition_evaluation_context(
+            state,
+            condition,
+            context=TargetEvaluationContext(
+                caster_id=caster_id,
+                effect_owner_id=owner_id,
+                parameter_entity_ids=(owner_id,),
+                turn_owner_id=committed_turn_owner_id(state),
+            ),
+            binding_sources=(*((parent_source,) if parent_source is not None else ()), *binding_sources),
+            status_detail=parent_detail,
+        )
+        result = RuleEvaluator().evaluate_condition_result(condition, context)
+        if not result.ok or result.result is None:
+            return False, f"modifier_addition_predicate_blocked:{result.reason}"
+        return bool(result.result), ""
+
     def _reconcile_one_halo_relation(
         self,
         state: BattleState,
@@ -1866,6 +1994,14 @@ class StatusSystem:
         desired_members = tuple(
             dict.fromkeys((*resolved_members, *retained_non_alive_members))
         )
+        gate, gate_reason = self._addition_predicate_allows(
+            state, effect, caster_id=str(relation["caster_id"]), owner_id=parent_owner_id,
+            parent_detail=parent_detail, binding_sources=binding_sources,
+        )
+        if gate_reason:
+            return _halo_blocked_result(gate_reason, relation)
+        if not gate:
+            desired_members = ()
         parent_fingerprint = _halo_parent_projection_fingerprint(parent_detail)
         projection_changed = (
             force_projection
@@ -4127,7 +4263,12 @@ def _resolve_dynamic_values(
     retained_runtime_hashes: tuple[str, ...] = (),
     *,
     character_bindings: dict[str, JSONValue] | None = None,
+    request_binding_sources: tuple[dict[str, JSONValue], ...] | None = None,
 ) -> dict[str, JSONValue]:
+    # AddModifier's own DynamicValues expressions are arguments evaluated in the
+    # caster's context; only the new status's slots are scoped to its owner.
+    if request_binding_sources is None:
+        request_binding_sources = binding_sources
     definition_bindings = definition.fields.get("dynamic_value_bindings")
     callback_definition_bindings = _definition_callback_dynamic_hashes(
         definition.fields.get("callback_dynamic_hashes")
@@ -4238,7 +4379,11 @@ def _resolve_dynamic_values(
             {"kind": "dynamic_hash", "hash": hash_key},
             NumericEvaluationContext(
                 dynamic_values=bindings,
-                binding_sources=binding_sources,
+                binding_sources=(
+                    request_binding_sources
+                    if hash_key in request_hashes and hash_key not in declared_hashes | callback_hashes
+                    else binding_sources
+                ),
                 source_trace=source_trace,
             ),
         )
@@ -4260,7 +4405,7 @@ def _resolve_dynamic_values(
             expr,
             NumericEvaluationContext(
                 dynamic_values=bindings,
-                binding_sources=binding_sources,
+                binding_sources=request_binding_sources,
                 source_trace=source_trace,
             ),
         )
@@ -5946,6 +6091,14 @@ def _shared_status_immunity_source(
             ):
                 return None, "status_immunity_rule_not_admitted", None
             if status_types and status_type not in {"Buff", "Debuff", "Other"}:
+                if _incoming_is_unclassified_nonstatus_marker(status_metadata):
+                    # An internal marker with no registered status row and no
+                    # status-category behavior flag is not a typed status: a
+                    # status-type immunity table cannot classify it, so this
+                    # rule does not apply. Everything else stays fail-closed.
+                    continue
+                # An untyped application cannot be proven non-matching, so the
+                # whole immunity decision fails closed.
                 return None, "status_immunity_application_type_unknown", None
             if not incoming_flags.intersection(behavior_flags) and status_type not in status_types:
                 continue
@@ -6017,12 +6170,17 @@ def _status_immunity_source(
 
 def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
     common_properties = {
+        "MaxExtraSpecialSP": ("resource", "max_extra_special_sp", "actor"),
+        "MaxSpecialSP": ("resource", "max_special_sp", "actor"),
+        "CurrentSpecialSP": ("resource", "special_sp", "actor"),
+        "CurExtraSpecialSP": ("resource", "cur_extra_special_sp", "actor"),
         "HPAddedRatio": ("attribute", "hp_added_ratio", "actor"),
         "HPDelta": ("attribute", "hp_delta", "actor"),
         # A flat Max-HP amount produced by an HP conversion.  It participates in
         # Max HP but stays separate from the source Max HP that percent-of-Max-HP
         # conversions read.
         "HPConvert": ("attribute", "hp_convert", "actor"),
+        "AttackConvert": ("attribute", "attack_convert", "actor"),
         "AttackAddedRatio": ("attribute", "attack_added_ratio", "actor"),
         "AttackDelta": ("attribute", "attack_delta", "actor"),
         "DefenceAddedRatio": ("attribute", "defense_added_ratio", "target"),
@@ -6032,8 +6190,12 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
         "SpeedAddedRatio": ("attribute", "speed_added_ratio", "actor"),
         "SpeedDelta": ("attribute", "speed_delta", "actor"),
         "BaseSpeed": ("attribute", "speed_base_delta", "actor"),
+        # A positive override replaces the unit's base speed; zero (the value
+        # used to clear a servant's override) leaves the base panel intact.
+        "SpeedOverride": ("attribute", "speed_override", "actor"),
         "CriticalChanceBase": ("crit", "critical_chance", "actor"),
         "CriticalDamageBase": ("crit", "critical_damage", "actor"),
+        "CriticalDamageConvert": ("crit", "critical_damage_convert", "actor"),
         "BreakDamageAddedRatioBase": (
             "break_bonus",
             "break_damage_added_ratio",
@@ -6513,7 +6675,9 @@ def _replacement_status_detail(
     ability identity is represented explicitly.
     """
 
-    if stacking not in {"Replace", "ReplaceByCaster"}:
+    # An omitted Stacking keeps one instance per caster, like ReplaceByCaster;
+    # another caster's instance stays a separate fail-closed case.
+    if stacking not in {"", "Replace", "ReplaceByCaster"}:
         return None
     for item in details:
         if not isinstance(item, dict) or item.get("status_id") != status_id:
@@ -7231,6 +7395,7 @@ def _application_semantics(
     *,
     same_status_other_source: dict[str, JSONValue] | None,
     exact_same_source_reapplication: bool,
+    same_definition_replace: bool = False,
 ) -> tuple[str, list[str]]:
     reasons: list[str] = []
     operation = "add"
@@ -7276,6 +7441,12 @@ def _application_semantics(
             operation = "refresh"
         elif replace_executable:
             operation = "replace"
+        elif same_definition_replace:
+            # A duration-less modifier re-applied by the same source ability has
+            # no stack/lifetime/refresh policy to consume the second
+            # application. The adopted native behavior is to replace the
+            # existing instance with the freshly resolved values.
+            operation = "replace"
         elif exact_same_source_reapplication:
             operation = "idempotent"
         elif refresh_status == "blocked":
@@ -7293,6 +7464,35 @@ def _application_semantics(
     if duration_admission.get("admission_status") == "blocked":
         reasons.append(f"duration_lifecycle_blocked:{duration_admission.get('blocked_reason')}")
     return operation, reasons
+
+
+def _same_definition_permanent_reapplication(
+    existing_detail: dict[str, JSONValue] | None,
+    *,
+    caster_id: str,
+    standard: dict[str, JSONValue],
+    refresh_admission: dict[str, JSONValue],
+    source_id: str,
+) -> bool:
+    """Same-source reapplication of a duration-less status replaces its values.
+
+    The comparison uses the instance's committed top-level source identity
+    (the applying effect task), never the audit trace stored beside it.
+    """
+
+    if (
+        existing_detail is None
+        or str(existing_detail.get("caster_id") or "") != caster_id
+        or not isinstance(source_id, str)
+        or not source_id
+    ):
+        return False
+    for key in ("lifetime", "layer_add_when_stack", "max_layer", "chance"):
+        if not _is_missing_numeric_expr(standard.get(key)):
+            return False
+    if str(refresh_admission.get("admission_status") or "") != "not_applicable":
+        return False
+    return existing_detail.get("source_id") == source_id
 
 
 def _exact_same_source_reapplication(
@@ -7401,6 +7601,30 @@ def _status_category(status_type: str) -> str:
     if normalized == "control":
         return "control"
     return "unknown"
+
+
+def _incoming_is_unclassified_nonstatus_marker(
+    status_metadata: dict[str, JSONValue],
+) -> bool:
+    """Whether an incoming modifier is not a typed status at all.
+
+    TBGD modifiers without a status configuration row are internal markers
+    (counters, continuation flags). When none of their behavior flags carries a
+    status category or control kind, a status-type immunity table has nothing
+    to classify and must not turn the application into a hard blocker. Markers
+    with any status-category or control evidence remain fail-closed.
+    """
+
+    if status_metadata.get("source") is not None:
+        return False
+    if str(status_metadata.get("control_kind") or ""):
+        return False
+    behavior_flags = tuple(
+        str(flag)
+        for flag in (status_metadata.get("behavior_flags") or ())
+        if isinstance(flag, str)
+    )
+    return _status_category_from_behavior_flags(behavior_flags) == "unknown"
 
 
 def _status_category_from_behavior_flags(

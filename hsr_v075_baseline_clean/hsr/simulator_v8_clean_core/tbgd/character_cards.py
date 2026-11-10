@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -2758,14 +2759,57 @@ def _augment_avatar_row_with_config_dynamic_values(tbgd_root: Path, row: dict[st
         for raw_hash, item in floats.items():
             if not isinstance(item, dict):
                 continue
-            by_hash[str(raw_hash)] = {
+            binding = {
                 "hash": str(raw_hash),
                 "read_info": _json_safe(item.get("ReadInfo")),
                 "source_path": json_path,
                 "raw_path": f"DynamicValues.Floats[{raw_hash}]",
             }
+            if (str(raw_hash) == str(tbgd_dynamic_key_hash("ServantID"))
+                    and item.get("ReadInfo") == {"Type": "None", "Index": 0}):
+                # This is the character-owned servant identity, not an unset
+                # mutable zero slot. Runtime consumes this normalized producer
+                # and the formal owner relation, never a hash or avatar id.
+                binding["value_producer"] = "owned_servant_identity"
+                binding["logical_name"] = "ServantID"
+            by_hash[str(raw_hash)] = binding
+    # A caster-scoped slot written by the character's own abilities is a mutable
+    # unit slot even when the config omits it; unset reads use the declared zero.
+    stem = Path(json_path).name.removesuffix("_Config.json")
+    ability_relative = f"Config/ConfigAbility/Avatar/{stem}_Ability.json"
+    ability_path = tbgd_root / ability_relative
+    if ability_path.exists():
+        try:
+            ability_data = json.loads(ability_path.read_text(encoding="utf-8"))
+        except Exception:
+            ability_data = None
+        for key_name in sorted(_caster_scoped_dynamic_writer_keys(ability_data)):
+            hash_key = str(tbgd_dynamic_key_hash(key_name))
+            by_hash.setdefault(hash_key, {
+                "hash": hash_key,
+                "read_info": {"Type": "None", "Index": 0},
+                "source_path": ability_relative,
+                "raw_path": f"ContextCaster writer:{key_name}",
+                "logical_name": key_name,
+            })
     row["_character_config_dynamic_value_bindings"] = {"by_hash": by_hash, "source_path": json_path}
     return row
+
+
+def _caster_scoped_dynamic_writer_keys(value: Any) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        if value.get("$type") == "RPG.GameCore.SetDynamicValue" and value.get("ContextScope") == "ContextCaster":
+            key = value.get("DynamicKey")
+            name = key.get("Value") if isinstance(key, dict) else key
+            if isinstance(name, str) and name:
+                keys.add(name)
+        for child in value.values():
+            keys |= _caster_scoped_dynamic_writer_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            keys |= _caster_scoped_dynamic_writer_keys(child)
+    return keys
 
 
 def _avatar_rank_rows_by_id(
@@ -3131,6 +3175,8 @@ def _bounce_policy_from_row(
     skill_text = text_map.get(text_hash, "") if text_hash else ""
     normalized_text = _normalize_skill_text(skill_text)
     bounce_count = _bounce_count_from_text(normalized_text)
+    if bounce_count <= 0:
+        bounce_count = _bounce_count_from_parameter_text(normalized_text, row)
     selection_strategy = _bounce_selection_strategy(normalized_text)
     candidate_scope = _bounce_candidate_scope(normalized_text)
     blocked_reason = ""
@@ -3356,6 +3402,9 @@ def _special_resource_definition_from_avatar_config(
         if isinstance(value, str)
         and value.startswith("Max")
         and value.endswith("SpecialSP")
+        # MaxExtraSpecialSP 是独立的溢出池上限（unit_stats max_extra_special_sp），
+        # 不是主特殊资源的上限。
+        and value != "MaxExtraSpecialSP"
     }
     reasons: list[str] = []
     if len(current_properties) != 1:
@@ -3567,7 +3616,6 @@ def _special_resource_initializer_from_sources(
     high_expression: dict[str, JSONValue] = lower_numeric_expression(None)
     level_key = ""
     level_hash = 0
-    zero_floor_hash = 0
     if len(world_predicates) != 1:
         reasons.append("special_resource_world_level_branch_missing_or_ambiguous")
     else:
@@ -3614,18 +3662,17 @@ def _special_resource_initializer_from_sources(
             reasons.append("special_resource_level_source_not_admitted")
         low_hashes = set(_integer_dynamic_hashes(low_expression))
         high_hashes = set(_integer_dynamic_hashes(high_expression))
-        zero_candidates = low_hashes - {level_hash}
+        # Function symbols are compiler inputs consumed during expression
+        # lowering; only the selected team level may stay a runtime binding.
         if (
             not is_typed_numeric_expression(low_expression)
             or not is_typed_numeric_expression(high_expression)
             or level_hash == 0
-            or low_hashes != {level_hash, *zero_candidates}
-            or len(zero_candidates) != 1
-            or high_hashes != zero_candidates
+            or not low_hashes <= {level_hash}
+            or not high_hashes <= {level_hash}
+            or not (low_hashes | high_hashes)
         ):
             reasons.append("special_resource_maximum_expression_bindings_invalid")
-        else:
-            zero_floor_hash = next(iter(zero_candidates))
 
     minimum_predicates = tuple(
         (path, node)
@@ -3708,7 +3755,6 @@ def _special_resource_initializer_from_sources(
             "maximum_value_dynamic_hash": maximum_hash,
             "level_dynamic_key": level_key,
             "level_dynamic_hash": level_hash,
-            "zero_floor_dynamic_hash": zero_floor_hash,
             "world_level_threshold": world_level_threshold,
             "initial_current_binding_hash": initial_binding_hash,
             "initial_current_binding_value": binding_value,
@@ -3721,7 +3767,6 @@ def _special_resource_initializer_from_sources(
             maximum_value_dynamic_hash=maximum_hash,
             level_dynamic_key=level_key,
             level_dynamic_hash=level_hash,
-            zero_floor_dynamic_hash=zero_floor_hash,
             world_level_threshold=world_level_threshold,
             low_world_level_expression=low_expression,
             high_world_level_expression=high_expression,
@@ -4298,6 +4343,34 @@ def _bounce_count_from_text(text: str) -> int:
     if match:
         return int(match.group("count"))
     return 0
+
+
+def _bounce_count_from_parameter_text(text: str, row: dict[str, Any]) -> int:
+    """Read a text-declared parameterised hit count from the skill row.
+
+    Source texts name the count slot directly (for example
+    "#4[i]段攻击段数"); the row parameter list carries the realised value for
+    the row's level.
+    """
+    match = re.search(r"#(?P<index>\d+)(?:\[i\])?段攻击", text)
+    if match is None:
+        return 0
+    parameter_index = int(match.group("index")) - 1
+    parameters = row.get("ParamList")
+    if (
+        parameter_index < 0
+        or not isinstance(parameters, list)
+        or parameter_index >= len(parameters)
+    ):
+        return 0
+    raw_value = parameters[parameter_index]
+    raw_value = raw_value.get("Value") if isinstance(raw_value, dict) else raw_value
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        return 0
+    value = float(raw_value)
+    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+        return 0
+    return int(value)
 
 
 def _bounce_candidate_scope(text: str) -> str:

@@ -73,7 +73,10 @@ def test_parallel_source_markers_admit_no_extra_death_settlement_and_debug_only(
     finish = {'$type': 'RPG.GameCore.DamagePerformFinish', 'SkipDeathSettlement': True}
     assert not reason(finish, 'DamagePerformFinish')
     assert reason({**finish, 'SkipDeathSettlement': False}, 'DamagePerformFinish')
-    assert reason({**finish, 'IsFakeAvatarAttack': True}, 'DamagePerformFinish')
+    # IsFakeAvatarAttack is the other source-declared settlement marker the
+    # ability executor implements (skip the extra settlement for a fake attack).
+    assert not reason({**finish, 'IsFakeAvatarAttack': True}, 'DamagePerformFinish')
+    assert reason({**finish, 'IsFakeAvatarAttack': False}, 'DamagePerformFinish')
     log = {'$type': 'RPG.GameCore.DebugLog', 'Level': 'Warn', 'Message': 'source diagnostic'}
     assert ability_task_execution_mode('DebugLog') == 'process_only'
     assert not reason(log, 'DebugLog')
@@ -133,6 +136,19 @@ def test_battle_event_caster_reads_the_committed_creator_relation():
     assert result.resolved and result.target_ids == ('caster',), result
     blocked = targets.resolve_target_expression(state, expression, context=TargetEvaluationContext(caster_id='caster'))
     assert not blocked.resolved and blocked.blocked_reason == 'battle_event_caster_requires_event'
+    from hsr.simulator_v8_clean_core.systems.queue import QueueTargetResolver
+
+    resolver = QueueTargetResolver()
+    assert resolver._resolve_many(state, {'caster_id': 'event'}, None,
+        'BattleEventCaster', relative_actor_id='') == result.target_ids
+    assert resolver._resolve_many(state, {'caster_id': 'caster'}, None,
+        'BattleEventCaster', relative_actor_id='') == ()
+    from hsr.simulator_v8_clean_core.systems.effect import _resolve_target_alias
+
+    arguments = dict(owner_id=None, param_entity_id=None, current_action_target_id=None, state=state)
+    assert _resolve_target_alias('BattleEventCaster', caster_id='event', **arguments) == 'caster'
+    assert _resolve_target_alias('BattleEventCaster', caster_id='caster', **arguments) is None
+    assert _resolve_target_alias('CasterSelfCreateBattleEvent', caster_id='caster', **arguments) == 'event'
 
 
 def test_template_targets_stay_separate_from_current_parameters_in_effect_consumers(monkeypatch):
@@ -1183,6 +1199,39 @@ def test_real_shield_callback_tasks_and_lifecycle_events_lower_without_bypassing
             assert not rejected.mutations and not rejected.events and not rejected.rng_events
     resilience = [task for task in tasks if task.opcode == 'SetResilience']
     assert resilience and all(task.coverage_status == 'executable' for task in resilience)
+
+
+def test_real_resilience_onstack_defers_only_to_its_own_later_shield_producer():
+    from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
+    from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering, _status_callback_task_admission
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    lowered = TBGDLowering(root)._lower_ability_file(
+        root / 'Config/ConfigAbility/Avatar/Avatar_DanHengPT_00_Ability.json', {}, ability_file_order=0)
+    rules = RuleBook(CanonicalIR('real-resilience-stack', effects=tuple(lowered.effects),
+        conditions=tuple(lowered.conditions), status_callbacks=tuple(lowered.status_callbacks),
+        status_callback_tasks=tuple(lowered.status_callback_tasks), target_expressions=tuple(lowered.target_expressions)))
+    modifier = 'MAvatar_DanHengPT_00_Shield'
+    callback = rules.status_callbacks_for_modifier_event(modifier, 'OnStack')[0]
+    tasks = rules.status_callback_tasks_for_callback(callback.callback_id)
+    sync = next(item for item in tasks if item.opcode == 'SetResilience')
+    shield = next(item for item in tasks if item.opcode == 'StackShield')
+    assert sync.coverage_status == 'executable' and shield.task_index > sync.task_index
+    detail = {'instance_id': 'shield:stack', 'status_id': 'shield', 'modifier_name': modifier,
+        'owner_id': 'target', 'caster_id': 'caster', 'source_id': 'shield-application', 'behavior_flags': ['Shield'],
+        'trigger_ids_by_event': {'OnStack': [callback.callback_id]}}
+    state = _state()
+    state = replace(state, units={**state.units, 'target': replace(state.units['target'], flags={'status_details': [detail]})})
+    system = StatusCallbackSystem(rules)
+    result = system._execute_shield_resilience_sync_task(state, callback, sync, detail)
+    assert result.ok and not result.mutations and result.after_state == state, result.errors
+    assert result.records[0]['payload']['deferred_init_task_ids'] == [shield.task_id]
+    wrong_order = replace(shield, task_index=sync.task_index)
+    broken = RuleBook(replace(rules.ir, status_callback_tasks=tuple(
+        wrong_order if item.task_id == shield.task_id else item for item in rules.ir.status_callback_tasks)))
+    rejected = StatusCallbackSystem(broken)._execute_shield_resilience_sync_task(state, callback, sync, detail)
+    assert not rejected.ok and not rejected.mutations
+    assert _status_callback_task_admission('OnStack', 'SetResilience',
+        {'$type': 'RPG.GameCore.SetResilience', 'DoReset': True})[0] == 'blocked'
 
 
 def test_real_shield_resilience_follows_create_stack_destroy_order():

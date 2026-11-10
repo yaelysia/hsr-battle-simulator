@@ -36,6 +36,13 @@ def test_actual_attached_skill_disable_uses_current_source_control_lifetime():
         restricted = result.after_state.units["holder"]
         assert restricted.flags["status_details"][0]["disabled_skill_types"] == ["Ultra"]
         assert result.records[0]["record_type"] == "status_skill_type_disable"
+        from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
+        audit = RuntimeSourceAuditor(rules).validate_execution(result.mutations, result.records)
+        assert audit.ok, audit.to_json()
+        mutation = result.mutations[0]
+        forged = replace(mutation, after=[{**mutation.after[0], "disabled_skill_types": ["Skill", "Ultra"]}], mutation_id="")
+        reassociated = tuple({**record, "mutation_id": forged.stable_id()} for record in result.records)
+        assert not RuntimeSourceAuditor(rules).validate_execution((forged,), reassociated).ok
         repeated = system._execute_task(result.after_state, callback, task, detail, None, {task.task_id: task}, None)
         assert repeated.ok and not repeated.mutations and repeated.after_state == result.after_state
         # Another live control must not cover a removed source's attachment.

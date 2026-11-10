@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from ..builds.models import OwnedCombatantBuildAssemblyResult
@@ -22,6 +22,7 @@ from .summon_runtime import (
 )
 from .status import StatusSystem
 from .unit_spawn import (
+    UnitBirthFact,
     UnitSpawnPlan,
     UnitSpawnRequest,
     UnitSpawnSystem,
@@ -297,6 +298,7 @@ class SummonSystem:
         *,
         owner_id: str,
         spawn_source: IRSource | None = None,
+        initial_values: dict[str, JSONValue] | None = None,
     ) -> SummonTransitionPlan:
         if definition.coverage_status != "executable" or definition.representation != "unit":
             return self._blocked(
@@ -405,7 +407,19 @@ class SummonSystem:
             source_trace=effective_spawn_source.to_json(),
             entry_source_trace=definition.source.to_json(),
         )
-        spawn_plan = self.unit_spawn.plan(template, spawn_request, owner=owner)
+        parameter_values = {
+            str(name): float(entry["value"])
+            for name, entry in (initial_values or {}).items()
+            if isinstance(entry, dict)
+            and isinstance(entry.get("value"), (int, float))
+            and not isinstance(entry.get("value"), bool)
+        } if initial_values else None
+        spawn_plan = self.unit_spawn.plan(
+            template,
+            spawn_request,
+            owner=owner,
+            parameter_values=parameter_values,
+        )
         if not spawn_plan.ok:
             return self._blocked(
                 "servant_spawn",
@@ -431,6 +445,7 @@ class SummonSystem:
                     owned_build.to_json() if owned_build is not None else None
                 ),
                 "spawn_source": effective_spawn_source.to_json(),
+                "creation_parameter_values": parameter_values or {},
                 "unit_spawn_plans": [spawn_plan.to_json()],
                 "unit_spawn_requests": [spawn_request.to_json()],
                 "replacement_unit_ids": list(defeated_replacements),
@@ -677,6 +692,13 @@ class SummonSystem:
                 expected_request=plan.spawn_requests[0],
                 expected_template=template,
                 owner=owner,
+                # Use the formal caller's inputs, not the audited metadata copy.
+                parameter_values={
+                    str(name): entry["value"]
+                    for name, entry in (initial_values or {}).items()
+                    if isinstance(entry, dict)
+                    and type(entry.get("value")) in (int, float)
+                },
             )
         except ValueError as exc:
             blocked = self._blocked(
@@ -782,6 +804,11 @@ class SummonSystem:
                 else {},
             },
         )
+        birth_fact = UnitBirthFact(
+            request=plan.spawn_requests[0], owner=owner, state=state,
+            initial_values=initial_values or {},
+        )
+        spawn_mutation = replace(spawn_mutation, unit_birth_fact=birth_fact)
         runtime_without_replaced = _runtime_after_remove(runtime_before, state, replacement_plan)
         runtime_after = _runtime_after_spawn(runtime_without_replaced, state, plan, (unit,))
         runtime_mutation = _runtime_mutation(state, runtime_before, runtime_after, plan, "record servant spawn")
@@ -790,7 +817,7 @@ class SummonSystem:
             *tuple(_remove_event(state, replacement_plan, unit_id) for unit_id in replacement_ids),
             _spawn_event(state, plan, unit),
         )
-        return self._with_halo_reconciliation(
+        result = self._with_halo_reconciliation(
             state,
             plan,
             mutations,
@@ -798,6 +825,13 @@ class SummonSystem:
             _plan_records(plan, mutations, process_only=False),
             initial_values=initial_values,
         )
+        # Bind the complete native birth transaction, not just its spawn leaf.
+        # Nested births keep their own invocation instead of borrowing this one.
+        return replace(result, mutations=tuple(
+            replace(mutation, unit_birth_fact=birth_fact)
+            if mutation.unit_birth_fact is None else mutation
+            for mutation in result.mutations
+        ))
 
     def plan_remove(
         self,

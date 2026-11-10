@@ -58,6 +58,10 @@ from .phase_machine import (
     ENDED,
     CombatPhaseMachine,
 )
+from .action_preflight import (
+    special_resource_ultimate_blocked_reason,
+    special_resource_ultimate_gate,
+)
 from .resource import ResourceSystem, ultimate_energy_blocked_reason
 from .skill_properties import effective_action_property
 from .status import StatusSystem, status_control_gate_for_actor
@@ -358,7 +362,12 @@ class CombatScheduler:
                 "manual_ultimate_action_not_ultra",
                 {"command": _command_payload(command), "definition": definition.to_json()},
             )
-        energy_reason = ultimate_energy_blocked_reason(actor, definition.sp_need)
+        special_gate = special_resource_ultimate_gate(state, actor.unit_id)
+        energy_reason = (
+            special_resource_ultimate_blocked_reason(special_gate)
+            if special_gate is not None
+            else ultimate_energy_blocked_reason(actor, definition.sp_need)
+        )
         if energy_reason:
             return self._blocked(
                 state,
@@ -630,6 +639,25 @@ class CombatScheduler:
             if command is None:
                 if UnitLifecycleSystem().view(state, actor_id).hp <= 0:
                     return self.end_current_turn(state)
+                auto_turn_actor = state.units.get(actor_id)
+                if (
+                    auto_turn_actor is not None
+                    and auto_turn_actor.flags.get("entity_type") == "battle_event"
+                    and auto_turn_actor.flags.get("timeline_admitted") is not False
+                ):
+                    auto_turn = self.end_current_turn(state)
+                    return _with_scheduler_record(
+                        auto_turn,
+                        record_type="scheduler_battle_event_auto_turn",
+                        payload={
+                            "scheduler_step": "battle_event_auto_turn",
+                            "actor_id": actor_id,
+                            "battle_event_kind": str(
+                                auto_turn_actor.flags.get("battle_event_kind") or ""
+                            ),
+                            "external_choice_required": False,
+                        },
+                    )
                 return self._blocked(
                     state,
                     "scheduler:decision_required",
@@ -1675,9 +1703,25 @@ class CombatScheduler:
                     current = self.reducer.apply_all(current, result.mutations)
                 for lifecycle_event in result.events:
                     if lifecycle_event.window == "OnDestroy":
+                        # Halo reconciliation can emit removal events for
+                        # projected children owned by another unit; the event
+                        # payload carries that instance's identity.
+                        event_payload = (
+                            lifecycle_event.payload
+                            if isinstance(lifecycle_event.payload, dict)
+                            else {}
+                        )
                         dispatch = self.event_dispatcher.dispatch_status_callback(
-                            current, event=lifecycle_event, unit_id=unit_id,
-                            modifier_name=str(detail.get("modifier_name") or ""),
+                            current,
+                            event=lifecycle_event,
+                            unit_id=str(
+                                event_payload.get("owner_id") or unit_id
+                            ),
+                            modifier_name=str(
+                                event_payload.get("modifier_name")
+                                or detail.get("modifier_name")
+                                or ""
+                            ),
                         )
                     else:
                         dispatch = self.event_dispatcher.dispatch_event(current, event=lifecycle_event)
@@ -2199,11 +2243,22 @@ class CombatScheduler:
 
             actor_id = str(plan.queue_entry.get("actor_id") or "")
             selected_command = self._queue_action_command_from_plan(plan, command)
+            queue_target_query = self.action_targets.query(
+                after_dequeue,
+                actor_id,
+                selected_command.action_id,
+                selected_command.action_level,
+            )
+            queue_target_ids = (
+                ()
+                if queue_target_query.selection_mode == "automatic"
+                else selected_command.target_ids
+            )
             queue_command = ActionCommand(
                 actor_id=actor_id,
                 action_id=selected_command.action_id,
                 action_level=selected_command.action_level,
-                target_ids=selected_command.target_ids,
+                target_ids=queue_target_ids,
                 source="queue",
                 queue_name=plan.queue_name,
                 metadata={
@@ -2235,12 +2290,7 @@ class CombatScheduler:
                 },
             )
             actor = after_dequeue.units.get(actor_id)
-            target_query = self.action_targets.query(
-                after_dequeue,
-                actor_id,
-                queue_command.action_id,
-                queue_command.action_level,
-            )
+            target_query = queue_target_query
             target_decision = self.action_targets.accept(
                 after_dequeue,
                 target_query,
@@ -2629,6 +2679,9 @@ class CombatScheduler:
             selected_action_id,
             selected_action_level,
         )
+        if target_query.selection_mode == "automatic":
+            # Automatic actions derive their own targets from the contract.
+            selected_targets = ()
         target_decision = self.action_targets.accept(
             state,
             target_query,
@@ -2664,7 +2717,12 @@ class CombatScheduler:
             if ultimate_rule is None:
                 return rule_blocked_reason
             actor = state.units[actor_id]
-            energy_reason = ultimate_energy_blocked_reason(actor, definition.sp_need)
+            special_gate = special_resource_ultimate_gate(state, actor_id)
+            energy_reason = (
+                special_resource_ultimate_blocked_reason(special_gate)
+                if special_gate is not None
+                else ultimate_energy_blocked_reason(actor, definition.sp_need)
+            )
             if energy_reason:
                 return energy_reason
         window = plan.queue_window or {}

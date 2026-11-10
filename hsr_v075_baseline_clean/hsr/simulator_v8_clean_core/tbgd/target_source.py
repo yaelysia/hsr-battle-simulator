@@ -505,6 +505,51 @@ def _value_at_json_path(document: Mapping[str, Any], path: str) -> Any:
     return current
 
 
+def _event_definition_aliases(tbgd_root: Path) -> tuple[tuple[TargetLanguageDefinitionIR, ...], dict[str, str]]:
+    """Register native identity references from actual event configuration rows.
+
+    This is canonical registration, not a fabricated AliasDict or native task.
+    The runtime sees only a definition reference, never the numeric alias syntax.
+    """
+    relative = "ExcelOutput/BattleEventConfig.json"
+    path = tbgd_root / relative
+    if not path.exists():
+        return (), {}
+    raw_bytes = path.read_bytes()
+    rows = json.loads(raw_bytes, object_pairs_hook=_unique_json_object)
+    if not isinstance(rows, list):
+        raise ValueError("event identity source must be a configuration row array")
+    definitions = []
+    seen = set()
+    for index, row in enumerate(rows):
+        identifier = row.get("BattleEventID") if isinstance(row, dict) else None
+        if type(identifier) is not int or identifier <= 0:
+            continue
+        if identifier in seen:
+            raise ValueError("event identity configuration contains duplicate definitions")
+        seen.add(identifier)
+        name = f"BattleEvent{identifier}"
+        location = f"$[{index}]"
+        source = IRSource(relative, "BattleEventConfig", str(identifier), {"json_path": location,
+            "canonical_registration": "native_event_definition_reference", "registered_alias": name})
+        expression_source = IRSource(relative, "TargetExpression", name, {"json_path": location,
+            "target_expression_field": "$self", "target_expression_kind": "EventDefinitionReference",
+            "source_raw_type": "BattleEventConfig", "source_raw_id": str(identifier),
+            "canonical_registration": "native_event_definition_reference"})
+        node = TargetExpressionNodeIR.build("EventDefinitionReference", expression_source,
+            {"definition_ref": f"battle_event:{identifier}"})
+        expression = TargetExpressionIR(
+            target_expression_id=_stable_id("target_language_expression", relative, "event_reference", name),
+            expression_kind="EventDefinitionReference", alias=name,
+            source=expression_source, coverage_status="executable", node=node)
+        definitions.append(TargetLanguageDefinitionIR(
+            definition_id=_stable_id("target_language_definition", relative, "alias", name),
+            definition_kind="alias", name=name, source=source,
+            content_sha256=sha256(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            coverage_status="executable", blocked_reason="", dependency_stages=(), expression=expression))
+    return tuple(definitions), {relative: sha256(raw_bytes).hexdigest()}
+
+
 def _target_language_definitions(
     tbgd_root: Path,
     *,
@@ -561,8 +606,14 @@ def _target_language_definitions(
                     sha256(json.dumps(raw, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                 ))
 
+    native_definitions, native_fingerprints = _event_definition_aliases(tbgd_root)
+    fingerprints.update(native_fingerprints)
+    explicit_global_names = {item[3] for item in raw_definitions if item[0] == "alias" and item[1] == _ALIAS_CONFIG}
+    native_definitions = tuple(item for item in native_definitions if item.name not in explicit_global_names)
+    native_by_key = {_target_definition_key("alias", _ALIAS_CONFIG, item.name): item for item in native_definitions}
     global_names_by_kind = {
-        "alias": {item[3] for item in raw_definitions if item[0] == "alias" and item[1] == _ALIAS_CONFIG},
+        "alias": {item[3] for item in raw_definitions if item[0] == "alias" and item[1] == _ALIAS_CONFIG}
+                 | {item.name for item in native_definitions},
         "operation": {item[3] for item in raw_definitions if item[0] == "operation"},
     }
     local_alias_names = {
@@ -574,8 +625,9 @@ def _target_language_definitions(
         _target_definition_key(kind, relative, name): _stable_id("target_language_definition", relative, kind, name)
         for kind, relative, _top_key, name, _raw, _source, _digest in raw_definitions
     }
-    expressions: dict[str, TargetExpressionIR] = {}
-    references: dict[str, tuple[str, ...]] = {}
+    definition_ids.update({key: item.definition_id for key, item in native_by_key.items()})
+    expressions: dict[str, TargetExpressionIR] = {key: item.expression for key, item in native_by_key.items()}
+    references: dict[str, tuple[str, ...]] = {key: () for key in native_by_key}
     link_reasons: dict[str, str] = {}
     for kind, relative, top_key, name, raw, source, _digest in raw_definitions:
         key = _target_definition_key(kind, relative, name)
@@ -651,7 +703,7 @@ def _target_language_definitions(
                 reference_definition_ids=tuple(definition_ids[item] for item in reference_names),
             )
         )
-    definitions_tuple = tuple(definitions)
+    definitions_tuple = tuple((*definitions, *native_definitions))
     definitions_tuple = tuple(
         replace(
             definition,
@@ -678,15 +730,24 @@ def build_target_language_definitions(
 def close_target_expression_language(
     expression: TargetExpressionIR,
     definitions: tuple[TargetLanguageDefinitionIR, ...],
+    *,
+    context_producer_aliases: frozenset[str] = frozenset(),
 ) -> TargetExpressionIR:
-    """Admit aliases only after every source definition closes without ambiguity."""
+    """Admit aliases only after every source definition closes without ambiguity.
+
+    A consumer that owns a typed context may name global aliases it binds to the
+    real producer. Such an alias closes only when that producer is the definition's
+    single missing dependency; any other blocker or unknown alias stays blocked.
+    """
     global_by_key = {
         (item.definition_kind, item.name): item for item in definitions
         if item.source.source_path in {_ALIAS_CONFIG, _OPERATION_CONFIG}
+        or item.expression.expression_kind == "EventDefinitionReference"
     }
     local_aliases = {
         (item.source.source_path, item.name): item for item in definitions
         if item.definition_kind == "alias" and item.source.source_path != _ALIAS_CONFIG
+        and item.expression.expression_kind != "EventDefinitionReference"
     }
     reason = ""
     for alias in _typed_target_aliases(expression.node):
@@ -705,6 +766,13 @@ def close_target_expression_language(
                     reason = f"target_language_{kind}_definition_missing:{name}"
                     break
                 if definition.coverage_status != "executable":
+                    if (
+                        index == 0
+                        and name in context_producer_aliases
+                        and definition.source.source_path == _ALIAS_CONFIG
+                        and definition.dependency_stages == (_TYPED_PRODUCER_DEPENDENCY_STAGE,)
+                    ):
+                        continue
                     reason = f"target_language_dependency_blocked:{kind}:{name}"
                     break
             if reason:
@@ -748,7 +816,7 @@ def _typed_target_aliases_from_value(value: object) -> tuple[str, ...]:
 
 
 _EVENT_OR_ENTITY_PRODUCER_KINDS = frozenset({
-    "TargetFetchAbilityGroup", "TargetFetchAbilityTargetLeader", "TargetFetchActionDelayExceed",
+    "TargetFetchAbilityTargetLeader", "TargetFetchActionDelayExceed",
     "TargetFetchAidDefender", "TargetFetchAidProtector", "TargetFetchAimAtTargetList",
     "TargetFetchAliveSourceEntity", "TargetFetchBattleEventCaster", "TargetFetchLockTarget",
     "TargetFetchNextSkillCaster", "TargetFetchNextTurnOwnerEntity", "TargetFetchPassiveEntity",
@@ -761,6 +829,7 @@ _EVENT_OR_ENTITY_PRODUCER_KINDS = frozenset({
     "TargetMapSnapshotEntity", "TargetFetchPartner", "TargetFetchUniqueNameEntity",
     "TargetMapSkillPointEntity",
 })
+_TYPED_PRODUCER_DEPENDENCY_STAGE = "p9_s9_s17_typed_event_or_entity_producer"
 
 
 def _target_dependency_stages(
@@ -771,11 +840,13 @@ def _target_dependency_stages(
         (item.definition_kind, item.name): item
         for item in definitions
         if item.source.source_path in {_ALIAS_CONFIG, _OPERATION_CONFIG}
+        or item.expression.expression_kind == "EventDefinitionReference"
     }
     local_aliases = {
         (item.source.source_path, item.name): item
         for item in definitions
         if item.definition_kind == "alias" and item.source.source_path != _ALIAS_CONFIG
+        and item.expression.expression_kind != "EventDefinitionReference"
     }
     visited: set[str] = set()
 
@@ -813,7 +884,7 @@ def _target_dependency_stages(
         if kind == "TargetShuffle" or (kind == "Retarget" and node.by_random):
             stages.add("p9_s5d_rng")
         if original_kind in _EVENT_OR_ENTITY_PRODUCER_KINDS:
-            stages.add("p9_s9_s17_typed_event_or_entity_producer")
+            stages.add(_TYPED_PRODUCER_DEPENDENCY_STAGE)
         elif "Part" in original_kind:
             stages.add("p9_s17_body_part_producer")
         elif original_kind.endswith("ClientOnly"):

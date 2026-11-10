@@ -37,9 +37,6 @@ from ..rules.ir import (
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
-from ..rules.engine_rule_registry import (
-    special_resource_initializer_numeric_binding_source,
-)
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
@@ -512,6 +509,11 @@ class ScenarioStateBuilder:
             global_flags["monster_rank_scores"] = canonical_rank_scores
         summon_runtime = empty_summon_runtime()
         global_flags["summon_runtime"] = summon_runtime
+        world_level = scenario.battle_setup.world_level
+        if world_level is not None:
+            # Battle setup world level is a typed global fact for ability
+            # dynamic-value reads (for example SetDynamicValueByWorldLevel).
+            global_flags.setdefault("world_level", int(world_level))
         setup_records.append(
             {
                 "record_type": "setup_summon_runtime",
@@ -637,7 +639,7 @@ class ScenarioStateBuilder:
             state,
             scenario,
             already_dispatched_creation_target_ids=_creation_target_ids(
-                setup_result.events
+                (*startup_result.events, *setup_result.events)
             ),
         )
         if battle_setup_event_result.blocked:
@@ -825,19 +827,42 @@ def _plan_formal_character_birth(
         formal_flags["standard_energy_active"] = True
     else:
         binding = base_panel.special_resource_binding
+        declared = set(initial_resource_values)
+        # Built characters declare their battle-entry initializer through the
+        # assembled build itself; the UI writes the ordinary energy placeholder
+        # ("0") because it must not compile a rulebook to classify the resource.
+        implicit_initializer = (
+            unit.build_mode == "assembled_character_build"
+            and binding is not None
+            and not declared
+        )
+        energy_marker = unit.initial_condition.initial_energy
+        zero_energy_marker = False
+        if energy_marker is not None:
+            try:
+                zero_energy_marker = Decimal(str(energy_marker)) == 0
+            except Exception:
+                zero_energy_marker = False
         if (
             binding is None
-            or unit.initial_condition.initial_energy is not None
-            or set(initial_resource_values) != {binding.resource_definition_id}
+            or (
+                energy_marker is not None
+                and not (implicit_initializer and zero_energy_marker)
+            )
+            or (
+                declared != {binding.resource_definition_id}
+                and not implicit_initializer
+            )
         ):
             raise ValueError(
                 f"unit {unit.unit_id}: special-resource initial condition mismatch"
             )
-        initial_value = initial_resource_values[binding.resource_definition_id]
-        if initial_value.source_kind != binding.initial_current_mode:
-            raise ValueError(
-                f"unit {unit.unit_id}: special-resource initializer marker mismatch"
-            )
+        if declared:
+            initial_value = initial_resource_values[binding.resource_definition_id]
+            if initial_value.source_kind != binding.initial_current_mode:
+                raise ValueError(
+                    f"unit {unit.unit_id}: special-resource initializer marker mismatch"
+                )
         initialization = initialize_special_resource(
             rules,
             scenario,
@@ -956,30 +981,11 @@ def initialize_special_resource(
         if branch_name == "low_world_level"
         else initializer.high_world_level_expression
     )
-    engine_binding_sources: list[dict[str, object]] = []
-    for expression in (
-        initializer.low_world_level_expression,
-        initializer.high_world_level_expression,
-    ):
-        binding_source, reason = special_resource_initializer_numeric_binding_source(
-            expression,
-            initializer.zero_floor_dynamic_hash,
-        )
-        if binding_source is None:
-            raise ValueError(
-                f"unit {unit.unit_id}: special-resource maximum source blocked: {reason}"
-            )
-        engine_binding_sources.append(binding_source)
-    if engine_binding_sources[0] != engine_binding_sources[1]:
-        raise ValueError(
-            f"unit {unit.unit_id}: special-resource maximum engine source conflict"
-        )
     evaluator = RuleEvaluator()
     maximum_branch_result = evaluator.evaluate_numeric(
         branch_expression,
         NumericEvaluationContext(
             dynamic_values={str(initializer.level_dynamic_hash): float(source_level)},
-            binding_sources=(engine_binding_sources[0],),
             source_trace=initializer.source.to_json(),
         ),
     )
@@ -1026,11 +1032,6 @@ def initialize_special_resource(
         raise ValueError(
             f"unit {unit.unit_id}: special-resource initialized values violate bounds"
         )
-    engine_traces = tuple(
-        dict(entry.get("source_trace") or {})
-        for entry in engine_binding_sources[0].get("entries", {}).values()
-        if isinstance(entry, dict) and isinstance(entry.get("source_trace"), dict)
-    )
     record = SettlementRecord(
         record_type="special_resource_initialization",
         source=initializer.initializer_id,
@@ -1053,14 +1054,13 @@ def initialize_special_resource(
             "resource_source": binding.source.to_json(),
             "initializer_source": initializer.source.to_json(),
             "initial_current_trigger": initializer.initial_current_trigger,
-            "engine_binding_source_count": len(engine_traces),
         },
     ).to_json()
     return SpecialResourceInitialization(
         current_value=current_value,
         maximum_value=maximum_value,
         record=record,
-        source_traces=(initializer.source.to_json(), *engine_traces),
+        source_traces=(initializer.source.to_json(),),
     )
 
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..core.model import BattleState, JSONValue, Mutation, current_max_hp
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, current_max_hp
 from ..core.settlement import SettlementRecord
 from ..immutable_json import freeze_json, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
@@ -19,6 +19,7 @@ from .task_graph import TaskGraphStatusScope
 
 if TYPE_CHECKING:
     from .status import StatusLifecyclePlan
+    from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 
 
 DYNAMIC_VALUE_PLAN_SCHEMA = "hsr.dynamic_value_plan.v1"
@@ -35,6 +36,11 @@ _DYNAMIC_VALUE_SCOPE_CONTRACTS = {
     "modifier_local": ("status", "status_instance"),
     "ContextModifier": ("status", "status_instance"),
     "event": ("event", "event"),
+    # AI tags are enemy-AI metadata.  The project does not implement enemy AI,
+    # but source callbacks still read and write these names as initialize-once
+    # guards.  They live in the unit's combat namespace and never feed damage,
+    # resource or lifecycle decisions.
+    "AITag": ("unit", "combat"),
 }
 
 
@@ -66,6 +72,10 @@ class DynamicValueExecutionRequest:
     # Typed producer fact for an admitted heal mutation.  The transport payload
     # above is only a convenience copy; the fact is the authority.
     heal_event_fact: HealEventFact | None = None
+    trigger_event: GameEvent | None = None
+    target_resolution: TargetResolution | None = None
+    admitted_action_target_fact: AdmittedActionTargetFact | None = None
+    expected_action_window_scope: ActionWindowExpectedScope | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("caster_id", "source_id", "effect_id", "opcode"):
@@ -114,6 +124,8 @@ class DynamicValueExecutionRequest:
                 # an event_value operand fails closed instead of storing a value.
                 frozen_payload = None
             object.__setattr__(self, "event_payload", frozen_payload)
+        if self.trigger_event is not None and type(self.trigger_event) is not GameEvent:
+            raise TypeError("dynamic value trigger event must be a native GameEvent")
         if self.heal_event_fact is not None:
             from .mutation_events import HealEventFact as _HealEventFact
 
@@ -321,6 +333,21 @@ def remove_status_instance_entries(
     )
 
 
+def remove_unit_entries(store: object, unit_id: str) -> dict[str, JSONValue] | None:
+    """Retire only slots owned by or scoped to this departed unit, and their ledger."""
+    if not isinstance(unit_id, str) or not unit_id:
+        raise ValueError("dynamic cleanup requires a unit identity")
+    normalized = normalized_dynamic_value_store(store)
+    entries = normalized["entries"]
+    kept = {key: entry for key, entry in entries.items()
+            if entry.get("owner_id") != unit_id and entry.get("target_id") != unit_id}
+    if len(kept) == len(entries):
+        return None
+    ledger = {key: item for key, item in normalized["operation_ledger"].items()
+              if item.get("destination_entry_key") in kept}
+    return _reindex({"entries": kept, "operation_ledger": ledger})
+
+
 def binding_source_from_store(
     store: object,
     *,
@@ -514,7 +541,7 @@ def plan_dynamic_value_operation(
             before_fingerprint,
             f"dynamic_value_store_invalid:{exc}",
         )
-    target_id = _resolve_request_alias(state, operation.target_alias, request)
+    target_id = resolve_operation_target(state, operation, request, rules=rules)
     if not target_id:
         return _blocked_plan(
             operation,
@@ -532,6 +559,7 @@ def plan_dynamic_value_operation(
         operation,
         request,
         target_id,
+        rules=rules,
     )
     if scope_reason:
         return _blocked_plan(operation, before_fingerprint, scope_reason)
@@ -578,14 +606,28 @@ def plan_dynamic_value_operation(
             result_value=replay_value,
             replayed=True,
         )
-    operand_value, evaluation, operand_reason = _resolve_operand(
-        state,
-        store,
-        operation.operand,
-        request,
-        resolved_scope,
-        rules=rules,
-    )
+    if operation.operand.operand_kind == "slot_adsorption":
+        current = store["entries"].get(destination_entry_key)
+        current_value = current.get("value") if isinstance(current, dict) else None
+        threshold = json.loads(str(operation.operand.parameters["threshold_json"]))
+        if not _finite_number(current_value):
+            operand_value, evaluation, operand_reason = None, {}, "dynamic_adsorption_destination_missing"
+        else:
+            nearest = float(round(float(current_value)))
+            operand_value = nearest if abs(float(current_value) - nearest) < threshold else float(current_value)
+            evaluation, operand_reason = {
+                "source_type": "slot_adsorption", "threshold": threshold,
+                "before": float(current_value), "after": operand_value,
+            }, ""
+    else:
+        operand_value, evaluation, operand_reason = _resolve_operand(
+            state,
+            store,
+            operation.operand,
+            request,
+            resolved_scope,
+            rules=rules,
+        )
     if operand_reason or operand_value is None:
         return _blocked_plan(
             operation,
@@ -597,6 +639,10 @@ def plan_dynamic_value_operation(
     value = operand_value
     if operation.operation_kind == "add":
         current = store["entries"].get(destination_entry_key)
+        if not isinstance(current, dict) or not _finite_number(current.get("value")):
+            baseline = _declared_slot_baseline(rules, state, target_id, operation)
+            if baseline is not None:
+                current = {"value": baseline}
         if not isinstance(current, dict) or not _finite_number(current.get("value")):
             return _blocked_plan(
                 operation,
@@ -979,11 +1025,57 @@ def _blocked_plan(
     )
 
 
+def _resolve_unique_expression_target(
+    state: BattleState, expression_id: str, request: DynamicValueExecutionRequest, rules: RuleBook | None,
+) -> str:
+    if rules is None:
+        return ""
+    from .target import TargetSystem
+    from .unit_relation import TargetEvaluationContext
+    expression, reason = rules.target_expression_resolution(expression_id)
+    if expression is None:
+        return ""
+    result = TargetSystem(rules).resolve_target_expression(state, expression,
+        context=TargetEvaluationContext(request.caster_id,
+            effect_owner_id=request.owner_id or request.caster_id,
+            parameter_entity_ids=(request.param_entity_id,) if request.param_entity_id else (),
+            template_entity_ids=request.template_target_ids,
+            selected_target_ids=request.target_resolution.selected if request.target_resolution else (),
+            current_target_id=request.current_action_target_id or None,
+            admitted_action_target_fact=request.admitted_action_target_fact,
+            expected_action_window_scope=request.expected_action_window_scope),
+        target_resolution=request.target_resolution, condition_event_payload=request.event_payload,
+        binding_sources=request.binding_sources)
+    # Random target producers must transport their RNG; this deterministic path
+    # never silently consumes/discards one or chooses the first of many results.
+    return result.target_ids[0] if result.resolved and len(result.target_ids) == 1 and not result.rng_events else ""
+
+
+def resolve_operation_target(
+    state: BattleState, operation: DynamicValueOperationIR, request: DynamicValueExecutionRequest,
+    *, rules: RuleBook | None = None,
+) -> str:
+    effect = rules.effect(request.effect_id) if rules is not None else None
+    standard = effect.payload.get("standard", {}) if effect is not None else {}
+    expression_id = standard.get("target_expression_id")
+    if expression_id:
+        refs = standard.get("target_expression_refs", {})
+        ref = refs.get("TargetType", {})
+        if ref.get("expression_kind") == "TargetAlias" and ref.get("alias") == operation.target_alias:
+            direct = _resolve_request_alias(state, operation.target_alias, request)
+            if direct:
+                return direct
+        return _resolve_unique_expression_target(state, str(expression_id), request, rules)
+    return _resolve_request_alias(state, operation.target_alias, request)
+
+
 def _resolve_request_alias(
     state: BattleState,
     alias: object,
     request: DynamicValueExecutionRequest,
 ) -> str:
+    # The dotted spellings name the same committed summon relations.
+    alias = {"Caster.GetServant": "CasterServant", "Caster.GetSummoner": "CasterSummoner"}.get(str(alias or ""), alias)
     if alias in {"CasterServant", "CasterSummoner"}:
         from .unit_relation import EntityRelationResolver, TargetEvaluationContext
 
@@ -1003,6 +1095,26 @@ def _resolve_request_alias(
                 return ""
             target_ids = tuple(unit_id for unit_id in target_ids if unit_id in servants.target_ids)
         return target_ids[0] if len(target_ids) == 1 else ""
+    if str(alias or "") == "CasterSelfCreateBattleEvent":
+        from .target import resolve_created_battle_event_targets
+
+        created = resolve_created_battle_event_targets(state, request.caster_id)
+        return created[0] if len(created) == 1 else ""
+    if str(alias or "") == "BattleEventCaster":
+        # The battle event's creator, through the committed entity.creator
+        # relation; a non-event caster resolves nothing and stays fail-closed.
+        from .unit_relation import EntityRelationResolver, TargetEvaluationContext
+
+        caster = state.units.get(request.caster_id)
+        if caster is None or caster.flags.get("entity_type") != "battle_event":
+            return ""
+        resolved = EntityRelationResolver().resolve(
+            state,
+            "entity.creator",
+            TargetEvaluationContext(caster_id=request.caster_id),
+            subject_ids=(request.caster_id,),
+        )
+        return resolved.target_ids[0] if resolved.resolved and len(resolved.target_ids) == 1 else ""
     return {
         "Caster": request.caster_id,
         "ModifierOwnerEntity": request.owner_id or request.caster_id,
@@ -1012,16 +1124,133 @@ def _resolve_request_alias(
     }.get(str(alias or ""), "")
 
 
+def _unit_scope_destination_entry(
+    state: BattleState,
+    target_id: str,
+    operation: DynamicValueOperationIR,
+) -> dict[str, JSONValue] | None:
+    entries = store_from_state(state).get("entries", {})
+    if not isinstance(entries, dict):
+        return None
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("scope") or entry.get("scope_kind") or "") not in {
+            "unit", "combat",
+        }:
+            continue
+        if str(entry.get("target_id") or entry.get("owner_id") or "") != target_id:
+            continue
+        if (
+            operation.destination_hash is not None
+            and str(entry.get("hash") or "") == str(operation.destination_hash)
+        ):
+            return entry
+        if operation.destination_key and entry.get("name") == operation.destination_key:
+            return entry
+    return None
+
+
+def _declared_slot_baseline(
+    rules: RuleBook | None,
+    state: BattleState,
+    unit_id: str,
+    operation: DynamicValueOperationIR,
+) -> float | None:
+    """Declared mutable slots start at their config baseline (usually zero)."""
+
+    if rules is None:
+        return None
+    source = character_declared_dynamic_binding_source(
+        rules, state, unit_id,
+    ) or servant_declared_dynamic_binding_source(
+        rules, state, unit_id,
+    )
+    if source is None:
+        return None
+    entries = source.get("entries")
+    if not isinstance(entries, dict):
+        return None
+    destination_hash = (
+        str(operation.destination_hash)
+        if operation.destination_hash is not None
+        else ""
+    )
+    for entry in entries.values():
+        if not isinstance(entry, dict):
+            continue
+        hash_matches = (
+            bool(destination_hash)
+            and str(entry.get("hash") or "") == destination_hash
+        )
+        name_matches = (
+            bool(operation.destination_key)
+            and entry.get("name") == operation.destination_key
+        )
+        if not (hash_matches or name_matches):
+            continue
+        value = entry.get("value")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric = float(value)
+            if math.isfinite(numeric):
+                return numeric
+    return None
+
+
 def _resolved_scope(
     state: BattleState,
     operation: DynamicValueOperationIR,
     request: DynamicValueExecutionRequest,
     target_id: str,
+    *,
+    rules: RuleBook | None = None,
 ) -> tuple[dict[str, JSONValue], str]:
     scope_kind = operation.scope_kind
+    if (
+        rules is not None
+        and scope_kind in {"contextual", "ability"}
+        and _declared_slot_baseline(rules, state, target_id, operation) is not None
+    ):
+        # A config-declared mutable slot is a unit value; writes made from an
+        # ability context must survive the ability so later actions can read it.
+        scope_kind = "unit"
+    if scope_kind == "ability" and not request.ability_instance_id and request.status_instance_id:
+        # A status-callback template runs inside event dispatch, not an ability
+        # instance; its cross-task scratch slots belong to the callback owner.
+        scope_kind = "unit"
     if scope_kind == "contextual":
-        if request.status_instance_id:
-            scope_kind = "status"
+        if request.status_instance_id and (
+            _unit_scope_destination_entry(state, target_id, operation)
+            or _declared_slot_baseline(rules, state, target_id, operation) is not None
+        ):
+            # A contextual write that already owns a unit-scope destination on
+            # the target keeps using that store; status-local defaults must not
+            # split the same dynamic value between two scopes.
+            scope_kind = "unit"
+        elif request.status_instance_id:
+            # A status-listener callback may write a contextual value onto a
+            # different unit (for example a servant syncing a summoner display
+            # value). The status instance lives on the callback owner, so the
+            # source intent is that target unit's own dynamic value store.
+            target_instances = _status_details_by_instance(
+                state, target_id, request.status_instance_id,
+            )
+            if target_instances:
+                scope_kind = "status"
+            else:
+                owner_id = request.owner_id or request.caster_id
+                owner_instances = (
+                    _status_details_by_instance(
+                        state, owner_id, request.status_instance_id,
+                    )
+                    if owner_id and owner_id != target_id
+                    else ()
+                )
+                scope_kind = (
+                    "unit"
+                    if owner_instances and target_id in state.units
+                    else "status"
+                )
         elif request.ability_instance_id:
             scope_kind = "ability"
         elif request.event_id:
@@ -1086,6 +1315,7 @@ def _removed_status_detail(
     # Only the status lifecycle producer may retain a removed instance for its
     # destruction callback. A payload or an old status binding is insufficient.
     from .status import StatusLifecyclePlan
+    from .action_event_contract import AdmittedActionTargetFact, ActionWindowExpectedScope
 
     plan = request.status_lifecycle_plan
     if (type(plan) is not StatusLifecyclePlan
@@ -1322,8 +1552,9 @@ def _resolve_operand(
     value: float | None = None
     reason = ""
     if operand.operand_kind == "expression":
+        expression = thaw_json(operand.expression)
         result = resolve_runtime_numeric_expression(
-            thaw_json(operand.expression),
+            expression,
             binding_sources=sources,
             source_trace={"effect_id": request.effect_id, "source_id": request.source_id},
         )
@@ -1444,7 +1675,10 @@ def _resolve_source_operand(
 ) -> tuple[float | None, dict[str, JSONValue], str]:
     parameters = operand.parameters
     source_alias = parameters.get("source_target_alias")
-    source_id = _resolve_request_alias(state, source_alias, request) if source_alias else ""
+    source_expression_id = parameters.get("source_target_expression_id")
+    source_id = (_resolve_unique_expression_target(state, str(source_expression_id), request, rules)
+                 if source_expression_id and operand.operand_kind != "character_count"
+                 else _resolve_request_alias(state, source_alias, request) if source_alias else "")
     param_detail = None
     if request.param_status_scope is not None:
         scope = request.param_status_scope
@@ -1455,6 +1689,31 @@ def _resolve_source_operand(
                 or details[0].get("status_id") not in owner.statuses):
             return None, {}, "parameter_modifier_instance_not_active"
         param_detail = details[0]
+    if operand.operand_kind == "unit_identity":
+        unit = state.units.get(source_id)
+        action_set = rules.combatant_action_set(unit.template_id) if rules is not None and unit is not None else None
+        if (unit is None or action_set is None or action_set.coverage_status != "executable"
+                or parameters.get("identity_kind") != "character_id"):
+            return None, {}, "unit_identity_formal_combatant_missing"
+        from ..rules.combatant_identity import combatant_character_id
+        identity = combatant_character_id(unit)
+        if identity is None:
+            return None, {}, "unit_identity_not_a_numeric_character_reference"
+        return float(identity), {"source_type": "unit_identity", "source_unit_id": source_id,
+            "entity_ref": unit.template_id, "identity_kind": "character_id",
+            "rule_source": action_set.source.to_json()}, ""
+    if operand.operand_kind == "world_level":
+        world_level = state.global_flags.get("world_level")
+        if not _finite_number(world_level):
+            return None, {}, "battle_world_level_missing"
+        return (
+            float(world_level),
+            {
+                "source_type": "battle_setup_world_level",
+                "world_level": int(world_level),
+            },
+            "",
+        )
     if operand.operand_kind == "character_count":
         from .target import TargetSystem
         from .unit_relation import TargetEvaluationContext
@@ -1500,9 +1759,17 @@ def _resolve_source_operand(
         if len(details) != 1 or details[0].get("caster_id") != request.caster_id:
             return None, {}, "snapshot_property_status_caster_mismatch"
         lifecycle = UnitLifecycleSystem().view(state, request.caster_id)
-        # ponytail: absent/dead-source snapshot retention needs its own evidence;
-        # never substitute the target or a value cached at application time.
-        if not lifecycle.is_present or not lifecycle.is_active or lifecycle.hp <= 0:
+        source_unit = state.units.get(request.caster_id)
+        # 来源已正式倒下但仍保留在战场记录中：读取其倒下时已提交的属性
+        # （用户 2026-11-09 裁决的工程规则，资料未给出依据）。已移除或缺失
+        # 的来源仍失败关闭；不以目标或施加时缓存值替代。
+        defeated_source = (
+            source_unit is not None
+            and source_unit.lifecycle_status == "defeated"
+        )
+        if not defeated_source and (
+            not lifecycle.is_present or not lifecycle.is_active or lifecycle.hp <= 0
+        ):
             return None, {}, "snapshot_property_alive_source_unavailable"
         source_id = request.caster_id
     if operand.operand_kind == "dynamic_value":
@@ -1631,6 +1898,31 @@ def _resolve_source_operand(
                      or detail.get("instance_id") == request.param_status_scope.instance_id)
             ]
             if len(matches) != 1:
+                if (
+                    not matches
+                    and str(parameters.get("modifier_value_name") or "")
+                    == "Layer"
+                ):
+                    # Native layer reads of an absent modifier are zero: the
+                    # modifier simply contributes no layers. Pinned sources
+                    # reference a few modifier names without definitions (for
+                    # example MAvatar_Hyacine_00_IronWater), so the read stays
+                    # a typed, audit-visible zero baseline instead of inventing
+                    # or dropping the surrounding startup task.
+                    return (
+                        0.0,
+                        {
+                            "source_type": "modifier_value",
+                            "source_unit_id": source_id,
+                            "modifier_name": str(
+                                parameters.get("modifier_name") or ""
+                            ),
+                            "value_basis": (
+                                "absent_modifier_layer_zero_baseline"
+                            ),
+                        },
+                        "",
+                    )
                 return None, {"candidate_count": len(matches)}, (
                     "modifier_value_source_missing"
                     if not matches
@@ -1651,6 +1943,79 @@ def _resolve_source_operand(
         )
     if operand.operand_kind == "event_value":
         event_kind = str(parameters.get("event_kind") or "")
+        if event_kind == "SetDynamicValueByChangeValue":
+            event = request.trigger_event
+            from .ability_property_watchers import AbilityPropertyChangeFact
+            fact = event.ability_property_change_fact if event is not None else None
+            property_transport = isinstance(request.event_payload, Mapping) and "ability_property_change_value" in request.event_payload
+            if fact is not None or property_transport:
+                if type(fact) is not AbilityPropertyChangeFact or not fact.matches_event(event):
+                    return None, {}, "event_value_property_change_fact_missing_or_mismatched"
+                return fact.delta, {"source_type": "native_ability_property_change", "event_kind": event_kind,
+                                    "watcher_id": fact.watcher.watcher_id, "range_id": fact.range_id,
+                                    "before": fact.before, "after": fact.after, "delta": fact.delta}, ""
+            if event is not None and event.event_type == "energy.change":
+                from .mutation_events import native_energy_change_value
+                delta, reason = native_energy_change_value(event)
+                return delta, {"source_type": "native_energy_change", "event_kind": event_kind,
+                               "event_id": event.event_id}, reason
+            from .mutation_events import native_hp_change_value
+            delta, reason = native_hp_change_value(event)
+            return delta, {"source_type": "native_hp_change", "event_kind": event_kind,
+                           "event_id": event.event_id if event is not None else ""}, reason
+        if event_kind == "SetDynamicValueByVariateType":
+            if str(parameters.get("variate_type") or "") != "ParamValue":
+                return None, {}, "event_value_variate_type_not_admitted"
+            from .mutation_events import native_hp_change_value
+            amount, reason = native_hp_change_value(request.trigger_event)
+            return amount, {"source_type": "native_hp_change", "event_kind": event_kind,
+                            "event_id": request.trigger_event.event_id if request.trigger_event is not None else "",
+                            "hp_change_amount": amount}, reason
+        if event_kind == "SetDynamicValueByDamageDataProperty":
+            # The hit window publishes the committed final damage of the hit it
+            # follows.  Only the source property used by true-damage callbacks
+            # is admitted, and the reader must be the attacker that dealt it.
+            property_name = parameters.get("property_name")
+            if property_name not in {
+                "Result_FinalDamageBase", "Result_FinalDamage",
+            }:
+                return None, {}, (
+                    "event_value_property_not_admitted:"
+                    + str(property_name or "<missing>")
+                )
+            event_payload = request.event_payload
+            if not isinstance(event_payload, Mapping):
+                return None, {}, "event_value_damage_payload_missing"
+            final_damage = event_payload.get("final_damage")
+            if (
+                type(final_damage) not in (int, float)
+                or isinstance(final_damage, bool)
+                or not math.isfinite(float(final_damage))
+            ):
+                return None, {}, "event_value_damage_value_not_finite"
+            read_alias = str(parameters.get("source_target_alias") or "")
+            if read_alias not in {"ModifierOwnerEntity", "Caster"}:
+                return None, {}, (
+                    "event_value_read_target_not_admitted:"
+                    + (read_alias or "<missing>")
+                )
+            if not source_id:
+                return None, {}, "event_value_read_target_unresolved"
+            attacker_id = str(
+                event_payload.get("attacker_id")
+                or event_payload.get("damage_attacker_id")
+                or ""
+            )
+            if source_id != attacker_id:
+                return None, {}, "event_value_damage_scope_mismatch"
+            return float(final_damage), {
+                "source_type": "damage_event_value",
+                "read_target_id": source_id,
+                "attacker_id": attacker_id,
+                "property_name": property_name,
+                "final_damage": float(final_damage),
+                "source_event_id": str(event_payload.get("event_id") or ""),
+            }, ""
         if event_kind != "SetDynamicValueByHealDataProperty":
             return None, {}, f"event_value_kind_not_admitted:{event_kind or '<missing>'}"
         property_name = parameters.get("property_name")
@@ -2126,21 +2491,132 @@ def character_declared_dynamic_binding_source(
                 or info.get("Type") != "None" or type(info.get("Index")) is not int or info["Index"] < 0
                 or not isinstance(binding.get("source_path"), str) or not binding["source_path"]):
             continue
-        candidates = tuple(entry for entry in stored if str(entry.get("hash")) == str(key))
-        if not candidates:
-            candidates = tuple(entry for entry in status_values if str(entry.get("hash")) == str(key))
-        values = {float(entry["value"]) for entry in candidates if _finite_number(entry.get("value"))}
-        # ponytail: conflicting committed writers need explicit scope resolution;
-        # never choose a writer by incidental record or dictionary order.
-        if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
+        producer = binding.get("value_producer")
+        if producer == "owned_servant_identity":
+            definitions = tuple(definition for definition in rules.ir.servant_definitions
+                if definition.coverage_status == "executable" and any(
+                    relation.coverage_status == "executable" and relation.owner_entity_ref == unit.template_id
+                    for relation in definition.owner_relations))
+            if len(definitions) != 1:
+                continue
+            definition = definitions[0]
+            namespace, _, identifier = definition.servant_ref.partition(":")
+            if namespace != "servant" or not identifier.isdecimal() or not 0 < int(identifier) <= 2 ** 53:
+                continue
+            value = float(int(identifier))
+            committed = tuple(entry for entry in (*stored, *status_values) if str(entry.get("hash")) == str(key))
+            if committed and any(not _finite_number(entry.get("value")) or entry["value"] != value for entry in committed):
+                continue
+            basis = "formal_owned_servant_identity"
+            producer_sources = [definition.source.to_json()]
+        elif producer is not None:
             continue
-        entry = {"scope": "unit", "owner_id": unit_id, "hash": str(key), "name": None, "value": next(iter(values), 0.0),
+        else:
+            candidates = tuple(entry for entry in stored if str(entry.get("hash")) == str(key))
+            if not candidates:
+                candidates = tuple(entry for entry in status_values if str(entry.get("hash")) == str(key))
+            values = {float(entry["value"]) for entry in candidates if _finite_number(entry.get("value"))}
+            # Conflicting committed writers require explicit scope resolution.
+            if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
+                continue
+            value = next(iter(values), 0.0)
+            basis = "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero"
+            producer_sources = [item.get("source_trace", {}) for item in candidates]
+        entry = {"scope": "unit", "owner_id": unit_id, "hash": str(key), "name": binding.get("logical_name"), "value": value,
                  "source_trace": {"character_data_card": card.source.to_json(), "binding": binding,
-                                  "value_basis": "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero",
-                                  "producer_sources": [item.get("source_trace", {}) for item in candidates]}}
+                                   "value_basis": basis, "producer_sources": producer_sources}}
         entries[_entry_key(entry)] = entry
-    return {"source_type": "character_declared_dynamic_values", "unit_id": unit_id,
-            **_reindex({"entries": entries})} if entries else None
+    return (
+        {
+            "source_type": "character_declared_dynamic_values",
+            "unit_id": unit_id,
+            "binding_role": "declared_mutable_slot_default",
+            **_reindex({"entries": entries}),
+        }
+        if entries
+        else None
+    )
+
+
+def ability_declared_dynamic_binding_source(
+    rules: RuleBook,
+    state: BattleState,
+    ability_name: str,
+    unit_id: str,
+    *,
+    ability_instance_id: str = "",
+    excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    """Declared ability-local mutable slots, defaulting unset slots to zero."""
+    configured = rules.ability_phase_dynamic_value_bindings(ability_name)
+    if not isinstance(configured, dict):
+        return None
+    declared = configured.get("by_hash")
+    if not isinstance(declared, dict):
+        return None
+    stored = tuple(
+        entry
+        for entry in store_from_state(state).get("entries", {}).values()
+        if isinstance(entry, dict)
+        and _entry_visible(
+            entry,
+            {"target_id": unit_id, "ability_instance_id": ability_instance_id},
+        )
+    )
+    entries: dict[str, JSONValue] = {}
+    for key, binding in declared.items():
+        if str(key) in excluded_hashes:
+            continue
+        info = binding.get("read_info") if isinstance(binding, dict) else None
+        if (
+            not isinstance(info, dict)
+            or set(info) != {"Type", "Index"}
+            or info.get("Type") != "None"
+            or type(info.get("Index")) is not int
+            or info["Index"] < 0
+        ):
+            continue
+        candidates = tuple(
+            entry for entry in stored if str(entry.get("hash")) == str(key)
+        )
+        values = {
+            float(entry["value"])
+            for entry in candidates
+            if _finite_number(entry.get("value"))
+        }
+        if candidates and (
+            len(values) != 1
+            or any(not _finite_number(entry.get("value")) for entry in candidates)
+        ):
+            continue
+        entry = {
+            "scope": "unit",
+            "owner_id": unit_id,
+            "hash": str(key),
+            "name": None,
+            "value": next(iter(values), 0.0),
+            "source_trace": {
+                "binding": binding,
+                "value_basis": (
+                    "committed_dynamic_values"
+                    if candidates
+                    else "declared_mutable_numeric_slot_initial_zero"
+                ),
+                "producer_sources": [
+                    item.get("source_trace", {}) for item in candidates
+                ],
+            },
+        }
+        entries[_entry_key(entry)] = entry
+    if not entries:
+        return None
+    return {
+        "source_type": "ability_declared_dynamic_values",
+        "unit_id": unit_id,
+        "ability_name": ability_name,
+        "binding_role": "declared_mutable_slot_default",
+        **_reindex({"entries": entries}),
+    }
 
 
 def character_skill_param_binding_sources(
@@ -2152,6 +2628,7 @@ def character_skill_param_binding_sources(
     current_action_trigger_key: str | None = None,
     excluded_hashes: tuple[str, ...] = (),
     excluded_names: tuple[str, ...] = (),
+    include_unowned_rank_defaults: bool = False,
 ) -> tuple[dict[str, JSONValue], ...]:
     sources: list[dict[str, JSONValue]] = []
     seen: set[str] = set()
@@ -2173,7 +2650,10 @@ def character_skill_param_binding_sources(
         )
         if source is not None:
             sources.append(source)
-        rank_source = _character_rank_param_binding_source(rules, state, unit_id, excluded_hashes)
+        rank_source = _character_rank_param_binding_source(
+            rules, state, unit_id, excluded_hashes,
+            include_unowned_rank_defaults=include_unowned_rank_defaults,
+        )
         if rank_source is not None:
             sources.append(rank_source)
         declared = {
@@ -2311,6 +2791,7 @@ def character_trace_param_binding_source(
 
 def _character_rank_param_binding_source(
     rules: RuleBook, state: BattleState, unit_id: str, excluded_hashes: tuple[str, ...],
+    *, include_unowned_rank_defaults: bool = False,
 ) -> dict[str, JSONValue] | None:
     unit = state.units[unit_id]
     if (unit.flags.get("build_mode") != "assembled_character_build"
@@ -2356,6 +2837,61 @@ def _character_rank_param_binding_source(
                 "source_trace": {
                     "character_data_card_id": card.card_id, "eidolon_slot_id": slot.eidolon_slot_id,
                     "eidolon_slot_source": slot.source.to_json(), "dynamic_value_binding": binding,
+                    "selection_source": "character_build_assembly",
+                },
+            }
+            entries[_entry_key(entry)] = entry
+    if include_unowned_rank_defaults:
+        # Runtime numeric consumers read a declared rank slot even when the
+        # rank is not owned (for example an E0 talent formula or a battle-event
+        # create parameter). The absent rank param is the zero baseline, not an
+        # unbound hash. The generic source API keeps the strict no-entry contract
+        # so build/selection audits still prove which ranks are selected.
+        eidolon_slots = rules.character_eidolon_slots_for_card(card.card_id)
+        selected_ranks = {
+            slot.rank
+            for slot in eidolon_slots
+            if slot.eidolon_slot_id in selected
+            and slot.coverage_status == "executable"
+            and not slot.blocked_reason
+        }
+        available_ranks = {slot.rank for slot in eidolon_slots}
+        for raw_hash, declaration in configured.items():
+            hash_key = str(raw_hash)
+            if (
+                not isinstance(declaration, dict)
+                or hash_key in excluded_hashes
+                or hash_key in seen_hashes
+            ):
+                continue
+            info = declaration.get("read_info")
+            if not isinstance(info, dict) or info.get("Type") != "SkillRank":
+                continue
+            trigger_key = info.get("TriggerKey")
+            index = info.get("Index")
+            if (
+                not isinstance(trigger_key, str)
+                or not trigger_key.startswith("Rank")
+                or type(index) is not int
+                or isinstance(index, bool)
+                or index < 0
+            ):
+                continue
+            suffix = trigger_key.removeprefix("Rank")
+            if not suffix.isdigit():
+                continue
+            rank = int(suffix)
+            if rank not in available_ranks or rank in selected_ranks:
+                continue
+            entry = {
+                "scope": "character_rank_param", "owner_id": unit_id,
+                "hash": hash_key, "name": None, "value": 0.0,
+                "binding_role": "declared_rank_param_default",
+                "source_trace": {
+                    "character_data_card_id": card.card_id,
+                    "dynamic_value_binding": declaration,
+                    "read_info": info,
+                    "value_basis": "unowned_rank_param_zero_baseline",
                     "selection_source": "character_build_assembly",
                 },
             }
@@ -2414,6 +2950,224 @@ def servant_skill_param_binding_source(
     return {"source_type": "servant_skill_param", "unit_id": unit_id, **_reindex({"entries": entries})} if entries else None
 
 
+def servant_declared_dynamic_binding_source(
+    rules: RuleBook, state: BattleState, unit_id: str,
+    *, ability_instance_id: str = "", excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    """Bind a servant definition's declared mutable numeric slots.
+
+    Servant configs declare ReadInfo Type "None" slots exactly like avatar
+    configs; committed values win, otherwise the declared baseline is zero.
+    """
+
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return None
+    definition_id = unit.flags.get("servant_definition_id")
+    if not isinstance(definition_id, str) or not definition_id:
+        return None
+    definition = rules.servant_definition(definition_id)
+    if definition is None or definition.servant_ref != unit.template_id:
+        return None
+    action_set = definition.action_set
+    bindings = action_set.get("dynamic_value_bindings") if isinstance(action_set, dict) else None
+    configured = bindings.get("by_hash") if isinstance(bindings, dict) else None
+    if not isinstance(configured, dict):
+        return None
+    stored = tuple(
+        entry
+        for entry in store_from_state(state).get("entries", {}).values()
+        if isinstance(entry, dict)
+        and _entry_visible(entry, {
+            "target_id": unit_id, "ability_instance_id": ability_instance_id,
+        })
+    )
+    status_values = tuple(
+        entry
+        for source in status_binding_sources(state, (unit_id,))
+        for entry in source.get("entries", {}).values()
+    )
+    skill_index_map = (
+        action_set.get("skill_index_map")
+        if isinstance(action_set, dict)
+        else None
+    )
+    effective_levels = unit.flags.get("effective_skill_levels_by_action_id")
+    entries: dict[str, JSONValue] = {}
+    for key, binding in configured.items():
+        if str(key) in excluded_hashes:
+            continue
+        info = binding.get("read_info") if isinstance(binding, dict) else None
+        if (
+            isinstance(info, dict)
+            and set(info) == {"Type", "Index", "TriggerKey"}
+            and info.get("Type") == "SkillParam"
+            and type(info.get("Index")) is int
+            and info["Index"] >= 0
+        ):
+            action_ref = ""
+            default_level = 0
+            if isinstance(skill_index_map, dict):
+                for slot in skill_index_map.values():
+                    if not isinstance(slot, dict):
+                        continue
+                    role_source = slot.get("role_source")
+                    if (
+                        isinstance(role_source, dict)
+                        and role_source.get("skill_trigger_key")
+                        == info.get("TriggerKey")
+                    ):
+                        action_ref = str(slot.get("action_ref") or "")
+                        level = slot.get("default_level")
+                        default_level = level if type(level) is int else 0
+                        break
+            level_value = (
+                effective_levels.get(action_ref)
+                if isinstance(effective_levels, dict)
+                else None
+            )
+            level = level_value if type(level_value) is int else default_level
+            definition = (
+                rules.action_definition(action_ref, level) if action_ref else None
+            )
+            params = definition.param_list if definition is not None else ()
+            value = None
+            if 0 <= int(info["Index"]) < len(params):
+                raw_param = params[int(info["Index"])]
+                value = (
+                    raw_param.get("Value")
+                    if isinstance(raw_param, dict)
+                    and set(raw_param) == {"Value"}
+                    else raw_param
+                )
+            if not _finite_number(value):
+                continue
+            param_entry = {
+                "scope": "unit",
+                "owner_id": unit_id,
+                "hash": str(key),
+                "name": None,
+                "value": float(value),
+                "source_trace": {
+                    "servant_definition": definition.source.to_json()
+                    if definition is not None
+                    else definition,
+                    "binding": binding,
+                    "value_basis": "servant_skill_param",
+                    "param_index": int(info["Index"]),
+                    "action_ref": action_ref,
+                    "action_level": level,
+                    "skill_definition": definition.to_json()
+                    if definition is not None
+                    else None,
+                },
+            }
+            entries[_entry_key(param_entry)] = param_entry
+            continue
+        if (
+            not isinstance(info, dict)
+            or set(info) != {"Type", "Index"}
+            or info.get("Type") != "None"
+            or type(info.get("Index")) is not int
+            or info["Index"] < 0
+        ):
+            continue
+        candidates = tuple(entry for entry in stored if str(entry.get("hash")) == str(key))
+        if not candidates:
+            candidates = tuple(entry for entry in status_values if str(entry.get("hash")) == str(key))
+        values = {float(entry["value"]) for entry in candidates if _finite_number(entry.get("value"))}
+        if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
+            continue
+        entry = {
+            "scope": "unit",
+            "owner_id": unit_id,
+            "hash": str(key),
+            "name": None,
+            "value": next(iter(values), 0.0),
+            "source_trace": {
+                "servant_definition": definition.source.to_json(),
+                "binding": binding,
+                "value_basis": "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero",
+                "producer_sources": [item.get("source_trace", {}) for item in candidates],
+            },
+        }
+        entries[_entry_key(entry)] = entry
+    return (
+        {
+            "source_type": "servant_declared_dynamic_values",
+            "unit_id": unit_id,
+            "binding_role": "declared_mutable_slot_default",
+            **_reindex({"entries": entries}),
+        }
+        if entries
+        else None
+    )
+
+
+def servant_declared_dynamic_binding_source_for_owner(
+    rules: RuleBook, state: BattleState, owner_unit_id: str, *,
+    excluded_hashes: tuple[str, ...] = (),
+) -> dict[str, JSONValue] | None:
+    """Project a summoner unit's declared slots from its owned servants.
+
+    Some servant modifiers synchronize display counters onto the summoner. The
+    servant config declares those mutable slots, so the summoner unit resolves
+    the same declared baseline.
+    """
+
+    owner = state.units.get(owner_unit_id)
+    if owner is None:
+        return None
+    servants = [
+        unit
+        for unit in state.units.values()
+        if unit.flags.get("owner_id") == owner_unit_id
+        and unit.flags.get("servant_definition_id")
+    ]
+    merged: dict[tuple[str, float], dict[str, JSONValue]] = {}
+    for servant in servants:
+        source = servant_declared_dynamic_binding_source(
+            rules,
+            state,
+            servant.unit_id,
+            ability_instance_id="",
+            excluded_hashes=excluded_hashes,
+        )
+        if source is None:
+            continue
+        for entry in source.get("entries", {}).values():
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get("value")
+            if not _finite_number(value):
+                continue
+            merged[(str(entry.get("hash") or ""), float(value))] = entry
+    entries: dict[str, JSONValue] = {}
+    for (hash_key, value), entry in merged.items():
+        projected = {
+            "scope": "unit",
+            "owner_id": owner_unit_id,
+            "hash": hash_key,
+            "name": None,
+            "value": value,
+            "source_trace": {
+                "projected_from_owner_servant": True,
+                "servant_source_trace": entry.get("source_trace", {}),
+            },
+        }
+        entries[_entry_key(projected)] = projected
+    return (
+        {
+            "source_type": "servant_declared_dynamic_values_projected_to_owner",
+            "unit_id": owner_unit_id,
+            "binding_role": "declared_mutable_slot_default",
+            **_reindex({"entries": entries}),
+        }
+        if entries
+        else None
+    )
+
+
 def character_skill_param_binding_source(
     rules: RuleBook,
     state: BattleState,
@@ -2427,15 +3181,24 @@ def character_skill_param_binding_source(
     unit = state.units.get(unit_id)
     if unit is None:
         return None
-    card_id = unit.flags.get("character_data_card_id")
-    if card_id is not None:
-        if not isinstance(card_id, str) or not card_id:
+    # A battle-event unit reads the skill parameters declared by the character
+    # that created it; the values stay bound to the acting event unit.
+    param_unit = unit
+    if unit.flags.get("entity_type") == "battle_event":
+        # Ownership can change without replacing the originating character build.
+        creator_id = unit.flags.get("creation_source_unit_id", unit.flags.get("summoner_id"))
+        creator = state.units.get(str(creator_id or ""))
+        if creator is not None:
+            param_unit = creator
+    param_card_id = param_unit.flags.get("character_data_card_id")
+    if param_card_id is not None:
+        if not isinstance(param_card_id, str) or not param_card_id:
             return None
-        card = rules.character_data_card(card_id)
-        if card is None or card.entity_ref != unit.template_id:
+        card = rules.character_data_card(param_card_id)
+        if card is None or card.entity_ref != param_unit.template_id:
             return None
     else:
-        card = rules.character_data_card_for_entity(unit.template_id)
+        card = rules.character_data_card_for_entity(param_unit.template_id)
     if card is None:
         return servant_skill_param_binding_source(rules, state, unit_id, excluded_hashes=excluded_hashes)
     config_bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
@@ -2445,7 +3208,7 @@ def character_skill_param_binding_source(
     if not isinstance(by_hash, dict):
         return None
 
-    skill_levels_by_trigger_key = unit.flags.get("skill_levels_by_trigger_key")
+    skill_levels_by_trigger_key = param_unit.flags.get("skill_levels_by_trigger_key")
     if not isinstance(skill_levels_by_trigger_key, dict):
         skill_levels_by_trigger_key = {}
     param_slots = tuple(
@@ -2503,6 +3266,12 @@ def character_skill_param_binding_source(
                 "dynamic_value_binding": binding,
                 "skill_level": selected_level,
                 "skill_level_source": level_source,
+                "binding_owner_unit_id": unit_id,
+                "param_declaring_unit_id": (
+                    unit_id
+                    if param_unit is unit
+                    else str(unit.flags.get("summoner_id") or "")
+                ),
             },
         }
         entries[_entry_key(entry)] = entry
@@ -2749,18 +3518,34 @@ def find_status_detail(
 
 
 def _entry_key(entry: dict[str, Any]) -> str:
+    scope_kind = str(entry.get("scope") or entry.get("scope_kind") or "")
+    hash_key = entry.get("hash")
+    # Unit/combat slots are identified by their hash: the raw name is display
+    # metadata, and writers may mention it or not. Keeping both spellings as
+    # separate entries would make one committed slot ambiguous.
+    normalized_name = (
+        None
+        if hash_key and scope_kind in {"unit", "combat"}
+        else entry.get("name")
+    )
+    # Unit/combat slots belong to their holder (target_id); owner_id only
+    # records which unit wrote the value, so it must not split one slot into
+    # two entries with different owners.
+    normalized_owner = (
+        None if scope_kind in {"unit", "combat"} else entry.get("owner_id")
+    )
     payload = {
         "scope": entry.get("scope"),
         "scope_kind": entry.get("scope_kind"),
         "lifecycle": entry.get("lifecycle"),
-        "owner_id": entry.get("owner_id"),
+        "owner_id": normalized_owner,
         "target_id": entry.get("target_id"),
         "status_id": entry.get("status_id"),
         "status_instance_id": entry.get("status_instance_id"),
         "ability_instance_id": entry.get("ability_instance_id"),
         "event_id": entry.get("event_id"),
-        "name": entry.get("name"),
-        "hash": entry.get("hash"),
+        "name": normalized_name,
+        "hash": hash_key,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return "dyn:" + hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]

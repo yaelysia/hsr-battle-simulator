@@ -135,6 +135,14 @@ class ResourceSystem:
         if actor_id not in state.units:
             return ResourcePlanResult(False, errors=(f"unknown actor_id: {actor_id}",))
 
+        special_gate = (plan.metadata or {}).get("special_resource_ultimate_gate")
+        if special_gate is not None:
+            if not isinstance(special_gate, dict):
+                errors.append("ultimate_special_resource_gate_invalid")
+            elif special_gate.get("valid") is not True:
+                errors.append(str(special_gate.get("blocked_reason") or "ultimate_special_resource_gate_invalid"))
+            elif special_gate.get("ready") is not True:
+                errors.append("ultimate_special_resource_not_ready")
         if type(plan.energy_cost) not in (int, float) or not math.isfinite(plan.energy_cost):
             errors.append("ultimate_energy_cost_invalid")
         elif plan.energy_cost != 0.0:
@@ -165,6 +173,32 @@ class ResourceSystem:
                     mutation_id=f"mutation:{plan.source}:skill_points:{state.event_index}",
                 )
             )
+
+        if isinstance(special_gate, dict) and special_gate.get("ready") is True:
+            # 特殊资源终结技的消耗：来源用 ModifySkillPropertyByName 把 Skill03 的
+            # SPNeed 同步为资源上限，施放时按该值扣除当前资源（同能量消耗）。
+            current_key = str(special_gate.get("current_key") or "")
+            unit = state.units[actor_id]
+            current = unit.resources.get(current_key)
+            cost = special_gate.get("maximum")
+            if (not current_key or type(current) not in (int, float)
+                    or type(cost) not in (int, float) or not math.isfinite(float(cost)) or cost <= 0):
+                return ResourcePlanResult(False, errors=("ultimate_special_resource_cost_invalid",))
+            after_value = max(0.0, float(current) - float(cost))
+            mutations.append(Mutation(
+                op="set",
+                path=("units", actor_id, "resources", current_key),
+                before=current,
+                after=after_value,
+                reason="consume special-resource ultimate cost",
+                source=plan.source,
+                metadata={**_plan_metadata(plan), "resource_operation": "ultimate_special_resource_cost",
+                          "special_resource_cost": float(cost),
+                          "cost_source": "Skill03 SPNeed synchronized to the resource maximum"},
+                mutation_id=f"mutation:{plan.source}:special_resource:{state.event_index}:{actor_id}",
+            ))
+            state = replace(state, units={**state.units, actor_id: replace(
+                unit, resources={**unit.resources, current_key: after_value})})
 
         if plan.energy_cost != 0.0:
             debit = self.change_unit_energy(state, actor_id, -float(plan.energy_cost), plan.source)

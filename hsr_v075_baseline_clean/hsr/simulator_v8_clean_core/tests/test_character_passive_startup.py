@@ -181,7 +181,11 @@ def test_source_lifecycle_without_listener_remains_observable():
     event = next(event for event in built.setup_events
                  if event.event_type == "status.lifecycle"
                  and event.payload.get("callback_event") == "OnAddModifierSuc")
-    assert rules.status_event_family("OnAddModifierSuc") is None
+    # Producer protocols exist even when a scoped build omits every listener:
+    # the family stays observable and dispatch is still a no-op.
+    family = rules.status_event_family("OnAddModifierSuc")
+    assert family is not None and family.coverage_status == "executable"
+    assert rules.status_callbacks_for_event("OnAddModifierSuc") == ()
     effects = EffectRegistry(StatusSystem(rules))
     dispatch = EventDispatchSystem(rules, effects)
     result = dispatch.dispatch_event(built.state, event=event)
