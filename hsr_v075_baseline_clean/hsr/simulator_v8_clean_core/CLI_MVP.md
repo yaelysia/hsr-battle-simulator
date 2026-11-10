@@ -292,12 +292,17 @@ PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean
   --output /tmp/hsr-aglaea-joint.json.gz
 ```
 
-## 倒计时退场与重新召唤（2026-10-15）
+## 倒计时退场与重新召唤（2026-10-15，2026-10-30 复验）
 
 网页场景列表选择 `aglaea_countdown_resummon`。E0/Lv20、空装备、初始能量350，
-使用关卡400020640的两只23级重子波次；15次公开操作获胜。
-倒计时到期后，忆灵退场，主人回复20能量（65→85），机制条归零并关闭，速度恢复102，
+使用关卡400020640的两只23级重子波次；**19 次公开操作获胜**（复验记录见下）。
+倒计时到期后，忆灵退场，主人回复20能量（本次序列为25→45），机制条归零并关闭，
 普通普攻与战技恢复；随后重新召唤忆灵并完成战斗。仅采用敌方波次，不包含完整关卡环境。
+
+行动序说明（2026-10-30）：忆灵在主人强化态下每次攻击按来源 `MServant_AglaeaServant_00_AddSpeed`
+逐层提升自身速度（上限来自主人 `SkillP01` 参数 `_MaxLayer`），因此忆灵会比旧记录更早获得
+独立行动；旧 15 步命令不再匹配当前合法动作集，已按实际合法动作序列更新为 19 步。
+公开命令仍为外部操作选择（含敌方目标选择），到达/重召唤/胜利语义不变。
 
 ```bash
 PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run \

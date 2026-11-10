@@ -1,7 +1,9 @@
 # HSR 战斗模拟器工作区
 
-当前主线是 `simulator_v8_clean_core/`。项目基于 TurnBasedGameData 构建可审计的
-《崩坏：星穹铁道》战斗模拟器，覆盖战斗配置、合法动作与目标、状态转移、结算、快照和 replay。
+当前主线是 `simulator_v8_clean_core/`。项目基于 TurnBasedGameData 和可靠机制资料构建供人工操作、
+UI 与外部推演器使用的《崩坏：星穹铁道》战斗模拟器，覆盖战斗配置、合法动作与目标、状态转移、
+结算、快照和 replay。当前版本的终点是用户确定的 v1 名单，见
+[`simulator_v8_clean_core/PROJECT_GOALS.md`](simulator_v8_clean_core/PROJECT_GOALS.md)。
 
 新线程按以下顺序定位，不要默认读取整个工作区：
 
