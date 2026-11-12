@@ -276,7 +276,7 @@ def preparation_counts():
 def _open_session(rules, scenario):
     from hsr.simulator_v8_clean_core.session import BattleSession
 
-    return BattleSession(rules, scenario)
+    return BattleSession(rules, scenario, diagnostics="full")
 
 
 def _submit_public_prefix(session, commands, count):

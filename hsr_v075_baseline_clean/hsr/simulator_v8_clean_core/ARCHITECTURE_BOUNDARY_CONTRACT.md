@@ -232,8 +232,49 @@ L2 负责把通用机制实例化到具体内容上：
 每个处理器在定义处注明依据（TBGD 能力名或资料链接、适用版本与条件）。第二个内容需要同样行为时，
 把共同部分提升为通用机制，两处改为复用。
 
-处理器的挂载接口和书写约定由首个对照实验确立，见
-[工程完结路线](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#里程碑)；接口落地后在本节补充。
+### 挂载接口与书写约定（2026-11-11 M1-3 对照实验确立）
+
+实验结论与投入对比见[对照实验报告](docs/archive/completed_tasks/CONTENT_PROCESSOR_EXPERIMENT_REPORT.md)：单内容专属行为
+默认走处理器路径。
+
+挂载接口：
+
+- 装配：`content_processors/` 目录是 L2 数据（键为内容身份 entity_ref）；`mount_catalog` 只挂载
+  IR 中实际存在的内容，`build_battle_rulebook` 末尾统一装配；RuleBook 携带按 content_id 排序的
+  MountedProcessor（content_id + version）。
+- 公共挂点：H1 动作执行（通用 preflight 之后、执行计划的**效果阶段**——首个 damage 步或首个
+  post-before 窗口；前窗口回调与事件先于处理器效果，后窗口与共享通知链照常；`takeover=False`
+  为前置清理，编译图继续执行；`takeover=True` 替换根效果图（OnStart）与 damage_plan，处理器伤害
+  命中接回 action_hit_targets 与 post-action notice）；H2 事件监听（监听器分派后，同一 dispatch
+  通道与去重规则，重入深度上限 8）；H4 可用性过滤。生命周期节点由 H2 事件覆盖。
+- 处理器数值解析：倍率经正式技能参数绑定（L1 binding source，servant 配置 ReadInfo 链）；
+  削韧经 L1 ToughnessSystem（compiled emission canonical 表达式优先，action definition 形式
+  show_stance_list 回退），随后经 BreakSystem 完成击破与多层溢出；不得按 ParamList 位置猜测
+  辅助动作倍率，不得绕过 L1 削韧/击破通路。
+- H1 的 ProcessorServices 接收攻击前窗口的类型化增伤贡献，仅合并到当前行动者的伤害包；
+  保留包自身贡献，同一贡献只应用一次，HP 消耗不应用增伤。
+- 分派：按单位自身 template_id 字典查找（与 action_set 同构），在场门禁；内核不按名称/固定 ID 分支。
+- 图覆盖旁路：处理器 `claims_action` 命中的动作，仅跳过 `GRAPH_COVERAGE_BLOCK_PREFIXES` 枚举的
+  编译图覆盖类阻断（task_graph_* / effect_coverage_* / bounce_not_executable / condition_not_executable /
+  damage_emission_scaling_ratio_not_runtime_bound / process_only_task_coverage_mismatch）；
+  availability 与 executor 共用同一枚举。目标、资源、生命周期、控制、身份门禁一律照常，不得绕过。
+- 输出与结算：HookResult 携带类型化 mutations/events/rng_events/records，以及内部已派发事件身份与
+  归一化结果；外层不得重新派发已消费事件，内部事件沿用原重入深度。ProcessorServices 门面包装
+  L1 系统（召唤/状态/伤害/RNG/队列/MutationReducer），内部候选 state 推进；失败零 mutation 零 RNG，
+  经既有原子边界整事务拒绝。
+- 版本身份：挂载记录进 setup_records（content_id + version，排序确定性）；语义变更必须升版本；
+  replay 经 setup_audit 比对拒绝版本漂移；不进 rules_fingerprint。
+
+书写约定：
+
+- 一个内容一个文件（`content_processors/<content>.py`），类注明 content_id、version 与逐行为依据
+  （TBGD 能力名 + 固定提交，或资料链接 + 适用版本/条件）。
+- 数值一律读数据卡参数；禁止写死倍率/层数/速度；参数缺失 fail-closed，不猜。
+- 只经 services 产生 mutation；禁止直接改 state、私写公式、绕过目标/资源/概率/抵抗/免疫/RNG。
+- 不读 raw TBGD/TextMap/其它内容卡私有状态；跨卡影响只经公共事件与通用系统。
+- 不持有跨调用可变状态；持久信息进类型化 state 字段。
+- 最小介入：已可用且语义正确的声明式行为不接管；接管清单与理由逐项记录。
+- 第二个内容需要同样行为时，把共同部分提升为通用机制，两处改复用。
 
 ### 声明式与处理器的选择
 

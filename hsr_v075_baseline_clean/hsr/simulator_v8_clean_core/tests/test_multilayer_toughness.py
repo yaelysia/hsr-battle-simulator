@@ -233,6 +233,27 @@ def test_real_three_layer_monster_overflows_then_breaks_and_recovers_atomically(
     assert "modifier:StanceBreakState" in unit.statuses and "modifier:MCommon_Element_Burn" in unit.statuses
     assert unit.action_value > first.after_state.units["enemy"].action_value
     assert sum(event.event_type == "break.triggered" for event in second.events) == 1
+    # The processor facade must preserve the same overflow, callbacks and RNG;
+    # commit skips events already dispatched inside the shared break system.
+    from hsr.simulator_v8_clean_core.core.content_hooks import ProcessorServices
+
+    candidate = before
+    for index, expected in enumerate((first, second)):
+        emission = rules.ir.toughness_emissions[index]
+        packet = ToughnessPacket("actor", "enemy", emission.toughness_emission_id, emission.source_task_id,
+            emission.hit_profile_id, "Fire", (450., 90.)[index], "primary", "executable", emission.source.to_json())
+        services = ProcessorServices(candidate, rules, producer_id="fixture:processor")
+        services.apply_toughness(packet)
+        hook = services.finish()
+        committed = CombatExecutor(rules).commit_eventful_transition(candidate,
+            mutations=hook.mutations, events=hook.events, records=hook.records, rng_events=hook.rng_events,
+            producer_kind="toughness_system", producer_id=emission.toughness_emission_id,
+            actor_id="actor", dispatched_event_ids=hook.dispatched_event_ids,
+            event_normalizations=hook.event_normalizations)
+        assert not committed.errors, committed.errors
+        assert committed.after_state == expected.after_state
+        assert committed.rng_events == expected.rng_events
+        candidate = committed.after_state
     recovery = breaks.recover_ordinary_before_action(second.after_state, unit_id="enemy")
     assert recovery is not None and recovery.ok, recovery.errors if recovery else None
     unit = recovery.after_state.units["enemy"]

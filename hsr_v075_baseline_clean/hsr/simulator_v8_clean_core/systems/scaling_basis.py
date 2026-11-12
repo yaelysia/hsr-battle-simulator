@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..core.audit_policy import diagnostic_json
+
 from ..core.model import BattleState, JSONValue, UnitState, current_max_hp
 from .unit_stats import effective_unit_stat
 
@@ -19,7 +21,7 @@ class ScalingBasisResult:
     blocked_reason: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {
+        return diagnostic_json({
             "ok": self.ok,
             "basis_kind": self.basis_kind,
             "unit_ref": self.unit_ref,
@@ -29,7 +31,7 @@ class ScalingBasisResult:
             "source_trace": self.source_trace,
             "source_terms": [dict(term) for term in self.source_terms],
             "blocked_reason": self.blocked_reason,
-        }
+        })
 
 
 def resolve_scaling_basis(

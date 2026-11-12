@@ -80,7 +80,7 @@ TBGD / 已采纳机制资料 -> compiler/lowering、规则注册或内容专属�
 
 ## 战斗范围
 
-当前版本只做 v1 名单（见 `<core>/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`）。名单外的
+当前版本只做 v1 名单（见 `<core>/V1_ROUTE.md`）。名单外的
 内容在准入时明确拒绝即可，不是缺陷，不列入待办；名单的增减由用户决定。
 
 名单内纳入会改变以下结果的内容：
@@ -134,20 +134,22 @@ TBGD / 已采纳机制资料 -> compiler/lowering、规则注册或内容专属�
 |---|---|
 | 当前进度、下一步、检查点 | `hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md` |
 | 项目目标、v1 完成定义、数值容差与性能预算 | `<core>/PROJECT_GOALS.md` |
-| v1 名单、里程碑与结束条件 | `<core>/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md` |
-| 分层、依赖方向、内容专属处理器边界 | `<core>/ARCHITECTURE_BOUNDARY_CONTRACT.md` |
+| v1 名单、里程碑与结束条件 | `<core>/V1_ROUTE.md` |
+| 分层、依赖方向、内容专属处理器的接口与书写约定 | `<core>/ARCHITECTURE_BOUNDARY_CONTRACT.md`；现有处理器在 `<core>/content_processors/` |
 | 禁止事项和历史兼容红线 | `<core>/FORBIDDEN.md` |
-| 阶段实施 | 当前阶段执行卡及卡内列出的直接依赖 |
-| 规划、验收、验证成本、执行角色 | `<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md` |
+| 数值对照的记录格式与现有记录 | `<core>/docs/numeric_validation/README.md` |
+| 命令行操作、示例场景、测试入口 | `<core>/CLI_MVP.md`、`<core>/tests/README.md` |
+| 实施方式与验证选择 | `<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md` |
+| 已完成任务的说明（R05–R07、怪物召唤、击破、希儿路线、性能、处理器实验） | `<core>/docs/archive/completed_tasks/README.md` |
 | 矫正前路线（R01–R18）与 P9 历史 | `<core>/docs/archive/p9/ENGINEERING_ROUTE_R01_R18_PRE_CORRECTION_2026-11-10.md`；旧卡仅追溯时读 `<core>/docs/archive/p9/execution_cards/README.md` |
 | 光锥、遗器和构筑历史 | `<core>/docs/archive/p8/P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`、`<core>/docs/archive/p8/execution_cards/README.md` |
 | 状态系统历史 | `<core>/docs/archive/completed_phase_plans/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md` |
 | 召唤物、忆灵和 servant 历史 | `<core>/docs/archive/completed_phase_plans/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md` |
 | 角色卡与怪物卡底座历史 | `<core>/docs/archive/completed_phase_plans/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md` |
 | 公式、动态值和参数绑定历史 | `<core>/docs/archive/completed_phase_plans/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md` |
-| 怪物卡 | `<core>/MONSTER_CARD_SPEC.md` 及对应阶段卡 |
-| UI | `hsr_v075_baseline_clean/hsr/simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md` |
-| 当前验收证据与历史报告 | `hsr_v075_baseline_clean/hsr/live_validation_reports/README.md`；只按当前交接点名读取 |
+| 怪物卡 | `<core>/MONSTER_CARD_SPEC.md` |
+| UI 工作台 | 代码在 `hsr_v075_baseline_clean/hsr/simulator_v8_ui/`，用法见 `<core>/CLI_MVP.md` 的浏览器一节；旧 UI v2 草案在 `<core>/docs/archive/ui/`，不作为施工计划 |
+| 历史阶段报告 | `hsr_v075_baseline_clean/hsr/live_validation_reports/README.md`；只按交接点名读取 |
 | 完整文档归属和历史档案 | `<core>/DOCUMENTATION_INDEX.md` |
 
 这张表是定位器，不是必读列表。当前状态只相信 `CODEX_HANDOFF.md`；旧计划和报告只用于追溯，
@@ -171,5 +173,4 @@ TBGD / 已采纳机制资料 -> compiler/lowering、规则注册或内容专属�
 - 手工编辑使用 `apply_patch`；临时产物写 `/tmp`，不提交缓存和大体积输出。
 - 不回滚用户改动，不混入无关文件，不使用破坏性 Git 命令。
 
-阶段拆分、风险分级、验证成本、执行角色、可选子代理与模型路由均由
-`<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md` 按需规定，不在本文件重复。
+实施方式、验证选择和成本约定见 `<core>/docs/AGENT_WORKFLOW_AND_VALIDATION.md`，不在本文件重复。

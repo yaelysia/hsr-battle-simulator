@@ -12,7 +12,7 @@ import tempfile
 from typing import Any, Callable
 
 from .archive_json import decode_archive_json, encode_archive_json, validate_json_graph
-from .builds.manifest import canonical_ir_fingerprint
+from .builds.manifest import cached_canonical_ir_fingerprint
 from .rules.rulebook import RuleBook
 from .session import BattleSession, SESSION_SCHEMA, command_from_json
 
@@ -20,6 +20,7 @@ from .session import BattleSession, SESSION_SCHEMA, command_from_json
 _ARCHIVE_FIELDS = frozenset(
     {
         "schema_version",
+        "diagnostics",
         "canonical_ir_fingerprint",
         "scenario",
         "initial_snapshot",
@@ -117,7 +118,7 @@ def restore_session(archive: dict[str, Any], rules: RuleBook) -> BattleSession:
     """Return only a fully replayed and verified session, retaining its history."""
     from copy import deepcopy
 
-    report, session = _verify_archive(archive, rules)
+    report, session = _verify_archive(archive, rules, retain_boundaries=True)
     if session is None:
         raise ValueError("archive_restore_failed:" + ";".join(report["errors"]))
     # State comes from replay. Only the already-compared audit history is copied;
@@ -127,22 +128,18 @@ def restore_session(archive: dict[str, Any], rules: RuleBook) -> BattleSession:
 
 
 def fork_session(original: BattleSession, operation_count: int) -> BattleSession:
-    """Replay a verified prefix of an existing session into an independent branch."""
-    from copy import deepcopy
+    """Branch at an admitted live-session boundary without serializing or replaying."""
 
     if not isinstance(original, BattleSession):
         raise TypeError("fork requires a BattleSession")
     if type(operation_count) is not int or not 0 <= operation_count <= len(original.operations):
         raise ValueError("fork operation count is outside session history")
-    archive = original.archive()
-    report, session = _verify_archive(archive, original.rules, operation_count=operation_count)
-    if session is None:
-        raise ValueError("archive_fork_failed:" + ";".join(report["errors"]))
-    session.operations = deepcopy(original.operations[:operation_count])
-    return session
+    return original.fork(operation_count)
 
 
-def _verify_archive(archive: dict[str, Any], rules: RuleBook, *, operation_count: int | None = None) -> tuple[dict[str, Any], BattleSession | None]:
+def _verify_archive(
+    archive: dict[str, Any], rules: RuleBook, *, retain_boundaries: bool = False,
+) -> tuple[dict[str, Any], BattleSession | None]:
     if not isinstance(archive, dict):
         return _failed(0, "archive_root_invalid"), None
     if archive.get("schema_version") != SESSION_SCHEMA:
@@ -152,14 +149,14 @@ def _verify_archive(archive: dict[str, Any], rules: RuleBook, *, operation_count
     fingerprint = archive.get("canonical_ir_fingerprint")
     if not isinstance(fingerprint, str) or not fingerprint:
         return _failed(0, "canonical_ir_fingerprint_invalid"), None
-    if fingerprint != canonical_ir_fingerprint(rules.ir):
+    if fingerprint != cached_canonical_ir_fingerprint(rules):
         return _failed(0, "canonical_ir_fingerprint_mismatch"), None
     try:
         _validate_archive_shape(archive)
     except (TypeError, ValueError) as exc:
         return _failed(0, f"archive_invalid:{exc}"), None
     try:
-        session = BattleSession(rules, archive["scenario"])
+        session = BattleSession(rules, archive["scenario"], diagnostics=archive["diagnostics"])
     except (TypeError, ValueError, KeyError) as exc:
         return _failed(0, f"session_rebuild_failed:{type(exc).__name__}:{exc}"), None
 
@@ -171,8 +168,10 @@ def _verify_archive(archive: dict[str, Any], rules: RuleBook, *, operation_count
         return _failed(0, "initialization_mismatch"), None
 
     step_count = 0
+    states = {0: session.state} if retain_boundaries else {}
+    session._history_states = None
     try:
-        for operation in (archive["operations"] if operation_count is None else archive["operations"][:operation_count]):
+        for operation in archive["operations"]:
             index = step_count
             try:
                 _replay_operation(session, operation)
@@ -182,16 +181,18 @@ def _verify_archive(archive: dict[str, Any], rules: RuleBook, *, operation_count
             if not _json_equal(actual, operation):
                 return _failed(step_count, f"operation[{index}]_mismatch"), None
             step_count += 1
+            if retain_boundaries:
+                states[step_count] = session.state
             session.operations.clear()
             del actual, operation
     except (TypeError, ValueError, KeyError) as exc:
         return _failed(step_count, f"archive_invalid:{exc}"), None
 
-    if operation_count is None or operation_count == len(archive["operations"]):
-        if not _json_equal(session.state.snapshot().to_json(detach=False), archive["final_snapshot"]):
-            return _failed(step_count, "final_snapshot_mismatch"), None
-        if session.outcome != archive["outcome"]:
-            return _failed(step_count, "outcome_mismatch"), None
+    if not _json_equal(session.state.snapshot().to_json(detach=False), archive["final_snapshot"]):
+        return _failed(step_count, "final_snapshot_mismatch"), None
+    if session.outcome != archive["outcome"]:
+        return _failed(step_count, "outcome_mismatch"), None
+    session._history_states = states
     return {"ok": True, "step_count": step_count, "errors": []}, session
 
 
@@ -240,6 +241,8 @@ def _validate_archive_shape(archive: dict[str, Any]) -> None:
         raise TypeError("archive.operations must be an array")
     if not isinstance(archive["outcome"], str):
         raise TypeError("archive.outcome must be a string")
+    if not isinstance(archive["diagnostics"], str) or archive["diagnostics"] not in {"compact", "full"}:
+        raise ValueError("archive.diagnostics must be compact or full")
     validate_json_graph(archive)
 
 

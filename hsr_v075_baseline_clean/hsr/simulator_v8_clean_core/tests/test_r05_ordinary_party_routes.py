@@ -51,7 +51,7 @@ def _rules_factory(scenario):
 def _run_route(name, tmp_path):
     scenario, commands = _module_scenario(name)
     rules = _rules_factory(scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
     records: list[dict] = []
     audited = 0

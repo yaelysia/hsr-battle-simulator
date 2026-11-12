@@ -1370,7 +1370,7 @@ class StatusCallbackSystem:
             rng_events=execution.rng_events,
             records=(
                 callback_record,
-                *(item.to_json() for item in execution.settlement_records),
+                *(item.to_json(detach=False) for item in execution.settlement_records),
             ),
             events=(callback_event, *execution.events),
             node_results=execution.outcome.node_results,
@@ -1517,7 +1517,7 @@ class StatusCallbackSystem:
             rng_events=execution.rng_events,
             records=(
                 callback_record,
-                *(item.to_json() for item in execution.settlement_records),
+                *(item.to_json(detach=False) for item in execution.settlement_records),
             ),
             events=(callback_event, *execution.events),
             node_results=execution.outcome.node_results,

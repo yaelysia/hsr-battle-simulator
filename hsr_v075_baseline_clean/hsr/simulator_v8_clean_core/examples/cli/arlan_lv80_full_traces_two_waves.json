@@ -1,0 +1,236 @@
+{
+  "scenario_id": "m2:arlan-e0-lv80-p6-full-traces-102-302-23002-two-waves",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "arlan",
+      "side": "ally",
+      "entity_ref": "avatar:1008",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "m2:arlan:e0-lv80-p6-full-traces",
+        "character_card_id": "character_data_card:avatar:1008",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1008:1008001:6",
+          "character_trace_node:character_data_card:avatar:1008:1008002:10",
+          "character_trace_node:character_data_card:avatar:1008:1008003:10",
+          "character_trace_node:character_data_card:avatar:1008:1008004:10",
+          "character_trace_node:character_data_card:avatar:1008:1008101:1",
+          "character_trace_node:character_data_card:avatar:1008:1008102:1",
+          "character_trace_node:character_data_card:avatar:1008:1008103:1",
+          "character_trace_node:character_data_card:avatar:1008:1008201:1",
+          "character_trace_node:character_data_card:avatar:1008:1008202:1",
+          "character_trace_node:character_data_card:avatar:1008:1008203:1",
+          "character_trace_node:character_data_card:avatar:1008:1008204:1",
+          "character_trace_node:character_data_card:avatar:1008:1008205:1",
+          "character_trace_node:character_data_card:avatar:1008:1008206:1",
+          "character_trace_node:character_data_card:avatar:1008:1008207:1",
+          "character_trace_node:character_data_card:avatar:1008:1008208:1",
+          "character_trace_node:character_data_card:avatar:1008:1008209:1",
+          "character_trace_node:character_data_card:avatar:1008:1008210:1"
+        ],
+        "equipment_build": {
+          "build_id": "m2:arlan:equipment:102-302-23002",
+          "character_card_id": "character_data_card:avatar:1008",
+          "light_cone": {
+            "instance_id": "m2:arlan:cone:23002",
+            "definition_key": {
+              "definition_kind": "light_cone",
+              "definition_identity": "23002",
+              "stable_id": "light_cone::23002"
+            },
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1,
+            "instance_fingerprint": "41ee4d096fd538aa6f3111ebf0acb0c0c98316ebf50dc9ec9ce02f953f4941bb"
+          },
+          "relics": [
+            {
+              "instance_id": "m2:arlan:relic:body",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61023",
+                "stable_id": "relic_template::61023"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "BODY",
+                "stable_id": "relic_slot::BODY"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "53:2",
+                "stable_id": "relic_main_affix::53:2"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "f1885d9e1a22e8c20bb3404ffa0dba0d0d2971233b89f3b29599b0f632bec95a"
+            },
+            {
+              "instance_id": "m2:arlan:relic:foot",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61024",
+                "stable_id": "relic_template::61024"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "FOOT",
+                "stable_id": "relic_slot::FOOT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "54:4",
+                "stable_id": "relic_main_affix::54:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "11e28743a406de318fb3ad5236d7603ef3fa6804a561accce1d830f0ad367bc2"
+            },
+            {
+              "instance_id": "m2:arlan:relic:hand",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61022",
+                "stable_id": "relic_template::61022"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HAND",
+                "stable_id": "relic_slot::HAND"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "52:1",
+                "stable_id": "relic_main_affix::52:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "e1c5984443111079aea5f1221f449e85e6c63039b17189b0eac03dddea401938"
+            },
+            {
+              "instance_id": "m2:arlan:relic:head",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "61021",
+                "stable_id": "relic_template::61021"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "HEAD",
+                "stable_id": "relic_slot::HEAD"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "51:1",
+                "stable_id": "relic_main_affix::51:1"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "36275de863d2b10b2deac6641f9ec27b738857a5ec4f1b195b4fd593f50345cb"
+            },
+            {
+              "instance_id": "m2:arlan:relic:neck",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63025",
+                "stable_id": "relic_template::63025"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "NECK",
+                "stable_id": "relic_slot::NECK"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "55:7",
+                "stable_id": "relic_main_affix::55:7"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "ac60cf5a26cedbbfb5cbaafd15c9277f4895340639db01566da9dbe212937f8c"
+            },
+            {
+              "instance_id": "m2:arlan:relic:object",
+              "template_key": {
+                "definition_kind": "relic_template",
+                "definition_identity": "63026",
+                "stable_id": "relic_template::63026"
+              },
+              "slot_key": {
+                "definition_kind": "relic_slot",
+                "definition_identity": "OBJECT",
+                "stable_id": "relic_slot::OBJECT"
+              },
+              "level": 15,
+              "main_affix_key": {
+                "definition_kind": "relic_main_affix",
+                "definition_identity": "56:4",
+                "stable_id": "relic_main_affix::56:4"
+              },
+              "sub_affix_rolls": [],
+              "instance_fingerprint": "8b3684257fd703a5813bf8173c5a6404984c6d01d97fea9ee17d626456ca3e67"
+            }
+          ],
+          "identity_labels": {},
+          "build_fingerprint": "72f50a4755e8e58eecb1041506559138d7c0d27bbd8185a967f3305a69e0fa0a"
+        },
+        "input_fingerprint": "d9279d2d39dcf7dce7dc9d2e2bc60f11cd93e6e3f7bf01de3dfa2f9e8f51eb75"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {},
+          "build_fingerprint": "81730c7c69d626d09427e3013f3512becf1be23fad0b52a637858e7544a00b76"
+        },
+        "input_fingerprint": "8056e1f21d1867ed478d9605e1e464fb828149b2dc0753d3221d6a4a303dbe25"
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "201010110",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "M2 roster entry arlan: Lv80 P6 E0 full traces, light cone 23002 Lv80 P6 S1, outer 102 x4 Lv15 (HEAD HP/HAND ATK/BODY ATK%/FOOT SPD), inner 302 x2 Lv15 (NECK Thunder%/OBJECT ATK%), no sub affixes. Natasha Lv80 P6 E0 empty equipment as healer. Stage 201010110 two waves, public advance/submit only."
+    }
+  }
+}

@@ -9,7 +9,7 @@
 
 - HEAD `8d6ddc9`；已验收实现基线 `a961e9f`（R06），R05 `b35d0a7`、普通怪物/工作台 `516acc8` 保留。
 - TBGD 固定 `14c1d18f91a8101d610e6c523447a7517de3fae1`；依赖和环境未变。
-- [R07 执行说明](../CHARACTER_DERIVED_UNITS_CLOSURE.md) 只规定整包目标、范围、约束与验收标准。
+- [R07 执行说明](completed_tasks/CHARACTER_DERIVED_UNITS_CLOSURE.md) 只规定整包目标、范围、约束与验收标准。
   实现顺序和方案按实际依赖决定，集中分析共同缺口，避免逐阻断反复整场试跑。
 - 当前未提交、未推送，整包尚未验收；保留已有实现，继续补齐下表缺口。
 
@@ -44,7 +44,7 @@
 
 ## 最近收口：R06 光锥与遗器完整效果（已验收提交）
 
-执行入口与交付表：[最终复审修复与复验](../EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md#最终复审修复与复验2026-10-28通过)。
+执行入口与交付表：[最终复审修复与复验](completed_tasks/EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md#最终复审修复与复验2026-10-28通过)。
 224 图静态闭包、162 光锥／58 套遗器／90 阈值证据保留。正式 emission 统一决定最终公式与
 indirect 身份；普通间接附伤正例通过，缺失或损坏的原生结算被拒绝。
 源码复查及四个复验入口、永久回归合跑 **78 passed，27.74 s**（墙钟 30.72 s，
@@ -55,8 +55,8 @@ indirect 身份；普通间接附伤正例通过，缺失或损坏的原生结�
 
 ## 最近收口：R05 四卡构筑与普通队伍战斗（已验收提交）
 
-执行入口：[完整范围与结果](../CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md#结果2026-10-24)；
-本轮结论见同文件[集中修复与验收](../CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md#集中修复与验收2026-10-26通过)。
+执行入口：[完整范围与结果](completed_tasks/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md#结果2026-10-24)；
+本轮结论见同文件[集中修复与验收](completed_tasks/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md#集中修复与验收2026-10-26通过)。
 救援准入改为核对实际源状态、typed pending plan 与 RuleBook 归属，不再读取 source_trace。
 HP 钳制由执行路径生成 `StatusHPClampFact`，审计复用 `current_max_hp` 重算完整前后上限，
 绑定实际状态实例与属性写；实际 HP 写及原生结算触发专用审计，删标签不能绕过。
@@ -71,19 +71,19 @@ P9 总路线中的其它机制仍保留原归属。
 ## 最近收口：普通怪物战斗闭环（已验收并提交）
 
 实现提交 `516acc8`；范围、原生路线与保留边界见
-[普通怪物执行说明](../MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md)。
+[普通怪物执行说明](completed_tasks/MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md)。
 
 ### 集中验收状态
 
 - 已完成相关源码、正式调用者、取消/原子边界及原生审计复查；入库 16 项、全部历史反例与相关检查合跑 124 项通过、4 项集成未选，`git diff --check` 通过；本轮未发现新的可操作问题。
-- 验收确认：失败身份的 Revivable/limbo 隔离、完整队列差分与原位过渡、正式 dequeue 准入及移除身份、ForceKill 清理因果均通过；原生结算中的完整 resolution 与 RuleBook `to_json()` 严格相等，缺失/替换/篡改均拒绝。169 项定向及 A/C 各 1 项集成证据保留，本轮复用既有整场/replay，未修改生产代码。详见[集中验收结论](../MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md#集中验收状态2026-10-24已通过)。
+- 验收确认：失败身份的 Revivable/limbo 隔离、完整队列差分与原位过渡、正式 dequeue 准入及移除身份、ForceKill 清理因果均通过；原生结算中的完整 resolution 与 RuleBook `to_json()` 严格相等，缺失/替换/篡改均拒绝。169 项定向及 A/C 各 1 项集成证据保留，本轮复用既有整场/replay，未修改生产代码。详见[集中验收结论](completed_tasks/MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md#集中验收状态2026-10-24已通过)。
 - 新 B：41 条公开命令完成首鱼自然死亡→同死亡实例许可/清理→自身 MaxHP × 正式 0.4 参数爆炸→实际减防→主人在余鱼存活时后死→关系 ForceKill→余鱼自身死亡插入→胜利。每笔事务过 RuntimeSourceAuditor；集成与独立 replay 通过，含终局拒绝检查的归档为 84 步、0 错误，耗时 11:15.31。
 - A/C/D 复用原生实战/回放证据；旧 77 项受影响检查及 669 项普通回归仅作历史底座，本轮未重新跑全量。旧目标 HP 基准的 B 归档已作废，不能替代当前证据。
 - R16 稳定接口范围及六文件已独立验收，随 `516acc8` 提交；UI 普通检查 14 项、客户端与错误交互检查通过，两场真实浏览器/下载恢复证据已收取。旧缺参 fixture 一行修复的相关 29 项通过；其余内容接入后的完整工作台仍按 R16 范围推进。
 
 ## 最近收口：召唤出生数值（已验收提交）
 
-范围、来源口径和详细验证见[出生属性任务](../MONSTER_SUMMON_STAT_BINDING.md#本批交付)。
+范围、来源口径和详细验证见[出生属性任务](completed_tasks/MONSTER_SUMMON_STAT_BINDING.md#本批交付)。
 等级、难度组与精英组来自当前关卡波次策略；出生属性由正式 intent、模板、profile 与原生结算互校，
 上下文与来源副本按路径检查，缺上下文整笔阻断。限定自然链与独立 replay 已通过。
 非中性 EliteGroup 仍为剩余项；主人死亡后的普通召唤清理已由 R01 接通。
@@ -92,11 +92,11 @@ P9 总路线中的其它机制仍保留原归属。
 
 | 范围 | 可用行为与边界 |
 | --- | --- |
-| V3 自然召唤与出生数值 | Stage 307311 的召唤、子行动、子死亡后再召唤与后续提交已接通；卡片作用域及位置不变量已修。出生面板按战斗等级上下文缩放，数值、来源副本及原生结算审计已验收，见[路线说明](../MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)与[出生属性任务](../MONSTER_SUMMON_STAT_BINDING.md)。 |
-| 第二轮性能优化 | 冻结子树共享、内部只读摘要、来源证据容量与目录哈希编码已验收；九步约 27 s，四项集成 48.88 s、88 项快测及 1205 组旧新对照通过。证据与范围见[优化说明](../COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。 |
-| 自动插入行动 | 真实监听阈值→入队→自动战技→清理→后续公开操作已验收；开始/终结 tag 事实、实际等级、BP 免扣与 SPBase 单一回能生产者、取消和晚期回滚受原子边界保护。九步归档独立 replay 19 步 0 错误；限定构筑、命令和剩余边界见[路线说明](../SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。 |
-| 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](../SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支见上行。 |
-| V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](../V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
+| V3 自然召唤与出生数值 | Stage 307311 的召唤、子行动、子死亡后再召唤与后续提交已接通；卡片作用域及位置不变量已修。出生面板按战斗等级上下文缩放，数值、来源副本及原生结算审计已验收，见[路线说明](completed_tasks/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)与[出生属性任务](completed_tasks/MONSTER_SUMMON_STAT_BINDING.md)。 |
+| 第二轮性能优化 | 冻结子树共享、内部只读摘要、来源证据容量与目录哈希编码已验收；九步约 27 s，四项集成 48.88 s、88 项快测及 1205 组旧新对照通过。证据与范围见[优化说明](completed_tasks/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)。 |
+| 自动插入行动 | 真实监听阈值→入队→自动战技→清理→后续公开操作已验收；开始/终结 tag 事实、实际等级、BP 免扣与 SPBase 单一回能生产者、取消和晚期回滚受原子边界保护。九步归档独立 replay 19 步 0 错误；限定构筑、命令和剩余边界见[路线说明](completed_tasks/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md)。 |
+| 后置监听行动事实 | 派生通知绑定自身作用域，希儿增强版条件为假的真实监听与四次公开提交可用；89 项定向及 1 项自然路线通过，独立 replay 9 步 0 错误。来源与边界见 [路线说明](completed_tasks/SEELE_POST_ATTACK_LISTENER_ROUTE.md)，插入行动真分支见上行。 |
+| V2 五元素普通击破 | 火/雷/冰/量子/虚数的首次击破、元素后续效果、自然恢复、同目标二次击破及后续合法行动通过；限定正式构筑、来源波次、普通单韧性和存活施加者，见 [V2 说明](completed_tasks/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)。共享动态值清理、多目标原子合并与差分审计已验收。 |
 | I12 逐任务绑定 | 倍率、基准、等级及削韧来源逐任务绑定；继承传播与物化分开，冲突拒绝，常数时间查找。29 项验收通过；继承链包含明确标注的组件输入，不代表完整角色整图。边界见 [I12 契约](completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)。 |
 | I11 真实来源子图 | Phainon 当前回合所有者 Buff 寿命延长、爻光新增状态实例寿命修改、遐蝶限定 InfectModifier 状态复制；生命周期事实与属性审计通过。 |
 | I11 完整内容限制 | 爻光 A6 正式构筑启动尚未验证；遐蝶完整忆灵/死龙与整场未验；Phainon 完整 Ultra 仍有其它未准入任务。 |
@@ -145,5 +145,5 @@ P9 总路线中的其它机制仍保留原归属。
   [测试入口](../../tests/README.md)。
 - [实施与验证约定](../AGENT_WORKFLOW_AND_VALIDATION.md)、
   [文档索引](../../DOCUMENTATION_INDEX.md)。
-- 长期目标见[工程完结路线](../../P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-工程完结路线)；
+- 长期目标见[工程完结路线](../../V1_ROUTE.md#0-工程完结路线)；
   旧检查点、规则依据和逐轮记录见[历史快照](CODEX_HANDOFF_PRE_SLIM_2026-10-19.md)。

@@ -10,6 +10,8 @@ import os
 import pickle
 import sys
 import tempfile
+import threading
+import weakref
 import zlib
 from dataclasses import asdict, is_dataclass
 from hashlib import sha256
@@ -24,6 +26,67 @@ from ..rules.ir import CanonicalIR, _FrozenIRPayloadDict, _FrozenIRPayloadList
 _MAGIC = b"HSR_IR_CACHE_V1\n"
 _CORE = __package__.rsplit(".tbgd", 1)[0]
 _IGNORED_SCAN_ERRORS = frozenset((errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP))
+
+# Loaded IR objects remember their cache slot so rule identity can be persisted
+# next to the artifact instead of rehashed in every new process.
+_SLOT_LOCK = threading.Lock()
+_CACHE_SLOTS: dict[int, tuple[weakref.ReferenceType[CanonicalIR], Path, str]] = {}
+
+
+def _register_slot(ir: CanonicalIR, path: Path, key: str) -> None:
+    identity = id(ir)
+
+    def clear(reference: weakref.ReferenceType[CanonicalIR]) -> None:
+        with _SLOT_LOCK:
+            current = _CACHE_SLOTS.get(identity)
+            if current is not None and current[0] is reference:
+                _CACHE_SLOTS.pop(identity, None)
+
+    with _SLOT_LOCK:
+        _CACHE_SLOTS[identity] = (weakref.ref(ir, clear), path, key)
+
+
+def ir_cache_slot(ir: CanonicalIR) -> tuple[Path, str] | None:
+    with _SLOT_LOCK:
+        entry = _CACHE_SLOTS.get(id(ir))
+        if entry is not None and entry[0]() is ir:
+            return entry[1], entry[2]
+    return None
+
+
+def _identity_sidecar_path(path: Path) -> Path:
+    return path.with_name(path.name.removesuffix(".ir.gz") + ".identity.json")
+
+
+def read_identity_sidecar(path: Path, key: str) -> dict | None:
+    try:
+        with _identity_sidecar_path(path).open("r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("cache_key") != key:
+        return None
+    identity = payload.get("identity")
+    return identity if isinstance(identity, dict) else None
+
+
+def write_identity_sidecar(path: Path, key: str, identity: dict) -> None:
+    target = _identity_sidecar_path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({"cache_key": key, "identity": identity}, stream,
+                      sort_keys=True, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    except OSError:
+        pass  # Identity persistence is an optimization; failure keeps rehashing.
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _mapping_proxy(values):
@@ -128,6 +191,10 @@ def _cache_key(root: Path, limits, scope: dict, *, code_root: Path | None = None
             continue  # The L3 session boundary is never imported by L0.
         if parts == ("core", "executor.py"):
             continue  # Combat execution consumes IR; L0 does not import it.
+        if parts[0] == "content_processors":
+            continue  # L2 content processors consume IR; L0 never imports them.
+        if parts == ("core", "content_hooks.py"):
+            continue  # Processor hook protocol consumes IR; L0 does not import it.
         digest.update(os.sep.join(parts).encode())
         with open(entry.path, "rb") as stream:
             digest.update(stream.read())
@@ -194,6 +261,7 @@ def cached_ir(root: Path, limits, scope: dict, build: Callable[[], CanonicalIR],
     key = _cache_key(root, limits, scope)
     result = _read_cache(path, key)
     if result is not None and key == _cache_key(root, limits, scope):
+        _register_slot(result, path, key)
         return result
     try:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -207,6 +275,7 @@ def cached_ir(root: Path, limits, scope: dict, build: Callable[[], CanonicalIR],
         key = _cache_key(root, limits, scope)
         result = _read_cache(path, key)
         if result is not None and key == _cache_key(root, limits, scope):
+            _register_slot(result, path, key)
             return result
         result = build()
         if key != _cache_key(root, limits, scope):
@@ -217,4 +286,5 @@ def cached_ir(root: Path, limits, scope: dict, build: Callable[[], CanonicalIR],
             _write_cache(path, key, result)
         except OSError:
             pass  # A cache write failure must not discard a successful compilation.
+        _register_slot(result, path, key)
         return result

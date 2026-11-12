@@ -206,7 +206,7 @@ def test_silvermane_lieutenant_natural_summon_route(tmp_path):
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
     rules = build_battle_rulebook(_ROOT / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
     gauge = _base_action_gauge(rules)
     level, hard_group, base, ratios, expected = _expected_child_panel()

@@ -1,0 +1,48 @@
+comparison_record:
+  id: m2-arlan-e0-lv80-p6-full-traces-102-302-23002-001
+  game_version: "星穹铁道 2.x 基线（阿兰数值自 1.0 稳定；直伤公式长期稳定）"
+  data_version: "TBGD submodule commit 14c1d18f91a8101d610e6c523447a7517de3fae1"
+  simulator_version:
+    engine_rule: hsr_v8_engine_rules_v8
+    canonical_ir_fingerprint: be9fb57b66ae5fb25a516fff9e19d86ff45d2b6406147fc2bb56ec320d3a297a
+    scenario: v0_200
+  build:
+    avatar: 1008
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: 全部 18 行迹最高级（技能 普攻6/战技10/终结技10/天赋10，属性节点全解锁，3 大行迹全解锁）
+    light_cone: {id: 23002, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, pieces: [61021 HEAD 51:1, 61022 HAND 52:1, 61023 BODY 53:2, 61024 FOOT 54:4], level: 15, sub_affixes: []}
+    relics_inner: {set: 302, pieces: [63025 NECK 55:7, 63026 OBJECT 56:4], level: 15, sub_affixes: []}
+    panel: {attack: 3312.22752, max_hp: 3589.3872, defense: 727.65, speed: 133.152, crit: 0.05/0.5, thunder_bonus: 0.388803015}
+  target: {stage: 201010110, wave: 0-1, monsters: [1002040, 1002050], monster_level: 10, hard_level_group: 1}
+  operations: 公开 advance/submit，阿兰战技/终结技 + 娜塔莎普攻/治疗 + 敌方行动（归档 /tmp/m2-arlan-lv80-route-20261111.json.gz）
+  rng: {mode: deterministic, note: 全部 8 次伤害非暴击（roll 见归档 crit_resolution）；暴击判定按归档作为给定输入}
+  reference_values:
+    - {event: op1_arlan_skill_noncrit, value: 6778.114314249444, mult: 2.4, source: "TBGD 100802 lv10 ParamList[1]=2.4 + Prydwen/17173 公式独立复算", independent: true}
+    - {event: op3_enemy_attack_arlan, value: 23.017352211356013, mult: 3.0, source: "TBGD MonsterSkillConfig 100205001 ParamList[0]=3 + 公式", independent: true}
+    - {event: op5_natasha_basic_hit, value: 178.0554584807625, mult: 0.5, source: "TBGD 110501 lv1 ParamList[0]=0.5（2 段）+ 公式", independent: true}
+    - {event: op7_arlan_skill_noncrit, value: 7040.523304758921, mult: 2.4, source: 同上, independent: true}
+    - {event: op9_natasha_basic_hit, value: 142.44436678461, mult: 0.5, source: 同上, independent: true}
+    - {event: op11_arlan_skill_noncrit, value: 7282.024329048771, mult: 2.4, source: 同上, independent: true}
+    - {event: op15_ultimate_main_hit1, value: 3248.509362947032, mult: 0.96, source: "TBGD 100803 lv10 主 3.2×段系数0.3 + 公式", independent: true}
+    - {event: op15_ultimate_adjacent_hit1, value: 1624.254681473516, mult: 0.48, source: "TBGD 100803 lv10 相邻 1.6×0.3 + 公式", independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.0, verdict: 公式一致性 PASS（非最终游戏对照）}
+  game_comparison: {status: 未完成, required: 游戏实测或成熟计算器输出（明确构筑）, note: 本记录为公式+独立参数复算，按 PROJECT_GOALS 不能替代游戏对照}
+  formula: "DMG = base_ATK × 倍率 × (1+Σ增伤) × 暴击 × [1−DEF/(DEF+200+10×攻方等级)] × (1−抗性+穿透) × (1+易伤) × (1−Σ减伤)；未破韧 0.9 经 MonsterAllDamageReduce；天赋增伤=0.72×损失HP%（lv10）；23002 击杀/受击后 +0.24 增伤"
+  sources:
+    - "https://www.prydwen.gg/star-rail/guides/damage-formula — DEF 乘区（2026-11-11 直接抓取复核）"
+    - "https://news.17173.com/content/08122024/160903756.shtml — 防御/破盾/抗性乘区"
+    - "TBGD AvatarSkillConfig 100801/100802/100803/100804 lv1/6/10、MonsterSkillConfig 100205001、MonsterConfig 1002040/1002050 抗性、RelicMainAffixConfig 55:7"
+    - "R06 路线 A 证据（23002/302 阈值）：docs/EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md"
+  unverified_params:
+    - 运行时 base_ATK 3406.78（面板 3312.23 × 102 四件套动态 ATK buff）——buff 值取自归档 status，未独立复算装配链
+    - 天赋增伤对应的即时 HP 损失链（含 23002 受击治疗）取自归档状态
+    - RNG 算法（暴击判定按归档结果作为输入）
+  notes:
+    - "复现：PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run examples/cli/arlan_lv80_full_traces_two_waves.json --commands 同名.commands.json --output 新路径"
+    - "击破分支路线另见 arlan_lv80_full_traces_break.json（stage 1022514 lv56，胜利 20 步）；该路线敌人无雷弱点，削韧被正确跳过（2026-11-11 曾误判为削韧绑定缺口，已纠正）；击破对照需雷弱点关卡"
+    - "302 速度阈值（SPD≥120→ATK+8%）入场激活验证：initial status_details 含 MRelic_302_Main+MRelic_302_Sub"
+    - "102 四件套动态（MRelic_102_Main）、23002 主/效果、天赋/行迹修饰器均在归档事件中实证"
+    - "本记录覆盖直伤/治疗/能量/天赋/装备分支；击破分支待雷弱点路线可用后补对照（现成 V2 雷击破路线被 XP_Minion 被动准入回归阻断，见交接）"

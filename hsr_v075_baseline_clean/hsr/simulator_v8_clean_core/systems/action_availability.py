@@ -6,6 +6,7 @@ from typing import Literal
 
 from ..builds.models import OwnedCombatantBuildAssemblyResult
 from ..build_types import ir_source_from_json
+from ..core.content_hooks import graph_coverage_block_reason as _graph_coverage_block_reason
 from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
 from ..immutable_json import freeze_json
 from ..ir_types import same_ir_source_raw_row
@@ -507,6 +508,9 @@ class ActionAvailabilitySystem:
                     requests, request_blocked = self._ally_choices(
                         state, candidate, manual_ultimate_request=True,
                     )
+                    requests, request_blocked = self._processor_filter_choices(
+                        state, candidate, requests, request_blocked,
+                    )
                     choices = (*choices, *requests)
                     blocked = (*blocked, *request_blocked)
             if not choices and _battle_event_auto_turn_actor(actor):
@@ -973,19 +977,33 @@ class ActionAvailabilitySystem:
         actor: UnitState,
     ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
         if actor.side == "ally":
-            return self._ally_choices(state, actor)
-        if actor.side == "enemy":
-            return self._enemy_choices(state, actor)
-        if actor.side == "summon":
-            return self._summon_choices(state, actor)
-        return (), (
-            BlockedActionReason(
-                reason=f"unsupported_actor_side:{actor.side}",
-                scope="actor",
-                actor_id=actor.unit_id,
-                actor_side=actor.side,
-            ),
-        )
+            choices, blocked = self._ally_choices(state, actor)
+        elif actor.side == "enemy":
+            choices, blocked = self._enemy_choices(state, actor)
+        elif actor.side == "summon":
+            choices, blocked = self._summon_choices(state, actor)
+        else:
+            return (), (
+                BlockedActionReason(
+                    reason=f"unsupported_actor_side:{actor.side}",
+                    scope="actor",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                ),
+            )
+        return self._processor_filter_choices(state, actor, choices, blocked)
+
+    def _processor_filter_choices(
+        self,
+        state: BattleState,
+        actor: UnitState,
+        choices: tuple[ActionChoice, ...],
+        blocked: tuple[BlockedActionReason, ...],
+    ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
+        """H4: generic content-processor availability filter (no-op unmounted)."""
+        if not self.rules.content_processors:
+            return choices, blocked
+        return self.rules.filter_actor_choices(state, actor, choices, blocked)
 
     def _ally_choices(
         self,
@@ -1772,19 +1790,40 @@ class ActionAvailabilitySystem:
             submission_mode="queue" if choice_kind == "manual_ultimate_request" else "external_turn",
         )
         if not contract.ok or contract.admission is None:
-            return None, _blocked_action(
-                actor,
-                action_id,
-                action_level,
-                contract.blocked_reason or "action_contract_blocked",
-                source_trace,
-                {**metadata, "action_contract": contract.to_json()},
-            )
+            # H4 (M1-3): a processor-claimed action whose contract block is
+            # purely compiled-graph coverage stays available; the processor
+            # owns the effects via H1. Admission must be present (all actor,
+            # control, energy and resource gates passed before the graph
+            # check); any non-graph reason still blocks.
+            if not (
+                contract.admission is not None
+                and _graph_coverage_block_reason(contract.blocked_reason or "")
+                and self.rules.processor_action_hook(state, contract_command) is not None
+            ):
+                return None, _blocked_action(
+                    actor,
+                    action_id,
+                    action_level,
+                    contract.blocked_reason or "action_contract_blocked",
+                    source_trace,
+                    {**metadata, "action_contract": contract.to_json()},
+                )
         event = self.rules.action_event(action_id, action_level)
         if event is None:
             return None, _blocked_action(actor, action_id, action_level, "action_event_missing", source_trace, metadata)
         event_reason = self._action_event_admission_reason(event)
         binding_reason = action_binding_blocked_reason(self.rules.action_ability_binding(action_id, action_level))
+        # H4 (M1-3): a mounted content processor that claims this action owns
+        # its effects via the H1 execution hook, so compiled-graph coverage
+        # blocks do not apply. ONLY graph-coverage reasons are bypassed
+        # (enumerated in _graph_coverage_block_reason); target, resource,
+        # lifecycle and control gates above/below still apply unchanged.
+        if event_reason or binding_reason:
+            if self.rules.processor_action_hook(state, contract_command) is not None:
+                if _graph_coverage_block_reason(event_reason):
+                    event_reason = ""
+                if _graph_coverage_block_reason(binding_reason):
+                    binding_reason = ""
         target_query = self.action_targets.query(
             state,
             actor.unit_id,

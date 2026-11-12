@@ -2,10 +2,30 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
 ARCHIVE_FORMAT = "hsr_battle_archive_v2"
+
+
+def _scalar_signature(item: Any) -> tuple[Any, ...]:
+    # JSON spelling distinguishes bool/int/float and signed zero; typed tags
+    # preserve exactly those distinctions without a json.dumps per node.
+    if item is None:
+        return ("scalar", "null")
+    kind = type(item)
+    if kind is bool:
+        return ("scalar", "b", item)
+    if kind is int:
+        return ("scalar", "i", item)
+    if kind is float:
+        if not math.isfinite(item):
+            raise ValueError("Out of range float values are not JSON compliant")
+        return ("scalar", "f", repr(item))
+    if kind is str:
+        return ("scalar", "s", item)
+    raise TypeError(f"unsupported JSON value: {kind.__name__}")
 
 
 def encode_archive_json(value: dict[str, Any]) -> dict[str, Any]:
@@ -19,8 +39,7 @@ def encode_archive_json(value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item, (dict, list, tuple)):
             if type(item) not in (str, int, float, bool, type(None)):
                 raise TypeError(f"unsupported JSON value: {type(item).__name__}")
-            # JSON spelling distinguishes bool/int/float and signed zero.
-            return item, ("scalar", json.dumps(item, allow_nan=False, ensure_ascii=False))
+            return item, _scalar_signature(item)
         identity = id(item)
         if identity in visiting:
             raise ValueError("circular JSON container")
@@ -74,7 +93,8 @@ def decode_archive_json(envelope: Any) -> dict[str, Any]:
             return objects[index]
         if type(item) not in (str, int, float, bool, type(None)):
             raise ValueError("archive container must use an object reference")
-        json.dumps(item, allow_nan=False)
+        if type(item) is float and not math.isfinite(item):
+            raise ValueError("Out of range float values are not JSON compliant")
         return item
 
     for record in records:
@@ -105,8 +125,8 @@ def validate_json_graph(value: Any) -> None:
         if not isinstance(item, (dict, list, tuple)):
             if type(item) not in (str, int, float, bool, type(None)):
                 raise TypeError(f"unsupported JSON value: {type(item).__name__}")
-            if isinstance(item, float):
-                json.dumps(item, allow_nan=False)
+            if type(item) is float and not math.isfinite(item):
+                raise ValueError("Out of range float values are not JSON compliant")
             return
         identity = id(item)
         if identity in visiting:

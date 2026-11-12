@@ -1129,7 +1129,7 @@ class AbilityTaskSystem:
             mutations.extend(execution.mutations)
             events.extend(execution.events)
             rng_events.extend(execution.rng_events)
-            graph_records = tuple(item.to_json() for item in execution.settlement_records)
+            graph_records = tuple(item.to_json(detach=False) for item in execution.settlement_records)
             records.extend(graph_records)
             task_records.extend(
                 cast(dict[str, JSONValue], record["payload"])

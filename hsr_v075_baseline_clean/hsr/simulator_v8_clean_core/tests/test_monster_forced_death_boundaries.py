@@ -58,7 +58,7 @@ def _enter_with_soldiers():
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
     rules = _rules()
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     session.advance()
     result = session.submit(command_from_json(commands[0]))
     assert result.transition.outcome.successor_eligible

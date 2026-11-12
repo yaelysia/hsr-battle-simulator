@@ -233,6 +233,101 @@ def test_concurrent_cold_requests_compile_once(tmp_path):
     assert len(list(cache.glob('*.ir.gz'))) == 1 and not list(cache.glob('*.tmp'))
 
 
+def test_identity_sidecar_roundtrip_and_invalidation(tmp_path):
+    from hsr.simulator_v8_clean_core.tbgd.compile_cache import (
+        ir_cache_slot, read_identity_sidecar, write_identity_sidecar,
+    )
+    root, cache = _source(tmp_path), tmp_path / 'cache'
+    ir = cached_ir(root, LoweringLimits(), {}, _ir, cache_dir=cache)
+    slot = ir_cache_slot(ir)
+    assert slot is not None
+    path, key = slot
+    assert read_identity_sidecar(path, key) is None
+    identity = {'source_fingerprint': 'a' * 64,
+                'canonical_ir_fingerprint': 'b' * 64,
+                'engine_rule_version': 'fixture'}
+    write_identity_sidecar(path, key, identity)
+    assert read_identity_sidecar(path, key) == identity
+    assert read_identity_sidecar(path, 'c' * 64) is None
+    sidecar = path.with_name(path.name.removesuffix('.ir.gz') + '.identity.json')
+    sidecar.write_text('{broken')
+    assert read_identity_sidecar(path, key) is None
+    assert not list(cache.glob('*.tmp'))
+    # A warm load in the same process registers its own slot.
+    warm = cached_ir(root, LoweringLimits(), {}, _ir, cache_dir=cache)
+    assert warm is not ir and ir_cache_slot(warm) == slot
+
+
+def test_build_rule_identity_reuses_persisted_sidecar(tmp_path, monkeypatch):
+    from hsr.simulator_v8_clean_core.builds import manifest
+    from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+    from hsr.simulator_v8_clean_core.tbgd.compile_cache import (
+        ir_cache_slot, read_identity_sidecar, write_identity_sidecar,
+    )
+    root, cache = _source(tmp_path), tmp_path / 'cache'
+    condition = ConditionIR('fixture', 'unknown', {'nested': [{'value': 1}]},
+                            IRSource('fixture.json', 'unknown', 'fixture'))
+    fixture = CanonicalIR(version=BASELINE_VERSION, conditions=(condition,),
+                          metadata={'light_cone_source_content_fingerprint': {'hash': 'fixture'}})
+    ir = cached_ir(root, LoweringLimits(), {}, lambda: fixture, cache_dir=cache)
+    rules = RuleBook(ir=ir)
+    monkeypatch.setattr(manifest, '_IDENTITY_CACHE', {})
+    first = manifest.current_build_rule_identity(rules)
+    slot = ir_cache_slot(ir)
+    assert slot is not None and read_identity_sidecar(*slot) == first.to_json()
+
+    def no_rehash(ir):
+        raise AssertionError('identity must come from the persisted sidecar')
+
+    # A fresh process (empty in-process cache) skips the full IR rehash.
+    monkeypatch.setattr(manifest, '_IDENTITY_CACHE', {})
+    monkeypatch.setattr(manifest, 'canonical_ir_fingerprint', no_rehash)
+    assert manifest.current_build_rule_identity(rules) == first
+    # A stale engine rule version is rejected and forces recomputation.
+    stale = first.to_json()
+    stale['engine_rule_version'] = 'other-version'
+    write_identity_sidecar(slot[0], slot[1], stale)
+    monkeypatch.setattr(manifest, '_IDENTITY_CACHE', {})
+    with pytest.raises(AssertionError, match='persisted sidecar'):
+        manifest.current_build_rule_identity(rules)
+    # Without the sidecar the full computation still runs and republishes.
+    sidecar = slot[0].with_name(slot[0].name.removesuffix('.ir.gz') + '.identity.json')
+    sidecar.unlink()
+    monkeypatch.setattr(manifest, '_IDENTITY_CACHE', {})
+    with pytest.raises(AssertionError, match='persisted sidecar'):
+        manifest.current_build_rule_identity(rules)
+
+
+def test_build_rule_identity_survives_a_new_process(tmp_path):
+    from hsr.simulator_v8_clean_core.builds import manifest
+    from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+    root, cache = _source(tmp_path), tmp_path / 'cache'
+    condition = ConditionIR('fixture', 'unknown', {'nested': [{'value': 1}]},
+                            IRSource('fixture.json', 'unknown', 'fixture'))
+    fixture = CanonicalIR(version=BASELINE_VERSION, conditions=(condition,),
+                          metadata={'light_cone_source_content_fingerprint': {'hash': 'fixture'}})
+    ir = cached_ir(root, LoweringLimits(), {}, lambda: fixture, cache_dir=cache)
+    expected = manifest.current_build_rule_identity(RuleBook(ir=ir)).canonical_ir_fingerprint
+    script = (
+        'from pathlib import Path\n'
+        'from simulator_v8_clean_core.tbgd.compile_cache import cached_ir\n'
+        'from simulator_v8_clean_core.tbgd.lowering import LoweringLimits\n'
+        'from simulator_v8_clean_core.rules.rulebook import RuleBook\n'
+        'from simulator_v8_clean_core.builds import manifest\n'
+        'def cold():\n'
+        '    raise AssertionError("warm cache must not rebuild")\n'
+        f'ir = cached_ir(Path({str(root)!r}), LoweringLimits(), {{}}, cold, cache_dir=Path({str(cache)!r}))\n'
+        'def no_rehash(ir):\n'
+        '    raise AssertionError("warm identity must not rehash")\n'
+        'manifest.canonical_ir_fingerprint = no_rehash\n'
+        'print(manifest.current_build_rule_identity(RuleBook(ir=ir)).canonical_ir_fingerprint)\n'
+    )
+    result = subprocess.run([os.sys.executable, '-B', '-c', script], check=True,
+        capture_output=True, text=True,
+        env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[2])})
+    assert result.stdout.strip() == expected
+
+
 def test_mapping_proxy_roundtrip_and_executable_pickle_globals_are_rejected():
     from hsr.simulator_v8_clean_core.equipment.models import EquipmentDefinitionKey
     key = EquipmentDefinitionKey('light_cone', 'fixture')

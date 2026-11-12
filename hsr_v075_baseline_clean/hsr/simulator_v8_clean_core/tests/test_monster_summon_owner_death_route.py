@@ -125,7 +125,7 @@ def test_silvermane_lieutenant_owner_death_route(tmp_path):
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
     rules = build_battle_rulebook(_ROOT / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
     _rules_facts(rules)
 

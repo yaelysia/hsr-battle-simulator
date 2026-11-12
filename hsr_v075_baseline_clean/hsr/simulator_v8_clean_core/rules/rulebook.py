@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Literal, TypeVar
+from typing import TYPE_CHECKING, Callable, Iterable, Literal, TypeVar
 
+if TYPE_CHECKING:
+    from ..core.content_hooks import MountedProcessor
+
+# core.content_hooks is imported lazily inside the lookup methods below: a
+# module-level import would initialize core/__init__ -> fidelity -> tbgd and
+# cycle back into this partially initialized module.
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
     EQUIPMENT_RESOLVABLE_COVERAGE_STATES,
@@ -558,6 +564,9 @@ class RuleBook:
     """Read-only view over Canonical IR."""
 
     ir: CanonicalIR
+    # Assembled content-specific processors (L2). Empty by default; mounted
+    # generically by content identity at assembly time (see core.content_hooks).
+    content_processors: tuple[MountedProcessor, ...] = ()
 
     def __post_init__(self) -> None:
         task_graph_catalog = self.ir.task_graph_catalog
@@ -2189,6 +2198,30 @@ class RuleBook:
             "_triggers_by_modifier_event",
             {key: tuple(value) for key, value in triggers_by_modifier_event.items()},
         )
+        processors_by_entity: dict[str, tuple[MountedProcessor, ...]] = {}
+        for mount in sorted(self.content_processors, key=lambda item: item.content_id):
+            processors_by_entity[mount.content_id] = (
+                *processors_by_entity.get(mount.content_id, ()), mount,
+            )
+        object.__setattr__(self, "_processors_by_entity", processors_by_entity)
+
+    def processor_action_hook(self, state: object, command: object) -> MountedProcessor | None:
+        """Generic lookup: the acting unit's own content identity claims actions."""
+        from ..core.content_hooks import processor_action_hook
+
+        return processor_action_hook(self, state, command)
+
+    def processors_for_event(self, state: object, event: object) -> tuple[MountedProcessor, ...]:
+        from ..core.content_hooks import processors_for_event
+
+        return processors_for_event(self, state, event)
+
+    def filter_actor_choices(
+        self, state: object, actor: object, choices: tuple, blocked: tuple,
+    ) -> tuple[tuple, tuple]:
+        from ..core.content_hooks import filter_actor_choices
+
+        return filter_actor_choices(self, state, actor, choices, blocked)
 
     def character_ability_source_graph_query(
         self,

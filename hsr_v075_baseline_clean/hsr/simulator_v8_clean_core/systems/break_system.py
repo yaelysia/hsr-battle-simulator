@@ -257,9 +257,11 @@ class BreakSystem:
         damage: DamageSystem | None = None,
         status_callbacks: StatusCallbackSystem | None = None,
         event_dispatcher: EventDispatchSystem | None = None,
+        processor_depth: int = 0,
     ) -> None:
         self.rules = rules
         self.effects = effects
+        self._processor_depth = processor_depth
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem(rules)
         self.toughness = ToughnessSystem(rules)
@@ -324,7 +326,9 @@ class BreakSystem:
             mutations.extend(result.mutations)
             records.extend(result.records)
             for event in result.events:
-                dispatched = self.event_dispatcher.dispatch_event(current, event=event)
+                dispatched = self.event_dispatcher.dispatch_event(
+                    current, event=event, _processor_depth=self._processor_depth,
+                )
                 if dispatched.errors:
                     return _blocked(state, packet, ",".join(dispatched.errors))
                 current = dispatched.after_state
@@ -414,7 +418,9 @@ class BreakSystem:
         for event in (*events, notification):
             if str(event.to_json()["event_id"]) in dispatched_ids:
                 continue
-            dispatched = self.event_dispatcher.dispatch_event(current, event=event)
+            dispatched = self.event_dispatcher.dispatch_event(
+                current, event=event, _processor_depth=self._processor_depth,
+            )
             if dispatched.errors:
                 return _blocked(state, packet, ",".join(dispatched.errors), template=template)
             current = dispatched.after_state
@@ -496,7 +502,9 @@ class BreakSystem:
                 "break_template_id": template_id, "source_trace": trace,
             },
         )
-        dispatched = self.event_dispatcher.dispatch_event(state, event=request)
+        dispatched = self.event_dispatcher.dispatch_event(
+            state, event=request, _processor_depth=self._processor_depth,
+        )
         if dispatched.errors:
             return blocked("ordinary_break_recovery_callback_blocked:" + ",".join(dispatched.errors))
         current = dispatched.after_state
@@ -708,6 +716,7 @@ class BreakSystem:
         # damage, so the hit consumes the post-break reduction state.
         entered = self.event_dispatcher.dispatch_event(
             current_state,
+            _processor_depth=self._processor_depth,
             event=replace(
                 notification, event_type="break.entered", window="break_entered",
                 event_id=f"{notification.event_id}:entered",

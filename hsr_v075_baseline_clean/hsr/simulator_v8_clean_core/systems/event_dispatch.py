@@ -273,6 +273,7 @@ class EventDispatchSystem:
         damage_window_ledger: DamageWindowLedger | None = None,
         task_graph_continuation: TaskGraphContinuation | None = None,
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
+        _processor_depth: int = 0,
     ) -> EventDispatchResult:
         return self._dispatch_event(
             state,
@@ -287,6 +288,7 @@ class EventDispatchSystem:
             damage_window_ledger=damage_window_ledger,
             task_graph_continuation=task_graph_continuation,
             nested_ability_hooks=nested_ability_hooks,
+            _processor_depth=_processor_depth,
         )
 
     def _dispatch_event(
@@ -306,6 +308,7 @@ class EventDispatchSystem:
         nested_ability_hooks: TaskGraphExecutionHooks | None = None,
         status_nested_ability_provider: StatusNestedAbilityHookProvider | None = None,
         expected_window_scope: ActionWindowExpectedScope | None = None,
+        _processor_depth: int = 0,
     ) -> EventDispatchResult:
         from .ability import StatusNestedAbilityHookProvider
 
@@ -498,10 +501,142 @@ class EventDispatchSystem:
             status_nested_ability_provider=status_nested_ability_provider,
         )
         result = self._complete_battle_event_dependencies(state, result, event)
+        result = self._notify_content_processors(
+            result, event=event, damage_window_ledger=damage_window_ledger,
+            processor_depth=_processor_depth,
+        )
         return _with_controlled_event_normalization(
             _with_event_dispatch_node_result(result, event),
             before=event_before_normalization,
             after=event,
+        )
+
+    def _notify_content_processors(
+        self,
+        result: EventDispatchResult,
+        *,
+        event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None,
+        processor_depth: int,
+    ) -> EventDispatchResult:
+        """H2: notify mounted content processors after normal listener dispatch.
+
+        Generic dispatch: processors are looked up by their own content's
+        presence and subscription scope, in content_id order. Processor
+        output joins the same dispatch result and atomic boundary; emitted
+        events re-enter this same typed channel (with a re-entry depth cap).
+        """
+        if not self.rules.content_processors or result.errors:
+            return result
+        from ..core.content_hooks import (
+            PROCESSOR_EVENT_DEPTH_LIMIT,
+            EventHookContext,
+            ProcessorServices,
+            run_hook,
+        )
+
+        mounts = self.rules.processors_for_event(result.after_state, event)
+        if not mounts:
+            return result
+        if processor_depth >= PROCESSOR_EVENT_DEPTH_LIMIT:
+            return replace(
+                result,
+                errors=(*result.errors, "content_processor_event_depth_exceeded"),
+                node_results=(
+                    *result.node_results,
+                    ExecutionNodeResult(
+                        node_kind="content_processor_event",
+                        node_id=event.event_id or event.event_type,
+                        status="blocked",
+                        reason_code="content_processor_event_depth_exceeded",
+                    ),
+                ),
+            )
+        current = result.after_state
+        mutations = list(result.mutations)
+        events = list(result.events)
+        rng_events = list(result.rng_events)
+        records = list(result.records)
+        node_results = list(result.node_results)
+        errors: list[str] = []
+        normalizations = list(result.event_normalizations)
+        dispatched_ids = set(result.dispatched_event_ids)
+        for mount in mounts:
+            services = ProcessorServices(
+                current, self.rules,
+                producer_id=f"{mount.content_id}:{mount.version}",
+                event_dispatcher=self,
+                processor_depth=processor_depth + 1,
+            )
+            ctx = EventHookContext(state=current, event=event, services=services)
+            hook = run_hook(mount.processor, "event", ctx)
+            node_results.append(ExecutionNodeResult(
+                node_kind="content_processor_event",
+                node_id=f"{mount.content_id}:{event.event_id or event.event_type}",
+                status="complete" if hook.ok else "blocked",
+                reason_code=hook.blocked_reason,
+            ))
+            if not hook.ok:
+                errors.append(hook.blocked_reason or "content_processor_event_blocked")
+                break
+            reduction = self.reducer.apply_all_result(current, hook.mutations)
+            if not reduction.ok:
+                conflict = reduction.conflicts[0].code if reduction.conflicts else "unknown"
+                errors.append(f"content_processor_reducer_conflict:{conflict}")
+                break
+            current = reduction.after_state
+            mutations.extend(hook.mutations)
+            records.extend(hook.records)
+            rng_events.extend(hook.rng_events)
+            normalizations.extend(hook.event_normalizations)
+            dispatched_ids.update(hook.dispatched_event_ids)
+            for index, hook_event in enumerate(hook.events):
+                if not hook_event.event_id:
+                    hook_event = replace(
+                        hook_event,
+                        event_id=(
+                            f"event:{current.event_index}:processor:"
+                            f"{mount.content_id}:{index}:{hook_event.event_type}"
+                        ),
+                    )
+                events.append(hook_event)
+                if hook_event.event_id in dispatched_ids:
+                    continue
+                dispatched = self.dispatch_event(
+                    current,
+                    event=hook_event,
+                    damage_window_ledger=damage_window_ledger,
+                    _processor_depth=processor_depth + 1,
+                )
+                current = dispatched.after_state
+                mutations.extend(dispatched.mutations)
+                events.extend(dispatched.events)
+                rng_events.extend(dispatched.rng_events)
+                records.extend(dispatched.records)
+                node_results.extend(dispatched.node_results)
+                normalizations.extend(dispatched.event_normalizations)
+                dispatched_ids.update(dispatched.dispatched_event_ids)
+                if dispatched.errors:
+                    errors.extend(dispatched.errors)
+                    break
+            if errors:
+                break
+        if errors:
+            return replace(
+                result,
+                errors=tuple(dict.fromkeys(errors)),
+                node_results=tuple(node_results),
+            )
+        return replace(
+            result,
+            after_state=current,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+            node_results=tuple(node_results),
+            event_normalizations=tuple(normalizations),
+            dispatched_event_ids=frozenset(dispatched_ids),
         )
 
     def _complete_battle_event_dependencies(

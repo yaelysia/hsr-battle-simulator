@@ -117,7 +117,7 @@ def _stage_context(stage_id: int) -> tuple[dict[str, float], int, int, int | Non
 def _case():
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     rules = build_battle_rulebook(_ROOT / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     intent = next(
         intent
         for intent in rules.ir.summon_monster_intents

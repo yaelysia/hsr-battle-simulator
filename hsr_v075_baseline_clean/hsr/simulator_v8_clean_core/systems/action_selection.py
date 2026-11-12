@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..core.model import ActionCommand, BattleState, JSONValue, RNGEvent, TargetResolution
+from ..core.model import ActionCommand, BattleState, JSONValue, RNGEvent, TargetResolution, battle_state_revision
 from ..rules.action_target_contract import ActionTargetContractIR
 from ..rules.ir import ActionEventIR
 from ..rules.rulebook import RuleBook
@@ -28,14 +28,7 @@ _SELECTION_CONTEXT_ISSUER = object()
 
 
 def action_target_state_revision(state: BattleState) -> str:
-    payload = json.dumps(
-        # Internal digest: encode the read-only frozen snapshot without a copy.
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+    return battle_state_revision(state)
 
 
 def _fingerprint(prefix: str, value: object) -> str:

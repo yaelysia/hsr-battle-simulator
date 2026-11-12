@@ -1,0 +1,421 @@
+{
+  "reference_kind": "existing_public_route_regression_not_game_oracle",
+  "scenario": "arlan_vs_antimatter",
+  "note": "Captured from the previously verified public route; do not auto-update to bless changed output.",
+  "after_submits": [
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 138.72,
+          "energy": 30.0,
+          "toughness": 0.0,
+          "action_value": 98.03921568627452,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 4.1539479805569215,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 22.442712024568863,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 22.442712024568863,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 138.72,
+          "energy": 30.0,
+          "toughness": 0.0,
+          "action_value": 75.59650366170565,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 4.1539479805569215,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 110.07025924528301,
+          "energy": 40.0,
+          "toughness": 0.0,
+          "action_value": 75.59650366170565,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 4.1539479805569215,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 120.48192771084338,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 81.42051849056602,
+          "energy": 50.0,
+          "toughness": 0.0,
+          "action_value": 75.59650366170565,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 4.1539479805569215,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 120.48192771084338,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 120.48192771084338,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 56.94051849056603,
+          "energy": 90.0,
+          "toughness": 0.0,
+          "action_value": 98.03921568627452,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 44.885424049137725,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 44.885424049137725,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 28.290777735849044,
+          "energy": 100.0,
+          "toughness": 0.0,
+          "action_value": 53.15379163713679,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 58.589999999999996,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 120.48192771084338,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 3.8107777358490473,
+          "energy": 110.0,
+          "toughness": 0.0,
+          "action_value": 98.03921568627452,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 12.052723364785749,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 67.32813607370659,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 3.8107777358490473,
+          "energy": 110.0,
+          "toughness": 0.0,
+          "action_value": 30.71107961256793,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 12.052723364785749,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    },
+    {
+      "skill_points": 3,
+      "wave_index": 0,
+      "outcome": "",
+      "rng_state": "deterministic",
+      "units": {
+        "arlan": {
+          "hp": 3.8107777358490473,
+          "energy": 15.0,
+          "toughness": 0.0,
+          "action_value": 30.71107961256793,
+          "lifecycle_status": "active",
+          "statuses": [
+            "modifier:M_Arlan_Passive",
+            "modifier:M_Arlan_Skill02_LoseHPPreShow",
+            "modifier:MAvatar_Arlan_00_Rank01",
+            "modifier:MAvatar_Arlan_00_Rank06",
+            "modifier:MAvatar_Arlan_00_Passive_DamageUp"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:0": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        },
+        "enemy:stage:200020050:wave:0:pos:1": {
+          "hp": 0.0,
+          "energy": 0.0,
+          "toughness": 30.0,
+          "action_value": 0.0,
+          "lifecycle_status": "defeated",
+          "statuses": [
+            "modifier:Local_ListenStanceBreak",
+            "modifier:Local_ListenRedStance",
+            "modifier:MonsterAllDamageReduce"
+          ]
+        }
+      }
+    }
+  ]
+}

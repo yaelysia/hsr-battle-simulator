@@ -1,8 +1,8 @@
 # R06 光锥与遗器完整效果
 
 本批由用户安排 dsh / DeepSeek 实现，Codex 集中验收。实现基线 `b35d0a7`；
-当前状态只在 [CODEX_HANDOFF.md](../../CODEX_HANDOFF.md) 维护。
-执行成本与来源采用遵循 [本地约定](AGENT_WORKFLOW_AND_VALIDATION.md)，不另设审批或验证套餐。
+当前状态只在 [CODEX_HANDOFF.md](../../../../CODEX_HANDOFF.md) 维护。
+执行成本与来源采用遵循 [本地约定](../../AGENT_WORKFLOW_AND_VALIDATION.md)，不另设审批或验证套餐。
 
 ## 交付目标与范围
 

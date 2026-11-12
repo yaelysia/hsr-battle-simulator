@@ -22,7 +22,7 @@ def test_ordinary_hit_breaks_once_and_removes_reduction_before_break_damage():
     root = Path(__file__).resolve().parents[4]
     scenario = json.loads((root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_vs_antimatter.json").read_text())
     rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     assert session.advance().ready
     target_id = next(uid for uid, unit in session.state.units.items() if unit.side == "enemy")
     target = session.state.units[target_id]
@@ -66,7 +66,7 @@ def test_ordinary_break_recovery_restores_stance_and_common_reduction():
     root = Path(__file__).resolve().parents[4]
     scenario = json.loads((root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_vs_antimatter.json").read_text())
     rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     assert session.advance().ready
     target_id = next(uid for uid, unit in session.state.units.items() if unit.side == "enemy")
     attacker_id = next(uid for uid, unit in session.state.units.items() if unit.side == "ally")

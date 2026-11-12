@@ -1,8 +1,9 @@
-# v8 工程完结路线
+# v1 工程路线
 
 本文件维护版本终点、v1 名单、里程碑和结束条件；当前进度与下一步只在
-[CODEX_HANDOFF.md](../CODEX_HANDOFF.md) 维护。文件名沿用历史命名，内容已于 2026-11-10 按
-[方向矫正](PROJECT_GOALS.md#2026-11-10-方向矫正)重写。
+[CODEX_HANDOFF.md](../CODEX_HANDOFF.md) 维护。内容于 2026-11-10 按
+[方向矫正](PROJECT_GOALS.md#2026-11-10-方向矫正)重写；2026-11-12 由旧文件名
+`P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md` 改为现名。
 
 矫正前的路线（固定目录全量终点、R01–R18 交付包、并行排程）原文保存在
 [历史快照](docs/archive/p9/ENGINEERING_ROUTE_R01_R18_PRE_CORRECTION_2026-11-10.md)，

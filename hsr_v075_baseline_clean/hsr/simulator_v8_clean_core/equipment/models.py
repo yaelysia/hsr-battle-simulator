@@ -638,7 +638,21 @@ class EquipmentDefinitionKey:
         }
 
     @classmethod
-    def from_json(cls, value: object) -> EquipmentDefinitionKey:
+    def from_json(
+        cls, value: object, *, expected_kind: EquipmentDefinitionKind | None = None,
+    ) -> EquipmentDefinitionKey:
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = str(value)
+        if isinstance(value, str):
+            kind, separator, identity = value.partition("::")
+            if not separator:
+                if expected_kind is None:
+                    raise ValueError("short definition key requires its field's definition kind")
+                kind, identity = expected_kind, value
+            result = cls(cast(EquipmentDefinitionKind, kind), identity)
+            if expected_kind is not None:
+                _require_kind(result, expected_kind)
+            return result
         row = _mapping(value, "definition_key")
         _require_exact_fields(
             row,
@@ -655,9 +669,12 @@ class EquipmentDefinitionKey:
                 "definition_key.definition_identity",
             ),
         )
-        stable_id = _text(row.get("stable_id"), "definition_key.stable_id")
-        if stable_id != result.stable_id:
-            raise ValueError("definition_key.stable_id does not match canonical identity")
+        if "stable_id" in row:
+            stable_id = _text(row["stable_id"], "definition_key.stable_id")
+            if stable_id != result.stable_id:
+                raise ValueError("definition_key.stable_id does not match canonical identity")
+        if expected_kind is not None:
+            _require_kind(result, expected_kind)
         return result
 
 
@@ -3478,15 +3495,16 @@ class LightConeInstanceInput:
         )
         result = cls(
             instance_id=_text(row.get("instance_id"), "instance_id"),
-            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key"), expected_kind="light_cone"),
             level=_integer(row.get("level"), "level"),
             promotion=_integer(row.get("promotion"), "promotion"),
             superimposition=_integer(row.get("superimposition"), "superimposition"),
         )
-        encoded = _text(row.get("instance_fingerprint"), "instance_fingerprint")
-        _require_sha256(encoded, "instance_fingerprint")
-        if encoded != result.instance_fingerprint:
-            raise ValueError("light-cone instance fingerprint mismatch")
+        if "instance_fingerprint" in row:
+            encoded = _text(row["instance_fingerprint"], "instance_fingerprint")
+            _require_sha256(encoded, "instance_fingerprint")
+            if encoded != result.instance_fingerprint:
+                raise ValueError("light-cone instance fingerprint mismatch")
         return result
 
 
@@ -3513,7 +3531,7 @@ class RelicSubAffixRollInput:
             "relic_sub_affix_roll",
         )
         return cls(
-            affix_key=EquipmentDefinitionKey.from_json(row.get("affix_key")),
+            affix_key=EquipmentDefinitionKey.from_json(row.get("affix_key"), expected_kind="relic_sub_affix"),
             count=_integer(row.get("count"), "count"),
             step=_integer(row.get("step"), "step"),
         )
@@ -3599,19 +3617,20 @@ class RelicInstanceInput:
         )
         result = cls(
             instance_id=_text(row.get("instance_id"), "instance_id"),
-            template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
-            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
+            template_key=EquipmentDefinitionKey.from_json(row.get("template_key"), expected_kind="relic_template"),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key"), expected_kind="relic_slot"),
             level=_integer(row.get("level"), "level"),
-            main_affix_key=EquipmentDefinitionKey.from_json(row.get("main_affix_key")),
+            main_affix_key=EquipmentDefinitionKey.from_json(row.get("main_affix_key"), expected_kind="relic_main_affix"),
             sub_affix_rolls=tuple(
                 RelicSubAffixRollInput.from_json(item)
-                for item in _sequence(row.get("sub_affix_rolls"), "sub_affix_rolls")
+                for item in _sequence(row.get("sub_affix_rolls", []), "sub_affix_rolls")
             ),
         )
-        encoded = _text(row.get("instance_fingerprint"), "instance_fingerprint")
-        _require_sha256(encoded, "instance_fingerprint")
-        if encoded != result.instance_fingerprint:
-            raise ValueError("relic instance fingerprint mismatch")
+        if "instance_fingerprint" in row:
+            encoded = _text(row["instance_fingerprint"], "instance_fingerprint")
+            _require_sha256(encoded, "instance_fingerprint")
+            if encoded != result.instance_fingerprint:
+                raise ValueError("relic instance fingerprint mismatch")
         return result
 
 
@@ -3704,17 +3723,18 @@ class EquipmentBuildInput:
             light_cone=LightConeInstanceInput.from_json(light_cone) if light_cone is not None else None,
             relics=tuple(
                 RelicInstanceInput.from_json(item)
-                for item in _sequence(row.get("relics"), "relics")
+                for item in _sequence(row.get("relics", []), "relics")
             ),
             identity_labels={
                 key: _text(item, f"identity_labels.{key}")
-                for key, item in _mapping(row.get("identity_labels"), "identity_labels").items()
+                for key, item in _mapping(row.get("identity_labels", {}), "identity_labels").items()
             },
         )
-        encoded_fingerprint = _text(row.get("build_fingerprint"), "build_fingerprint")
-        _require_sha256(encoded_fingerprint, "build_fingerprint")
-        if encoded_fingerprint != result.build_fingerprint:
-            raise ValueError("equipment build fingerprint does not match the encoded payload")
+        if "build_fingerprint" in row:
+            encoded_fingerprint = _text(row["build_fingerprint"], "build_fingerprint")
+            _require_sha256(encoded_fingerprint, "build_fingerprint")
+            if encoded_fingerprint != result.build_fingerprint:
+                raise ValueError("equipment build fingerprint does not match the encoded payload")
         return result
 
 

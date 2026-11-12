@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..core.audit_policy import detailed_diagnostics_enabled, diagnostic_json
+
 from dataclasses import dataclass, field, replace
 import math
 from typing import Literal
@@ -673,6 +675,11 @@ class DamageSystem:
         if window_ledger is not None:
             for event in result.events:
                 window_ledger.record_defeat_event(event)
+        if not detailed_diagnostics_enabled():
+            result = replace(result, records=tuple(
+                diagnostic_json(record) if record.get("source") == "damage_system" else record
+                for record in result.records
+            ))
         return result
 
     def _damage_block_excluding_dot(
@@ -2119,6 +2126,17 @@ def _damage_defeat_event(
 def _packet_mutation_metadata(packet: DamagePacket, packet_json: dict[str, JSONValue]) -> dict[str, JSONValue]:
     # Keep producer fields separate from custom metadata without nesting the entire packet.
     fields = {key: value for key, value in packet_json.items() if key != "metadata"}
+    if not detailed_diagnostics_enabled():
+        # Numerical/producer fields remain flat; the full packet is already
+        # owned by the caller. Do not duplicate it inside every mutation.
+        metadata = {**fields, **packet.metadata}
+        compact = diagnostic_json(metadata)
+        # The lethal lifecycle fact binds this producer trace to its HP write
+        # and terminal event. Keep that shared provenance identical; trim the
+        # much larger explanatory modifier/formula trees instead.
+        if "source_trace" in metadata:
+            compact["source_trace"] = metadata["source_trace"]
+        return compact
     return {**fields, **packet.metadata, "packet_fields": fields}
 
 

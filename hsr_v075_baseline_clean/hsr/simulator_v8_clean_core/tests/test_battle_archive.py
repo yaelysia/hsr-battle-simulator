@@ -151,7 +151,7 @@ def test_archive_validation_rejects_invalid_json_in_later_operations():
     import pytest
     from hsr.simulator_v8_clean_core.battle_archive import _validate_archive_shape
 
-    archive = dict(schema_version=SESSION_SCHEMA, canonical_ir_fingerprint="synthetic:fingerprint",
+    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", canonical_ir_fingerprint="synthetic:fingerprint",
                    scenario={}, initial_snapshot={}, setup_audit={}, initialization={},
                    final_snapshot={}, outcome="", operations=[{"valid": 1}])
     _validate_archive_shape(archive)
@@ -198,7 +198,7 @@ def test_graph_archive_shares_nested_evidence_and_preserves_scalar_types(tmp_pat
             cursor = cursor[0]
         assert cursor is decoded["evidence"]
 
-    archive = dict(schema_version=SESSION_SCHEMA, canonical_ir_fingerprint="not-current",
+    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", canonical_ir_fingerprint="not-current",
                    scenario={}, initial_snapshot={}, setup_audit={}, initialization={},
                    final_snapshot={}, outcome="", operations=[])
     rules = RuleBook(CanonicalIR(version="archive-test"))

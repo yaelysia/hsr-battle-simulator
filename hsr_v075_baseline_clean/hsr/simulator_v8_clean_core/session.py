@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from .builds.manifest import canonical_ir_fingerprint
-from .core.model import ActionCommand
+from .core.audit_policy import diagnostic_detail
+from .core.model import ActionCommand, BattleState
 from .core.transition_consumer import transition_successor_state
 from .rules.rulebook import RuleBook
 from .scenarios import ScenarioLoader, ScenarioStateBuilder
@@ -13,7 +15,7 @@ from .systems.decision import CurrentDecision, DecisionSystem
 from .systems.scheduler import SchedulerStepResult
 
 
-SESSION_SCHEMA = "hsr_battle_session_v2"
+SESSION_SCHEMA = "hsr_battle_session_v3"
 
 
 def command_from_json(value: dict[str, Any]) -> ActionCommand:
@@ -45,7 +47,19 @@ def command_to_json(command: ActionCommand) -> dict[str, Any]:
 class BattleSession:
     """Own session history; all combat decisions and mutations stay in the core."""
 
-    def __init__(self, rules: RuleBook, scenario_data: dict[str, Any]):
+    def __init__(
+        self, rules: RuleBook, scenario_data: dict[str, Any], *, diagnostics: str | None = None,
+    ):
+        self.diagnostics = diagnostics if diagnostics is not None else (
+            "full" if os.environ.get("HSR_DETAILED_DIAGNOSTICS") == "1" else "compact"
+        )
+        if not isinstance(self.diagnostics, str) or self.diagnostics not in {"compact", "full"}:
+            raise ValueError("diagnostics must be compact or full")
+        with diagnostic_detail(self.diagnostics == "full"):
+            self._initialize(rules, scenario_data)
+        self._history_states: dict[int, BattleState] | None = {0: self.state}
+
+    def _initialize(self, rules: RuleBook, scenario_data: dict[str, Any]) -> None:
         self.rules = rules
         self.scenario_data = json.loads(json.dumps(scenario_data, allow_nan=False))
         self.scenario = ScenarioLoader().load_dict(self.scenario_data)
@@ -66,7 +80,14 @@ class BattleSession:
         )
         self.initial_snapshot = self.state.snapshot().to_json(detach=False)
         self.setup_audit = {
-            "records": list(self.build.setup_records),
+            # Mounted content-processor identities (M1-3): recorded for replay
+            # version drift detection; sorted by content_id for determinism.
+            # Empty when no processor is mounted, leaving archives unchanged.
+            "records": list(self.build.setup_records) + [
+                {"record_type": "content_processor_mount", "source": "content_processors",
+                 "process_only": True, "payload": {"content_id": m.content_id, "version": m.version}}
+                for m in sorted(rules.content_processors, key=lambda item: item.content_id)
+            ],
             "mutations": [item.to_json(detach=False) for item in self.build.setup_mutations],
             "events": [item.to_json() for item in self.build.setup_events],
             "rng_events": [item.to_json() for item in self.build.setup_rng_events],
@@ -96,35 +117,73 @@ class BattleSession:
     def advance_with_transitions(self) -> tuple[CurrentDecision, tuple[Any, ...]]:
         """Advance and expose the typed internal transitions for native audit."""
 
-        result = self.decisions.advance_to_decision(self.state)
-        self.state = result.after_state
-        self.operations.append({
-            "kind": "advance",
-            "decision_id": result.decision.token.decision_id if result.decision.token else None,
-            "blocked_reason": result.blocked_reason,
-            "transitions": [transition.to_json(detach=False) for transition in result.transitions],
-        })
+        with diagnostic_detail(self.diagnostics == "full"):
+            result = self.decisions.advance_to_decision(self.state)
+            self.state = result.after_state
+            self.operations.append({
+                "kind": "advance",
+                "decision_id": result.decision.token.decision_id if result.decision.token else None,
+                "blocked_reason": result.blocked_reason,
+                "transitions": [transition.to_json(detach=False) for transition in result.transitions],
+            })
+        if self._history_states is not None:
+            self._history_states[len(self.operations)] = self.state
         return result.decision, tuple(result.transitions)
 
     def submit(self, command: ActionCommand) -> SchedulerStepResult:
-        decision = self.decisions.current_decision(self.state)
-        if not decision.ready or decision.token is None:
-            result = self.decisions.scheduler.reject_decision_submission(
-                self.state, decision.blocked_reason or "decision_not_ready",
-                {"command": command_to_json(command)},
-            )
-        else:
-            result = self.decisions.submit(self.state, decision.token, command)
-        self._accept(result)
-        self.operations.append({
-            "kind": "submit", "command": command_to_json(command),
-            "transition": result.transition.to_json(detach=False),
-        })
+        with diagnostic_detail(self.diagnostics == "full"):
+            decision = self.decisions.current_decision(self.state)
+            if not decision.ready or decision.token is None:
+                result = self.decisions.scheduler.reject_decision_submission(
+                    self.state, decision.blocked_reason or "decision_not_ready",
+                    {"command": command_to_json(command)},
+                )
+            else:
+                result = self.decisions.submit(self.state, decision.token, command)
+            self._accept(result)
+            self.operations.append({
+                "kind": "submit", "command": command_to_json(command),
+                "transition": result.transition.to_json(detach=False),
+            })
+        if self._history_states is not None:
+            self._history_states[len(self.operations)] = self.state
         return result
+
+    def fork(self, operation_count: int | None = None) -> "BattleSession":
+        """Branch from a retained operation boundary without replay.
+
+        The live state was produced by this kernel, so it needs no
+        re-verification: immutable state and setup evidence are shared, and
+        the history prefix is copied. Archives of the fork still replay-verify
+        from entry. External archives must first pass ``restore_session``;
+        their verified operation boundaries are then available for branching.
+        """
+        count = len(self.operations) if operation_count is None else operation_count
+        if type(count) is not int or not 0 <= count <= len(self.operations):
+            raise ValueError("fork operation count is outside session history")
+        state = self.state if count == len(self.operations) else (self._history_states or {}).get(count)
+        if state is None:
+            raise ValueError("fork operation boundary state was not retained")
+        clone = object.__new__(BattleSession)
+        clone.rules = self.rules
+        clone.scenario_data = self.scenario_data
+        clone.scenario = self.scenario
+        clone.build = self.build
+        clone.state = state
+        clone.diagnostics = self.diagnostics
+        clone.decisions = DecisionSystem(self.rules)
+        clone.operations = list(self.operations[:count])
+        clone._history_states = {i: value for i, value in (self._history_states or {}).items() if i <= count}
+        clone.rules_fingerprint = self.rules_fingerprint
+        clone.initial_snapshot = self.initial_snapshot
+        clone.setup_audit = self.setup_audit
+        clone.initialization = self.initialization
+        return clone
 
     def archive(self) -> dict[str, Any]:
         return {
             "schema_version": SESSION_SCHEMA,
+            "diagnostics": self.diagnostics,
             "canonical_ir_fingerprint": self.rules_fingerprint,
             "scenario": self.scenario_data,
             "initial_snapshot": self.initial_snapshot,

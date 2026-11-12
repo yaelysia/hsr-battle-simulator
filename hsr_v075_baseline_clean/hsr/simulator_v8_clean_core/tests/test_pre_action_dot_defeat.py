@@ -19,7 +19,7 @@ def test_pre_action_dot_defeat_commits_and_next_actor_can_act():
     root = Path(__file__).resolve().parents[4]
     scenario = json.loads((root / "hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/examples/cli/arlan_vs_antimatter.json").read_text())
     rules = build_battle_rulebook(root / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     scheduler = session.decisions.scheduler
     target_id = next(uid for uid, unit in session.state.units.items() if unit.side == "enemy")
     attacker_id = next(uid for uid, unit in session.state.units.items() if unit.side == "ally")

@@ -87,7 +87,7 @@ def _trace(rules, avatar_id, point_id):
 def _session(units):
     scenario = _template()
     scenario['units'] = units
-    return BattleSession(_rules(), scenario)
+    return BattleSession(_rules(), scenario, diagnostics="full")
 
 
 def _status(unit, modifier_name):
@@ -224,7 +224,7 @@ def test_arlan_e4_consumes_its_formal_revive_after_native_lethal_damage():
     rules = _rules()
     scenario = _template()
     scenario['units'] = [_unit('1008', 'arlan', _build('1008', eidolon_level=4))]
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     assert any(
         detail.get('modifier_name') == 'MAvatar_Arlan_00_PassiveSkill_UnDead'
         for detail in session.state.units['arlan'].flags['status_details']
@@ -285,7 +285,7 @@ def test_public_enemy_lethal_hit_runs_e4_rescue():
             'initial_energy': '0', 'initial_resource_values': [],
         })
     ]
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     for _ in range(8):
         decision = session.advance()
         assert decision.ready, decision.blocked_reason
@@ -342,7 +342,7 @@ def test_native_e4_rescue_writes_pass_the_source_audit():
     rules = _rules()
     scenario = _template()
     scenario['units'] = [_unit('1008', 'arlan', _build('1008', eidolon_level=4))]
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     state = session.state
     enemy = next(
         unit_id for unit_id, unit in state.units.items() if unit.side == 'enemy'
@@ -407,7 +407,7 @@ def test_limbo_rescue_admission_verifies_its_native_source_identity():
     rules = _rules()
     scenario = _template()
     scenario['units'] = [_unit('1008', 'arlan', _build('1008', eidolon_level=4))]
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     state = session.state
     enemy = next(
         unit_id for unit_id, unit in state.units.items() if unit.side == 'enemy'

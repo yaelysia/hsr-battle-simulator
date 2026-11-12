@@ -536,6 +536,10 @@ def _is_json_value(value: Any) -> bool:
         return True
     if isinstance(value, float):
         return math.isfinite(value)
+    if type(value) in _FROZEN_JSON_CONTAINERS:
+        # Immutable and validated at freeze time; same guarantee _json_value
+        # relies on, so the recursive walk can stop here.
+        return True
     if isinstance(value, list):
         return all(_is_json_value(item) for item in value)
     if isinstance(value, dict):

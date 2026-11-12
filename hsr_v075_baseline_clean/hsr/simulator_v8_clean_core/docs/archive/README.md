@@ -11,9 +11,11 @@
 
 | 目录 | 追溯内容 |
 | --- | --- |
+| [2026-11-12 整理前交接](CODEX_HANDOFF_PRE_TIDY_2026-11-12.md) | M1 性能优化逐项过程、削韧误诊纠正经过、R07 旧验证记录 |
 | [矫正前路线](p9/ENGINEERING_ROUTE_R01_R18_PRE_CORRECTION_2026-11-10.md)、[矫正前交接](CODEX_HANDOFF_PRE_CORRECTION_2026-11-10.md) | 2026-11-10 方向矫正前的全目录终点、R01–R18 交付包、并行排程与逐项验收记录 |
 | [p9](p9/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md) | 原工程盘点与 P9 历史计划；[旧执行卡](p9/execution_cards/README.md) |
-| [completed_tasks](completed_tasks/README.md) | 已验收的 I12、后置监听与自动插入任务说明 |
+| [completed_tasks](completed_tasks/README.md) | 已完成任务的说明：R05–R07、怪物召唤、击破、希儿路线、I12、两轮性能优化、处理器对照实验 |
+| [ui](ui/UI_V2_WORKBENCH_TASK_PLAN.md) | 2026-10 的 UI v2 工作台草案 |
 | [checkpoints](checkpoints/) | 旧 MVP 缺口及 PR #8 事实对账 |
 | [character](character/README.md) | P9 开工前角色范围、机制归类、账本与 CHAR-M1 |
 | [completed_phase_plans](completed_phase_plans/README.md)、[p8](p8/README.md)、[phase1](phase1/README.md) | 原阶段计划 |

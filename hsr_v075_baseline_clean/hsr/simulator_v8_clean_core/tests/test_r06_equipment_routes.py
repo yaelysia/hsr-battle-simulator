@@ -197,7 +197,7 @@ def _drive(
     tmp_path: Path,
     archive_name: str,
 ):
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
     observed = {"records": [], "settlements": [], "steps": 0, "totals": []}
     while observed["steps"] < max_steps and not session.outcome:
@@ -260,7 +260,7 @@ def test_route_a_kill_hit_recovery_and_heal_record_consumption(tmp_path):
     # the healer's own heal exercises the snapshot transport.
     scenario = _scenario_from(base, units, base["stage_ref"])
     rules = _rules(scenario)
-    assert BattleSession(rules, scenario).state.units["serval"].energy == pytest.approx(30.0)
+    assert BattleSession(rules, scenario, diagnostics="full").state.units["serval"].energy == pytest.approx(30.0)
 
     def priority(session, choices):
         chosen = _prefer_ult(choices)

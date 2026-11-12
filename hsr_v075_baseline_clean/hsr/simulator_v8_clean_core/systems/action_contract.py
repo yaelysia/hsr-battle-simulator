@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from ..core.model import ActionCommand, BattleState, JSONValue
+from ..core.model import ActionCommand, BattleState, JSONValue, battle_state_revision
 from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.rulebook import RuleBook
@@ -139,14 +139,7 @@ def _issue_action_submission_authorization(
 
 
 def _action_state_revision(state: BattleState) -> str:
-    payload = json.dumps(
-        # Internal digest: encode the read-only frozen snapshot without a copy.
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+    return battle_state_revision(state)
 
 
 def _action_authorization_payload(

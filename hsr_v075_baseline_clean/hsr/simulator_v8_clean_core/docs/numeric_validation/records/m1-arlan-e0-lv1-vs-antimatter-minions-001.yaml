@@ -1,0 +1,50 @@
+comparison_record:
+  id: m1-arlan-e0-lv1-vs-antimatter-minions-001
+  game_version: "星穹铁道 2.x 基线（阿兰数值自 1.0 稳定；直伤公式长期稳定，来源见 sources）"
+  data_version: "TBGD submodule commit 14c1d18f91a8101d610e6c523447a7517de3fae1"
+  simulator_version:
+    engine_rule: hsr_v8_engine_rules_v8
+    canonical_ir_fingerprint: be9fb57b66ae5fb25a516fff9e19d86ff45d2b6406147fc2bb56ec320d3a297a
+    scenario: v0_200
+  build: {avatar: 1008, level: 1, eidolon: 0, promotion: 0, traces: [], light_cone: null, relics: []}
+  target: {stage: 200020050, wave: 0, monsters: [8011010, 8011010], monster_level: 2, hard_level_group: 1, elite_group: 1}
+  operations:
+    - 战技→pos0
+    - 平局选择（同速行动者）
+    - 敌攻→arlan
+    - 敌攻→arlan
+    - 战技→pos0（击杀）
+    - 敌攻→arlan
+    - 战技→pos1
+    - 终结技排队
+    - 终结技→pos1（首段击杀，胜利）
+  rng:
+    mode: deterministic
+    crit_rolls: {op1: 0.015365870870308438, op5: 0.8096, op7: 0.3067, op9: 0.19508282718327122, op11: 0.6375, op13: 0.6808, op17: 0.2448}
+    note: 暴击判定按归档 RNG 结果作为给定输入；RNG 算法本身未独立核对
+  reference_values:
+    - {event: op1_skill_crit_pos0, value: 54.436052019443075, source: "独立复算：TBGD 参数 + Prydwen/17173 公式", independent: true}
+    - {event: op5_enemy_attack_arlan, value: 28.649740754716984, source: 同上, independent: true}
+    - {event: op7_enemy_attack_arlan, value: 28.649740754716984, source: 同上, independent: true}
+    - {event: op9_skill_noncrit_pos0, value: 42.501986240773874, source: 同上, independent: true}
+    - {event: op11_enemy_attack_arlan, value: 28.649740754716984, source: 同上, independent: true}
+    - {event: op13_skill_noncrit_pos1, value: 46.53727663521425, source: 同上, independent: true}
+    - {event: op17_ultimate_hit1_pos1, value: 22.337892784902838, source: 同上, independent: true}
+    - {event: final_hp_arlan, value: 3.8107777358490473, source: 同上, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.0, verdict: 公式一致性 PASS（非最终游戏对照）}
+  game_comparison: {status: 未完成, required: 游戏实测或成熟计算器输出, note: 方法验证记录；复算不替代游戏对照}
+  sources:
+    - "https://www.prydwen.gg/star-rail/guides/damage-formula — DEF乘区=1−DEF/(DEF+200+10×攻方等级)；未破韧10%通用减伤乘算（2026-11-11 lead 直接抓取复核）"
+    - "https://honkai-star-rail.fandom.com/wiki/Damage — 同式（fetch 被 404 拦截，经搜索快照核对）"
+    - "https://news.17173.com/content/08122024/160903756.shtml — 防御乘区同式；敌DEF=200+10×敌等级（2024-08-12）"
+    - "https://wiki.biligame.com/sr/阿兰 — 普攻LV1 50%、战技LV1 120%耗15%HP不耗SP、终结技192%/96%、天赋LV1上限36%（2025-06-04 更新）"
+    - "TBGD AvatarPromotionConfig 1008 P0、AvatarSkillConfig 100801-100804、MonsterTemplateConfig 8011010、HardLevelGroup(1,2)、StageConfig 200020050、MonsterSkillConfig 801101001"
+  unverified_params:
+    - RNG 算法（暴击判定按归档结果作为输入）
+  notes:
+    - "复现：PYTHONPATH=hsr_v075_baseline_clean .venv/bin/python -B -m hsr.simulator_v8_clean_core.cli run examples/cli/arlan_vs_antimatter.json --commands 同名.commands.json --output 新路径；归档 /tmp/m1-baseline-20261111.json.gz（2026-11-11）"
+    - "未破韧10%减伤经 TBGD MonsterAllDamageReduce 状态实现于 damage_reduction 桶，与社区破盾乘区0.9数值等价；击破恢复后减伤是否回归待击破路线另行对照"
+    - "阿兰战技不耗战技点为游戏真实机制（fandom/KQM/biligame 多源确认）"
+    - "终结技主目标192%拆3段（57.6%/19.2%/115.2%），按段记值；首段击杀后后续段无目标"
+    - "敌方DEF=219.99999（210×1.047619），社区取整220代入误差2.3e-6%，远小于容差"
+    - "本记录是 M1-4 方法验证；阿兰基线为等级1无装备场景，名单条目（80级满行迹）交付时另做对应构筑对照"

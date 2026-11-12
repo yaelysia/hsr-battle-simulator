@@ -47,7 +47,7 @@ def test_natural_defeat_with_live_enemy_summons(tmp_path):
     scenario = json.loads(_SCENARIO.read_text(encoding="utf-8"))
     commands = json.loads(_COMMANDS.read_text(encoding="utf-8"))["commands"]
     rules = build_battle_rulebook(_ROOT / "turnbasedgamedata-main", scenario)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
     audited = 0
     last_submit_transition = None

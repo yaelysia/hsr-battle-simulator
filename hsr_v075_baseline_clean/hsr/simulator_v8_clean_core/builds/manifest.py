@@ -459,11 +459,14 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
         if cached is not None and cached[0]() is rules:
             return cached[1]
 
-    identity = BuildRuleIdentity(
-        source_fingerprint=_source_fingerprint(rules.ir),
-        canonical_ir_fingerprint=canonical_ir_fingerprint(rules.ir),
-        engine_rule_version=ENGINE_RULE_REGISTRY_VERSION,
-    )
+    identity = _persisted_build_rule_identity(rules.ir)
+    if identity is None:
+        identity = BuildRuleIdentity(
+            source_fingerprint=_source_fingerprint(rules.ir),
+            canonical_ir_fingerprint=canonical_ir_fingerprint(rules.ir),
+            engine_rule_version=ENGINE_RULE_REGISTRY_VERSION,
+        )
+        _store_persisted_build_rule_identity(rules.ir, identity)
 
     def clear(reference: weakref.ReferenceType[RuleBook]) -> None:
         with _IDENTITY_CACHE_LOCK:
@@ -475,6 +478,56 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
     with _IDENTITY_CACHE_LOCK:
         _IDENTITY_CACHE[cache_key] = (reference, identity)
     return identity
+
+
+def cached_canonical_ir_fingerprint(rules: RuleBook) -> str:
+    """Canonical IR fingerprint with in-process and persisted reuse.
+
+    Archive verification only needs the canonical fingerprint; unlike the full
+    build rule identity it must not require source fingerprint tokens, so
+    component-only IRs keep the direct computation path.
+    """
+    if not isinstance(rules, RuleBook):
+        raise TypeError("rules must be RuleBook")
+    with _IDENTITY_CACHE_LOCK:
+        cached = _IDENTITY_CACHE.get(id(rules))
+        if cached is not None and cached[0]() is rules:
+            return cached[1].canonical_ir_fingerprint
+    persisted = _persisted_build_rule_identity(rules.ir)
+    if persisted is not None:
+        return persisted.canonical_ir_fingerprint
+    return canonical_ir_fingerprint(rules.ir)
+
+
+def _persisted_build_rule_identity(ir: CanonicalIR) -> BuildRuleIdentity | None:
+    # The compile cache key covers source metadata and all L0/identity code, so a
+    # matching sidecar identifies the same IR without rehashing it per process.
+    from ..tbgd.compile_cache import ir_cache_slot, read_identity_sidecar
+
+    slot = ir_cache_slot(ir)
+    if slot is None:
+        return None
+    payload = read_identity_sidecar(slot[0], slot[1])
+    if payload is None:
+        return None
+    try:
+        identity = BuildRuleIdentity.from_json(payload)
+    except (TypeError, ValueError):
+        return None
+    if identity.engine_rule_version != ENGINE_RULE_REGISTRY_VERSION:
+        return None
+    return identity
+
+
+def _store_persisted_build_rule_identity(
+    ir: CanonicalIR,
+    identity: BuildRuleIdentity,
+) -> None:
+    from ..tbgd.compile_cache import ir_cache_slot, write_identity_sidecar
+
+    slot = ir_cache_slot(ir)
+    if slot is not None:
+        write_identity_sidecar(slot[0], slot[1], identity.to_json())
 
 
 def canonical_ir_fingerprint(ir: CanonicalIR) -> str:

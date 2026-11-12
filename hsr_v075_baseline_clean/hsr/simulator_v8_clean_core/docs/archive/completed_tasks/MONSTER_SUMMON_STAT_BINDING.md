@@ -1,7 +1,7 @@
 # 怪物召唤单位的有效等级与出生属性
 
 起点：`7ff13e3`，TBGD 固定为 `14c1d18f91a8101d610e6c523447a7517de3fae1`。
-实现：dsh / DeepSeek；范围、约束与集中验收：Codex。当前状态只在[交接](../../CODEX_HANDOFF.md)维护。
+实现：dsh / DeepSeek；范围、约束与集中验收：Codex。当前状态只在[交接](../../../../CODEX_HANDOFF.md)维护。
 
 ## 本批成果
 

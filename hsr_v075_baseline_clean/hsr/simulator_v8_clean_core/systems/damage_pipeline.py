@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from ..core.audit_policy import diagnostic_json
+
 from ..core.model import BattleState, JSONValue, UnitState
 from ..rules.ir import FormulaIR
 from ..rules.engine_rule_registry import (
@@ -99,7 +101,7 @@ class DamagePipelineResult:
                     "bucket": bucket.to_json(),
                 }
             )
-        return {
+        return diagnostic_json({
             "schema_version": DAMAGE_STAGE_SCHEMA_VERSION,
             "ok": self.ok,
             "family": self.family,
@@ -113,7 +115,7 @@ class DamagePipelineResult:
             "skipped_terms": list(self.skipped_terms),
             "source_trace": self.source_trace,
             "blocked_reason": self.blocked_reason,
-        }
+        })
 
 
 class DamageStagePipeline:

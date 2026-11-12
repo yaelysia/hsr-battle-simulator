@@ -418,14 +418,14 @@ class TaskGraphSettlementRecord:
         object.__setattr__(self, "payload", _frozen_object(self.payload, "task graph settlement payload"))
         object.__setattr__(self, "trace", _frozen_object(self.trace, "task graph settlement trace"))
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
         return {
             "record_type": self.record_type,
             "source": self.source,
             "mutation_id": self.mutation_id,
             "process_only": self.process_only,
-            "payload": cast(JSONValue, thaw_json(self.payload)),
-            "trace": cast(JSONValue, thaw_json(self.trace)),
+            "payload": cast(JSONValue, thaw_json(self.payload) if detach else self.payload),
+            "trace": cast(JSONValue, thaw_json(self.trace) if detach else self.trace),
         }
 
 

@@ -5,6 +5,8 @@ import json
 import math
 from dataclasses import dataclass, field
 
+from ..core.audit_policy import detailed_diagnostics_enabled, diagnostic_json
+
 from ..core.model import BattleState, JSONValue, RNGEvent, UnitState
 from ..rules.engine_rule_registry import (
     EngineRuleRegistry,
@@ -80,7 +82,7 @@ class ModifierLedger:
     def to_json(self) -> dict[str, JSONValue]:
         applied_count = sum(len(bucket.applied_terms) for bucket in self.buckets)
         skipped_count = sum(len(bucket.skipped_terms) for bucket in self.buckets)
-        return {
+        return diagnostic_json({
             "formula_family": self.formula_family,
             "buckets": [bucket.to_json() for bucket in self.buckets],
             "applied_count": applied_count,
@@ -95,7 +97,7 @@ class ModifierLedger:
                 for bucket in self.buckets
                 for term in bucket.skipped_terms
             ],
-        }
+        })
 
 
 @dataclass(frozen=True)
@@ -168,7 +170,7 @@ class DamageFormulaResult:
     rng_events: tuple[RNGEvent, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {
+        result = {
             "formula_family": self.formula_family,
             "attacker_id": self.attacker_id,
             "target_id": self.target_id,
@@ -195,9 +197,13 @@ class DamageFormulaResult:
             },
             "final_damage": self.final_damage,
             "modifier_ledger": self.modifier_ledger.to_json(),
-            "rng_events": [event.to_json() for event in self.rng_events],
             "calculation_mode": "v0_209_direct_damage_formula",
         }
+        if detailed_diagnostics_enabled():
+            result["rng_events"] = [event.to_json() for event in self.rng_events]
+        else:
+            result["rng_event_ids"] = [event.event_id for event in self.rng_events]
+        return diagnostic_json(result)
 
 
 class DirectDamageFormula:

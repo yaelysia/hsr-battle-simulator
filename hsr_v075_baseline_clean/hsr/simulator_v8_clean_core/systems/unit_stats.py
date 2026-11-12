@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..core.audit_policy import source_reference
+
 from dataclasses import dataclass
 import math
 
@@ -481,7 +483,7 @@ def _status_modifier_total(
                         or f"status_details.{instance_id}.modifiers[{modifier_index}]"
                     ),
                     "source_trace": (
-                        dict(detail.get("source_trace"))
+                        source_reference(detail.get("source_trace"))
                         if isinstance(detail.get("source_trace"), dict)
                         else {}
                     ),

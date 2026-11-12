@@ -31,6 +31,7 @@ Thumbs.db
 /local-workspace-mcp-template/
 /local-workspace-mcp-template.zip
 /local_test_archive/
+/local_mcp/
 
 # Generated validation artifacts
 hsr_v075_baseline_clean/hsr/validation_outputs_v*/

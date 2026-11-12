@@ -1,100 +1,51 @@
 # v8 文档索引
 
-本文件说明文档归属和阅读入口，不复制阶段事实。当前进度只在 `../CODEX_HANDOFF.md` 维护。
+本文件说明每份文档管什么，不复制状态。当前进度只在 [`../CODEX_HANDOFF.md`](../CODEX_HANDOFF.md) 维护。
+新线程先读工作区 `AGENTS.md` 和交接，再按任务补一份主题文档，不需要通读本表。
 
-## 默认入口
+## 现行文档
 
-| 需求 | 文档 |
+| 文档 | 管什么 |
 |---|---|
-| 项目永久约束 | [`../../../AGENTS.md`](../../../AGENTS.md) |
-| 当前进度、下一项工作和已验收边界 | [`../CODEX_HANDOFF.md`](../CODEX_HANDOFF.md) |
-| 核心模块概览 | [`README.md`](README.md) |
-| 最终目标、v1 完成定义、数值容差与性能预算 | [`PROJECT_GOALS.md`](PROJECT_GOALS.md) |
-| 分层、依赖方向和权威边界 | [`ARCHITECTURE_BOUNDARY_CONTRACT.md`](ARCHITECTURE_BOUNDARY_CONTRACT.md) |
-| 绝对禁止事项 | [`FORBIDDEN.md`](FORBIDDEN.md) |
-| 本地执行与必要验证 | [`docs/AGENT_WORKFLOW_AND_VALIDATION.md` 第 0 节](docs/AGENT_WORKFLOW_AND_VALIDATION.md#0-当前本地工作方式) |
+| [`../../../AGENTS.md`](../../../AGENTS.md) | 项目约束、分层、内核不变量、导航 |
+| [`../CODEX_HANDOFF.md`](../CODEX_HANDOFF.md) | 当前状态、下一步、待修问题、已验收基线、已知限制 |
+| [`PROJECT_GOALS.md`](PROJECT_GOALS.md) | 最终目标、v1 完成定义、数值容差、性能预算、优先级 |
+| [`V1_ROUTE.md`](V1_ROUTE.md) | v1 名单、里程碑、内容接入方式、结束条件 |
+| [`ARCHITECTURE_BOUNDARY_CONTRACT.md`](ARCHITECTURE_BOUNDARY_CONTRACT.md) | 四层边界；内容专属处理器的挂载接口与书写约定（第 5 节） |
+| [`FORBIDDEN.md`](FORBIDDEN.md) | 禁止事项与方向红线 |
+| [`docs/AGENT_WORKFLOW_AND_VALIDATION.md`](docs/AGENT_WORKFLOW_AND_VALIDATION.md) | 实施方式、验证选择、成本约定 |
+| [`docs/numeric_validation/README.md`](docs/numeric_validation/README.md) | 游戏数值对照的记录格式、规则和现有记录 |
+| [`CLI_MVP.md`](CLI_MVP.md) | 命令行与浏览器工作台的用法、示例场景和固定命令 |
+| [`tests/README.md`](tests/README.md) | 测试入口与按需检查的命令 |
+| [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) | 怪物卡的职责边界与字段规范 |
+| [`scenarios/README.md`](scenarios/README.md) | 正式构筑、初始条件、关卡波次与 `battle_setup` 输入 |
+| [`README.md`](README.md) | 核心模块概览与目录职责 |
 
-新线程不需要通读这张表。先读 `AGENTS.md` 和交接文档，再按任务补一个主题入口。
-
-## 当前主线
-
-2026-11-10 起按[方向矫正](PROJECT_GOALS.md#2026-11-10-方向矫正)推进：终点是 v1 名单，进度按名单条目计量。
-工程路线维护版本终点、v1 名单、里程碑与结束条件；当前状态和下一步只看交接。
-矫正前的 R01–R18 交付包、旧目录数量、编译阻断与阶段勾选均在归档中，不是当前任务统计。
-
-- 版本终点、里程碑与结束条件：
-  [工程完结路线](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#0-工程完结路线)
-- v1 范围与内容接入方式：
-  [v1 名单](P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md#v1-名单)、
-  [内容专属处理器边界](ARCHITECTURE_BOUNDARY_CONTRACT.md#内容专属处理器)
-- 当前实际进度与下一项：[CODEX_HANDOFF.md](../CODEX_HANDOFF.md)
-- 已交付命令行场景与操作：[CLI_MVP.md](CLI_MVP.md)
-
-旧阶段 checklist 保留已完成边界，不再作为唯一当前卡或逐阶段审批链。后续任务只读相关机制
-和调用者，不默认通读执行卡目录或恢复 MCP 工作流。
-
-## 内容与专题
-
-| 主题 | 当前入口 |
-|---|---|
-| 怪物卡边界 | [`MONSTER_CARD_SPEC.md`](MONSTER_CARD_SPEC.md) |
-| 战斗中怪物自然召唤 | [真实入口、共享调用链与集中验收约束](docs/MONSTER_SUMMON_NATURAL_ROUTE_CLOSURE.md)；当前进度仍见交接 |
-| 召唤怪物有效等级与面板 | [出生属性、上下文隔离与数值验收约束](docs/MONSTER_SUMMON_STAT_BINDING.md)；当前进度仍见交接 |
-| 普通怪物战斗闭环 | [两类召唤者、生命周期、队列、多波与胜负的集中交付约束](docs/MONSTER_SUMMON_OWNER_DEATH_CLOSURE.md)；当前进度仍见交接 |
-| 正式角色构筑与普通队伍战斗 | [R05 四卡行迹/星魂、参数与实际战斗的集中交付](docs/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md)；验收与提交状态见交接 |
-| 光锥与遗器完整效果 | [R06 成品装配、动态触发、阈值与完整清理的整包说明](docs/EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md)；验收与提交状态见交接 |
-| 角色派生单位完整战斗 | [R07 忆灵、可行动伙伴、战斗事件与完整生命周期的整包说明](docs/CHARACTER_DERIVED_UNITS_CLOSURE.md)；整包验收已于 2026-11-10 停止，在途状态见交接 |
-| 独立伤害逐任务绑定 | [已验收批次的绑定契约](docs/archive/completed_tasks/I12_STANDALONE_DAMAGE_BINDING.md)；当前进度仍见交接 |
-| V2 五元素普通击破自然路线 | [执行说明、五行结果与验收证据](docs/V2_ORDINARY_ELEMENT_BREAK_ROUTES.md)；当前进度仍见交接 |
-| 技能后置监听行动事实 | [自然路线、实现边界与固定命令](docs/SEELE_POST_ATTACK_LISTENER_ROUTE.md) |
-| 自动插入行动完整执行链 | [自然路线、实现边界与固定命令](docs/SEELE_AUTOMATIC_INSERT_ACTION_ROUTE.md) |
-| 编译与执行耗时 | [第二轮性能定位与集中优化约束](docs/COMPILE_AND_RUNTIME_PROFILE_OPTIMIZATION.md)、[第一轮编译与测试提速](docs/COMPILE_AND_TEST_COST_REDUCTION.md) |
-| UI 规划 | `../simulator_v8_ui/UI_V2_WORKBENCH_TASK_PLAN.md`，仅在该草案存在且任务涉及 UI 时读取 |
-
-这些专题文档提供领域事实，不是当前阶段 checklist。其结论与当前源码冲突时，以源码、正式来源和
-当前阶段验收为准。其中的验收口径（逐事务审计、反例与整包闭合）是矫正前的要求，现行口径见
-[验证选择](docs/AGENT_WORKFLOW_AND_VALIDATION.md#验证选择)。
-
-## 验收证据
-
-阶段报告与历史报告入口见 [`../live_validation_reports/README.md`](../live_validation_reports/README.md)。使用规则：
-
-- 交接文档或当前执行卡点名的报告才是默认入口；
-- `ready_for_review` 只是执行交付，不等于已验收；
-- 当前能力以源码、实际运行证据与交接为准；历史 checklist/Git 检查点只证明当时声明的范围；
-- 历史报告按阶段或关键词搜索，不全量读取；
-- `/tmp` 中的详细 evidence 不属于长期项目文档。
+CLI、场景和测试说明只保留当前接口；整理前逐日期的命令与旧验收口径移至 `docs/archive/usage/`。
+当前命令的复核范围以各入口的检查说明为准，未复跑的历史路线不自动标为可运行。
 
 ## 历史归档
 
-归档文档用于追溯当时的目标和裁决，不能当作当前事实或默认执行入口。
+归档只用于追溯当时的目标、裁决和证据，不是当前事实或任务清单。按关键词定位，不全量读取。
 
 | 归档 | 内容 |
 |---|---|
-| [`docs/archive/phase1/`](docs/archive/phase1/) | P1 总结、执行计划和最终报告导航 |
-| [`docs/archive/completed_phase_plans/`](docs/archive/completed_phase_plans/) | 已完成的 P2-P7 总计划 |
-| [`docs/archive/p8/`](docs/archive/p8/) | P8 装备总计划和全部执行卡 |
-| [矫正前路线快照](docs/archive/p9/ENGINEERING_ROUTE_R01_R18_PRE_CORRECTION_2026-11-10.md)、[矫正前交接快照](docs/archive/CODEX_HANDOFF_PRE_CORRECTION_2026-11-10.md) | 2026-11-10 方向矫正前的全目录终点、R01–R18 交付包与逐项验收记录 |
-| [P9 历史计划](docs/archive/p9/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)、[执行卡索引](docs/archive/p9/execution_cards/README.md) | 原目录核对、阶段拆分、勾选和旧任务约束；不作为当前施工计划 |
-| [`docs/archive/completed_tasks/`](docs/archive/completed_tasks/README.md) | I12、后置监听与自动插入行动的已验收任务说明 |
-| [`docs/archive/checkpoints/`](docs/archive/checkpoints/) | 旧 MVP 缺口与 PR #8 事实对账；状态均为历史快照 |
-| [历史阶段报告](../live_validation_reports/archive/pre_2026_10_21/README.md) | 2026-10-21 整理时迁出的旧报告，保留原验收状态 |
-| [`docs/archive/validation_governance/`](docs/archive/validation_governance/) | 已结束的验证治理试点计划和执行卡 |
-| [`docs/archive/bootstrap_v075/`](docs/archive/bootstrap_v075/) | v0.75 导入、工作区基线和旧 v7 检查记录 |
-| [`docs/archive/character/`](docs/archive/character/) | P9 开工前角色目录盘点和已完成 CHAR-M1 执行卡 |
-| [`docs/archive/workflow_sources/`](docs/archive/workflow_sources/) | 现行 HSR 工作流吸收过的便携版流程草案 |
-| [2026-10-19 交接历史快照](docs/archive/CODEX_HANDOFF_PRE_SLIM_2026-10-19.md) | 瘦身前的验收记录、机制证据与历史检查点；不作为当前状态 |
-| [`docs/archive/`](docs/archive/) | 瘦身前 AGENTS、交接和索引快照 |
+| [`docs/archive/completed_tasks/`](docs/archive/completed_tasks/README.md) | 已完成任务的说明：R05–R07、怪物召唤、击破、希儿路线、I12、两轮性能优化、处理器对照实验 |
+| [旧操作与测试命令](docs/archive/usage/CLI_MVP_PRE_REFRESH_2026-11-12.md) | 2026-11-12 更新前的 CLI、测试与场景说明；仅供追溯 |
+| [交接快照](docs/archive/README.md) | 2026-11-12 整理前、2026-11-10 矫正前、2026-10-19 和 2026-07-24 的交接原文 |
+| [矫正前路线](docs/archive/p9/ENGINEERING_ROUTE_R01_R18_PRE_CORRECTION_2026-11-10.md) | 固定目录全量终点、R01–R18 交付包与并行排程 |
+| [P9 历史计划](docs/archive/p9/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md)、[执行卡](docs/archive/p9/execution_cards/README.md) | 原目录核对、阶段拆分和旧任务约束 |
+| [`docs/archive/p8/`](docs/archive/p8/)、[`completed_phase_plans/`](docs/archive/completed_phase_plans/)、[`phase1/`](docs/archive/phase1/) | P1–P8 的阶段计划与执行卡 |
+| [`docs/archive/ui/`](docs/archive/ui/UI_V2_WORKBENCH_TASK_PLAN.md) | 2026-10 的 UI v2 工作台草案 |
+| [`docs/archive/checkpoints/`](docs/archive/checkpoints/)、[`character/`](docs/archive/character/)、[`validation_governance/`](docs/archive/validation_governance/)、[`workflow_sources/`](docs/archive/workflow_sources/)、[`bootstrap_v075/`](docs/archive/bootstrap_v075/) | 旧缺口快照、角色盘点、验证治理试点、流程草案、v0.75 导入记录 |
+| [历史阶段报告](../live_validation_reports/README.md) | 2026-10-21 之前的阶段报告 |
 
-旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格目录仍属于历史实现，不是 v8 runtime 依赖。
+旧 v7、`model_pack_v3_0`、早期生成 IR 和旧规格目录属于历史实现，不是 v8 runtime 依赖。
 
 ## 维护规则
 
-- 交接只维护当前任务、已验收基线、阻断、下一步与入口，目标 150 行以内；覆盖更新对应条目，
-  不逐轮追加修复经过、测试耗时或历史计划。较长契约放对应任务说明，历史按 Git 或归档追溯。
-- 工程路线只写 P9 总计划第 0 节，历史 checklist 不因新路线自动补勾；不为每轮修复新增快照。
-- v1 名单只在工程路线维护，条目状态只在交接维护；不另建覆盖矩阵或进度报告。
-- 稳定架构、目标与工作流文档不记录每张卡的计数和耗时。
-- 已完成阶段的详细计划整体归档，不在根目录继续充当活动入口。
-- 报告不复述执行卡；执行卡不复述工作流；AGENTS 不承载阶段流水账。
-- 移动或替换文档后同步更新本索引、`AGENTS.md` 和交接文档中的有效链接。
+- 一件事只在一处维护：状态在交接，范围在路线，目标在项目目标，约束在 `AGENTS.md` 和架构契约。
+- 交接保持在 150 行以内，只写现状、下一步和入口；过程经过、逐轮数字和教训不累积，超出时先存快照再精简。
+- 任务结束后，它的说明、设计稿和报告移入 `docs/archive/completed_tasks/`，结论写回对应的现行文档。
+- 不为单个机制或单轮修复新建长期文档；新增现行文档时在本索引登记。
+- 移动或改名文档后，同步修正本索引、`AGENTS.md` 和交接中的路径。

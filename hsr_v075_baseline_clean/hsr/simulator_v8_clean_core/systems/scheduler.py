@@ -22,6 +22,7 @@ from ..core.model import (
     Mutation,
     RNGEvent,
     TargetResolution,
+    battle_state_revision,
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
@@ -198,14 +199,7 @@ def _decision_authorization_seal_valid(authorization: DecisionSubmissionAuthoriz
 
 
 def _scheduler_state_revision(state: BattleState) -> str:
-    payload = json.dumps(
-        # Internal digest: encode the read-only frozen snapshot without a copy.
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+    return battle_state_revision(state)
 
 
 @dataclass(frozen=True)

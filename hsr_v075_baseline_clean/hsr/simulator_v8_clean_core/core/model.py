@@ -527,6 +527,44 @@ class BattleState:
         )
 
 
+def battle_state_revision(state: BattleState) -> str:
+    """Shared short state revision, cached on the immutable state instance.
+
+    The four decision/contract/scheduler/selection digests encode the same
+    snapshot bytes; one cached digest serves all of them. BattleState is
+    immutable after construction, so the cache cannot go stale.
+    """
+    cached = getattr(state, "_state_revision_cache", None)
+    if cached is not None:
+        return cached
+    payload = json.dumps(
+        state.snapshot().to_json(detach=False),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    revision = f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+    object.__setattr__(state, "_state_revision_cache", revision)
+    return revision
+
+
+def battle_state_full_fingerprint(state: BattleState) -> str:
+    """Full-length state fingerprint (dynamic value store), cached per state."""
+    cached = getattr(state, "_state_full_fingerprint_cache", None)
+    if cached is not None:
+        return cached
+    encoded = json.dumps(
+        state.snapshot().to_json(detach=False),
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    fingerprint = "state:" + hashlib.sha256(encoded).hexdigest()
+    object.__setattr__(state, "_state_full_fingerprint_cache", fingerprint)
+    return fingerprint
+
+
 @dataclass(frozen=True)
 class Snapshot:
     data: dict[str, JSONValue]

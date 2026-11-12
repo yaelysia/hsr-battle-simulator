@@ -1,7 +1,7 @@
 # V2 剩余五元素普通击破自然路线
 
 执行：dsh / DeepSeek；范围、约束与集中验收：Codex。基线为 `fc2e6ff`，当前状态只在
-[交接文档](../../CODEX_HANDOFF.md)维护。
+[交接文档](../../../../CODEX_HANDOFF.md)维护。
 
 ## 一次交付的成果
 
@@ -14,7 +14,7 @@
 ## 交付范围与证据
 
 五条路线使用正式构筑与来源波次，固定外部命令；战斗在交付链完成后允许未结束。集成入口为
-[test_ordinary_element_break_natural_routes.py](../tests/test_ordinary_element_break_natural_routes.py)，
+[test_ordinary_element_break_natural_routes.py](../../../tests/test_ordinary_element_break_natural_routes.py)，
 场景与固定命令位于 `examples/cli/`。
 
 | 元素 | 角色/构筑 | 关卡/敌人 | 自然操作结果 | 剩余依赖 |
@@ -68,7 +68,7 @@
 
 - 普通击破已有 `BreakSystem`、状态回调、生命周期、调度恢复与来源审计；不另写元素结算器。
 - 物理已有自然交战路线；风已有完整自然多轮检查
-  [test_ordinary_wind_break_natural_route.py](../tests/test_ordinary_wind_break_natural_route.py)，
+  [test_ordinary_wind_break_natural_route.py](../../../tests/test_ordinary_wind_break_natural_route.py)，
   可复用其公开操作、原生记录检查与缓存使用方式。
 - 固定 `AvatarSkillConfig` 的 Lv1 普攻声明如下；这些是选角起点，不等于完整角色已验收。
   默认采用 E0、空装备、未选额外行迹的正式构筑；等级、晋阶按生存与目标血量需要合法配置。

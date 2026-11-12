@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, current_max_hp
+from ..core.audit_policy import eager_identity_audit_enabled
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, battle_state_full_fingerprint, current_max_hp
 from ..core.settlement import SettlementRecord
 from ..immutable_json import freeze_json, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
@@ -132,7 +133,7 @@ class DynamicValueExecutionRequest:
             if type(self.heal_event_fact) is not _HealEventFact:
                 raise TypeError("dynamic value heal event fact must be typed")
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
         return {
             "caster_id": self.caster_id,
             "source_id": self.source_id,
@@ -149,14 +150,14 @@ class DynamicValueExecutionRequest:
             "status_modifier_name": self.status_modifier_name,
             "status_id": self.status_id,
             "status_source_id": self.status_source_id,
-            "binding_sources": [thaw_json(source) for source in self.binding_sources],
+            "binding_sources": [thaw_json(source) if detach else source for source in self.binding_sources],
             "status_lifecycle_plan": self.status_lifecycle_plan.to_json() if self.status_lifecycle_plan else None,
             "param_status_scope": ({"owner_id": self.param_status_scope.owner_id,
                                     "instance_id": self.param_status_scope.instance_id}
                                    if self.param_status_scope else None),
             "template_target_ids": list(self.template_target_ids) if self.template_target_ids is not None else None,
             "event_payload": (
-                thaw_json(self.event_payload)
+                (thaw_json(self.event_payload) if detach else self.event_payload)
                 if self.event_payload is not None
                 else None
             ),
@@ -231,23 +232,26 @@ class DynamicValuePlan:
         object.__setattr__(self, "records", records)
         object.__setattr__(self, "evaluation", evaluation)
         _validate_resolved_scope(scope, allow_empty=not self.ok)
-        if self.plan_id != _dynamic_value_plan_id(self):
+        # Eager identity rehashing is switchable audit (2026-11-10 correction):
+        # the sole producer derives plan_id from these exact fields, and replay
+        # still compares it. Default off keeps the hot path free of audit cost.
+        if eager_identity_audit_enabled() and self.plan_id != _dynamic_value_plan_id(self):
             raise ValueError("dynamic value plan identity is inconsistent")
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def to_json(self, *, detach: bool = True) -> dict[str, JSONValue]:
         return {
             "schema_version": DYNAMIC_VALUE_PLAN_SCHEMA,
             "ok": self.ok,
             "plan_id": self.plan_id,
             "operation": self.operation.to_json(),
-            "request": self.request.to_json() if self.request is not None else None,
+            "request": self.request.to_json(detach=detach) if self.request is not None else None,
             "operation_instance_id": self.operation_instance_id,
             "before_state_fingerprint": self.before_state_fingerprint,
-            "resolved_scope": thaw_json(self.resolved_scope),
+            "resolved_scope": thaw_json(self.resolved_scope) if detach else self.resolved_scope,
             "result_value": self.result_value,
-            "mutations": [mutation.to_json() for mutation in self.mutations],
-            "records": [thaw_json(record) for record in self.records],
-            "evaluation": thaw_json(self.evaluation),
+            "mutations": [mutation.to_json(detach=detach) for mutation in self.mutations],
+            "records": [thaw_json(record) if detach else record for record in self.records],
+            "evaluation": thaw_json(self.evaluation) if detach else self.evaluation,
             "blocked_reason": self.blocked_reason,
             "replayed": self.replayed,
         }
@@ -823,7 +827,7 @@ def execute_dynamic_value_plan(
         )
     try:
         expected = plan_dynamic_value_operation(state, plan.operation, plan.request, rules=rules)
-        matches = expected.ok and expected.to_json() == plan.to_json()
+        matches = expected.ok and expected.to_json(detach=False) == plan.to_json(detach=False)
     except (TypeError, ValueError):
         matches = False
     if not matches:
@@ -842,15 +846,7 @@ def execute_dynamic_value_plan(
 
 
 def dynamic_value_state_fingerprint(state: BattleState) -> str:
-    encoded = json.dumps(
-        # Internal digest: encode the read-only frozen snapshot without a copy.
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=True,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return "state:" + hashlib.sha256(encoded).hexdigest()
+    return battle_state_full_fingerprint(state)
 
 
 def _strict_dynamic_value_store(value: object) -> dict[str, JSONValue]:
@@ -2243,11 +2239,11 @@ def _dynamic_value_plan_payload(
         "request": request.to_json() if request is not None else None,
         "operation_instance_id": operation_instance_id,
         "before_state_fingerprint": before_state_fingerprint,
-        "resolved_scope": thaw_json(resolved_scope),
+        "resolved_scope": resolved_scope,
         "result_value": result_value,
-        "mutations": [mutation.to_json() for mutation in mutations],
-        "records": [thaw_json(record) for record in records],
-        "evaluation": thaw_json(evaluation),
+        "mutations": [mutation.to_json(detach=False) for mutation in mutations],
+        "records": list(records),
+        "evaluation": evaluation,
         "blocked_reason": blocked_reason,
         "replayed": replayed,
     }

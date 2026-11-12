@@ -241,7 +241,7 @@ def test_b_aurumaton_second_summoner_deathrattle_owner_death(tmp_path):
     assert commands
     rules = build_battle_rulebook(_ROOT / "turnbasedgamedata-main", scenario)
     source_ratio = _rules_facts(rules)
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     auditor = RuntimeSourceAuditor(rules)
 
     transitions = []

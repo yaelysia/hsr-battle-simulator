@@ -101,7 +101,7 @@ def _session(units, rules=None, *, stage_ref=None):
     if stage_ref is not None:
         scenario['stage_ref'] = stage_ref
     scenario['units'] = units
-    return BattleSession(rules or _rules(), scenario)
+    return BattleSession(rules or _rules(), scenario, diagnostics="full")
 
 
 def _param_value(source, dynamic_hash):
@@ -645,6 +645,7 @@ def test_formal_arlan_blocked_hit_passes_the_native_source_audit():
                 }),
             ],
         },
+        diagnostics="full",
     )
     for _ in range(16):
         decision = _advance(session)

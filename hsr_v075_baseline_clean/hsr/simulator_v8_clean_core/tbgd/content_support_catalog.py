@@ -163,8 +163,9 @@ def build_content_support_catalog(root: Path) -> dict[str, Any]:
 
     stages_path = root / 'ExcelOutput/StageConfig.json'
     stage_content = stages_path.read_bytes()
-    hard_levels = TBGDLowering(root, LoweringLimits(max_records_per_table=None))._hard_level_profiles()
-    elite_profiles = lowerer._elite_group_profiles()
+    stage_lowerer = TBGDLowering(root, LoweringLimits(max_records_per_table=None))
+    hard_levels = stage_lowerer._hard_level_profiles()
+    elite_profiles = stage_lowerer._elite_group_profiles()
     source_fingerprints['stage_config'] = sha256(stage_content).hexdigest()
     elite_path = root / 'ExcelOutput/EliteGroup.json'
     source_fingerprints['elite_groups'] = sha256(elite_path.read_bytes() if elite_path.exists() else b'').hexdigest()

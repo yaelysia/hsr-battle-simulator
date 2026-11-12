@@ -5,7 +5,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
-from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue
+from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue, battle_state_revision
 from ..rules.rulebook import RuleBook
 from .action_availability import ActionAvailabilitySystem, ActionAvailabilityView, ActionChoice
 from .action_selection import ActionTargetSelectionContext
@@ -496,8 +496,7 @@ def _choice_revision(availability: ActionAvailabilityView) -> str:
 
 
 def _state_revision(state: BattleState) -> str:
-    # Internal digest: encode the read-only frozen snapshot without a copy.
-    return _digest("state", state.snapshot().to_json(detach=False))
+    return battle_state_revision(state)
 
 
 def _single_choice_actor_id(choices: tuple[ActionChoice, ...]) -> str:

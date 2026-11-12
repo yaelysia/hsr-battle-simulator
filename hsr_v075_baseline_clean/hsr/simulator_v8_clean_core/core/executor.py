@@ -568,6 +568,52 @@ class CombatExecutor:
                 ),
             ),
         )
+    def _reconcile_action_halos(
+        self, state: BattleState, *, action_event_index: int,
+        damage_window_ledger: DamageWindowLedger,
+    ) -> EventDispatchResult:
+        """Reconcile and dispatch the action's final halo changes in order."""
+        reconciliation = self.status.reconcile_halo_relations(state)
+        node_id = f"status_halo_reconciliation:{action_event_index}"
+        if not reconciliation.ok:
+            return EventDispatchResult(
+                after_state=state, records=reconciliation.records,
+                rng_events=reconciliation.rng_events,
+                node_results=(ExecutionNodeResult(
+                    node_kind="status_halo_reconciliation", node_id=node_id,
+                    status="blocked", reason_code=(";".join(reconciliation.unsupported)
+                                                  or "status_halo_reconciliation_blocked"),
+                ),),
+            )
+        reduction = self.reducer.apply_all_result(state, reconciliation.mutations)
+        if not reduction.ok:
+            return EventDispatchResult(
+                after_state=state, rng_events=reconciliation.rng_events,
+                node_results=(ExecutionNodeResult(
+                    node_kind="status_halo_reconciliation", node_id=node_id, status="blocked",
+                    reason_code=f"status_halo_reconciliation_reducer_conflict:{reduction.conflicts[0].code}",
+                ),),
+            )
+        current_state = reduction.after_state
+        dispatched = []
+        for event in reconciliation.events:
+            result = self.event_dispatcher.dispatch_event(
+                current_state, event=event, damage_window_ledger=damage_window_ledger,
+            )
+            current_state = result.after_state
+            dispatched.append(result)
+        return EventDispatchResult(
+            after_state=current_state,
+            mutations=(*reconciliation.mutations, *(m for r in dispatched for m in r.mutations)),
+            events=(*reconciliation.events, *(e for r in dispatched for e in r.events)),
+            records=(*reconciliation.records, *(r for result in dispatched for r in result.records)),
+            rng_events=(*reconciliation.rng_events, *(e for r in dispatched for e in r.rng_events)),
+            node_results=(*(n for r in dispatched for n in r.node_results), ExecutionNodeResult(
+                node_kind="status_halo_reconciliation", node_id=node_id, status="complete",
+            )),
+            event_normalizations=tuple(n for r in dispatched for n in r.event_normalizations),
+        )
+
     def execute(
         self,
         command: ActionCommand,
@@ -597,11 +643,21 @@ class CombatExecutor:
             queue_resource_policy=queue_resource_policy,
         )
         if not action_contract.ok:
-            return state, _action_contract_blocked_transition(
-                state,
-                command,
-                action_contract,
-            )
+            # H1 (M1-3): same contract-level graph-coverage bypass as the
+            # availability boundary; a processor-claimed action executes via
+            # the H1 hook. Non-graph reasons and missing admission still block.
+            from .content_hooks import graph_coverage_block_reason
+
+            if not (
+                action_contract.admission is not None
+                and graph_coverage_block_reason(action_contract.blocked_reason or "")
+                and self.rules.processor_action_hook(state, command) is not None
+            ):
+                return state, _action_contract_blocked_transition(
+                    state,
+                    command,
+                    action_contract,
+                )
         action_execution_token = object()
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
@@ -736,6 +792,21 @@ class CombatExecutor:
         )
         execution_binding_blocked_reason = _execution_source_blocked_reason(binding_blocked_reason, action_execution_plan)
         execution_event_blocked_reason = _execution_source_blocked_reason(action_event_reason, action_execution_plan)
+        # H1/H4 (M1-3): a mounted processor claiming this action owns its
+        # effects, so compiled-graph coverage blocks do not gate execution.
+        # Only graph-coverage reasons are bypassed (enumerated in
+        # core.content_hooks.GRAPH_COVERAGE_BLOCK_PREFIXES); lifecycle,
+        # summon, target and resource gates below still apply unchanged.
+        from .content_hooks import graph_coverage_block_reason
+
+        processor_claimed_early = self.rules.processor_action_hook(state, command) is not None
+        if processor_claimed_early:
+            if graph_coverage_block_reason(execution_binding_blocked_reason):
+                execution_binding_blocked_reason = ""
+            if graph_coverage_block_reason(execution_event_blocked_reason):
+                execution_event_blocked_reason = ""
+            if graph_coverage_block_reason(bounce_policy_blocked_reason):
+                bounce_policy_blocked_reason = ""
         summon_execution_blocked_reason = _summon_execution_blocked_reason(state, command)
         use_action_damage_plan_fallback = _uses_action_damage_plan_fallback(
             binding_blocked_reason,
@@ -993,6 +1064,111 @@ class CombatExecutor:
                 ordered_mutations.extend(dispatch_result.mutations)
                 runtime_records.extend(dispatch_result.records)
 
+        # H1 content-processor action hook (generic dispatch by the acting
+        # unit's own content identity). The hook runs at the plan's effect
+        # phase -- the first damage step, or the first post-before window
+        # when the plan has no damage step -- so before/after windows,
+        # callbacks and the shared notification chain keep their normal
+        # order. takeover=True replaces the compiled effect segment;
+        # takeover=False is a pre-effect step and the compiled graph still
+        # runs. A blocked result rejects the whole transition through the
+        # same atomic boundary (zero mutations, zero RNG).
+        processor_takeover = False
+        processor_hook_done = False
+        processor_rng_events: list[RNGEvent] = []
+        processor_event_normalizations: list[EventNormalization] = []
+        processor_mount = (
+            self.rules.processor_action_hook(current_state, command)
+            if action_enabled else None
+        )
+
+        def run_action_callback(callback_kind: str) -> None:
+            nonlocal current_state
+            ability_result = self.ability_tasks.execute_callback(
+                current_state,
+                phases=ability_phases,
+                callback_kind=callback_kind,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_result.resolution,
+                action_damage_modifiers=tuple(action_damage_modifiers),
+                admitted_action_target_fact=action_target_fact,
+                action_execution_token=action_execution_token,
+            )
+            current_state = ability_result.after_state
+            ability_task_results.append(ability_result)
+            ordered_mutations.extend(ability_result.mutations)
+            runtime_records.extend(ability_result.records)
+            dispatch_ability_events(ability_result)
+
+        def run_processor_hook() -> bool:
+            nonlocal current_state, processor_takeover, processor_hook_done
+            nonlocal action_enabled, blocked_reason, events, action_target_fact
+            from .content_hooks import ActionHookContext, ProcessorServices, run_hook
+
+            processor_hook_done = True
+            processor_services = ProcessorServices(
+                current_state, self.rules,
+                producer_id=f"{processor_mount.content_id}:{processor_mount.version}",
+                action_command=command,
+                action_damage_modifiers=tuple(action_damage_modifiers),
+                event_dispatcher=self.event_dispatcher,
+            )
+            processor_ctx = ActionHookContext(
+                state=current_state,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_result.resolution,
+                services=processor_services,
+            )
+            hook_result = run_hook(processor_mount.processor, "action", processor_ctx)
+            execution_node_results.append(ExecutionNodeResult(
+                node_kind="content_processor_action",
+                node_id=(
+                    f"{processor_mount.content_id}:{command.action_id}:"
+                    f"{command.action_level}"
+                ),
+                status="complete" if hook_result.ok else "blocked",
+                reason_code=hook_result.blocked_reason,
+            ))
+            if not hook_result.ok:
+                action_enabled = False
+                blocked_reason = hook_result.blocked_reason or "content_processor_action_blocked"
+                return False
+            hook_reduction = self.reducer.apply_all_result(
+                current_state, hook_result.mutations,
+            )
+            if not hook_reduction.ok:
+                action_enabled = False
+                blocked_reason = (
+                    "content_processor_reducer_conflict:"
+                    f"{hook_reduction.conflicts[0].code if hook_reduction.conflicts else 'unknown'}"
+                )
+                return False
+            current_state = hook_reduction.after_state
+            ordered_mutations.extend(hook_result.mutations)
+            runtime_records.extend(hook_result.records)
+            processor_rng_events.extend(hook_result.rng_events)
+            processor_event_normalizations.extend(hook_result.event_normalizations)
+            events = (*events, *hook_result.events)
+            hook_hit_targets = tuple(
+                str(hook_event.target_id or hook_event.payload.get("target_id") or "")
+                for hook_event in hook_result.events
+                if hook_event.event_type == "damage.hit"
+            )
+            action_hit_targets.extend(t for t in hook_hit_targets if t)
+            if action_hit_targets and (
+                target_selection_context.dynamic_target or action_event_ir.target_mode == "bounce"
+            ):
+                action_target_fact = action_target_fact.with_resolved_targets(
+                    tuple(dict.fromkeys(action_hit_targets))
+                )
+            for hook_event in hook_result.events:
+                if str(hook_event.to_json()["event_id"]) not in hook_result.dispatched_event_ids:
+                    dispatch_listener_window(hook_event)
+            processor_takeover = hook_result.takeover
+            return True
+
         if action_enabled:
             pending_before_callbacks: list[str] = []
             for step_index, step in enumerate(action_execution_plan.event_steps):
@@ -1013,23 +1189,30 @@ class CombatExecutor:
                     # actions whose source graph contains no damage stage.
                     callback_kinds = (*pending_before_callbacks, *callback_kinds)
                     pending_before_callbacks.clear()
-                for callback_kind in callback_kinds:
-                    ability_result = self.ability_tasks.execute_callback(
-                        current_state,
-                        phases=ability_phases,
-                        callback_kind=callback_kind,
-                        command=command,
-                        action_definition=action_definition,
-                        target_resolution=target_result.resolution,
-                        action_damage_modifiers=tuple(action_damage_modifiers),
-                        admitted_action_target_fact=action_target_fact,
-                        action_execution_token=action_execution_token,
+                at_effect_position = (
+                    step.kind == "damage"
+                    or (
+                        step.kind == "trigger_window"
+                        and step.phase not in {"before_skill_use", "before_attack"}
                     )
-                    current_state = ability_result.after_state
-                    ability_task_results.append(ability_result)
-                    ordered_mutations.extend(ability_result.mutations)
-                    runtime_records.extend(ability_result.records)
-                    dispatch_ability_events(ability_result)
+                )
+                if at_effect_position and processor_mount is not None and not processor_hook_done:
+                    # Before-window callbacks keep their normal order; the
+                    # processor hook then owns the effect phase. On takeover
+                    # the root effect graph (OnStart) is replaced; otherwise
+                    # it still runs after the pre-effect hook.
+                    for callback_kind in tuple(k for k in callback_kinds if k != "OnStart"):
+                        run_action_callback(callback_kind)
+                    if not run_processor_hook():
+                        break
+                    callback_kinds = (
+                        () if processor_takeover
+                        else tuple(k for k in callback_kinds if k == "OnStart")
+                    )
+                for callback_kind in callback_kinds:
+                    if processor_takeover and callback_kind == "OnStart":
+                        continue
+                    run_action_callback(callback_kind)
                 if step.kind == "trigger_window":
                     dispatch_event, expected_window_scope = _action_window_dispatch_event(
                         current_state,
@@ -1077,6 +1260,11 @@ class CombatExecutor:
                         action_damage_modifiers.extend(listener_result.damage_modifiers)
                     continue
                 if step.kind == "damage":
+                    if processor_takeover:
+                        # The processor already produced the effect segment
+                        # at this plan position; windows and notifications
+                        # continue in their normal order below.
+                        continue
                     if ability_task_damage_authoritative:
                         runtime_records.append(
                             SettlementRecord(
@@ -1657,6 +1845,11 @@ class CombatExecutor:
                         listener_dispatch_results.append(dispatch_result)
                         ordered_mutations.extend(dispatch_result.mutations)
                         runtime_records.extend(dispatch_result.records)
+            if action_enabled and processor_mount is not None and not processor_hook_done:
+                # A plan without an effect-position step still runs the hook
+                # before post-action notifications; a blocked hook rejects
+                # the whole transition through the atomic boundary.
+                run_processor_hook()
             for hit_target_id in dict.fromkeys(action_hit_targets):
                 for event_type in (
                     "damage.target_hit_sequence.after",
@@ -1916,84 +2109,23 @@ class CombatExecutor:
         execution_node_results.extend(_toughness_node_results(toughness_results))
         execution_node_results.extend(_break_node_results(break_results))
         execution_node_results.extend(owner_cleanup_node_results)
-        halo_dispatch_results: list[EventDispatchResult] = []
-        halo_reconciliation = self.status.reconcile_halo_relations(
-            current_state,
+        halo_result = self._reconcile_action_halos(
+            current_state, action_event_index=state.event_index,
+            damage_window_ledger=damage_window_ledger,
         )
-        if halo_reconciliation.ok:
-            halo_reduction = self.reducer.apply_all_result(
-                current_state,
-                halo_reconciliation.mutations,
-            )
-            if halo_reduction.ok:
-                current_state = halo_reduction.after_state
-                ordered_mutations.extend(halo_reconciliation.mutations)
-                events = (*events, *halo_reconciliation.events)
-                runtime_records.extend(halo_reconciliation.records)
-                for halo_event in halo_reconciliation.events:
-                    dispatch_result = self.event_dispatcher.dispatch_event(
-                        current_state,
-                        event=halo_event,
-                        damage_window_ledger=damage_window_ledger,
-                    )
-                    current_state = dispatch_result.after_state
-                    halo_dispatch_results.append(dispatch_result)
-                    ordered_mutations.extend(dispatch_result.mutations)
-                    runtime_records.extend(dispatch_result.records)
-                    events = (*events, *dispatch_result.events)
-                execution_node_results.extend(
-                    node
-                    for result in halo_dispatch_results
-                    for node in result.node_results
-                )
-                execution_node_results.append(
-                    ExecutionNodeResult(
-                        node_kind="status_halo_reconciliation",
-                        node_id=(
-                            f"status_halo_reconciliation:{state.event_index}"
-                        ),
-                        status="complete",
-                    )
-                )
-            else:
-                execution_node_results.append(
-                    ExecutionNodeResult(
-                        node_kind="status_halo_reconciliation",
-                        node_id=(
-                            f"status_halo_reconciliation:{state.event_index}"
-                        ),
-                        status="blocked",
-                        reason_code=(
-                            "status_halo_reconciliation_reducer_conflict:"
-                            f"{halo_reduction.conflicts[0].code}"
-                        ),
-                    )
-                )
-        else:
-            runtime_records.extend(halo_reconciliation.records)
-            execution_node_results.append(
-                ExecutionNodeResult(
-                    node_kind="status_halo_reconciliation",
-                    node_id=f"status_halo_reconciliation:{state.event_index}",
-                    status="blocked",
-                    reason_code=(
-                        ";".join(halo_reconciliation.unsupported)
-                        or "status_halo_reconciliation_blocked"
-                    ),
-                )
-            )
+        current_state = halo_result.after_state
+        ordered_mutations.extend(halo_result.mutations)
+        events = (*events, *halo_result.events)
+        runtime_records.extend(halo_result.records)
+        execution_node_results.extend(halo_result.node_results)
         damage_rng_events = (
             *tuple(target_rng_events),
+            *tuple(processor_rng_events),
             *ability_task_rng_events,
             *trigger_rng_events,
             *listener_dispatch_rng_events,
             *tuple(owner_cleanup_rng_events),
-            *halo_reconciliation.rng_events,
-            *tuple(
-                event
-                for result in halo_dispatch_results
-                for event in result.rng_events
-            ),
+            *halo_result.rng_events,
             *tuple(event for result in damage_results for event in result.rng_events),
             *tuple(event for result in break_results for event in result.rng_events),
         )
@@ -2015,15 +2147,11 @@ class CombatExecutor:
             *(event for result in toughness_results for event in result.events),
             *(event for result in break_results for event in result.events),
         )
-        event_normalizations = tuple(
-            normalization
-            for result in (
-                *trigger_results,
-                *listener_dispatch_results,
-                *halo_dispatch_results,
-                *break_results,
-            )
-            for normalization in result.event_normalizations
+        event_normalizations = (
+            *processor_event_normalizations,
+            *(normalization for result in (
+                *trigger_results, *listener_dispatch_results, halo_result, *break_results,
+            ) for normalization in result.event_normalizations),
         )
         event_identity_conflict: _EventIdentityConflict | None = None
         try:

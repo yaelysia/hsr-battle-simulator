@@ -26,7 +26,7 @@ def _case():
 
 
 def _cleared_boundary(rules, scenario):
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     assert session.advance().ready
     # Cleared-boundary fixture only; the whole-battle test below executes damage.
     return replace(session.state, units={uid: replace(unit, hp=0., lifecycle_status='defeated')
@@ -94,7 +94,7 @@ def test_later_wave_startup_failure_rolls_back_entire_transition(monkeypatch):
 
 def test_real_two_wave_battle_completes_with_archive(tmp_path):
     rules, scenario = _case()
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     seen_waves = set()
     submitted = 0
     for _ in range(100):
@@ -148,7 +148,7 @@ def test_gunner_bleed_executes_and_ticks_on_the_natural_target_turn():
     rules, _ = _case()
     scenario = json.loads((Path(__file__).resolve().parents[1]
                            / 'examples/cli/arlan_melee_two_waves.json').read_text())
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     gunner_hit = False
     for _ in range(10):
         hp_before_turn = session.state.units['arlan'].hp
@@ -181,7 +181,7 @@ def test_melee_natural_turns_and_debuff_complete_two_wave_battle(tmp_path):
     examples = Path(__file__).resolve().parents[1] / 'examples/cli'
     scenario = json.loads((examples / 'arlan_melee_two_waves.json').read_text())
     commands = json.loads((examples / 'arlan_melee_two_waves.commands.json').read_text())['commands']
-    session = BattleSession(rules, scenario)
+    session = BattleSession(rules, scenario, diagnostics="full")
     enemy_turns = 0
     submitted = 0
     waves = set()
