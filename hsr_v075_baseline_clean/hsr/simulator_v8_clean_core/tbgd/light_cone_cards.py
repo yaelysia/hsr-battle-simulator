@@ -112,7 +112,6 @@ class LightConeCatalogBuildResult:
     catalog_complete: bool
     semantic_table_parse_count: int
     ability_file_parse_count: int
-    numeric_values_never_pass_through_float: bool
     production_validation_artifact_read_count: int = 0
 
     def __post_init__(self) -> None:
@@ -147,8 +146,6 @@ class LightConeCatalogBuildResult:
                 raise TypeError(f"{field_name} must be a non-negative integer")
         if not isinstance(self.catalog_complete, bool):
             raise TypeError("catalog_complete must be a boolean")
-        if not isinstance(self.numeric_values_never_pass_through_float, bool):
-            raise TypeError("numeric_values_never_pass_through_float must be a boolean")
         if self.catalog_complete and (
             self.published_blocked_count != 0
             or self.published_lowered_count != self.published_source_count
@@ -179,9 +176,6 @@ class LightConeCatalogBuildResult:
             "issues": [issue.to_json() for issue in self.issues],
             "semantic_table_parse_count": self.semantic_table_parse_count,
             "ability_file_parse_count": self.ability_file_parse_count,
-            "numeric_values_never_pass_through_float": (
-                self.numeric_values_never_pass_through_float
-            ),
             "production_validation_artifact_read_count": (
                 self.production_validation_artifact_read_count
             ),
@@ -1077,7 +1071,6 @@ def build_light_cone_catalog_from_documents(
         ability_file_parse_count=ability_file_parse_count
         if ability_file_parse_count is not None
         else len(ability_documents),
-        numeric_values_never_pass_through_float=True,
         production_validation_artifact_read_count=0,
     )
 

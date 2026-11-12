@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+from contextlib import nullcontext
 import gzip
 import importlib
 import json
@@ -27,8 +28,8 @@ _MAGIC = b"HSR_IR_CACHE_V1\n"
 _CORE = __package__.rsplit(".tbgd", 1)[0]
 _IGNORED_SCAN_ERRORS = frozenset((errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP))
 
-# Loaded IR objects remember their cache slot so rule identity can be persisted
-# next to the artifact instead of rehashed in every new process.
+# Compiled IR objects retain their validated input identity, including builds
+# that could not persist a cache file. No full IR rehash is needed at startup.
 _SLOT_LOCK = threading.Lock()
 _CACHE_SLOTS: dict[int, tuple[weakref.ReferenceType[CanonicalIR], Path, str]] = {}
 
@@ -52,41 +53,6 @@ def ir_cache_slot(ir: CanonicalIR) -> tuple[Path, str] | None:
         if entry is not None and entry[0]() is ir:
             return entry[1], entry[2]
     return None
-
-
-def _identity_sidecar_path(path: Path) -> Path:
-    return path.with_name(path.name.removesuffix(".ir.gz") + ".identity.json")
-
-
-def read_identity_sidecar(path: Path, key: str) -> dict | None:
-    try:
-        with _identity_sidecar_path(path).open("r", encoding="utf-8") as stream:
-            payload = json.load(stream)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(payload, dict) or payload.get("cache_key") != key:
-        return None
-    identity = payload.get("identity")
-    return identity if isinstance(identity, dict) else None
-
-
-def write_identity_sidecar(path: Path, key: str, identity: dict) -> None:
-    target = _identity_sidecar_path(path)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
-                prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump({"cache_key": key, "identity": identity}, stream,
-                      sort_keys=True, separators=(",", ":"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    except OSError:
-        pass  # Identity persistence is an optimization; failure keeps rehashing.
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def _mapping_proxy(values):
@@ -260,31 +226,35 @@ def cached_ir(root: Path, limits, scope: dict, build: Callable[[], CanonicalIR],
     path = directory / f"{_request_key(root, limits, scope)}.ir.gz"
     key = _cache_key(root, limits, scope)
     result = _read_cache(path, key)
-    if result is not None and key == _cache_key(root, limits, scope):
+    # A hit is an immutable snapshot of the inputs observed at entry. Later
+    # source edits are picked up by the next call; no second directory walk.
+    if result is not None:
         _register_slot(result, path, key)
         return result
     try:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         lock = (directory / "compile.lock").open("a+b")
     except OSError:
-        return build()
-    with lock:
+        lock = None
+    with lock if lock is not None else nullcontext():
         # ponytail: one lock serializes cold builds to protect WSL memory; split
         # by scope only after per-process memory budgets can bound parallelism.
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        key = _cache_key(root, limits, scope)
-        result = _read_cache(path, key)
-        if result is not None and key == _cache_key(root, limits, scope):
-            _register_slot(result, path, key)
-            return result
+        if lock is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            key = _cache_key(root, limits, scope)
+            result = _read_cache(path, key)
+            if result is not None:
+                _register_slot(result, path, key)
+                return result
         result = build()
         if key != _cache_key(root, limits, scope):
             raise RuntimeError("sources or production code changed during IR compilation; retry")
         if type(result) is not CanonicalIR or result.version != BASELINE_VERSION:
             raise TypeError("compile cache requires current, validated CanonicalIR")
-        try:
-            _write_cache(path, key, result)
-        except OSError:
-            pass  # A cache write failure must not discard a successful compilation.
+        if lock is not None:
+            try:
+                _write_cache(path, key, result)
+            except OSError:
+                pass  # A cache write failure must not discard a successful compilation.
         _register_slot(result, path, key)
         return result

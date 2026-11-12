@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any
 
-from .builds.manifest import canonical_ir_fingerprint
+from .builds.manifest import rulebook_fingerprint
 from .core.audit_policy import diagnostic_detail
 from .core.model import ActionCommand, BattleState
 from .core.transition_consumer import transition_successor_state
@@ -15,7 +15,7 @@ from .systems.decision import CurrentDecision, DecisionSystem
 from .systems.scheduler import SchedulerStepResult
 
 
-SESSION_SCHEMA = "hsr_battle_session_v3"
+SESSION_SCHEMA = "hsr_battle_session_v4"
 
 
 def command_from_json(value: dict[str, Any]) -> ActionCommand:
@@ -74,9 +74,9 @@ class BattleSession:
         # formal build manifest and keep the direct fingerprint path.
         manifest = self.build.build_manifest
         self.rules_fingerprint = (
-            manifest.rule_identity.canonical_ir_fingerprint
+            manifest.rule_identity.rules_fingerprint
             if manifest is not None
-            else canonical_ir_fingerprint(rules.ir)
+            else rulebook_fingerprint(rules)
         )
         self.initial_snapshot = self.state.snapshot().to_json(detach=False)
         self.setup_audit = {
@@ -184,7 +184,7 @@ class BattleSession:
         return {
             "schema_version": SESSION_SCHEMA,
             "diagnostics": self.diagnostics,
-            "canonical_ir_fingerprint": self.rules_fingerprint,
+            "rules_fingerprint": self.rules_fingerprint,
             "scenario": self.scenario_data,
             "initial_snapshot": self.initial_snapshot,
             "setup_audit": self.setup_audit,

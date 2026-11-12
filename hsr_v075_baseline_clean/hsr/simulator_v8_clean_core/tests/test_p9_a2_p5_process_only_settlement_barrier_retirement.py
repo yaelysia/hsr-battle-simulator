@@ -89,7 +89,7 @@ def _control(
         ControlFlowFieldResponsibilityIR(
             field_name=field,
             responsibility="downstream_gameplay",
-            owner_stage="p9_s11",
+            owner_stage="damage_heal_shield",
             covers_subtree=True,
             source=IRSource(
                 source.source_path,
@@ -118,12 +118,12 @@ def _control(
             node_id=node_id,
             termination_kind="not_applicable",
             status="not_applicable",
-            owner_stage="p9_s8a",
+            owner_stage="control_flow_source",
             expression=None,
             blocked_reason="",
             source=source,
         ),
-        downstream_stages=("p9_s11",),
+        downstream_stages=("damage_heal_shield",),
         source=source,
         coverage_status="blocked" if blocked else "lowered_with_obligation",  # type: ignore[arg-type]
         blocked_reason="fixture_blocked" if blocked else "",

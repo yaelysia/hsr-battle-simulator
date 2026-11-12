@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 from ..build_types import canonical_json_fingerprint, require_sha256, require_text
-from ..core.immutable_json import FrozenJSONDict, freeze_json, thaw_json
+from ..immutable_json import FrozenJSONDict, freeze_json, thaw_json
 from ..core.model import BattleState, JSONValue, Mutation
 from ..core.reducer import MutationReducer, ReplayResult
 from ..rules.engine_rule_registry import ENGINE_RULE_REGISTRY_VERSION
@@ -22,7 +22,7 @@ from .character_assembler import assemble_character_build
 from .models import CharacterBuildAssemblyResult, CharacterBuildInput
 
 
-BUILD_MANIFEST_SCHEMA_VERSION = "p8_s19_formal_build_manifest_v1"
+BUILD_MANIFEST_SCHEMA_VERSION = "formal_build_manifest_v1"
 FORMAL_BUILD_MANIFEST_FLAG = "formal_build_manifest"
 
 _PROTECTED_BUILD_UNIT_FLAGS = frozenset(
@@ -64,18 +64,18 @@ def _closed_mapping(
 @dataclass(frozen=True)
 class BuildRuleIdentity:
     source_fingerprint: str
-    canonical_ir_fingerprint: str
+    rules_fingerprint: str
     engine_rule_version: str
 
     def __post_init__(self) -> None:
         require_sha256(self.source_fingerprint, "source_fingerprint")
-        require_sha256(self.canonical_ir_fingerprint, "canonical_ir_fingerprint")
+        require_sha256(self.rules_fingerprint, "rules_fingerprint")
         require_text(self.engine_rule_version, "engine_rule_version")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "source_fingerprint": self.source_fingerprint,
-            "canonical_ir_fingerprint": self.canonical_ir_fingerprint,
+            "rules_fingerprint": self.rules_fingerprint,
             "engine_rule_version": self.engine_rule_version,
         }
 
@@ -86,7 +86,7 @@ class BuildRuleIdentity:
             "build_rule_identity",
             {
                 "source_fingerprint",
-                "canonical_ir_fingerprint",
+                "rules_fingerprint",
                 "engine_rule_version",
             },
         )
@@ -95,9 +95,9 @@ class BuildRuleIdentity:
                 row.get("source_fingerprint"),
                 "source_fingerprint",
             ),
-            canonical_ir_fingerprint=require_sha256(
-                row.get("canonical_ir_fingerprint"),
-                "canonical_ir_fingerprint",
+            rules_fingerprint=require_sha256(
+                row.get("rules_fingerprint"),
+                "rules_fingerprint",
             ),
             engine_rule_version=require_text(
                 row.get("engine_rule_version"),
@@ -459,14 +459,18 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
         if cached is not None and cached[0]() is rules:
             return cached[1]
 
-    identity = _persisted_build_rule_identity(rules.ir)
-    if identity is None:
+    from ..tbgd.compile_cache import ir_cache_slot
+
+    slot = ir_cache_slot(rules.ir)
+    if slot is not None:
+        identity = BuildRuleIdentity(slot[1], slot[1], ENGINE_RULE_REGISTRY_VERSION)
+    else:
+        fingerprint = canonical_ir_fingerprint(rules.ir)
         identity = BuildRuleIdentity(
-            source_fingerprint=_source_fingerprint(rules.ir),
-            canonical_ir_fingerprint=canonical_ir_fingerprint(rules.ir),
+            source_fingerprint=_source_fingerprint(rules.ir) or fingerprint,
+            rules_fingerprint=fingerprint,
             engine_rule_version=ENGINE_RULE_REGISTRY_VERSION,
         )
-        _store_persisted_build_rule_identity(rules.ir, identity)
 
     def clear(reference: weakref.ReferenceType[RuleBook]) -> None:
         with _IDENTITY_CACHE_LOCK:
@@ -480,54 +484,12 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
     return identity
 
 
-def cached_canonical_ir_fingerprint(rules: RuleBook) -> str:
-    """Canonical IR fingerprint with in-process and persisted reuse.
+def rulebook_fingerprint(rules: RuleBook) -> str:
+    """Identify compiled rules by their validated build inputs; hash ad-hoc IRs."""
+    from ..tbgd.compile_cache import ir_cache_slot
 
-    Archive verification only needs the canonical fingerprint; unlike the full
-    build rule identity it must not require source fingerprint tokens, so
-    component-only IRs keep the direct computation path.
-    """
-    if not isinstance(rules, RuleBook):
-        raise TypeError("rules must be RuleBook")
-    with _IDENTITY_CACHE_LOCK:
-        cached = _IDENTITY_CACHE.get(id(rules))
-        if cached is not None and cached[0]() is rules:
-            return cached[1].canonical_ir_fingerprint
-    persisted = _persisted_build_rule_identity(rules.ir)
-    if persisted is not None:
-        return persisted.canonical_ir_fingerprint
-    return canonical_ir_fingerprint(rules.ir)
-
-
-def _persisted_build_rule_identity(ir: CanonicalIR) -> BuildRuleIdentity | None:
-    # The compile cache key covers source metadata and all L0/identity code, so a
-    # matching sidecar identifies the same IR without rehashing it per process.
-    from ..tbgd.compile_cache import ir_cache_slot, read_identity_sidecar
-
-    slot = ir_cache_slot(ir)
-    if slot is None:
-        return None
-    payload = read_identity_sidecar(slot[0], slot[1])
-    if payload is None:
-        return None
-    try:
-        identity = BuildRuleIdentity.from_json(payload)
-    except (TypeError, ValueError):
-        return None
-    if identity.engine_rule_version != ENGINE_RULE_REGISTRY_VERSION:
-        return None
-    return identity
-
-
-def _store_persisted_build_rule_identity(
-    ir: CanonicalIR,
-    identity: BuildRuleIdentity,
-) -> None:
-    from ..tbgd.compile_cache import ir_cache_slot, write_identity_sidecar
-
-    slot = ir_cache_slot(ir)
-    if slot is not None:
-        write_identity_sidecar(slot[0], slot[1], identity.to_json())
+    slot = ir_cache_slot(rules.ir)
+    return slot[1] if slot is not None else canonical_ir_fingerprint(rules.ir)
 
 
 def canonical_ir_fingerprint(ir: CanonicalIR) -> str:
@@ -536,7 +498,7 @@ def canonical_ir_fingerprint(ir: CanonicalIR) -> str:
     return digest.hexdigest()
 
 
-def _source_fingerprint(ir: CanonicalIR) -> str:
+def _source_fingerprint(ir: CanonicalIR) -> str | None:
     tokens: set[str] = set()
     for key in _SOURCE_FINGERPRINT_METADATA_KEYS:
         value = ir.metadata.get(key)
@@ -544,7 +506,7 @@ def _source_fingerprint(ir: CanonicalIR) -> str:
             tokens.add(canonical_json_fingerprint(cast(JSONValue, value)))
     _collect_source_fingerprint_tokens(ir, tokens, set())
     if not tokens:
-        raise ValueError("canonical_ir_source_fingerprint_missing")
+        return None
     return canonical_json_fingerprint({"source_fingerprints": sorted(tokens)})
 
 
@@ -593,8 +555,8 @@ def _identity_errors(
     errors: list[str] = []
     if expected.source_fingerprint != actual.source_fingerprint:
         errors.append("build_source_fingerprint_mismatch")
-    if expected.canonical_ir_fingerprint != actual.canonical_ir_fingerprint:
-        errors.append("build_canonical_ir_fingerprint_mismatch")
+    if expected.rules_fingerprint != actual.rules_fingerprint:
+        errors.append("build_rules_fingerprint_mismatch")
     if expected.engine_rule_version != actual.engine_rule_version:
         errors.append("build_engine_rule_version_mismatch")
     return tuple(errors)

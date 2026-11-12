@@ -5,12 +5,12 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .immutable_json import FrozenJSONDict, freeze_json, thaw_json
+from ..immutable_json import FrozenJSONDict, freeze_json, thaw_json
 from .model import BattleState, JSONValue
 from .unit_state_codec import unit_state_to_payload
 
 
-COMPACT_STATE_SCHEMA_VERSION = "p8_s19_compact_semantic_state_v2"
+COMPACT_STATE_SCHEMA_VERSION = "compact_semantic_state_v2"
 
 # These keys are provenance or derived report material. Runtime behavior must
 # never depend on them; their full values remain available through audit_details.

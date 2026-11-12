@@ -19,7 +19,7 @@ from .elation import ElationDamageContext
 from .toughness_state import read_toughness_segments
 
 
-DAMAGE_STAGE_SCHEMA_VERSION = "p7_s12_damage_stage_pipeline_v1"
+DAMAGE_STAGE_SCHEMA_VERSION = "damage_stage_pipeline_v1"
 DAMAGE_STAGE_ORDER = (
     "critical",
     "damage_bonus",

@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from hsr.simulator_v8_clean_core.core.immutable_json import thaw_json
+from hsr.simulator_v8_clean_core.immutable_json import thaw_json
 from hsr.simulator_v8_clean_core.core.model import BattleState, UnitState, UnitStatPool, current_max_hp
 from hsr.simulator_v8_clean_core.core.reducer import MutationReducer
 from hsr.simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor

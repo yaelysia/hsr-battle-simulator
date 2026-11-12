@@ -138,7 +138,7 @@ def source_denominator(root: Path) -> dict[str, Any]:
             and not control.template_reference_ids
             and control.termination.termination_kind == "not_applicable"
             and control.termination.status == "not_applicable"
-            and control.downstream_stages == ("p9_s11",)
+            and control.downstream_stages == ("damage_heal_shield",)
         )
         partition = _source_partition(
             eligible=eligible, source_reason=source_reason

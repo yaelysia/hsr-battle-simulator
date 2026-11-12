@@ -4,7 +4,8 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from ..core.model import ActionCommand, BattleState, JSONValue, battle_state_revision
+from ..core.model import battle_state_revision as _action_state_revision
+from ..core.model import ActionCommand, BattleState, JSONValue
 from ..rules.ir import ActionAdmissionIR, AbilityTaskIR
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.rulebook import RuleBook
@@ -33,7 +34,7 @@ from .ability_task_contract import (
 )
 
 
-ACTION_SUBMISSION_CONTRACT_SCHEMA = "p7_s6_action_submission_contract_v1"
+ACTION_SUBMISSION_CONTRACT_SCHEMA = "action_submission_contract_v1"
 _ACTION_AUTHORIZATION_ISSUER = object()
 
 
@@ -138,8 +139,6 @@ def _issue_action_submission_authorization(
     )
 
 
-def _action_state_revision(state: BattleState) -> str:
-    return battle_state_revision(state)
 
 
 def _action_authorization_payload(

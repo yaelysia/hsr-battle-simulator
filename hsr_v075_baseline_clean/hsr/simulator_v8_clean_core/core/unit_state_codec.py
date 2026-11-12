@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
+from ..immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
 from .model import (
     JSONValue,
     LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,

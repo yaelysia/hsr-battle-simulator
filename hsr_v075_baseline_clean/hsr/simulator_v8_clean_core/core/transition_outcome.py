@@ -33,7 +33,7 @@ class TransitionOutcome:
     category: TransitionOutcomeCategory
     reason_codes: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
-    schema_version: str = "p7_s1_transition_outcome_v1"
+    schema_version: str = "transition_outcome_v1"
 
     @property
     def successor_eligible(self) -> bool:

@@ -1812,7 +1812,7 @@ def _s8c_sibling_signature(source_catalog: Any) -> list[list[Any]]:
         ]
         for node in source_catalog.nodes
         if node.family != "WaitAnimState"
-        and "p9_s8c" in node.downstream_stages
+        and "hit_random_sequence" in node.downstream_stages
     )
 
 

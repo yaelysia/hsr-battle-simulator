@@ -27,10 +27,12 @@
 | 诊断精简与数值保留 | `test_diagnostic_output.py`；跨模式公开路线见下方公共接口基线 |
 | 归档与会话分支 | `test_battle_archive.py`、`test_session_fork.py` |
 | 装备输入与消费 | `test_equipment_input_codec.py`、`test_equipment_heal_formula_delay_cost.py`；完整装备路线另按需选择 |
+| 装备来源查询与可选审计 | `test_equipment_source_query.py`（integration，真实构筑注册结算） |
 | 工作台请求 | `test_live_battle_ui.py`；监听端口/浏览器检查与内存请求检查分开报告 |
 
 快速机制检查用于定位公式、时序、原子性等具体错误，保留这些检查的行为价值。
 重构时优先迁移绑定私有返回形状、旧审计结构的断言，不批量删除所有内部检查。
+`test_p9_a2_direct_static_context.py` 会构建真实规则目录，已归入 integration，默认快测不再隐式执行它。
 
 ## 真实入场与公开操作
 
@@ -74,5 +76,7 @@
 
 历史 `tools/validate_*` 只有仍被生产、测试或当前任务引用时才承担现行职责；
 删除前核对调用者，不因为文件名带阶段编号就直接删除。当前不按旧阶段补验证器。
+2026-11-12 已移除 221 个无现行引用的工具模块，保留测试及 CI 引用闭包内的 23 个。
+删除的工具、v7/model-pack、旧 HTML 和无现行引用的报告可从 `c3b3483` 的 Git 历史读取。
 整理前的完整命令和历史断言见
 [历史测试记录](../docs/archive/usage/TEST_COMMANDS_PRE_REFRESH_2026-11-12.md)。

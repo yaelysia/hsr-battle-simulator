@@ -15,7 +15,7 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import _attach_target_expressions
 from hsr.simulator_v8_clean_core.tbgd.target_source import build_target_language_definitions
 
 
-def test_real_misha_count_commits_audited_store_and_missing_target_does_not_write():
+def test_real_misha_count_commits_audited_store_and_missing_target_does_not_write(monkeypatch):
     path = "Config/ConfigAbility/Avatar/Avatar_Misha_00_Ability.json"
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
     document = json.loads((root / path).read_text())
@@ -50,7 +50,24 @@ def test_real_misha_count_commits_audited_store_and_missing_target_does_not_writ
     })
     context = EffectExecutionContext(state, "actor", "source:count", owner_id="actor",
         ability_instance_id="ability:count", event_payload={"operation_event_id": "count:1"})
-    result = runtime.execute(effect, context)
+    from hsr.simulator_v8_clean_core.core import audit_policy
+    from hsr.simulator_v8_clean_core.systems import dynamic_values
+    original_planner = dynamic_values.plan_dynamic_value_operation
+    def no_replan(*args, **kwargs):
+        raise AssertionError('normal execution must not repeat planning')
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_policy, '_ENABLED', False)
+        patch.setattr(dynamic_values, 'plan_dynamic_value_operation', no_replan)
+        result = runtime.execute(effect, context)
+    replans = []
+    def counted(*args, **kwargs):
+        replans.append(1)
+        return original_planner(*args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_policy, '_ENABLED', True)
+        patch.setattr(dynamic_values, 'plan_dynamic_value_operation', counted)
+        checked = runtime.execute(effect, context)
+    assert len(replans) == 1 and checked.mutations == result.mutations
     assert not result.unsupported, result.unsupported
     committed = MutationReducer().apply_all(state, result.mutations)
     values = list(store_from_state(committed)["entries"].values())

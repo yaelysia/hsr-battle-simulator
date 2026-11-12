@@ -12,7 +12,7 @@ import tempfile
 from typing import Any, Callable
 
 from .archive_json import decode_archive_json, encode_archive_json, validate_json_graph
-from .builds.manifest import cached_canonical_ir_fingerprint
+from .builds.manifest import rulebook_fingerprint
 from .rules.rulebook import RuleBook
 from .session import BattleSession, SESSION_SCHEMA, command_from_json
 
@@ -21,7 +21,7 @@ _ARCHIVE_FIELDS = frozenset(
     {
         "schema_version",
         "diagnostics",
-        "canonical_ir_fingerprint",
+        "rules_fingerprint",
         "scenario",
         "initial_snapshot",
         "setup_audit",
@@ -146,11 +146,11 @@ def _verify_archive(
         return _failed(0, "schema_version_mismatch"), None
     if not isinstance(rules, RuleBook):
         return _failed(0, "rules_invalid"), None
-    fingerprint = archive.get("canonical_ir_fingerprint")
+    fingerprint = archive.get("rules_fingerprint")
     if not isinstance(fingerprint, str) or not fingerprint:
-        return _failed(0, "canonical_ir_fingerprint_invalid"), None
-    if fingerprint != cached_canonical_ir_fingerprint(rules):
-        return _failed(0, "canonical_ir_fingerprint_mismatch"), None
+        return _failed(0, "rules_fingerprint_invalid"), None
+    if fingerprint != rulebook_fingerprint(rules):
+        return _failed(0, "rules_fingerprint_mismatch"), None
     try:
         _validate_archive_shape(archive)
     except (TypeError, ValueError) as exc:

@@ -11,6 +11,7 @@ from ..core.atomic_commit import (
     records_for_atomic_result,
     rng_events_for_atomic_result,
 )
+from ..core.model import battle_state_revision as _scheduler_state_revision
 from ..core.model import (
     ActionCommand,
     ActionSettlement,
@@ -22,7 +23,6 @@ from ..core.model import (
     Mutation,
     RNGEvent,
     TargetResolution,
-    battle_state_revision,
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
@@ -198,8 +198,6 @@ def _decision_authorization_seal_valid(authorization: DecisionSubmissionAuthoriz
     )
 
 
-def _scheduler_state_revision(state: BattleState) -> str:
-    return battle_state_revision(state)
 
 
 @dataclass(frozen=True)
@@ -1223,7 +1221,7 @@ class CombatScheduler:
                     ("pre_action_removal" if actor_lifecycle.is_removed else "pre_action_defeat"):
                         {"actor_id": plan.actor_id, "state": "turn_closed"},
                     "phase_machine": {
-                        "schema_version": "p7_s9_combat_phase_machine_v1",
+                        "schema_version": "combat_phase_machine_v1",
                         "path": [IDLE, TIMELINE_ADVANCING, TURN_BEGIN, PRE_ACTION, TURN_END, IDLE],
                     },
                     "pre_action_lifecycle": {
@@ -1332,7 +1330,7 @@ class CombatScheduler:
                         "state": "pending_turn_end",
                     },
                     "phase_machine": {
-                        "schema_version": "p7_s9_combat_phase_machine_v1",
+                        "schema_version": "combat_phase_machine_v1",
                         "path": [IDLE, TIMELINE_ADVANCING, TURN_BEGIN, PRE_ACTION, TURN_END],
                     },
                     "pre_action_lifecycle": {
@@ -1484,7 +1482,7 @@ class CombatScheduler:
                     "timeline_rule": rule.to_json(),
                     "enemy_action_candidate": enemy_candidate.to_json() if enemy_candidate is not None else {},
                     "phase_machine": {
-                        "schema_version": "p7_s9_combat_phase_machine_v1",
+                        "schema_version": "combat_phase_machine_v1",
                         "path": [IDLE, TIMELINE_ADVANCING, TURN_BEGIN, PRE_ACTION, AWAITING_DECISION],
                     },
                     "pre_action_lifecycle": {
@@ -1612,7 +1610,7 @@ class CombatScheduler:
                     "mutation_count": len(lifecycle.mutations),
                 },
                 "phase_machine": {
-                    "schema_version": "p7_s9_combat_phase_machine_v1",
+                    "schema_version": "combat_phase_machine_v1",
                     "path": ([TURN_END, IDLE] if already_in_turn_end else [self.phases.current_phase(state), TURN_END, IDLE]),
                 },
             },
@@ -3146,7 +3144,7 @@ def _combine_scheduler_transitions(
 def _phase_coverage(state: BattleState) -> dict[str, JSONValue]:
     machine = CombatPhaseMachine()
     return {
-        "schema_version": "p7_s9_combat_phase_machine_v1",
+        "schema_version": "combat_phase_machine_v1",
         "current_phase": machine.current_phase(state),
         "allowed_next_phases": list(machine.allowed_next_phases(state)),
     }

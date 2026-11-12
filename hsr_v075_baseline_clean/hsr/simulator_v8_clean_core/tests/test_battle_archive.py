@@ -60,7 +60,7 @@ class BattleArchiveTest(unittest.TestCase):
     def test_verify_rejects_rule_fingerprint_before_session_rebuild(self):
         archive = {
             "schema_version": SESSION_SCHEMA,
-            "canonical_ir_fingerprint": "not-the-current-rules",
+            "rules_fingerprint": "not-the-current-rules",
             "scenario": {},
             "initial_snapshot": {},
             "initialization": {},
@@ -74,10 +74,10 @@ class BattleArchiveTest(unittest.TestCase):
             {
                 "ok": False,
                 "step_count": 0,
-                "errors": ["canonical_ir_fingerprint_mismatch"],
+                "errors": ["rules_fingerprint_mismatch"],
             },
         )
-        with self.assertRaisesRegex(ValueError, "archive_restore_failed:canonical_ir_fingerprint_mismatch"):
+        with self.assertRaisesRegex(ValueError, "archive_restore_failed:rules_fingerprint_mismatch"):
             restore_session(archive, RuleBook(CanonicalIR(version="archive-test")))
 
     def test_fork_rejects_invalid_boundary_before_rebuild(self):
@@ -151,7 +151,7 @@ def test_archive_validation_rejects_invalid_json_in_later_operations():
     import pytest
     from hsr.simulator_v8_clean_core.battle_archive import _validate_archive_shape
 
-    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", canonical_ir_fingerprint="synthetic:fingerprint",
+    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", rules_fingerprint="synthetic:fingerprint",
                    scenario={}, initial_snapshot={}, setup_audit={}, initialization={},
                    final_snapshot={}, outcome="", operations=[{"valid": 1}])
     _validate_archive_shape(archive)
@@ -198,7 +198,7 @@ def test_graph_archive_shares_nested_evidence_and_preserves_scalar_types(tmp_pat
             cursor = cursor[0]
         assert cursor is decoded["evidence"]
 
-    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", canonical_ir_fingerprint="not-current",
+    archive = dict(schema_version=SESSION_SCHEMA, diagnostics="compact", rules_fingerprint="not-current",
                    scenario={}, initial_snapshot={}, setup_audit={}, initialization={},
                    final_snapshot={}, outcome="", operations=[])
     rules = RuleBook(CanonicalIR(version="archive-test"))

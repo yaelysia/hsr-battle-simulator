@@ -60,26 +60,26 @@ from .expression_lowering import lower_numeric_expression
 
 _OWNER_DOMAIN_BY_STAGE = {
     "excluded": "non_gameplay_excluded",
-    "p9_s4": "numeric_expression",
-    "p9_s5a": "target_resolution",
-    "p9_s5b": "target_resolution",
-    "p9_s5c": "target_resolution",
-    "p9_s5d": "target_random_selection",
-    "p9_s6a": "condition_evaluation",
-    "p9_s6b": "condition_evaluation",
-    "p9_s7": "transient_condition_evaluation",
-    "p9_s8a": "control_flow_source_contract",
-    "p9_s8b": "task_graph_execution",
-    "p9_s8c": "hit_random_sequence",
-    "p9_s9": "event_dispatch",
-    "p9_s10": "status_lifecycle",
-    "p9_s11": "damage_heal_shield",
-    "p9_s12": "resource_resolution",
-    "p9_s13": "timeline_queue",
-    "p9_s14": "unit_lifecycle",
-    "p9_s15": "toughness_break",
-    "p9_s16": "action_form_phase",
-    "p9_s17": "combat_entity_event",
+    "numeric_expression": "numeric_expression",
+    "target_definition": "target_resolution",
+    "target_alias": "target_resolution",
+    "target_relation": "target_resolution",
+    "target_random_selection": "target_random_selection",
+    "condition_definition": "condition_evaluation",
+    "committed_condition": "condition_evaluation",
+    "transient_condition": "transient_condition_evaluation",
+    "control_flow_source": "control_flow_source_contract",
+    "task_graph_execution": "task_graph_execution",
+    "hit_random_sequence": "hit_random_sequence",
+    "event_dispatch": "event_dispatch",
+    "status_lifecycle": "status_lifecycle",
+    "damage_heal_shield": "damage_heal_shield",
+    "resource_resolution": "resource_resolution",
+    "timeline_queue": "timeline_queue",
+    "unit_lifecycle": "unit_lifecycle",
+    "toughness_break": "toughness_break",
+    "action_form_phase": "action_form_phase",
+    "combat_entity_event": "combat_entity_event",
 }
 _ALREADY_CLOSED_DOMAINS = frozenset({
     "non_gameplay_excluded",
@@ -1848,7 +1848,7 @@ def _is_wait_anim_state_process_only_presentation_shape(
         and not control.template_reference_ids
         and control.termination.termination_kind == "not_applicable"
         and control.termination.status == "not_applicable"
-        and control.downstream_stages == ("p9_s8c",)
+        and control.downstream_stages == ("hit_random_sequence",)
         and all(
             item.responsibility == "presentation_excluded"
             and item.owner_stage == "excluded"
@@ -1910,7 +1910,7 @@ def _is_death_settlement_barrier_shape(control, task) -> bool:
         and not control.blocked_reason and not control.peer_field_names and not control.field_responsibilities
         and not control.branches and not control.template_reference_ids
         and control.termination.termination_kind == control.termination.status == "not_applicable"
-        and control.downstream_stages == ("p9_s14",)
+        and control.downstream_stages == ("unit_lifecycle",)
         and task.execution_mode == "runtime_effect" and task.coverage_status == "executable"
         and task.effect_id and not task.condition_id and not task.target_expression_id
         and not task.ability_definition_id
@@ -1939,7 +1939,7 @@ def _is_process_only_settlement_barrier_shape(
                 }
                 and all(
                     responsibility.responsibility == "downstream_gameplay"
-                    and responsibility.owner_stage == "p9_s11"
+                    and responsibility.owner_stage == "damage_heal_shield"
                     for responsibility in control.field_responsibilities
                 )
             )
@@ -1948,7 +1948,7 @@ def _is_process_only_settlement_barrier_shape(
         and not control.template_reference_ids
         and control.termination.termination_kind == "not_applicable"
         and control.termination.status == "not_applicable"
-        and control.downstream_stages == ("p9_s11",)
+        and control.downstream_stages == ("damage_heal_shield",)
         and task.family == control.family
         and task.opcode == control.family
         and task.execution_mode == "process_only"
@@ -2249,7 +2249,7 @@ def _node_status(
         and not task.ability_definition_id and not control.template_reference_ids
         and len(control.branches) == 1 and control.branches[0].branch_kind == "servant_created"
         and control.termination.termination_kind == control.termination.status == "not_applicable"
-        and control.downstream_stages == ("p9_s8b",)
+        and control.downstream_stages == ("task_graph_execution",)
         and len(references) == 1 and references[0].reference_kind == "effect"
         and references[0].definition_id == task.effect_id and references[0].resolution_status == "resolved"
     ):

@@ -395,7 +395,7 @@ def test_limbo_rescue_admission_verifies_its_native_source_identity():
     from dataclasses import replace
 
     from hsr.simulator_v8_clean_core.core.executor import CombatExecutor
-    from hsr.simulator_v8_clean_core.core.immutable_json import thaw_json
+    from hsr.simulator_v8_clean_core.immutable_json import thaw_json
     from hsr.simulator_v8_clean_core.session import BattleSession
     from hsr.simulator_v8_clean_core.systems.damage import (
         DamagePacket,

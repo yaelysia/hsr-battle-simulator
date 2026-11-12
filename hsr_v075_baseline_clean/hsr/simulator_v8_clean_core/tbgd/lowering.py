@@ -1944,11 +1944,29 @@ class TBGDLowering:
         )
         if stage_ids and include_stage_environment:
             self._prepare_stage_ability_sources(stage_ids)
-        light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
-        light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
-        relic_catalog_result = build_relic_catalog(self.tbgd_root)
-        relic_catalog = require_complete_relic_catalog(relic_catalog_result)
-        relic_set_thresholds = relic_catalog.set_thresholds
+        light_cone_definitions = ()
+        relic_set_thresholds = ()
+        equipment_fields = {}
+        equipment_fingerprints = {}
+        if include_equipment:
+            light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
+            light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
+            relic_catalog_result = build_relic_catalog(self.tbgd_root)
+            relic_catalog = require_complete_relic_catalog(relic_catalog_result)
+            relic_set_thresholds = relic_catalog.set_thresholds
+            equipment_fields = {
+                'relic_' + name: getattr(relic_catalog, name) for name in (
+                    'domain_definitions', 'slot_definitions', 'main_affix_group_definitions',
+                    'main_affix_definitions', 'sub_affix_group_definitions', 'sub_affix_definitions',
+                    'template_definitions', 'set_definitions',
+                )
+            }
+            equipment_fingerprints = _equipment_catalog_fingerprint_metadata(
+                light_cone_source_content_fingerprint=light_cone_catalog.source_content_fingerprint,
+                relic_source_content_fingerprint=relic_catalog_result.source_content_fingerprint,
+                light_cone_catalog_definition_fingerprint=light_cone_catalog.catalog_definition_fingerprint,
+                relic_catalog_definition_fingerprint=relic_catalog_result.catalog_definition_fingerprint,
+            )
         equipment_ability_sources = _equipment_ability_source_projection(
             (*light_cone_definitions, *relic_set_thresholds)
         )
@@ -2716,18 +2734,7 @@ class TBGDLowering:
             ),
             monster_data_cards=tuple(monster_data_cards),
             light_cone_definitions=tuple(light_cone_definitions),
-            relic_domain_definitions=relic_catalog.domain_definitions,
-            relic_slot_definitions=relic_catalog.slot_definitions,
-            relic_main_affix_group_definitions=(
-                relic_catalog.main_affix_group_definitions
-            ),
-            relic_main_affix_definitions=relic_catalog.main_affix_definitions,
-            relic_sub_affix_group_definitions=(
-                relic_catalog.sub_affix_group_definitions
-            ),
-            relic_sub_affix_definitions=relic_catalog.sub_affix_definitions,
-            relic_template_definitions=relic_catalog.template_definitions,
-            relic_set_definitions=relic_catalog.set_definitions,
+            **equipment_fields,
             relic_set_thresholds=relic_set_thresholds,
             equipment_ability_parameter_reads=tuple(equipment_parameter_reads),
             equipment_mechanism_refs=tuple(equipment_mechanism_refs),
@@ -2852,21 +2859,8 @@ class TBGDLowering:
                     and len(selected_ability_files) < len(ability_files),
                     "callbacks": self.limits.max_callbacks_per_file is not None,
                 },
-                **_equipment_catalog_fingerprint_metadata(
-                    light_cone_source_content_fingerprint=(
-                        light_cone_catalog.source_content_fingerprint
-                    ),
-                    relic_source_content_fingerprint=(
-                        relic_catalog_result.source_content_fingerprint
-                    ),
-                    light_cone_catalog_definition_fingerprint=(
-                        light_cone_catalog.catalog_definition_fingerprint
-                    ),
-                    relic_catalog_definition_fingerprint=(
-                        relic_catalog_result.catalog_definition_fingerprint
-                    ),
-                ),
-                "light_cone_catalog_limited": False,
+                **equipment_fingerprints,
+                "light_cone_catalog_limited": not include_equipment,
                 "equipment_ability_graph_status": {
                     "graph_count": len(equipment_ability_graphs),
                     "executable_count": sum(
@@ -24637,8 +24631,8 @@ def _typed_condition_execution_node(
         family_stage = character_condition_family_stage(opcode, raw)
         family_admitted = family_stage in {
             "existing_family",
-            "p9_s6b_committed_state",
-            "p9_s7_transient_context",
+            "committed_state",
+            "transient_context",
         }
         family_blocked_reason = character_condition_family_blocked_reason(
             opcode, raw

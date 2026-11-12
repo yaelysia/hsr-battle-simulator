@@ -5,7 +5,8 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
-from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue, battle_state_revision
+from ..core.model import battle_state_revision as _state_revision
+from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue
 from ..rules.rulebook import RuleBook
 from .action_availability import ActionAvailabilitySystem, ActionAvailabilityView, ActionChoice
 from .action_selection import ActionTargetSelectionContext
@@ -17,8 +18,8 @@ from .scheduler import (
 )
 
 
-DECISION_CONTRACT_SCHEMA_VERSION = "p7_s8_decision_contract_v1"
-DECISION_TOKEN_SCHEMA_VERSION = "p7_s8_decision_token_v1"
+DECISION_CONTRACT_SCHEMA_VERSION = "decision_contract_v1"
+DECISION_TOKEN_SCHEMA_VERSION = "decision_token_v1"
 _EXTERNAL_DECISION_MODES = {"external_selectable", "queued_selectable", "timeline_actor_selectable"}
 
 
@@ -495,8 +496,6 @@ def _choice_revision(availability: ActionAvailabilityView) -> str:
     return _digest("choices", payload)
 
 
-def _state_revision(state: BattleState) -> str:
-    return battle_state_revision(state)
 
 
 def _single_choice_actor_id(choices: tuple[ActionChoice, ...]) -> str:

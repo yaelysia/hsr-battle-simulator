@@ -1,4 +1,4 @@
-from .tools.validate_v0_200 import main
+from .cli import main
 
 
 if __name__ == "__main__":

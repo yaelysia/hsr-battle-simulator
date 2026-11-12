@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..core.audit_policy import eager_identity_audit_enabled
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, battle_state_full_fingerprint, current_max_hp
+from ..core.model import battle_state_full_fingerprint as dynamic_value_state_fingerprint
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, current_max_hp
 from ..core.settlement import SettlementRecord
 from ..immutable_json import freeze_json, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
@@ -825,17 +826,18 @@ def execute_dynamic_value_plan(
             plan_id=plan.plan_id,
             blocked_reason="dynamic_value_plan_request_missing",
         )
-    try:
-        expected = plan_dynamic_value_operation(state, plan.operation, plan.request, rules=rules)
-        matches = expected.ok and expected.to_json(detach=False) == plan.to_json(detach=False)
-    except (TypeError, ValueError):
-        matches = False
-    if not matches:
-        return DynamicValueExecutionResult(
-            ok=False,
-            plan_id=plan.plan_id,
-            blocked_reason="dynamic_value_plan_integrity_mismatch",
-        )
+    if eager_identity_audit_enabled():
+        try:
+            expected = plan_dynamic_value_operation(state, plan.operation, plan.request, rules=rules)
+            matches = expected.ok and expected.to_json(detach=False) == plan.to_json(detach=False)
+        except (TypeError, ValueError):
+            matches = False
+        if not matches:
+            return DynamicValueExecutionResult(
+                ok=False,
+                plan_id=plan.plan_id,
+                blocked_reason="dynamic_value_plan_integrity_mismatch",
+            )
     return DynamicValueExecutionResult(
         ok=True,
         plan_id=plan.plan_id,
@@ -845,8 +847,6 @@ def execute_dynamic_value_plan(
     )
 
 
-def dynamic_value_state_fingerprint(state: BattleState) -> str:
-    return battle_state_full_fingerprint(state)
 
 
 def _strict_dynamic_value_store(value: object) -> dict[str, JSONValue]:

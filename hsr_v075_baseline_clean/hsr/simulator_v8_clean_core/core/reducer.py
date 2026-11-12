@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
+from ..immutable_json import FrozenJSONDict, FrozenJSONList, thaw_json
 from .model import (
     LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,
     BattleState,

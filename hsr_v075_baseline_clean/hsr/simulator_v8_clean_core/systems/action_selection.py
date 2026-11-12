@@ -6,7 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..core.model import ActionCommand, BattleState, JSONValue, RNGEvent, TargetResolution, battle_state_revision
+from ..core.model import battle_state_revision as action_target_state_revision
+from ..core.model import ActionCommand, BattleState, JSONValue, RNGEvent, TargetResolution
 from ..rules.action_target_contract import ActionTargetContractIR
 from ..rules.ir import ActionEventIR
 from ..rules.rulebook import RuleBook
@@ -22,13 +23,11 @@ from .unit_lifecycle import UnitLifecycleSystem
 from .unit_relation import EntityRelationResolver, TargetEvaluationContext
 
 
-ACTION_TARGET_QUERY_SCHEMA = "p9_s5c2_action_target_query_v1"
-ACTION_TARGET_SELECTION_SCHEMA = "p9_s5c2_action_target_selection_v1"
+ACTION_TARGET_QUERY_SCHEMA = "action_target_query_v1"
+ACTION_TARGET_SELECTION_SCHEMA = "action_target_selection_v1"
 _SELECTION_CONTEXT_ISSUER = object()
 
 
-def action_target_state_revision(state: BattleState) -> str:
-    return battle_state_revision(state)
 
 
 def _fingerprint(prefix: str, value: object) -> str:

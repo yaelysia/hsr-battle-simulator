@@ -14,16 +14,24 @@ hsr_run_dir=$(mktemp -d /tmp/hsr-cli-XXXXXX)
 .venv/bin/python -B -m hsr.simulator_v8_clean_core.cli --help
 ```
 
+包入口 `python -m hsr.simulator_v8_clean_core` 同样进入 CLI。
+
 首次选择新内容范围会编译并缓存规则；重复启动复用缓存。默认目录为
 `/tmp/hsr-v8-ir-cache-<uid>`，可用 `HSR_IR_CACHE_DIR` 指定。修改规则来源或编译代码会失效，
 修改操作脚本不要求重编译。运行不读取旧 v7/model-pack 的规则。
 多支队伍需共用规则缓存时，可配置固定的 `compile_scope` 内容池，见
 [场景说明](scenarios/README.md#共享编译范围)；不用把全部来源目录编进一次战斗。
+未装配装备且未显式要求装备范围时，不构建光锥和遗器目录；带装备的范围目前仍包含完整装备目录。
 
 会话默认输出精简诊断：保留数值、生产者身份和 RNG，裁掉重复 packet 与展开的来源解释树。
 排查具体来源或运行来源审计时，在启动命令前设置 `HSR_DETAILED_DIAGNOSTICS=1`。
-新归档为 `hsr_battle_session_v3`，记录自己的诊断模式，回放不依赖当前环境开关；旧归档文件保留，
+新归档为 `hsr_battle_session_v4`，记录自己的诊断模式，回放不依赖当前环境开关；旧归档文件保留，
 不保证跨格式回放。
+
+正式规则的 `rules_fingerprint` 复用编译输入修订身份，绑定来源目录、文件修订、编译代码与范围。
+不再在会话初始化重算完整 IR 指纹；更换来源目录或输入修订后需重新生成归档。
+缓存命中读取本次调用开始时对应的不可变规则，加载期间的来源变化在下一次调用生效；冷编译仍核对输入未变化。
+动态值计划的重复求值仅在 `HSR_EAGER_IDENTITY_AUDIT=1` 时启用。默认仍检查过期计划、目标与原子提交。
 
 ## 查询与交互操作
 

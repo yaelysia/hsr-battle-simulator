@@ -1,8 +1,4 @@
-"""Internal state revisions keep encoding the same bytes after sharing the snapshot.
-
-The five digest helpers encode a read-only internal snapshot instead of materializing
-a detached copy. Their algorithm, options and truncation stay the baseline ones.
-"""
+"""Short and full state identities share one encoding, including Unicode."""
 from __future__ import annotations
 
 import hashlib
@@ -64,9 +60,8 @@ def _baseline_encoding(state: BattleState, **options: object) -> str:
 
 def test_internal_state_digests_match_the_detached_baseline_encoding():
     state = _state()
-    short = _baseline_encoding(state, ensure_ascii=False)
     full = _baseline_encoding(state, ensure_ascii=True, allow_nan=False)
-    short_digest = "state:" + hashlib.sha256(short.encode("utf-8")).hexdigest()[:24]
+    short_digest = "state:" + hashlib.sha256(full.encode("utf-8")).hexdigest()[:24]
     full_digest = "state:" + hashlib.sha256(full.encode("utf-8")).hexdigest()
     assert action_target_state_revision(state) == short_digest
     assert _state_revision(state) == short_digest
@@ -87,3 +82,16 @@ def test_same_event_index_different_state_changes_every_digest():
         dynamic_value_state_fingerprint,
     ):
         assert revision(left) != revision(right)
+
+
+def test_short_and_full_identity_serialize_a_state_only_once(monkeypatch):
+    from hsr.simulator_v8_clean_core.core import model
+    original = model.json.dumps
+    calls = []
+    def tracked(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    state = _state()
+    monkeypatch.setattr(model.json, 'dumps', tracked)
+    assert action_target_state_revision(state) == dynamic_value_state_fingerprint(state)[:30]
+    assert len(calls) == 1

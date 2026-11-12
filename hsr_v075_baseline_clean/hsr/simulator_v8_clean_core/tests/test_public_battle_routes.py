@@ -40,6 +40,7 @@ def test_public_route_numbers_modes_and_history_branch(tmp_path):
     commands = json.loads((core / 'examples/cli/arlan_vs_antimatter.commands.json').read_text())['commands']
     reference = json.loads((Path(__file__).parent / 'golden/arlan_vs_antimatter.json').read_text())
     rules = build_battle_rulebook(root / 'turnbasedgamedata-main', scenario)
+    assert not rules.ir.light_cone_definitions and not rules.ir.relic_template_definitions
     results = {}
     for mode in ('compact', 'full'):
         started = time.perf_counter()

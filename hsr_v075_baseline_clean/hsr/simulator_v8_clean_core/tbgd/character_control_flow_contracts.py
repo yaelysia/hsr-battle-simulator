@@ -35,7 +35,7 @@ from .expression_lowering import lower_numeric_expression
 
 
 _GLOBAL_TEMPLATE_DIR = "Config/ConfigGlobalTaskListTemplate"
-_COMPLETED_OWNERS = frozenset({"excluded", "p9_s4", "p9_s5b", "p9_s6b", "p9_s8a"})
+_COMPLETED_OWNERS = frozenset({"excluded", "numeric_expression", "target_alias", "committed_condition", "control_flow_source"})
 _NON_GAMEPLAY_SEMANTICS = frozenset(
     {"presentation_only", "client_only_excluded", "ai_excluded", "telemetry_excluded"}
 )
@@ -57,7 +57,7 @@ _HYBRID_BRANCH_FIELDS: dict[str, tuple[str, ...]] = {
     "TurnInsertAction": ("OnInsertAbort",),
 }
 _PRESENTATION_FALLBACK_OWNER = {
-    ("FireWaveProjectile", "OnProjectileHitClientOnly"): "p9_s8c",
+    ("FireWaveProjectile", "OnProjectileHitClientOnly"): "hit_random_sequence",
 }
 
 
@@ -72,187 +72,187 @@ def _rules(
 _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     "AddBuffPerform": {
         **_rules("presentation_excluded", "excluded", "AddPerformTime"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("target_contract", "target_alias", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
     },
     "AddModifier": {
-        **_rules("numeric_contract", "p9_s10", "Chance", "LayerAddWhenStack", "LifeStepImmediately", "LifeTime", "MaxLayer"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
-        **_rules("downstream_gameplay", "p9_s10", "ModifierName"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "SuccessTaskList", "FailTaskList"),
+        **_rules("numeric_contract", "status_lifecycle", "Chance", "LayerAddWhenStack", "LifeStepImmediately", "LifeTime", "MaxLayer"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicValues"),
+        **_rules("downstream_gameplay", "status_lifecycle", "ModifierName"),
+        **_rules("target_contract", "target_alias", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "SuccessTaskList", "FailTaskList"),
     },
     "AddWeakByTeamAttackType": {
-        **_rules("numeric_contract", "p9_s10", "AddWeakCountMax", "ResistanceDeltaValue"),
-        **_rules("downstream_gameplay", "p9_s10", "PreferWeak", "ReturnWeakType"),
+        **_rules("numeric_contract", "status_lifecycle", "AddWeakCountMax", "ResistanceDeltaValue"),
+        **_rules("downstream_gameplay", "status_lifecycle", "PreferWeak", "ReturnWeakType"),
         **_rules("presentation_excluded", "excluded", "BlockUIRefresh"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "OnNoNewWeak"),
+        **_rules("target_contract", "target_alias", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "OnNoNewWeak"),
     },
     "ByCompareDynamicValue": {
-        **_rules("condition_contract", "p9_s6b", "CompareType", "ContextScope", "Inverse"),
-        **_rules("numeric_contract", "p9_s4", "CompareValue", "DynamicKey"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("condition_contract", "committed_condition", "CompareType", "ContextScope", "Inverse"),
+        **_rules("numeric_contract", "numeric_expression", "CompareValue", "DynamicKey"),
+        **_rules("target_contract", "target_alias", "TargetType"),
     },
-    "ByDieAnimFinished": _rules("downstream_gameplay", "p9_s14", "EntityTypeMask", "TeamTypeMask"),
+    "ByDieAnimFinished": _rules("downstream_gameplay", "unit_lifecycle", "EntityTypeMask", "TeamTypeMask"),
     "CharacterChangeModel": {
         **_rules("presentation_excluded", "excluded", "IsAsyncLoad", "PrefabPath"),
-        **_rules("child_graph", "p9_s8b", "OnSuccess"),
+        **_rules("child_graph", "task_graph_execution", "OnSuccess"),
     },
     "ConditionLoopExecuteTaskList": {
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
-        **_rules("numeric_contract", "p9_s8b", "MaxLoopCount"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
+        **_rules("numeric_contract", "task_graph_execution", "MaxLoopCount"),
     },
     "ConditionLoopExecuteTaskListWithInterval": {
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
-        **_rules("numeric_contract", "p9_s8b", "MaxLoopCount"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
+        **_rules("numeric_contract", "task_graph_execution", "MaxLoopCount"),
     },
     "DamagePerformFinish": _rules(
-        "downstream_gameplay", "p9_s11", "IsFakeAvatarAttack", "SkipDeathSettlement"
+        "downstream_gameplay", "damage_heal_shield", "IsFakeAvatarAttack", "SkipDeathSettlement"
     ),
     "CreateBattleEvent": {
-        **_rules("downstream_gameplay", "p9_s9", "AllowDuplicate", "EventID", "IsDynamicPreload", "PropertyFromTarget", "SpecifyCaster", "Team"),
-        **_rules("child_graph", "p9_s8b", "OnBattleEventCreate"),
+        **_rules("downstream_gameplay", "event_dispatch", "AllowDuplicate", "EventID", "IsDynamicPreload", "PropertyFromTarget", "SpecifyCaster", "Team"),
+        **_rules("child_graph", "task_graph_execution", "OnBattleEventCreate"),
     },
     "WaitSkillPerformAbilityFinish": {},
     "CreateServant": {
-        **_rules("numeric_contract", "p9_s4", "ServantID"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
+        **_rules("numeric_contract", "numeric_expression", "ServantID"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicValues"),
         **_rules("presentation_excluded", "excluded", "IsDynamicPreload"),
-        **_rules("child_graph", "p9_s8b", "OnServantCreate"),
+        **_rules("child_graph", "task_graph_execution", "OnServantCreate"),
     },
     "FireMultiProjectiles": {
-        **_rules("target_contract", "p9_s5b", "CasterTargetType", "TargetType"),
-        **_rules("control_structure", "p9_s8c", "ProjectileConfigList"),
-        **_rules("child_graph", "p9_s8c", "ProjectileOnHitList"),
+        **_rules("target_contract", "target_alias", "CasterTargetType", "TargetType"),
+        **_rules("control_structure", "hit_random_sequence", "ProjectileConfigList"),
+        **_rules("child_graph", "hit_random_sequence", "ProjectileOnHitList"),
     },
     "FireProjectile": {
-        **_rules("target_contract", "p9_s5b", "CustomAnchorTarget", "TargetType"),
-        **_rules("control_structure", "p9_s8c", "MaxNumber", "Projectile", "WaitProjectileFinish"),
-        **_rules("child_graph", "p9_s8c", "OnProjectileHit"),
+        **_rules("target_contract", "target_alias", "CustomAnchorTarget", "TargetType"),
+        **_rules("control_structure", "hit_random_sequence", "MaxNumber", "Projectile", "WaitProjectileFinish"),
+        **_rules("child_graph", "hit_random_sequence", "OnProjectileHit"),
     },
     "FireWaveProjectile": {
-        **_rules("target_contract", "p9_s5b", "CasterTargetType", "TargetType"),
-        **_rules("control_structure", "p9_s8c", "Count", "Interval", "Projectile", "WaitProjectileFinish"),
-        **_rules("downstream_gameplay", "p9_s11", "PerProjectileDamage"),
+        **_rules("target_contract", "target_alias", "CasterTargetType", "TargetType"),
+        **_rules("control_structure", "hit_random_sequence", "Count", "Interval", "Projectile", "WaitProjectileFinish"),
+        **_rules("downstream_gameplay", "damage_heal_shield", "PerProjectileDamage"),
         **_rules("presentation_excluded", "excluded", "OnProjectileHitClientOnly"),
     },
     "GoNextTargetInList": {},
     "GLOABNLLLEL": {
-        **_rules("control_structure", "p9_s8c", "ByRandom"),
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
-        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("control_structure", "hit_random_sequence", "ByRandom"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("numeric_contract", "target_alias", "MaxNumber"),
+        **_rules("target_contract", "target_alias", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
     },
     "IncludeGlobalTaskListTemplate": {
-        **_rules("control_structure", "p9_s8a", "Name"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
+        **_rules("control_structure", "control_flow_source", "Name"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicStrings", "DynamicValues"),
     },
     "IncludeTaskListTemplate": {
-        **_rules("control_structure", "p9_s8a", "Name"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
-        **_rules("target_contract", "p9_s5b", "ParamTarget"),
-        **_rules("child_graph", "p9_s8b", "TemplateParamSequences"),
+        **_rules("control_structure", "control_flow_source", "Name"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicStrings", "DynamicValues"),
+        **_rules("target_contract", "target_alias", "ParamTarget"),
+        **_rules("child_graph", "task_graph_execution", "TemplateParamSequences"),
     },
     "LoopExecuteTaskList": {
-        **_rules("numeric_contract", "p9_s8b", "MaxLoopCount"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("numeric_contract", "task_graph_execution", "MaxLoopCount"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
     },
     "LoopExecuteTaskListWithInterval": {
-        **_rules("numeric_contract", "p9_s8b", "MaxLoopCount"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("numeric_contract", "task_graph_execution", "MaxLoopCount"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
         **_rules("presentation_excluded", "excluded", "PreciseTime"),
     },
-    "LoopTargetList": _rules("child_graph", "p9_s8b", "TaskList"),
-    "MakeSuccess": _rules("child_graph", "p9_s8b", "Task"),
+    "LoopTargetList": _rules("child_graph", "task_graph_execution", "TaskList"),
+    "MakeSuccess": _rules("child_graph", "task_graph_execution", "Task"),
     "NewFireProjectile": {
         **_rules("presentation_excluded", "excluded", "DisplayData"),
-        **_rules("control_structure", "p9_s8c", "MaxNumber", "NewProjectile", "WaitProjectileFinish"),
-        **_rules("child_graph", "p9_s8c", "OnProjectileHit"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("control_structure", "hit_random_sequence", "MaxNumber", "NewProjectile", "WaitProjectileFinish"),
+        **_rules("child_graph", "hit_random_sequence", "OnProjectileHit"),
+        **_rules("target_contract", "target_alias", "TargetType"),
     },
-    "PauseToTurnEnd": _rules("control_structure", "p9_s13", "Pause"),
+    "PauseToTurnEnd": _rules("control_structure", "timeline_queue", "Pause"),
     "PerformDelayExecute": {
-        **_rules("numeric_contract", "p9_s8c", "Delay"),
-        **_rules("child_graph", "p9_s8b", "PerformTaskList"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
+        **_rules("numeric_contract", "hit_random_sequence", "Delay"),
+        **_rules("child_graph", "task_graph_execution", "PerformTaskList"),
+        **_rules("target_contract", "target_alias", "TargetType"),
     },
     "PredicateTaskList": {
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("child_graph", "p9_s8b", "SuccessTaskList", "FailedTaskList"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("child_graph", "task_graph_execution", "SuccessTaskList", "FailedTaskList"),
     },
     "PredicateToMakeFail": {
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("child_graph", "p9_s8b", "OnSuccess"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("child_graph", "task_graph_execution", "OnSuccess"),
     },
     "RandomConfig": {
-        **_rules("numeric_contract", "p9_s8c", "OddsList"),
-        **_rules("child_graph", "p9_s8c", "TaskList"),
+        **_rules("numeric_contract", "hit_random_sequence", "OddsList"),
+        **_rules("child_graph", "hit_random_sequence", "TaskList"),
     },
-    "SkillPerformFinish": _rules("downstream_gameplay", "p9_s11", "SkipAttackSettlement"),
+    "SkillPerformFinish": _rules("downstream_gameplay", "damage_heal_shield", "SkipAttackSettlement"),
     "Remodifier": {
-        **_rules("condition_contract", "p9_s10", "BehaviorFlagFilter", "CasterFilter", "PredicateFilter", "StatusTypeMask"),
-        **_rules("downstream_gameplay", "p9_s10", "ModifierName"),
-        **_rules("numeric_contract", "p9_s10", "MaxNumber"),
-        **_rules("target_contract", "p9_s5b", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("condition_contract", "status_lifecycle", "BehaviorFlagFilter", "CasterFilter", "PredicateFilter", "StatusTypeMask"),
+        **_rules("downstream_gameplay", "status_lifecycle", "ModifierName"),
+        **_rules("numeric_contract", "status_lifecycle", "MaxNumber"),
+        **_rules("target_contract", "target_alias", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
     },
     "Retarget": {
-        **_rules("control_structure", "p9_s8c", "ByRandom", "IgnoreParallelWarning"),
-        **_rules("condition_contract", "p9_s6b", "Predicate"),
-        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
-        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "TaskList", "FailedTaskList"),
+        **_rules("control_structure", "hit_random_sequence", "ByRandom", "IgnoreParallelWarning"),
+        **_rules("condition_contract", "committed_condition", "Predicate"),
+        **_rules("numeric_contract", "target_alias", "MaxNumber"),
+        **_rules("target_contract", "target_alias", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "TaskList", "FailedTaskList"),
     },
     "SortTargets": {
-        **_rules("control_structure", "p9_s5b", "SortConfig"),
-        **_rules("numeric_contract", "p9_s5b", "MaxNumber"),
-        **_rules("target_contract", "p9_s5b", "IncludeLimbo", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "TaskList"),
+        **_rules("control_structure", "target_alias", "SortConfig"),
+        **_rules("numeric_contract", "target_alias", "MaxNumber"),
+        **_rules("target_contract", "target_alias", "IncludeLimbo", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "TaskList"),
     },
     "SwitchByCommandType": {
-        **_rules("target_contract", "p9_s5b", "TargetType"),
-        **_rules("child_graph", "p9_s8b", "CaseTaskList", "DefaultTaskList"),
+        **_rules("target_contract", "target_alias", "TargetType"),
+        **_rules("child_graph", "task_graph_execution", "CaseTaskList", "DefaultTaskList"),
     },
     "SwitchCaseByAttackDamageType": {
-        **_rules("child_graph", "p9_s8b", "CaseTaskList"),
-        **_rules("target_contract", "p9_s5b", "Source"),
+        **_rules("child_graph", "task_graph_execution", "CaseTaskList"),
+        **_rules("target_contract", "target_alias", "Source"),
     },
     "SwitchCaseByDynamicValue": {
-        **_rules("child_graph", "p9_s8b", "CaseTaskList"),
-        **_rules("child_graph", "p9_s8b", "DefaultTaskList"),
-        **_rules("numeric_contract", "p9_s4", "Switch"),
-        **_rules("control_structure", "p9_s8b", "CompareType"),
+        **_rules("child_graph", "task_graph_execution", "CaseTaskList"),
+        **_rules("child_graph", "task_graph_execution", "DefaultTaskList"),
+        **_rules("numeric_contract", "numeric_expression", "Switch"),
+        **_rules("control_structure", "task_graph_execution", "CompareType"),
     },
     "TriggerAbility": {
         # DynamicValues 不会转发给子能力；运行时只允许被调能力为无玩法空操作。
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
-        **_rules("ability_source_contract", "p9_s8b", "AbilityName"),
-        **_rules("control_structure", "p9_s8b", "IsSkillPerform"),
-        **_rules("target_contract", "p9_s5b", "AbilityInherentTargetType", "TargetType"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicValues"),
+        **_rules("ability_source_contract", "task_graph_execution", "AbilityName"),
+        **_rules("control_structure", "task_graph_execution", "IsSkillPerform"),
+        **_rules("target_contract", "target_alias", "AbilityInherentTargetType", "TargetType"),
     },
     "TriggerParallelTaskListTemplate": {
         # The trigger only invokes template bodies; hit-random sequencing belongs
         # to the child tasks, so this field is task-graph execution territory.
-        **_rules("control_structure", "p9_s8b", "Templates"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicValues"),
+        **_rules("control_structure", "task_graph_execution", "Templates"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicValues"),
     },
-    "TriggerParallelAbility": _rules("ability_source_contract", "p9_s8b", "ParallelAbilityList"),
-    "WaitParallelTimeStamp": _rules("numeric_contract", "p9_s4", "WaitTime"),
+    "TriggerParallelAbility": _rules("ability_source_contract", "task_graph_execution", "ParallelAbilityList"),
+    "WaitParallelTimeStamp": _rules("numeric_contract", "numeric_expression", "WaitTime"),
     "TriggerSkipDeadHandler": {},
-    "TaskTemplateFetchParamSequence": _rules("control_structure", "p9_s8b", "ParamName"),
+    "TaskTemplateFetchParamSequence": _rules("control_structure", "task_graph_execution", "ParamName"),
     "TurnInsertAction": {
-        **_rules("condition_contract", "p9_s6b", "ActivePredicate", "PreCheck"),
-        **_rules("dynamic_context_contract", "p9_s4", "DynamicStrings", "DynamicValues"),
-        **_rules("target_contract", "p9_s5b", "AutoCastTargetType", "TargetType"),
-        **_rules("control_structure", "p9_s13", "AbortBehaviorFlags", "AutoCast", "CanInsertUltraSkill", "CopyAbortContext", "CustomTag", "FollowSameTagNormalAction", "IgnoreBPDec", "PrepareAbilityName", "SkillIndex", "SkillType"),
-        **_rules("child_graph", "p9_s8b", "OnInsertAbort"),
+        **_rules("condition_contract", "committed_condition", "ActivePredicate", "PreCheck"),
+        **_rules("dynamic_context_contract", "numeric_expression", "DynamicStrings", "DynamicValues"),
+        **_rules("target_contract", "target_alias", "AutoCastTargetType", "TargetType"),
+        **_rules("control_structure", "timeline_queue", "AbortBehaviorFlags", "AutoCast", "CanInsertUltraSkill", "CopyAbortContext", "CustomTag", "FollowSameTagNormalAction", "IgnoreBPDec", "PrepareAbilityName", "SkillIndex", "SkillType"),
+        **_rules("child_graph", "task_graph_execution", "OnInsertAbort"),
         **_rules("presentation_excluded", "excluded", "PlayReadyAnim"),
     },
-    "TurnInsertAbilityCondition": _rules("downstream_gameplay", "p9_s13", "Count", "Type"),
+    "TurnInsertAbilityCondition": _rules("downstream_gameplay", "timeline_queue", "Count", "Type"),
     "WaitAnimState": _rules(
         "presentation_excluded",
         "excluded",
@@ -270,8 +270,8 @@ _FIELD_RULES: dict[str, dict[str, tuple[str, str, bool]]] = {
     "WaitFor": _rules("presentation_excluded", "excluded", "Predicate"),
     "WaitFrame": _rules("presentation_excluded", "excluded", "RealFrame", "WaitFrameCount"),
     "WaitFrameForBattleServer": {},
-    "WaitCustomString": _rules("control_structure", "p9_s8c", "CustomString", "GoNextImmediately"),
-    "WaitForTurnEnd": _rules("control_structure", "p9_s13", "GoNextImmediately"),
+    "WaitCustomString": _rules("control_structure", "hit_random_sequence", "CustomString", "GoNextImmediately"),
+    "WaitForTurnEnd": _rules("control_structure", "timeline_queue", "GoNextImmediately"),
     "WaitSecond": _rules("presentation_excluded", "excluded", "IsRealtime", "WaitTime"),
     "WaitTimelineFinish": _rules(
         "presentation_excluded", "excluded", "IgnoreWarning", "TimelineName", "TriggerBeforeFinish"
@@ -336,40 +336,40 @@ _ROLE_BY_FAMILY = {
 
 
 _ROLE_OWNER = {
-    "effect_continuation": "p9_s8b",
-    "status_scope": "p9_s8b",
-    "target_scope": "p9_s8b",
-    "ordered_target_scope": "p9_s8b",
-    "action_abort_continuation": "p9_s8b",
-    "event_creation_continuation": "p9_s8b",
-    "servant_creation_continuation": "p9_s8b",
-    "template_parameter_fetch": "p9_s8b",
-    "conditional_loop": "p9_s8b",
-    "counted_loop": "p9_s8b",
-    "target_loop": "p9_s8b",
-    "wrapped_task": "p9_s8b",
-    "predicate_branch": "p9_s8b",
-    "switch_branch": "p9_s8b",
-    "ability_trigger": "p9_s8b",
-    "parallel_abilities": "p9_s8b",
-    "parallel_time_barrier": "p9_s8b",
+    "effect_continuation": "task_graph_execution",
+    "status_scope": "task_graph_execution",
+    "target_scope": "task_graph_execution",
+    "ordered_target_scope": "task_graph_execution",
+    "action_abort_continuation": "task_graph_execution",
+    "event_creation_continuation": "task_graph_execution",
+    "servant_creation_continuation": "task_graph_execution",
+    "template_parameter_fetch": "task_graph_execution",
+    "conditional_loop": "task_graph_execution",
+    "counted_loop": "task_graph_execution",
+    "target_loop": "task_graph_execution",
+    "wrapped_task": "task_graph_execution",
+    "predicate_branch": "task_graph_execution",
+    "switch_branch": "task_graph_execution",
+    "ability_trigger": "task_graph_execution",
+    "parallel_abilities": "task_graph_execution",
+    "parallel_time_barrier": "task_graph_execution",
     # Death-animation waits are recorded as process-only barriers when their
     # source shape is admitted; their resolution belongs to task execution.
-    "condition_barrier": "p9_s8b",
-    "delayed_sequence": "p9_s8c",
-    "custom_sync_barrier": "p9_s8c",
-    "server_sync_barrier": "p9_s8c",
-    "projectile_sequence": "p9_s8c",
-    "random_branch": "p9_s8c",
-    "parallel_templates": "p9_s8b",
-    "target_cursor": "p9_s8c",
-    "presentation_barrier": "p9_s8c",
+    "condition_barrier": "task_graph_execution",
+    "delayed_sequence": "hit_random_sequence",
+    "custom_sync_barrier": "hit_random_sequence",
+    "server_sync_barrier": "hit_random_sequence",
+    "projectile_sequence": "hit_random_sequence",
+    "random_branch": "hit_random_sequence",
+    "parallel_templates": "task_graph_execution",
+    "target_cursor": "hit_random_sequence",
+    "presentation_barrier": "hit_random_sequence",
     "presentation_child_wrapper": "excluded",
-    "settlement_barrier": "p9_s11",
-    "event_switch": "p9_s9",
-    "death_barrier": "p9_s14",
-    "queue_condition": "p9_s13",
-    "turn_barrier": "p9_s13",
+    "settlement_barrier": "damage_heal_shield",
+    "event_switch": "event_dispatch",
+    "death_barrier": "unit_lifecycle",
+    "queue_condition": "timeline_queue",
+    "turn_barrier": "timeline_queue",
 }
 
 
@@ -552,7 +552,7 @@ def classify_control_flow_peer_fields(
     for field_name in fields:
         rule = rules.get(field_name) if rules is not None else None
         if rule is None:
-            rule = ("unclassified", "p9_s8a", True)
+            rule = ("unclassified", "control_flow_source", True)
             blockers.append(f"control_flow_peer_field_unclassified:{family}:{field_name}")
         responsibility, owner_stage, covers_subtree = rule
         if (
@@ -572,7 +572,7 @@ def classify_control_flow_peer_fields(
                     (family, field_name)
                 )
                 if fallback_owner is None:
-                    responsibility, owner_stage = "unclassified", "p9_s8a"
+                    responsibility, owner_stage = "unclassified", "control_flow_source"
                     blockers.append(
                         f"presentation_exclusion_descendant_not_closed:{family}:{field_name}"
                     )
@@ -782,7 +782,7 @@ def _termination(node_id: str, family: str, raw: Mapping[str, Any], source: IRSo
             node_id,
             "count_expression",
             "source_backed" if valid else "blocked",
-            "p9_s8b",
+            "task_graph_execution",
             expression,
             "" if valid else "loop_count_expression_not_lowered",
             source,
@@ -795,7 +795,7 @@ def _termination(node_id: str, family: str, raw: Mapping[str, Any], source: IRSo
                 node_id,
                 "condition_with_source_cap",
                 "source_backed" if valid else "blocked",
-                "p9_s8b",
+                "task_graph_execution",
                 expression,
                 "" if valid else "conditional_loop_cap_not_lowered",
                 source,
@@ -804,7 +804,7 @@ def _termination(node_id: str, family: str, raw: Mapping[str, Any], source: IRSo
             node_id,
             "condition_progress_required",
             "runtime_proof_required",
-            "p9_s8b",
+            "task_graph_execution",
             None,
             "",
             source,
@@ -814,7 +814,7 @@ def _termination(node_id: str, family: str, raw: Mapping[str, Any], source: IRSo
             node_id,
             "finite_target_collection",
             "source_backed",
-            "p9_s8b",
+            "task_graph_execution",
             None,
             "",
             source,
@@ -823,7 +823,7 @@ def _termination(node_id: str, family: str, raw: Mapping[str, Any], source: IRSo
         node_id,
         "not_applicable",
         "not_applicable",
-        "p9_s8a",
+        "control_flow_source",
         None,
         "",
         source,
@@ -1462,7 +1462,7 @@ def build_character_control_flow_contract_catalog(
             ControlFlowContractIssueIR(
                 problem.code,
                 subject,
-                "p9_s8a",
+                "control_flow_source",
                 problem.detail,
                 _source(
                     source_path=problem.source_path,
@@ -1489,7 +1489,7 @@ def build_character_control_flow_contract_catalog(
                 ControlFlowContractIssueIR(
                     "template_definition_ambiguous",
                     draft.template_id,
-                    "p9_s8a",
+                    "control_flow_source",
                     ":".join(key),
                     next(item.source for item in templates if item.template_id == draft.template_id),
                 )
@@ -1526,12 +1526,12 @@ def build_character_control_flow_contract_catalog(
         )
         blockers.extend(field_blockers)
         for reason in field_blockers:
-            issues.append(ControlFlowContractIssueIR("field_unclassified", node_id, "p9_s8a", reason, node_source))
+            issues.append(ControlFlowContractIssueIR("field_unclassified", node_id, "control_flow_source", reason, node_source))
         branches: list[ControlFlowBranchIR] = []
         branch_specs, branch_blockers = _branch_specs(occurrence.family, raw, node_path)
         blockers.extend(branch_blockers)
         for reason in branch_blockers:
-            issues.append(ControlFlowContractIssueIR("branch_source_invalid", node_id, "p9_s8a", reason, node_source))
+            issues.append(ControlFlowContractIssueIR("branch_source_invalid", node_id, "control_flow_source", reason, node_source))
         for branch_index, (branch_kind, label, branch_path, child_specs) in enumerate(branch_specs):
             children: list[ControlFlowChildSourceIR] = []
             for child_index, (child_raw, child_path) in enumerate(child_specs):
@@ -1547,7 +1547,7 @@ def build_character_control_flow_contract_catalog(
                 if child is None:
                     reason = f"control_flow_child_source_missing:{child_path}"
                     blockers.append(reason)
-                    issues.append(ControlFlowContractIssueIR("child_source_missing", node_id, "p9_s8a", reason, node_source))
+                    issues.append(ControlFlowContractIssueIR("child_source_missing", node_id, "control_flow_source", reason, node_source))
                 else:
                     children.append(child)
             branch_id = _stable_id("control_flow_branch", node_id, branch_index, branch_kind, label)
@@ -1583,7 +1583,7 @@ def build_character_control_flow_contract_catalog(
         termination = _termination(node_id, occurrence.family, raw, node_source)
         if termination.status == "blocked":
             blockers.append(termination.blocked_reason)
-            issues.append(ControlFlowContractIssueIR("termination_source_invalid", node_id, "p9_s8a", termination.blocked_reason, node_source))
+            issues.append(ControlFlowContractIssueIR("termination_source_invalid", node_id, "control_flow_source", termination.blocked_reason, node_source))
         role = _ROLE_BY_FAMILY.get(occurrence.family, "unclassified")
         if (
             role == "presentation_child_wrapper"
@@ -1605,7 +1605,7 @@ def build_character_control_flow_contract_catalog(
         blocked_reference = next((item for item in node_references if item.coverage_status == "blocked"), None)
         if blocked_reference is not None:
             blockers.append(blocked_reference.blocked_reason)
-            issues.append(ControlFlowContractIssueIR("template_reference_blocked", node_id, "p9_s8a", blocked_reference.blocked_reason, blocked_reference.source))
+            issues.append(ControlFlowContractIssueIR("template_reference_blocked", node_id, "control_flow_source", blocked_reference.blocked_reason, blocked_reference.source))
         nodes.append(
             CharacterControlFlowNodeIR(
                 node_id,
@@ -1632,7 +1632,7 @@ def build_character_control_flow_contract_catalog(
             if reference.reference_id in cycle_ids:
                 affected_nodes.add(reference.node_id)
                 updated_references.append(replace(reference, resolved_template_id="", coverage_status="blocked", blocked_reason="control_flow_template_cycle"))
-                issues.append(ControlFlowContractIssueIR("template_cycle", reference.reference_id, "p9_s8a", "control_flow_template_cycle", reference.source))
+                issues.append(ControlFlowContractIssueIR("template_cycle", reference.reference_id, "control_flow_source", "control_flow_template_cycle", reference.source))
             else:
                 updated_references.append(reference)
         references = updated_references
@@ -1708,7 +1708,7 @@ def build_character_control_flow_contract_catalog(
             ControlFlowContractIssueIR(
                 "template_parameter_subgraph_not_closed",
                 reference.reference_id,
-                "p9_s8a",
+                "control_flow_source",
                 detail,
                 reference.source,
             )

@@ -248,7 +248,7 @@ def preparation_counts():
     counts = {"rulebook_builds": 0, "sessions": 0, "fingerprint_calls": 0}
     original_build = build_battle_rulebook
     original_init = session_module.BattleSession.__init__
-    original_fingerprint = session_module.canonical_ir_fingerprint
+    original_fingerprint = session_module.rulebook_fingerprint
 
     def counting_build(*args, **kwargs):
         counts["rulebook_builds"] += 1
@@ -266,7 +266,7 @@ def preparation_counts():
             mock.patch.object(
                 session_module.BattleSession, "__init__", counting_init), \
             mock.patch.object(
-                session_module, "canonical_ir_fingerprint", counting_fingerprint):
+                session_module, "rulebook_fingerprint", counting_fingerprint):
         yield counts
     assert counts == {
         "rulebook_builds": 1, "sessions": 1, "fingerprint_calls": 0,
@@ -441,7 +441,7 @@ def test_shared_preparation_and_formal_fingerprint_reuse(natural_route) -> None:
     session = natural_route["session"]
     manifest = session.build.build_manifest
     assert manifest is not None
-    assert session.rules_fingerprint == manifest.rule_identity.canonical_ir_fingerprint
+    assert session.rules_fingerprint == manifest.rule_identity.rules_fingerprint
     assert len(natural_route["pending"].queues.get("turn_insert_action", ())) == 1
 
 

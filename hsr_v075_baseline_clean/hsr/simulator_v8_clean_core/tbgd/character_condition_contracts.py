@@ -43,8 +43,8 @@ def _spec(
     )
 
 
-_S6 = "p9_s6b_committed_state"
-_S7 = "p9_s7_transient_context"
+_S6 = "committed_state"
+_S7 = "transient_context"
 
 # This registry defines semantics, not source completeness. The complete current
 # family denominator is rebuilt from CharacterAbilityScopeProjectionCatalog.
@@ -55,14 +55,14 @@ _MISSING_FAMILY_SPECS: dict[str, _ConditionSpec] = {
         _S7,
         "status_callback",
         "status_callback.modifier_value",
-        producer="p9_s10",
+        producer="status_lifecycle",
     ),
     "ByCompareBP": _spec(_S6, "battle_resource", "battle.skill_points"),
     "ByCompareBattleEventID": _spec(
         _S6,
         "unit_definition",
         "target.unit.battle_event_id",
-        producer="p9_s17",
+        producer="combat_entity_event",
     ),
     "ByCompareCurrentSkillEffectIsDamaging": _spec(
         _S7, "action_context", "action.effect_is_damaging"
@@ -73,89 +73,89 @@ _MISSING_FAMILY_SPECS: dict[str, _ConditionSpec] = {
         _S6, "unit_definition", "target.monster.unique_id"
     ),
     "ByCompareNextUnusedInsertAction": _spec(
-        _S7, "queue_context", "queue.next_unused_insert_action", producer="p9_s13"
+        _S7, "queue_context", "queue.next_unused_insert_action", producer="timeline_queue"
     ),
     "ByCompareParamString": _spec(
-        _S7, "event_context", "event.param_string", producer="p9_s9"
+        _S7, "event_context", "event.param_string", producer="event_dispatch"
     ),
     "ByCompareResistChance": _spec(
         _S6, "status_resistance", "target.status_resistance"
     ),
     "ByCompareSPChangeTag": _spec(
-        _S7, "resource_event_context", "resource_change.tags", producer="p9_s12"
+        _S7, "resource_event_context", "resource_change.tags", producer="resource_resolution"
     ),
     "ByCompareSomatoType": _spec(_S6, "unit_definition", "target.unit.somato_type"),
     "ByCompareSpecialSPRatio": _spec(
         _S6, "unit_resource", "target.unit.special_resource_ratio"
     ),
     "ByCompareStance": _spec(
-        _S6, "toughness_state", "target.toughness.current", producer="p9_s15"
+        _S6, "toughness_state", "target.toughness.current", producer="toughness_break"
     ),
     "ByCompareStanceCount": _spec(
-        _S6, "toughness_state", "target.toughness.segment_count", producer="p9_s15"
+        _S6, "toughness_state", "target.toughness.segment_count", producer="toughness_break"
     ),
     "ByCompareStanceRatio": _spec(
-        _S6, "toughness_state", "target.toughness.ratio", producer="p9_s15"
+        _S6, "toughness_state", "target.toughness.ratio", producer="toughness_break"
     ),
     "ByCompareTeamFormationWidth": _spec(
         _S6, "formation_state", "team.formation_width"
     ),
     "ByCompareTurnActionEntityTeamType": _spec(
-        _S7, "action_context", "turn.action_entity.team", producer="p9_s13"
+        _S7, "action_context", "turn.action_entity.team", producer="timeline_queue"
     ),
     "ByCompareUnusedInsertAbilityCount": _spec(
-        _S7, "queue_context", "queue.unused_insert_ability_count", producer="p9_s13"
+        _S7, "queue_context", "queue.unused_insert_ability_count", producer="timeline_queue"
     ),
     "ByCompareUnusedUltraSkillCount": _spec(
-        _S7, "queue_context", "queue.unused_ultimate_count", producer="p9_s13"
+        _S7, "queue_context", "queue.unused_ultimate_count", producer="timeline_queue"
     ),
     "ByContainsRedStance": _spec(
-        _S6, "toughness_state", "target.toughness.red_stance", producer="p9_s15"
+        _S6, "toughness_state", "target.toughness.red_stance", producer="toughness_break"
     ),
     "ByCurrentSkillTargetType": _spec(
         _S7, "action_context", "action.target_contract"
     ),
     "ByDamageSourceContainBehaviorFlag": _spec(
-        _S7, "damage_context", "damage.source_behavior_flags", producer="p9_s11"
+        _S7, "damage_context", "damage.source_behavior_flags", producer="damage_heal_shield"
     ),
     "ByDistance": _spec(_S6, "formation_state", "formation.distance"),
     "ByHasInsertActionByTarget": _spec(
-        _S7, "queue_context", "queue.insert_action_targets", producer="p9_s13"
+        _S7, "queue_context", "queue.insert_action_targets", producer="timeline_queue"
     ),
     "ByHasSummonRelation": _spec(_S6, "entity_relation", "entity.summon_relation"),
     "ByIsBattleEventEntity": _spec(
-        _S6, "unit_definition", "target.unit.entity_kind", producer="p9_s17"
+        _S6, "unit_definition", "target.unit.entity_kind", producer="combat_entity_event"
     ),
     "ByIsBodyPart": _spec(
-        _S6, "entity_relation", "entity.body_part", producer="p9_s17"
+        _S6, "entity_relation", "entity.body_part", producer="combat_entity_event"
     ),
     "ByIsBodyPartOwner": _spec(
-        _S6, "entity_relation", "entity.body_part_owner", producer="p9_s17"
+        _S6, "entity_relation", "entity.body_part_owner", producer="combat_entity_event"
     ),
     "ByIsDamageType": _spec(
-        _S7, "damage_context", "damage.type", producer="p9_s11"
+        _S7, "damage_context", "damage.type", producer="damage_heal_shield"
     ),
     "ByIsEnemy": _spec(_S6, "entity_relation", "entity.combat_team"),
     "ByIsFirstInsertAbilityInQueue": _spec(
-        _S7, "queue_context", "queue.first_insert_ability", producer="p9_s13"
+        _S7, "queue_context", "queue.first_insert_ability", producer="timeline_queue"
     ),
     "ByIsInCharmAction": _spec(
-        _S7, "action_context", "action.charm_phase", producer="p9_s16"
+        _S7, "action_context", "action.charm_phase", producer="action_form_phase"
     ),
     "ByIsSplitDamage": _spec(
-        _S7, "damage_context", "damage.split_semantics", producer="p9_s11"
+        _S7, "damage_context", "damage.split_semantics", producer="damage_heal_shield"
     ),
     "ByIsSubTargetOfHpSharedGroup": _spec(
-        _S6, "entity_relation", "entity.hp_shared_group", producer="p9_s11"
+        _S6, "entity_relation", "entity.hp_shared_group", producer="damage_heal_shield"
     ),
     "ByIsTargetUnselectable": _spec(
         _S6, "targetability", "target.targetability"
     ),
     "ByIsTurnActionEntity": _spec(
-        _S7, "action_context", "turn.action_entity.identity", producer="p9_s13"
+        _S7, "action_context", "turn.action_entity.identity", producer="timeline_queue"
     ),
     "ByTargetIsStanceWeak": _spec(
-        _S6, "toughness_state", "target.toughness.weakness", producer="p9_s15"
+        _S6, "toughness_state", "target.toughness.weakness", producer="toughness_break"
     ),
     "ByTargetListAll": _spec(
         _S6, "target_collection", "target.collection", "target.collection.predicate"
@@ -164,13 +164,13 @@ _MISSING_FAMILY_SPECS: dict[str, _ConditionSpec] = {
         _S6, "target_collection", "target.collection", "target.collection.predicate"
     ),
     "ByTurnOwnerActionPhaseEnd": _spec(
-        _S7, "action_context", "turn.owner.action_phase", producer="p9_s13"
+        _S7, "action_context", "turn.owner.action_phase", producer="timeline_queue"
     ),
     "ByTurnOwnerHasActionInTurn": _spec(
-        _S7, "action_context", "turn.owner.action_history", producer="p9_s13"
+        _S7, "action_context", "turn.owner.action_history", producer="timeline_queue"
     ),
     "ByTurnOwnerHasPendingOneMore": _spec(
-        _S7, "action_context", "turn.owner.pending_one_more", producer="p9_s13"
+        _S7, "action_context", "turn.owner.pending_one_more", producer="timeline_queue"
     ),
 }
 

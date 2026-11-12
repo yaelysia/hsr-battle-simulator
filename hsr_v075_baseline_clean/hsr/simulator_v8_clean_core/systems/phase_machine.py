@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 
 
-COMBAT_PHASE_SCHEMA_VERSION = "p7_s9_combat_phase_machine_v1"
+COMBAT_PHASE_SCHEMA_VERSION = "combat_phase_machine_v1"
 IDLE = "idle"
 TIMELINE_ADVANCING = "timeline_advancing"
 TURN_BEGIN = "turn_begin"

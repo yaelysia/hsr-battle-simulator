@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
+from ..immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
 def current_max_hp(unit: Any) -> float:
@@ -530,22 +530,10 @@ class BattleState:
 def battle_state_revision(state: BattleState) -> str:
     """Shared short state revision, cached on the immutable state instance.
 
-    The four decision/contract/scheduler/selection digests encode the same
-    snapshot bytes; one cached digest serves all of them. BattleState is
-    immutable after construction, so the cache cannot go stale.
+    Decision, contract, scheduler, selection and dynamic values share the
+    full digest. BattleState is immutable, so the cache cannot go stale.
     """
-    cached = getattr(state, "_state_revision_cache", None)
-    if cached is not None:
-        return cached
-    payload = json.dumps(
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    revision = f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
-    object.__setattr__(state, "_state_revision_cache", revision)
-    return revision
+    return battle_state_full_fingerprint(state)[:30]
 
 
 def battle_state_full_fingerprint(state: BattleState) -> str:

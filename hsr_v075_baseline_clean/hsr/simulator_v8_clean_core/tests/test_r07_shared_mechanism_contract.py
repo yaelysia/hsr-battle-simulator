@@ -1320,7 +1320,7 @@ def test_character_id_group_condition_reads_the_compiled_group_or_blocks():
     groups = _character_id_groups(_TBGD)
     assert 1415 in groups['Chrysos']['ids']
     raw = {'$type': 'RPG.GameCore.ByIsInCharacterIDGroup',
-           'TargetType': {'$type': 'RPG.GameCore.TargetAlias', 'Alias': 'Caster'}, 'Group': 'Chrysos'}
+           'TargetType': {'alias': 'Caster'}, 'Group': 'Chrysos'}
     state = BattleState(units={
         'heir': UnitState('heir', 'ally', 'avatar:1415', hp=1, max_hp=1),
         'other': UnitState('other', 'ally', 'avatar:1105', hp=1, max_hp=1),
@@ -1342,7 +1342,7 @@ def test_character_id_group_condition_reads_the_compiled_group_or_blocks():
 
 def test_ability_scoped_dynamic_values_are_invisible_without_an_ability_instance():
     from hsr.simulator_v8_clean_core.systems.dynamic_values import binding_source_from_store, upsert_dynamic_value
-    store = upsert_dynamic_value({}, scope='ability', owner_id='cy', value=1.0, value_name='_X', hash_key='7',
+    store = upsert_dynamic_value(None, scope='ability', owner_id='cy', value=1.0, value_name='_X', hash_key='7',
                                  ability_instance_id='ability_action:1')
     store = upsert_dynamic_value(store, scope='unit', owner_id='cy', value=2.0, value_name='_X', hash_key='7')
     assert len(binding_source_from_store(store, excluded_scopes=('ability',))['by_hash']['7']) == 1

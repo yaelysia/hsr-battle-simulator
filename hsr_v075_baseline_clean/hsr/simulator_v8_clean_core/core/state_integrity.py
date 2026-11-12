@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .immutable_json import freeze_json, thaw_json
+from ..immutable_json import freeze_json, thaw_json
 from .model import BattleState, JSONValue, Mutation, PendingDefeatPlan, UnitState, current_max_hp
 
 

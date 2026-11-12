@@ -1889,7 +1889,7 @@ def _direct_pipeline_json(formula: dict[str, JSONValue], event_index: int) -> di
             }
         )
     return {
-        "schema_version": "p7_s12_damage_stage_pipeline_v1",
+        "schema_version": "damage_stage_pipeline_v1",
         "ok": True,
         "family": "direct",
         "input_state_event_index": event_index,

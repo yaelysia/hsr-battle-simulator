@@ -10,8 +10,8 @@ from ..ir_types import IRSource, JSONValue
 CONDITION_RESPONSIBILITY_SCHEMA = "hsr.character_condition_responsibility.v1"
 
 ConditionEvaluationStage = Literal[
-    "p9_s6b_committed_state",
-    "p9_s7_transient_context",
+    "committed_state",
+    "transient_context",
     "excluded_non_gameplay",
     "blocked_unclassified",
 ]
@@ -39,8 +39,8 @@ ConditionAuthority = Literal[
 
 _EVALUATION_STAGES = frozenset(
     {
-        "p9_s6b_committed_state",
-        "p9_s7_transient_context",
+        "committed_state",
+        "transient_context",
         "excluded_non_gameplay",
         "blocked_unclassified",
     }
@@ -72,15 +72,15 @@ _PRODUCER_STAGES = frozenset(
     {
         "current",
         "none",
-        "p9_s9",
-        "p9_s10",
-        "p9_s11",
-        "p9_s12",
-        "p9_s13",
-        "p9_s14",
-        "p9_s15",
-        "p9_s16",
-        "p9_s17",
+        "event_dispatch",
+        "status_lifecycle",
+        "damage_heal_shield",
+        "resource_resolution",
+        "timeline_queue",
+        "unit_lifecycle",
+        "toughness_break",
+        "action_form_phase",
+        "combat_entity_event",
     }
 )
 _PLANNED_SCOPE_BASIS = "scope_catalog_gameplay_candidate"

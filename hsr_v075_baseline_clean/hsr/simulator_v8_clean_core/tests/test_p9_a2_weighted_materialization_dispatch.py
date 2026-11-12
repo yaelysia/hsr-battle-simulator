@@ -43,7 +43,7 @@ DEFERRED = "ability_task_weighted_selection_caller_deferred_to_pr9"
 
 def _compiled_graph(
     entry_kind="ability_phase_callback", *, role="random_branch",
-    stages=("p9_s8c",), execution_mode="runtime_effect", odds=(2, 3),
+    stages=("hit_random_sequence",), execution_mode="runtime_effect", odds=(2, 3),
     source_blocked=False, with_reference=False,
 ):
     # Small in-memory source/catalog inputs avoid a full TBGD scan. Production
@@ -73,7 +73,7 @@ def _compiled_graph(
         control_role=role, peer_field_names=(), field_responsibilities=(),
         branches=branches, template_reference_ids=(),
         termination=ControlFlowTerminationIR(
-            control_id, "not_applicable", "not_applicable", "p9_s8c",
+            control_id, "not_applicable", "not_applicable", "hit_random_sequence",
             None, "", source,
         ),
         downstream_stages=tuple(sorted(stages)), source=source,
@@ -163,7 +163,7 @@ def test_materialized_source_reaches_weighted_hook_without_rewriting_node(entry_
 
 @pytest.mark.parametrize("kwargs", [
     {"role": "predicate_branch"},
-    {"stages": ("p9_s8c", "p9_s11")},
+    {"stages": ("hit_random_sequence", "damage_heal_shield")},
     {"execution_mode": "process_only"},
     {"with_reference": True},
     {"with_reference": "foreign_source"},

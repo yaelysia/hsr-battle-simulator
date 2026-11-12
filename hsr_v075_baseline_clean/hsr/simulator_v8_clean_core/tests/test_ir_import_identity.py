@@ -17,3 +17,12 @@ def test_rule_fingerprint_is_independent_of_internal_import_prefix(monkeypatch):
     assert canonical_ir_fingerprint(content(bare, 1)) == expected
     assert canonical_ir_fingerprint(content(bare, 2)) != expected
     assert canonical_ir_fingerprint(content(bare, 1.0)) != expected
+
+
+def test_rule_fingerprint_does_not_depend_on_object_sharing():
+    from hsr.simulator_v8_clean_core.immutable_json import freeze_json
+    shared = freeze_json({'items': [1, '标签', True, 1.0]})
+    a = qualified.CanonicalIR('test', metadata={'left': shared, 'right': shared})
+    b = qualified.CanonicalIR('test', metadata={'left': {'items': [1, '标签', True, 1.0]},
+                                             'right': {'items': [1, '标签', True, 1.0]}})
+    assert canonical_ir_fingerprint(a) == canonical_ir_fingerprint(b)

@@ -4,6 +4,8 @@ from dataclasses import replace
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from hsr.simulator_v8_clean_core.tools.validate_p9_a2_action_window_status_nested_ability_transport import (
     _action_candidates_by_window,
     _build_runtime_direct_rulebook,

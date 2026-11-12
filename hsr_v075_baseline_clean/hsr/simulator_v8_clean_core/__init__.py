@@ -5,5 +5,5 @@ consumes Canonical IR generated from TurnBasedGameData and does not read legacy
 model packs or adapter contexts.
 """
 
-BASELINE_VERSION = "v0_200"
+BASELINE_VERSION = "hsr.canonical_ir.v1"
 

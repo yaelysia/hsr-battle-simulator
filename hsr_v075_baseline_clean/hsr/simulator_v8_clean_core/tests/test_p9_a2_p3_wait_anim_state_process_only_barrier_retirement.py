@@ -150,7 +150,7 @@ def _control(
             source_path=source_path,
         ),
     ]
-    stages = {"p9_s8c" if role == "presentation_barrier" else "p9_s11"}
+    stages = {"hit_random_sequence" if role == "presentation_barrier" else "damage_heal_shield"}
     if gameplay_field:
         fields.append(
             _responsibility(
@@ -158,12 +158,12 @@ def _control(
                 family,
                 "GameplayField",
                 responsibility="downstream_gameplay",
-                owner_stage="p9_s11",
+                owner_stage="damage_heal_shield",
                 path=path,
                 source_path=source_path,
             )
         )
-        stages.add("p9_s11")
+        stages.add("damage_heal_shield")
     branches: tuple[ControlFlowBranchIR, ...] = ()
     if with_branch:
         branch_id = f"{node_id}:branch"
@@ -194,7 +194,7 @@ def _control(
             "count_expression" if with_count_termination else "not_applicable"
         ),
         status="source_backed" if with_count_termination else "not_applicable",
-        owner_stage="p9_s8c" if with_count_termination else "p9_s8a",
+        owner_stage="hit_random_sequence" if with_count_termination else "control_flow_source",
         expression=numeric_fixed(1.0) if with_count_termination else None,
         blocked_reason="",
         source=source,

@@ -7,7 +7,6 @@ from typing import Literal, cast
 from ..builds.character_assembler import assemble_character_build
 from ..builds.models import CharacterBuildAssemblyResult, CharacterBuildInput
 from ..core.model import BattleTransition
-from ..core.source_audit import RuntimeSourceAuditor
 from ..equipment.models import (
     EquipmentDefinitionKey,
     EquipmentDefinitionResolution,
@@ -744,6 +743,7 @@ class EquipmentQueryService:
         mutation_id: str,
         *,
         provider_id: str = "",
+        audit: bool = False,
     ) -> DynamicMutationSourceView:
         if not isinstance(result, CharacterBuildAssemblyResult):
             return _blocked_dynamic(mutation_id, "character_build_result_invalid")
@@ -768,28 +768,26 @@ class EquipmentQueryService:
                 tuple(mutation.to_json() for mutation in mutations),
             )
         mutation = mutations[0]
-        audit = RuntimeSourceAuditor(self.rules).validate_transition(transition)
-        if not audit.ok:
-            return _blocked_dynamic(
-                mutation_id,
-                "runtime_source_audit_failed",
-                tuple(violation.to_json() for violation in audit.violations),
-            )
-        traces = tuple(
-            trace
-            for trace in audit.traces
-            if isinstance(trace.get("mutation"), Mapping)
-            and trace["mutation"].get("mutation_id") == mutation_id
-        )
-        if len(traces) != 1:
-            return _blocked_dynamic(
-                mutation_id,
-                "runtime_source_trace_missing"
-                if not traces
-                else "runtime_source_trace_ambiguous",
-                traces,
-            )
-        trace = traces[0]
+        if audit:
+            from ..core.source_audit import RuntimeSourceAuditor
+
+            report = RuntimeSourceAuditor(self.rules).validate_transition(transition)
+            if not report.ok:
+                return _blocked_dynamic(mutation_id, "runtime_source_audit_failed",
+                                        tuple(v.to_json() for v in report.violations))
+            traces = tuple(t for t in report.traces if isinstance(t.get("mutation"), Mapping)
+                           and t["mutation"].get("mutation_id") == mutation_id)
+            if len(traces) != 1:
+                return _blocked_dynamic(mutation_id, "runtime_source_trace_missing", traces)
+            trace = traces[0]
+        else:
+            trace = {
+                "mutation": mutation.to_json(),
+                "settlement_records": [r for r in (transition.transaction.settlement.records
+                                                    if transition.transaction.settlement else ())
+                                       if r.get("mutation_id") == mutation_id],
+                "audit_status": "not_run",
+            }
         records = trace.get("settlement_records")
         if not isinstance(records, (list, tuple)) or not records:
             return _blocked_dynamic(

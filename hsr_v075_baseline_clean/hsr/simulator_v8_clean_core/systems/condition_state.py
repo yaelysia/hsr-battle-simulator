@@ -24,13 +24,13 @@ from .toughness_state import read_toughness_segments
 
 
 _EXTERNAL_FACT_PRODUCERS = {
-    "relation.body_part": "p9_s17",
-    "relation.hp_shared_group": "p9_s11",
-    "unit.red_stance": "p9_s15",
-    "unit.battle_event_id": "p9_s17",
-    "unit.stance_current": "p9_s15",
-    "unit.stance_ratio": "p9_s15",
-    "unit.stance_weak": "p9_s15",
+    "relation.body_part": "combat_entity_event",
+    "relation.hp_shared_group": "damage_heal_shield",
+    "unit.red_stance": "toughness_break",
+    "unit.battle_event_id": "combat_entity_event",
+    "unit.stance_current": "toughness_break",
+    "unit.stance_ratio": "toughness_break",
+    "unit.stance_weak": "toughness_break",
 }
 
 _FACT_AUTHORITIES = {

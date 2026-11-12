@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-from ..core.immutable_json import thaw_json
+from ..immutable_json import thaw_json
 from ..core.model import (
     BattleState,
     GameEvent,

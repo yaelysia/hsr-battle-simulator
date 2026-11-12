@@ -20,7 +20,7 @@ from hsr.simulator_v8_clean_core.tools.validate_p9_s8c1b_action_entry_weighted_s
 )
 
 
-def _case(*, role="random_branch", stages=("p9_s8c",),
+def _case(*, role="random_branch", stages=("hit_random_sequence",),
           execution_mode="runtime_effect", with_reference=False):
     graph = _compiled_graph(
         role=role, stages=stages, execution_mode=execution_mode,
@@ -75,7 +75,7 @@ def test_source_closed_compiler_output_is_accepted_without_erasing_obligations(w
 
 @pytest.mark.parametrize("kwargs", [
     {"role": "predicate_branch"},
-    {"stages": ("p9_s8c", "p9_s11")},
+    {"stages": ("hit_random_sequence", "damage_heal_shield")},
     {"execution_mode": "process_only"},
     {"with_reference": True},
     {"with_reference": "foreign_source"},

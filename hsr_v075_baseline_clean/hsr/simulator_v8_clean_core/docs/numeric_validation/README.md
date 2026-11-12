@@ -13,7 +13,7 @@
 | id | 条目身份 + 序号，如 m1-arlan-e0-lv1-vs-antimatter-minions-001 |
 | game_version | 对照值适用的游戏版本；版本不明时如实记录 |
 | data_version | TBGD submodule 固定提交哈希 |
-| simulator_version | engine_rule 版本 + canonical_ir_fingerprint + scenario 版本 |
+| simulator_version | engine_rule 版本 + rules_fingerprint + scenario 版本；已有记录中的旧指纹字段保留为历史证据 |
 | build | 角色、等级、星魂、晋升、行迹、光锥、遗器（完整构筑输入） |
 | target | stage、wave、怪物身份、怪物等级、难度组 |
 | operations | 公开操作序列（advance/submit 口径） |
