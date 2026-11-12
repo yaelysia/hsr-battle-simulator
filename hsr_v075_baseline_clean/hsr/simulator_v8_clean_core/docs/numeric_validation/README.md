@@ -13,7 +13,7 @@
 | id | 条目身份 + 序号，如 m1-arlan-e0-lv1-vs-antimatter-minions-001 |
 | game_version | 对照值适用的游戏版本；版本不明时如实记录 |
 | data_version | TBGD submodule 固定提交哈希 |
-| simulator_version | engine_rule 版本 + rules_fingerprint + scenario 版本；已有记录中的旧指纹字段保留为历史证据 |
+| simulator_version | Git 提交 + engine_rule 版本 + rules_fingerprint（IR 内容指纹）+ scenario 版本；已有记录中的旧指纹字段保留为历史证据 |
 | build | 角色、等级、星魂、晋升、行迹、光锥、遗器（完整构筑输入） |
 | target | stage、wave、怪物身份、怪物等级、难度组 |
 | operations | 公开操作序列（advance/submit 口径） |
@@ -26,6 +26,7 @@
 
 ## 规则
 
+- `rules_fingerprint` 不使用本机缓存键，不包含部署路径、文件系统时间戳或 Python 版本；相同 IR 内容可跨机器复现。它不代替代码版本，因此同时记录 Git 提交。历史记录保留当时的版本与指纹，不能把新指纹填回旧实验记录。
 - **最终对照值来源只有两类：游戏实测、成熟计算器输出**（PROJECT_GOALS 数值一致定义）。
   资料公式 + 独立来源参数复算只是**公式一致性验证**：它证明实现与公认公式一致，
   不能替代游戏对照，不能据此标记条目"数值已对照"。复算记录保留为中间证据，

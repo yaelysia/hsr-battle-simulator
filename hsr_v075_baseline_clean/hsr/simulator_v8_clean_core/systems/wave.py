@@ -11,7 +11,7 @@ from .unit_spawn import UnitSpawnRequest, UnitSpawnSystem, spawn_plans_from_meta
 from .unit_lifecycle import UnitLifecycleSystem
 
 
-WAVE_RUNTIME_SCHEMA_VERSION = "p1_2_wave_runtime_v1"
+WAVE_RUNTIME_SCHEMA_VERSION = "wave_runtime_v1"
 
 WaveTransitionStatus = Literal[
     "no_change",

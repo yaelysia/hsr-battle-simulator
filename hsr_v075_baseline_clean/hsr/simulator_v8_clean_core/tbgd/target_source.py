@@ -829,7 +829,7 @@ _EVENT_OR_ENTITY_PRODUCER_KINDS = frozenset({
     "TargetMapSnapshotEntity", "TargetFetchPartner", "TargetFetchUniqueNameEntity",
     "TargetMapSkillPointEntity",
 })
-_TYPED_PRODUCER_DEPENDENCY_STAGE = "p9_s9_s17_typed_event_or_entity_producer"
+_TYPED_PRODUCER_DEPENDENCY_STAGE = "typed_event_or_entity_producer"
 
 
 def _target_dependency_stages(
@@ -862,45 +862,45 @@ def _target_dependency_stages(
             parts = token.split(".")
             definition = local_aliases.get((source_path, parts[0])) or global_definitions.get(("alias", parts[0]))
             if definition is None:
-                stages.add("p9_s17_source_language_decode")
+                stages.add("target_source_language_decode")
             elif definition.coverage_status == "blocked":
                 stages.update(visit_definition(definition))
             for operation in parts[1:]:
                 definition = global_definitions.get(("operation", operation))
                 if definition is None:
-                    stages.add("p9_s17_source_language_decode")
+                    stages.add("target_source_language_decode")
                 elif definition.coverage_status == "blocked":
                     stages.update(visit_definition(definition))
         return stages
 
     def visit_node(node: TargetExpressionNodeIR | None, source_path: str) -> set[str]:
         if node is None:
-            return {"p9_s17_source_language_decode"}
+            return {"target_source_language_decode"}
         stages: set[str] = set()
         kind = node.expression_kind
         original_kind = str(node.payload.get("original_kind") or "") if kind == "TargetUnsupported" else kind
         if kind == "TargetAlias":
             stages.update(visit_alias(node.alias, source_path))
         if kind == "TargetShuffle" or (kind == "Retarget" and node.by_random):
-            stages.add("p9_s5d_rng")
+            stages.add("target_selection_rng")
         if original_kind in _EVENT_OR_ENTITY_PRODUCER_KINDS:
             stages.add(_TYPED_PRODUCER_DEPENDENCY_STAGE)
         elif "Part" in original_kind:
-            stages.add("p9_s17_body_part_producer")
+            stages.add("body_part_producer")
         elif original_kind.endswith("ClientOnly"):
-            stages.add("p9_s5c_action_target_selection")
+            stages.add("action_target_selection")
         elif original_kind == "TargetQuery":
-            stages.add("p9_s17_source_language_decode")
+            stages.add("target_source_language_decode")
         elif kind == "TargetUnsupported":
-            stages.add("p9_s5b_entity_relation_deterministic_target")
+            stages.add("entity_relation_deterministic_target")
         if node.predicate is not None:
-            stages.add("p9_s6_s7_condition_evaluator")
+            stages.add("condition_evaluator")
         for child in (*node.children, node.candidate, node.target, node.query_target, node.query_compare):
             stages.update(visit_node(child, source_path) if child is not None else set())
         return stages
 
     stages = visit_node(expression.node, expression.source.source_path)
-    return tuple(sorted(stages or {"p9_s5b_entity_relation_deterministic_target"}))
+    return tuple(sorted(stages or {"entity_relation_deterministic_target"}))
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

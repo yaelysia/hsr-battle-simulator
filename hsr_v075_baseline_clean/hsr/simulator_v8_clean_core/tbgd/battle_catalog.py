@@ -57,9 +57,10 @@ def build_battle_rulebook(root: Path, scenario_data: dict[str, Any], *, include_
     pool = scenario.battle_setup.metadata.get("compile_scope", {})
     if not isinstance(pool, dict) or set(pool) - {
         "avatar_ids", "stage_ids", "include_equipment", "include_stage_environment",
+        "light_cone_ids", "relic_template_ids",
     }:
         raise ValueError("invalid compile_scope")
-    for name in ("avatar_ids", "stage_ids"):
+    for name in ("avatar_ids", "stage_ids", "light_cone_ids", "relic_template_ids"):
         values = pool.get(name, [])
         if not isinstance(values, list) or any(not isinstance(v, str) or not v.isdecimal() for v in values):
             raise ValueError(f"compile_scope.{name} requires source ID strings")
@@ -80,13 +81,21 @@ def build_battle_rulebook(root: Path, scenario_data: dict[str, Any], *, include_
             if not isinstance(wave, dict):
                 raise ValueError("stage monster wave must be an object")
             monsters.update(str(value) for value in wave.values())
-    equipment = include_equipment or pool.get("include_equipment", False) or any(unit.character_build is not None and (
-        unit.character_build.equipment_build.light_cone is not None
-        or unit.character_build.equipment_build.relics
-    ) for unit in scenario.units)
+    light_cones = set(pool.get('light_cone_ids', ()))
+    relic_templates = set(pool.get('relic_template_ids', ()))
+    for unit in scenario.units:
+        if unit.character_build is not None:
+            build = unit.character_build.equipment_build
+            if build.light_cone is not None:
+                light_cones.add(build.light_cone.definition_key.definition_identity)
+            relic_templates.update(relic.template_key.definition_identity for relic in build.relics)
+    full_equipment = include_equipment or pool.get('include_equipment', False)
+    equipment = full_equipment or bool(light_cones or relic_templates)
     ir = TBGDLowering(root).build(
         avatar_ids=frozenset(avatars), monster_ids=frozenset(monsters),
         stage_ids=frozenset(stages), include_equipment=equipment,
+        light_cone_ids=None if full_equipment else frozenset(light_cones),
+        relic_template_ids=None if full_equipment else frozenset(relic_templates),
         include_stage_environment=stage_scope == "full_stage" or pool.get("include_stage_environment", False),
     )
     rules = RuleBook(ir)

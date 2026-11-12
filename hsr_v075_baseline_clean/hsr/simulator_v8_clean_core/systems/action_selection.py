@@ -28,8 +28,6 @@ ACTION_TARGET_SELECTION_SCHEMA = "action_target_selection_v1"
 _SELECTION_CONTEXT_ISSUER = object()
 
 
-
-
 def _fingerprint(prefix: str, value: object) -> str:
     payload = json.dumps(
         value,

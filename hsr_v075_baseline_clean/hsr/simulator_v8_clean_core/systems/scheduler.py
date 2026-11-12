@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from dataclasses import dataclass, field, replace
 
@@ -196,8 +194,6 @@ def _decision_authorization_seal_valid(authorization: DecisionSubmissionAuthoriz
         and seal.issuer is _DECISION_AUTHORIZATION_ISSUER
         and seal.claims == _decision_authorization_claims(authorization)
     )
-
-
 
 
 @dataclass(frozen=True)

@@ -708,9 +708,18 @@ def test_servant_camera_triggers_do_not_block_an_avatar_action_binding(selector_
             action_ids=frozenset({'avatar_skill:141503'}))
         if item.level == 1
     )
-    binding, phases, _ = lowerer._avatar_action_binding(definition)
+    binding, phases, lowered = lowerer._avatar_action_binding(definition)
     assert binding.coverage_status == 'executable', binding.blocked_reason
     assert binding.blocked_reason == ''
     assert phases and any(phase.coverage_status == 'lowered' for phase in phases)
-    # Presentation effect names can change with the source version. Their
-    # observable contract is that they do not block the action above.
+    # The fixed source still contains Ready_Camera. Its parent VisualPrepare is
+    # excluded as a whole presentation graph, so the child is not expanded into
+    # a separate effect by _avatar_action_binding's dependency walk.
+    parent_name = 'Servant_CyreneServant_00_Skill01_VisualPrepare'
+    parent = next(effect for effect in lowered.effects
+                  if effect.payload.get('client_only_ability_source', {}).get('ability_name') == parent_name)
+    assert parent.coverage_status == 'audit_only'
+    document = json.loads((lowerer.tbgd_root / 'Config/ConfigAbility/Servant/Servant_CyreneServant_00_Ability.json').read_text())
+    raw_parent = next(ability for ability in document['AbilityList'] if ability['Name'] == parent_name)
+    assert any(task.get('AbilityName', {}).get('Value') == 'Servant_CyreneServant_00_Skill01_Ready_Camera'
+               for task in raw_parent['OnStart'])

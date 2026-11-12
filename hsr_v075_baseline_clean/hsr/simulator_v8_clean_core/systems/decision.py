@@ -496,8 +496,6 @@ def _choice_revision(availability: ActionAvailabilityView) -> str:
     return _digest("choices", payload)
 
 
-
-
 def _single_choice_actor_id(choices: tuple[ActionChoice, ...]) -> str:
     actor_ids = {choice.actor_id for choice in choices if choice.actor_id}
     return next(iter(actor_ids)) if len(actor_ids) == 1 else ""

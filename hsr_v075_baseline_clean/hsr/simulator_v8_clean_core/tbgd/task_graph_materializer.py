@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from ..immutable_json import thaw_json
 from ..dynamic_key_hash import tbgd_dynamic_key_hash

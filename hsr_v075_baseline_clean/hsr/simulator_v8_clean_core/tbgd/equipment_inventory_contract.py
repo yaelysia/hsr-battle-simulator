@@ -8,7 +8,7 @@ from typing import Any, cast
 from ..equipment.models import validate_equipment_source_fingerprint
 
 
-S0_SUMMARY_SCHEMA_VERSION = "p8_s0_equipment_source_inventory_summary_v1"
+S0_SUMMARY_SCHEMA_VERSION = "equipment_source_inventory_summary_v1"
 PRIMARY_FINGERPRINT_ALGORITHM = "sha256-path-and-full-content-v1"
 PRIMARY_FINGERPRINT_COVERAGE = "full_content_for_every_primary_source_file"
 FINGERPRINT_REQUIRED_FIELDS = frozenset(

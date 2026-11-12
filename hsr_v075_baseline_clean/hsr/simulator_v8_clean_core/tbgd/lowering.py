@@ -54,7 +54,6 @@ from .action_target_contracts import build_action_target_contract_catalog
 from .equipment_ability_families import (
     classify_equipment_callback,
     classify_equipment_condition,
-    classify_equipment_family,
     classify_equipment_task,
 )
 from .light_cone_cards import (
@@ -190,31 +189,6 @@ from ..rules.ir import (
     WaveMonsterEntryIR,
 )
 from ..rules.rulebook import CharacterAbilitySourceGraphQuery
-
-
-def _equipment_catalog_fingerprint_metadata(
-    *,
-    light_cone_source_content_fingerprint: Mapping[str, JSONValue],
-    relic_source_content_fingerprint: Mapping[str, JSONValue],
-    light_cone_catalog_definition_fingerprint: Mapping[str, JSONValue],
-    relic_catalog_definition_fingerprint: Mapping[str, JSONValue],
-) -> dict[str, JSONValue]:
-    """Keep source and definition fingerprints explicit per equipment family."""
-
-    return {
-        "light_cone_source_content_fingerprint": thaw_json(
-            light_cone_source_content_fingerprint
-        ),
-        "relic_source_content_fingerprint": thaw_json(
-            relic_source_content_fingerprint
-        ),
-        "light_cone_catalog_definition_fingerprint": thaw_json(
-            light_cone_catalog_definition_fingerprint
-        ),
-        "relic_catalog_definition_fingerprint": thaw_json(
-            relic_catalog_definition_fingerprint
-        ),
-    }
 
 
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
@@ -1900,11 +1874,13 @@ class TBGDLowering:
         monster_ids: frozenset[str] | None = None,
         stage_ids: frozenset[str] | None = None,
         include_equipment: bool = True,
+        light_cone_ids: frozenset[str] | None = None,
+        relic_template_ids: frozenset[str] | None = None,
         include_stage_environment: bool = False,
         use_cache: bool = True,
     ) -> CanonicalIR:
         # Content scope selects whole source graphs, never a prefix of their tasks.
-        for selected in (avatar_ids, monster_ids, stage_ids):
+        for selected in (avatar_ids, monster_ids, stage_ids, light_cone_ids, relic_template_ids):
             if selected is not None and (
                 type(selected) is not frozenset
                 or any(not isinstance(item, str) or not item for item in selected)
@@ -1912,6 +1888,10 @@ class TBGDLowering:
                 raise ValueError("content scope must contain nonempty string identities")
         if type(include_equipment) is not bool:
             raise TypeError("include_equipment must be bool")
+        if (light_cone_ids is None) != (relic_template_ids is None):
+            raise ValueError("equipment scope requires both light cone and relic template selections")
+        if not include_equipment and (light_cone_ids or relic_template_ids):
+            raise ValueError("equipment selections require include_equipment")
         if type(include_stage_environment) is not bool:
             raise TypeError("include_stage_environment must be bool")
         if type(use_cache) is not bool:
@@ -1924,17 +1904,30 @@ class TBGDLowering:
                 "monster_ids": sorted(monster_ids) if monster_ids is not None else None,
                 "stage_ids": sorted(stage_ids) if stage_ids is not None else None,
                 "include_equipment": include_equipment,
+                "light_cone_ids": sorted(light_cone_ids) if light_cone_ids is not None else None,
+                "relic_template_ids": sorted(relic_template_ids) if relic_template_ids is not None else None,
                 "include_stage_environment": include_stage_environment,
             }
             # A reused builder must not compile changed files from stale S0 caches.
-            compiler = TBGDLowering(self.tbgd_root, self.limits)
-            result = cached_ir(self.tbgd_root, self.limits, scope, lambda: compiler.build(
-                avatar_ids=avatar_ids, monster_ids=monster_ids, stage_ids=stage_ids,
-                include_equipment=include_equipment, include_stage_environment=include_stage_environment, use_cache=False,
-            ))
+            compiler = None
+            def compile_selected():
+                nonlocal compiler
+                # Constructor reads are compilation dependencies too.
+                compiler = TBGDLowering(self.tbgd_root, self.limits)
+                return compiler.build(
+                    avatar_ids=avatar_ids, monster_ids=monster_ids, stage_ids=stage_ids,
+                    light_cone_ids=light_cone_ids, relic_template_ids=relic_template_ids,
+                    include_equipment=include_equipment, include_stage_environment=include_stage_environment, use_cache=False,
+                )
+            result = cached_ir(self.tbgd_root, self.limits, scope, compile_selected)
+            if compiler is None:
+                compiler = TBGDLowering(self.tbgd_root, self.limits)
             self.__dict__.clear()
             self.__dict__.update(compiler.__dict__)
             return result
+        # This table cache belongs to one compilation, not to a source directory
+        # forever. A fresh build must observe (and record) its current bytes.
+        _game_core_servant_sync_property_list.cache_clear()
         scoped = any(value is not None for value in (avatar_ids, monster_ids, stage_ids))
         character_ability_source_graph_catalog = (
             self.build_character_ability_source_graph_catalog()
@@ -1949,24 +1942,29 @@ class TBGDLowering:
         equipment_fields = {}
         equipment_fingerprints = {}
         if include_equipment:
-            light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
-            light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
-            relic_catalog_result = build_relic_catalog(self.tbgd_root)
-            relic_catalog = require_complete_relic_catalog(relic_catalog_result)
-            relic_set_thresholds = relic_catalog.set_thresholds
-            equipment_fields = {
-                'relic_' + name: getattr(relic_catalog, name) for name in (
-                    'domain_definitions', 'slot_definitions', 'main_affix_group_definitions',
-                    'main_affix_definitions', 'sub_affix_group_definitions', 'sub_affix_definitions',
-                    'template_definitions', 'set_definitions',
-                )
-            }
-            equipment_fingerprints = _equipment_catalog_fingerprint_metadata(
-                light_cone_source_content_fingerprint=light_cone_catalog.source_content_fingerprint,
-                relic_source_content_fingerprint=relic_catalog_result.source_content_fingerprint,
-                light_cone_catalog_definition_fingerprint=light_cone_catalog.catalog_definition_fingerprint,
-                relic_catalog_definition_fingerprint=relic_catalog_result.catalog_definition_fingerprint,
-            )
+            if light_cone_ids is None:
+                light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
+                relic_catalog_result = build_relic_catalog(self.tbgd_root)
+            else:
+                from .equipment_scope import build_equipment_scope
+                light_cone_catalog, relic_catalog_result = build_equipment_scope(
+                    self.tbgd_root, light_cone_ids, relic_template_ids)
+            if light_cone_catalog is not None:
+                light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
+            if relic_catalog_result is not None:
+                relic_catalog = require_complete_relic_catalog(relic_catalog_result)
+                relic_set_thresholds = relic_catalog.set_thresholds
+                equipment_fields = {
+                    'relic_' + name: getattr(relic_catalog, name) for name in (
+                        'domain_definitions', 'slot_definitions', 'main_affix_group_definitions',
+                        'main_affix_definitions', 'sub_affix_group_definitions', 'sub_affix_definitions',
+                        'template_definitions', 'set_definitions',
+                    )
+                }
+            for prefix, catalog in (('light_cone', light_cone_catalog), ('relic', relic_catalog_result)):
+                if catalog is not None:
+                    equipment_fingerprints[prefix + '_source_content_fingerprint'] = thaw_json(catalog.source_content_fingerprint)
+                    equipment_fingerprints[prefix + '_catalog_definition_fingerprint'] = thaw_json(catalog.catalog_definition_fingerprint)
         equipment_ability_sources = _equipment_ability_source_projection(
             (*light_cone_definitions, *relic_set_thresholds)
         )
@@ -2860,7 +2858,7 @@ class TBGDLowering:
                     "callbacks": self.limits.max_callbacks_per_file is not None,
                 },
                 **equipment_fingerprints,
-                "light_cone_catalog_limited": not include_equipment,
+                "light_cone_catalog_limited": not include_equipment or light_cone_ids is not None,
                 "equipment_ability_graph_status": {
                     "graph_count": len(equipment_ability_graphs),
                     "executable_count": sum(
@@ -23727,7 +23725,7 @@ def _target_expression_admission(
         return (
             "blocked",
             f"target_alias_requires_source_closure:{alias}",
-            "p9_s5a_target_language_closure",
+            "target_language_closure",
         )
     if kind in {"TargetConcat", "TargetSequence", "TargetFilter", "Retarget"}:
         reason = _target_expression_runtime_blocked_reason(raw, source=source)
@@ -23738,7 +23736,7 @@ def _target_expression_admission(
     if not reason and (kind == "TargetQuery" or _target_expression_kind_admitted(kind, raw)):
         return "executable", "", "p1_6_target_pipeline"
     if reason:
-        return "blocked", reason, "p9_s5b_typed_target_admission"
+        return "blocked", reason, "typed_target_admission"
     if kind.startswith("TargetSort"):
         return "blocked", f"target_sort_not_admitted:{kind}", "after_target_sequence_sorting"
     if kind.startswith("TargetFetch"):

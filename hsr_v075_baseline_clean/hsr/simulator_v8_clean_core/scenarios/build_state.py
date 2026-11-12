@@ -2255,7 +2255,7 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
         blocked_reason = blocked_reason or "current_wave_executable_units_missing"
         status = "blocked"
     return {
-        "schema_version": "p1_2_wave_runtime_v1",
+        "schema_version": "wave_runtime_v1",
         "wave_definition_id": definition.wave_definition_id,
         "stage_id": definition.stage_id,
         "current_wave_index": current_wave_index,

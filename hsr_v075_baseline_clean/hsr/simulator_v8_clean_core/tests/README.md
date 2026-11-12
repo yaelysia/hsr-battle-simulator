@@ -24,6 +24,7 @@
 | 多层韧性和溢出 | `test_multilayer_toughness.py` |
 | 伤害与临时贡献 | `test_damage_formula_reconciled_rules.py`、`test_damage_modifier_transport.py` |
 | 编译缓存与 IR 身份 | `test_compile_cache.py`、`test_ir_import_identity.py` |
+| 装备范围裁剪、参数与依赖闭包 | `test_equipment_scope.py`（integration；与全目录定义对照，含空光锥/仅外圈/仅内圈与共享池） |
 | 诊断精简与数值保留 | `test_diagnostic_output.py`；跨模式公开路线见下方公共接口基线 |
 | 归档与会话分支 | `test_battle_archive.py`、`test_session_fork.py` |
 | 装备输入与消费 | `test_equipment_input_codec.py`、`test_equipment_heal_formula_delay_cost.py`；完整装备路线另按需选择 |

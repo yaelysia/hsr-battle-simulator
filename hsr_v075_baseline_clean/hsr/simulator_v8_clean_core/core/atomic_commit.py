@@ -11,7 +11,7 @@ from .state_integrity import (
 from .transition_outcome import ExecutionNodeResult, TransitionOutcome, classify_transition_outcome
 
 
-ATOMIC_COMMIT_SCHEMA_VERSION = "vg_s2_atomic_commit_v2"
+ATOMIC_COMMIT_SCHEMA_VERSION = "atomic_commit_v2"
 
 
 @dataclass(frozen=True)

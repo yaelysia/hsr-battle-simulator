@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from ..build_types import static_property_binding
 from ..equipment.models import (
@@ -34,7 +34,7 @@ from .equipment_discovery import (
 )
 
 
-LIGHT_CONE_CATALOG_SCHEMA_VERSION = "p8.light_cone_catalog.v2"
+LIGHT_CONE_CATALOG_SCHEMA_VERSION = "light_cone_catalog.v2"
 LIGHT_CONE_CATALOG_FINGERPRINT_ALGORITHM = (
     "sha256-canonical-light-cone-definition-catalog-v2"
 )

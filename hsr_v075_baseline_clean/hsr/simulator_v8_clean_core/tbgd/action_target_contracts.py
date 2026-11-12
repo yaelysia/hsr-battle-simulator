@@ -273,7 +273,7 @@ def _contract_from_definition(
             else "action_selection_source_has_multiple_decode_failures"
         )
         gap_owner = (
-            "p9_s6"
+            "condition_evaluation"
             if all(
                 reason.startswith("action_target_filter_condition_deferred:")
                 for reason in blocked_reasons

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 
 from ..core.model import battle_state_revision as _action_state_revision
@@ -137,8 +135,6 @@ def _issue_action_submission_authorization(
             claims=_action_authorization_claims(authorization),
         ),
     )
-
-
 
 
 def _action_authorization_payload(

@@ -847,8 +847,6 @@ def execute_dynamic_value_plan(
     )
 
 
-
-
 def _strict_dynamic_value_store(value: object) -> dict[str, JSONValue]:
     if value is None:
         return empty_dynamic_value_store()

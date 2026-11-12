@@ -56,7 +56,8 @@ def test_cold_then_warm_preserves_typed_ir_and_shared_immutable_subtrees(tmp_pat
     assert warm.to_json() == cold.to_json()
     assert not list(cache.glob('*.tmp'))
     # A separate process and the UI import spelling must reuse the same artifact.
-    key = _cache_key(root, LoweringLimits(), {})
+    from hsr.simulator_v8_clean_core.tbgd.compile_cache import ir_cache_slot
+    key = ir_cache_slot(cold)[1]
     path, = cache.glob('*.ir.gz')
     script = ('from pathlib import Path; from simulator_v8_clean_core.tbgd.compile_cache import _read_cache; '
               'from simulator_v8_clean_core.rules.ir import CanonicalIR; '
@@ -80,11 +81,99 @@ def test_warm_load_checks_source_generation_once(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_read_dependencies_skip_unread_edits_but_track_discovery_changes(tmp_path, monkeypatch):
+    from hsr.simulator_v8_clean_core.tbgd import compile_cache
+    root, cache = _source(tmp_path), tmp_path / 'cache'
+    unused = root / 'Config/unread.json'
+    unused.write_text('{}')
+    calls = []
+    def build():
+        calls.append(1)
+        (root / 'Config/ability.json').read_text()
+        return _ir()
+    first = cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    original = compile_cache._source_entries
+    def no_source_walk(path, *args, **kwargs):
+        assert path != root, 'warm cache enumerated the source directory'
+        return original(path, *args, **kwargs)
+    with monkeypatch.context() as patcher:
+        patcher.setattr(compile_cache, '_source_entries', no_source_walk)
+        unused.write_text('{"unrelated":2}')
+        warm = cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+        assert compile_cache.ir_cache_slot(first)[1] == compile_cache.ir_cache_slot(warm)[1]
+    assert len(calls) == 1
+    # A new file may introduce a definition or satisfy a previously missing
+    # reference; renames and deletions likewise invalidate discovery.
+    added = root / 'Config/added.json'
+    added.write_text('{}')
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    renamed = added.with_name('renamed.json')
+    added.rename(renamed)
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    renamed.unlink()
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    assert len(calls) == 4
+
+
+def test_dependency_edit_during_cold_build_never_publishes(tmp_path):
+    root, cache = _source(tmp_path), tmp_path / 'cache'
+    def build():
+        path = root / 'Config/ability.json'
+        path.read_text()
+        path.write_text('{"changed":true}')
+        return _ir()
+    with pytest.raises(RuntimeError, match='changed during IR compilation'):
+        cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    assert not list(cache.glob('*.ir.gz'))
+
+
+def test_lowerer_initialization_reads_participate_in_cache_invalidation(tmp_path, monkeypatch):
+    from hsr.simulator_v8_clean_core.tbgd import lowering
+    root = _source(tmp_path)
+    monkeypatch.setenv('HSR_IR_CACHE_DIR', str(tmp_path / 'cache'))
+    monkeypatch.setattr(lowering, '_damage_tag_registry', lambda path: (path / 'Config/ability.json').read_text())
+    monkeypatch.setattr(lowering, '_character_id_groups', lambda path: {})
+    original = lowering.TBGDLowering.build
+    def build(self, **kwargs):
+        if kwargs.get('use_cache', True):
+            return original(self, **kwargs)
+        # Component input: only the constructor consumes this source file.
+        return CanonicalIR(version=BASELINE_VERSION, metadata={'registry': self._damage_tag_registry})
+    monkeypatch.setattr(lowering.TBGDLowering, 'build', build)
+    compiler = lowering.TBGDLowering(root)
+    first = compiler.build()
+    (root / 'Config/ability.json').write_text('{"value":2}')
+    second = compiler.build()
+    assert first.metadata['registry'] == '{"value":1}'
+    assert second.metadata['registry'] == '{"value":2}'
+
+
+def test_resolved_symlink_reads_and_cache_inside_source(tmp_path):
+    root = _source(tmp_path)
+    cache = root / 'cache'
+    external = tmp_path / 'external.json'
+    external.write_text('{}')
+    link = root / 'Config/linked.json'
+    link.symlink_to(external)
+    calls = []
+    def build():
+        calls.append(1)
+        link.resolve().read_text()
+        return _ir()
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    assert len(calls) == 1
+    external.write_text('{"changed":true}')
+    cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
+    assert len(calls) == 2
+
+
 def test_source_edit_even_with_restored_mtime_and_scope_limits_invalidate(tmp_path):
     root, cache = _source(tmp_path), tmp_path / 'cache'
     calls = []
     def build():
         calls.append(1)
+        (root / 'Config/ability.json').read_text()
         return _ir()
     first_key = _cache_key(root, LoweringLimits(), {})
     cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)
@@ -248,21 +337,32 @@ def test_concurrent_cold_requests_compile_once(tmp_path):
 
 
 @pytest.mark.parametrize('cache_available', [True, False])
-def test_compiled_rule_identity_never_rehashes_ir(tmp_path, monkeypatch, cache_available):
+def test_compiled_rule_identity_hashes_once_then_reuses_content(tmp_path, monkeypatch, cache_available):
     from hsr.simulator_v8_clean_core.builds import manifest
     from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
     from hsr.simulator_v8_clean_core.tbgd.compile_cache import ir_cache_slot
     root, cache = _source(tmp_path), tmp_path / 'cache'
     if not cache_available:
         cache.write_text('a file prevents cache directory creation')
+    original = manifest.canonical_ir_fingerprint
+    expected = original(_ir())
+    calls = []
+    def counted(ir):
+        calls.append(1)
+        return original(ir)
+    monkeypatch.setattr(manifest, 'canonical_ir_fingerprint', counted)
     ir = cached_ir(root, LoweringLimits(), {}, _ir, cache_dir=cache)
+    assert len(calls) == 1
     def no_rehash(*args):
-        raise AssertionError('compiled identity must use validated build inputs')
+        raise AssertionError('compiled identity must reuse the cold content digest')
     monkeypatch.setattr(manifest, 'canonical_ir_fingerprint', no_rehash)
     monkeypatch.setattr(manifest, '_source_fingerprint', no_rehash)
+    if cache_available:
+        ir = cached_ir(root, LoweringLimits(), {}, no_rehash, cache_dir=cache)
     rules = RuleBook(ir)
     identity = manifest.current_build_rule_identity(rules)
-    assert identity.rules_fingerprint == ir_cache_slot(ir)[1]
+    assert identity.rules_fingerprint == expected
+    assert identity.rules_fingerprint != ir_cache_slot(ir)[1]
     assert manifest.rulebook_fingerprint(rules) == identity.rules_fingerprint
 
 
@@ -284,16 +384,47 @@ def test_build_rule_identity_survives_a_new_process(tmp_path):
         'from simulator_v8_clean_core.builds import manifest\n'
         'def cold():\n'
         '    raise AssertionError("warm cache must not rebuild")\n'
-        f'ir = cached_ir(Path({str(root)!r}), LoweringLimits(), {{}}, cold, cache_dir=Path({str(cache)!r}))\n'
         'def no_rehash(ir):\n'
         '    raise AssertionError("warm identity must not rehash")\n'
         'manifest.canonical_ir_fingerprint = no_rehash\n'
+        'manifest._source_fingerprint = no_rehash\n'
+        f'ir = cached_ir(Path({str(root)!r}), LoweringLimits(), {{}}, cold, cache_dir=Path({str(cache)!r}))\n'
         'print(manifest.current_build_rule_identity(RuleBook(ir=ir)).rules_fingerprint)\n'
     )
     result = subprocess.run([os.sys.executable, '-B', '-c', script], check=True,
         capture_output=True, text=True,
         env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[2])})
     assert result.stdout.strip() == expected
+
+
+def test_content_identity_and_state_ignore_location_and_file_metadata(tmp_path):
+    import json
+    from hsr.simulator_v8_clean_core.builds.manifest import current_build_rule_identity
+    from hsr.simulator_v8_clean_core.core.model import BattleState, battle_state_revision
+    from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+    from hsr.simulator_v8_clean_core.tbgd.compile_cache import ir_cache_slot
+    snapshots, revisions, local_keys = [], [], []
+    for label in ('original', 'relocated'):
+        location = tmp_path / label
+        root = _source(location)
+        source = root / 'Config/ability.json'
+        if label == 'relocated':
+            os.utime(source, ns=(1000000000, 1000000000))
+        def build():
+            return CanonicalIR(version=BASELINE_VERSION, conditions=(ConditionIR(
+                'content', 'fixture', json.loads(source.read_text()), IRSource('Config/ability.json', 'fixture', 'content'),
+            ),))
+        ir = cached_ir(root, LoweringLimits(), {}, build, cache_dir=location / 'cache')
+        identity = current_build_rule_identity(RuleBook(ir))
+        state = BattleState(units={}, global_flags={'formal_build_manifest': {'rule_identity': identity.to_json()}})
+        snapshots.append(state.snapshot().to_json())
+        revisions.append(battle_state_revision(state))
+        local_keys.append(ir_cache_slot(ir)[1])
+    assert local_keys[0] != local_keys[1]
+    assert snapshots[0] == snapshots[1] and revisions[0] == revisions[1]
+    source.write_text('{"value":2}')
+    changed = cached_ir(root, LoweringLimits(), {}, build, cache_dir=location / 'cache')
+    assert current_build_rule_identity(RuleBook(changed)) != identity
 
 
 def test_mapping_proxy_roundtrip_and_executable_pickle_globals_are_rejected():

@@ -4926,7 +4926,7 @@ class SummonUnitDefinitionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
-    schema_version: str = "p1_3_summon_unit_definition_v1"
+    schema_version: str = "summon_unit_definition_v1"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -4959,7 +4959,7 @@ class UnitBirthTemplateIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
-    schema_version: str = "p6_unit_birth_template_v1"
+    schema_version: str = "unit_birth_template_v1"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -5022,7 +5022,7 @@ class SummonMonsterIntentIR:
     caster_card_scope: dict[str, JSONValue] = field(default_factory=dict)
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
-    schema_version: str = "p1_3_summon_monster_intent_v1"
+    schema_version: str = "summon_monster_intent_v1"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -5053,7 +5053,7 @@ class AssistantAbilityResolutionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
-    schema_version: str = "p1_3_assistant_ability_resolution_v1"
+    schema_version: str = "assistant_ability_resolution_v1"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -5107,7 +5107,7 @@ class ServantDefinitionIR:
     birth_template_id: str = ""
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
-    schema_version: str = "p1_3_servant_definition_v1"
+    schema_version: str = "servant_definition_v1"
     skill_ids: tuple[str, ...] = ()
     owner_relations: tuple[ServantOwnerRelationIR, ...] = ()
     spawn_sources: tuple[IRSource, ...] = ()

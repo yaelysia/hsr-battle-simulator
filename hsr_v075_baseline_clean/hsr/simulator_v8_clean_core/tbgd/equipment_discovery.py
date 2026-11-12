@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-EQUIPMENT_DISCOVERY_SCHEMA_VERSION = "p8.equipment_source_discovery.v1"
+EQUIPMENT_DISCOVERY_SCHEMA_VERSION = "equipment_source_discovery.v1"
 PRIMARY_FINGERPRINT_ALGORITHM = "sha256-path-and-full-content-v1"
 FULL_AUXILIARY_FINGERPRINT_ALGORITHM = "sha256-path-and-file-sha256-v1"
 SAMPLED_AUXILIARY_FINGERPRINT_ALGORITHM = "sha256-path-size-range-and-sample-v1"

@@ -46,7 +46,7 @@ from .equipment_inventory_contract import (
 )
 
 
-RELIC_CATALOG_SCHEMA_VERSION = "p8.relic_definition_catalog.v1"
+RELIC_CATALOG_SCHEMA_VERSION = "relic_definition_catalog.v1"
 RELIC_CATALOG_FINGERPRINT_ALGORITHM = (
     "sha256-canonical-relic-definition-catalog-v1"
 )
@@ -699,6 +699,7 @@ def build_relic_catalog_from_documents(
     prerequisite_issues: Sequence[RelicCatalogIssue] = (),
     source_integrity_ok: bool = True,
     source_row_indexes: Mapping[str, Sequence[int]] | None = None,
+    require_full_catalog: bool = True,
     semantic_table_parse_count: int = 6,
     ability_file_parse_count: int | None = None,
 ) -> RelicCatalogBuildResult:
@@ -998,16 +999,28 @@ def build_relic_catalog_from_documents(
         for item in template_definitions
         if item.publication_status == "published"
     )
+    if require_full_catalog:
+        if len(base_records) != 6:
+            issues.append(_issue(
+                "relic_real_slot_count_not_six", PRIMARY_TABLE_ROLES["relic_base_type"],
+                "$", "typed_slots", "status_unknown",
+                f"current relic schema requires six typed slots, got {len(base_records)}",
+            ))
+        if set(slot_domain_names.values()) != set(RELIC_DOMAIN_NAMES):
+            issues.append(_issue(
+                "relic_domain_partition_incomplete", PRIMARY_TABLE_ROLES["relic_config"],
+                "$", "domains", "status_unknown", "membership must derive outer and planar domains",
+            ))
     catalog_complete = (
         source_integrity_ok
         and not issues
-        and len(slot_definitions) == 6
+        and len(slot_definitions) == len(base_records)
         and len(slot_filters) >= 1
         and len(template_definitions) == len(template_records)
         and len(set_definitions) == len(set_records)
         and len(threshold_definitions) == len(threshold_records)
         and {item.domain for item in domain_definitions}
-        == set(RELIC_DOMAIN_NAMES)
+        == set(set_domain_names.values())
         and all(
             item.coverage_status == "lowered"
             for collection in (
@@ -1420,17 +1433,6 @@ def _build_slot_records(
             )
             continue
         unique[slot_type] = candidates[0]
-    if len(unique) != 6:
-        issues.append(
-            _issue(
-                "relic_real_slot_count_not_six",
-                PRIMARY_TABLE_ROLES["relic_base_type"],
-                "$",
-                "typed_slots",
-                "status_unknown",
-                f"current relic schema requires six typed slots, got {len(unique)}",
-            )
-        )
     if not filters:
         issues.append(
             _issue(
@@ -1795,17 +1797,6 @@ def _derive_domains(
             )
             continue
         set_domains[set_id] = declared
-    if set(slot_domains.values()) != set(RELIC_DOMAIN_NAMES):
-        issues.append(
-            _issue(
-                "relic_domain_partition_incomplete",
-                PRIMARY_TABLE_ROLES["relic_config"],
-                "$",
-                "domains",
-                "status_unknown",
-                "membership must derive outer and planar domains",
-            )
-        )
     return slot_domains, set_domains
 
 

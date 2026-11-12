@@ -764,7 +764,7 @@ def _wave_state(wave_definition_id: str, summon: UnitState) -> BattleState:
         },
         global_flags={
             "wave_runtime": {
-                "schema_version": "p1_2_wave_runtime_v1",
+                "schema_version": "wave_runtime_v1",
                 "wave_definition_id": wave_definition_id,
                 "current_wave_index": 0,
                 "total_waves": 1,

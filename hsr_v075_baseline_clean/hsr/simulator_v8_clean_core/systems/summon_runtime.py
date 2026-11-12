@@ -7,8 +7,8 @@ from ..core.model import JSONValue, UnitState
 from ..unit_eligibility import runtime_unit_combat_team
 
 
-SUMMON_RUNTIME_SCHEMA_VERSION = "p3_summon_runtime_v2"
-LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION = "p1_3_summon_runtime_v1"
+SUMMON_RUNTIME_SCHEMA_VERSION = "summon_runtime_v2"
+LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION = "summon_runtime_v1"
 SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS = {
     SUMMON_RUNTIME_SCHEMA_VERSION,
     LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION,

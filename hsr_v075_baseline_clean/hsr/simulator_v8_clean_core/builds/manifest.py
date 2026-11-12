@@ -459,11 +459,11 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
         if cached is not None and cached[0]() is rules:
             return cached[1]
 
-    from ..tbgd.compile_cache import ir_cache_slot
+    from ..tbgd.compile_cache import ir_content_identity
 
-    slot = ir_cache_slot(rules.ir)
-    if slot is not None:
-        identity = BuildRuleIdentity(slot[1], slot[1], ENGINE_RULE_REGISTRY_VERSION)
+    content = ir_content_identity(rules.ir)
+    if content is not None:
+        identity = BuildRuleIdentity(content[1], content[0], ENGINE_RULE_REGISTRY_VERSION)
     else:
         fingerprint = canonical_ir_fingerprint(rules.ir)
         identity = BuildRuleIdentity(
@@ -485,11 +485,11 @@ def current_build_rule_identity(rules: RuleBook) -> BuildRuleIdentity:
 
 
 def rulebook_fingerprint(rules: RuleBook) -> str:
-    """Identify compiled rules by their validated build inputs; hash ad-hoc IRs."""
-    from ..tbgd.compile_cache import ir_cache_slot
+    """Return the portable content identity, reusing the cold compiler's digest."""
+    from ..tbgd.compile_cache import ir_content_identity
 
-    slot = ir_cache_slot(rules.ir)
-    return slot[1] if slot is not None else canonical_ir_fingerprint(rules.ir)
+    content = ir_content_identity(rules.ir)
+    return content[0] if content is not None else canonical_ir_fingerprint(rules.ir)
 
 
 def canonical_ir_fingerprint(ir: CanonicalIR) -> str:

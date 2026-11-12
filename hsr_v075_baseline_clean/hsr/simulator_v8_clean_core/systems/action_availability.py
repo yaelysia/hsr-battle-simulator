@@ -42,7 +42,7 @@ from .unit_lifecycle import UnitLifecycleSystem
 from .wave import WaveSystem
 
 
-ACTION_AVAILABILITY_SCHEMA_VERSION = "p1_0_action_availability_v1"
+ACTION_AVAILABILITY_SCHEMA_VERSION = "action_availability_v1"
 
 ActionAvailabilityMode = Literal[
     "queued_mandatory",

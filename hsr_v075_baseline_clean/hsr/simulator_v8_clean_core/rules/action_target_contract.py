@@ -45,8 +45,8 @@ ActionTargetGapOwner = Literal[
     "source_gap",
     "source_ambiguity",
     "source_decode",
-    "p9_s5c2",
-    "p9_s6",
+    "action_target_selection",
+    "condition_evaluation",
 ]
 
 _SELECTION_MODES = frozenset({"automatic", "explicit"})
@@ -81,7 +81,7 @@ _COMPONENT_KINDS = frozenset(
 _GAP_OWNERS = frozenset(
     {
         "", "source_scope", "source_gap", "source_ambiguity", "source_decode",
-        "p9_s5c2", "p9_s6",
+        "action_target_selection", "condition_evaluation",
     }
 )
 
