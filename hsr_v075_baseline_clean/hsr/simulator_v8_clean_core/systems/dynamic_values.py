@@ -11,7 +11,7 @@ from ..core.audit_policy import eager_identity_audit_enabled
 from ..core.model import battle_state_full_fingerprint as dynamic_value_state_fingerprint
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution, current_max_hp
 from ..core.settlement import SettlementRecord
-from ..immutable_json import freeze_json, thaw_json
+from ..immutable_json import FrozenJSONDict, freeze_json, json_tree_digest, thaw_json
 from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import resolve_runtime_numeric_expression
@@ -276,6 +276,38 @@ class DynamicValueExecutionResult:
         object.__setattr__(self, "records", records)
 
 
+@dataclass(frozen=True)
+class DynamicValueChangeFact:
+    """The executed typed write and its pre-write state, retained for watchers."""
+    plan: DynamicValuePlan
+    before_state: BattleState
+    event_id: str
+
+    def matches_event(self, event: GameEvent) -> bool:
+        return (type(self.plan) is DynamicValuePlan and self.plan.ok and not self.plan.replayed
+            and type(self.before_state) is BattleState and self.plan.request is not None
+            and event.dynamic_value_change_fact is self and event.event_type == "dynamic.value.changed"
+            and event.event_id == self.event_id and event.source_id == self.plan.request.source_id
+            and event.target_id == self.plan.resolved_scope.get("target_id"))
+
+
+def dynamic_value_change_events(state: BattleState, plan: DynamicValuePlan, rules: RuleBook | None) -> tuple[GameEvent, ...]:
+    # Only materialized watchers need notification; ordinary scratch writes stay cheap.
+    from ..rules.expression_ir import numeric_dynamic_hashes
+    if plan.replayed or rules is None or not any(
+        item.coverage_status == "executable" and item.property_source.endswith("_dynamic_value") and str(plan.operation.destination_hash) in {
+            item.property_name, *(str(key) for interval in rules.ability_property_ranges_for_watcher(item.watcher_id)
+                for bound in (interval.minimum, interval.maximum) for key in numeric_dynamic_hashes(bound))}
+        for item in rules.ir.ability_property_watchers
+    ):
+        return ()
+    event_id = f"event:dynamic_value_changed:{plan.operation_instance_id}"
+    fact = DynamicValueChangeFact(plan, state, event_id)
+    return (GameEvent(event_type="dynamic.value.changed", source_id=plan.request.source_id,
+        target_id=str(plan.resolved_scope["target_id"]), event_id=event_id, process_only=True,
+        dynamic_value_change_fact=fact, payload={"operation_id": plan.operation.operation_id}),)
+
+
 def empty_dynamic_value_store() -> dict[str, JSONValue]:
     return {"entries": {}, "by_hash": {}, "by_name": {}, "operation_ledger": {}}
 
@@ -422,21 +454,10 @@ def binding_source_from_store_for_units(
     }
     if len(filtered) == len(entries):
         return source
-    normalized = normalized_dynamic_value_store(store)
-    ledger = normalized.get("operation_ledger")
-    kept_ledger = (
-        {
-            key: item
-            for key, item in ledger.items()
-            if isinstance(item, dict)
-            and item.get("destination_entry_key") in filtered
-        }
-        if isinstance(ledger, dict)
-        else {}
-    )
-    return binding_source_from_store(
-        _reindex({"entries": filtered, "operation_ledger": kept_ledger})
-    )
+    # The input was validated above. This is a read-only binding projection,
+    # not a new committed store: it needs indexes, never a copied write ledger.
+    indexed = _reindex({"entries": filtered})
+    return {**source, **{key: indexed[key] for key in ("entries", "by_hash", "by_name")}}
 
 
 def upsert_dynamic_value(
@@ -689,6 +710,9 @@ def plan_dynamic_value_operation(
             resolved_scope=resolved_scope,
         )
 
+    # Mutation, settlement and plan all retain the same numeric explanation.
+    # Freeze it once so their identity checks can share the immutable subtree.
+    evaluation = freeze_json(evaluation)
     entry = _destination_entry(
         operation,
         request,
@@ -710,7 +734,11 @@ def plan_dynamic_value_operation(
     }
     ledger_record["record_fingerprint"] = _ledger_record_fingerprint(ledger_record)
     ledger[operation_instance_id] = ledger_record
-    after_store = _reindex({"entries": entries, "operation_ledger": ledger})
+    after_store = freeze_json(_reindex({"entries": entries, "operation_ledger": ledger}))
+    # This producer extends an already validated store with its checked scoped
+    # entry and matching ledger row. Re-readers need not audit the entire write
+    # history again; imported/mutable stores still enter the full validator.
+    after_store._dynamic_store_validated = True
     metadata = {
         "effect_id": request.effect_id,
         "opcode": request.opcode,
@@ -850,6 +878,10 @@ def execute_dynamic_value_plan(
 def _strict_dynamic_value_store(value: object) -> dict[str, JSONValue]:
     if value is None:
         return empty_dynamic_value_store()
+    # Internal readers share one canonical immutable view. Writers already copy
+    # entries/ledger before constructing a new store; mutable inputs stay detached.
+    if type(value) is FrozenJSONDict and getattr(value, "_dynamic_store_validated", False):
+        return getattr(value, "_canonical_dynamic_store", value)
     if not isinstance(value, dict):
         raise TypeError("store_not_object")
     expected_store_fields = {"entries", "by_hash", "by_name", "operation_ledger"}
@@ -996,6 +1028,11 @@ def _strict_dynamic_value_store(value: object) -> dict[str, JSONValue]:
     canonical = _reindex({"entries": entries, "operation_ledger": ledger})
     if value.get("by_hash") != canonical["by_hash"] or value.get("by_name") != canonical["by_name"]:
         raise ValueError("store_index_mismatch")
+    if type(value) is FrozenJSONDict:
+        canonical = freeze_json(canonical)
+        canonical._dynamic_store_validated = True
+        value._canonical_dynamic_store = canonical
+        value._dynamic_store_validated = True
     return canonical
 
 
@@ -1068,6 +1105,11 @@ def _resolve_request_alias(
     alias: object,
     request: DynamicValueExecutionRequest,
 ) -> str:
+    if alias in {"DamageAttackerEntity", "DamageDefenderEntity"}:
+        from .damage import event_damage_identity_ids
+
+        attacker, defender = event_damage_identity_ids(state, request.trigger_event)
+        return (attacker if alias == "DamageAttackerEntity" else defender) or ""
     # The dotted spellings name the same committed summon relations.
     alias = {"Caster.GetServant": "CasterServant", "Caster.GetSummoner": "CasterSummoner"}.get(str(alias or ""), alias)
     if alias in {"CasterServant", "CasterSummoner"}:
@@ -1201,17 +1243,19 @@ def _resolved_scope(
 ) -> tuple[dict[str, JSONValue], str]:
     scope_kind = operation.scope_kind
     if (
-        rules is not None
-        and scope_kind in {"contextual", "ability"}
-        and _declared_slot_baseline(rules, state, target_id, operation) is not None
+        scope_kind in {"contextual", "ability"}
+        and (_unit_scope_destination_entry(state, target_id, operation)
+             or _declared_slot_baseline(rules, state, target_id, operation) is not None)
     ):
-        # A config-declared mutable slot is a unit value; writes made from an
-        # ability context must survive the ability so later actions can read it.
+        # A config-declared or already instantiated unit slot stays on that
+        # unit. Creation-time parameters also need later ability resets to
+        # update the same slot, rather than leave its previous value live.
         scope_kind = "unit"
     if scope_kind == "ability" and not request.ability_instance_id and request.status_instance_id:
         # A status-callback template runs inside event dispatch, not an ability
-        # instance; its cross-task scratch slots belong to the callback owner.
-        scope_kind = "unit"
+        # instance. Keep scratch values with that status, so another receiver's
+        # callback cannot supply a same-named temporary to a numeric expression.
+        scope_kind = "status" if target_id == (request.owner_id or request.caster_id) else "unit"
     if scope_kind == "contextual":
         if request.status_instance_id and (
             _unit_scope_destination_entry(state, target_id, operation)
@@ -1604,7 +1648,7 @@ def _operand_binding_sources(
     resolved_scope: Mapping[str, Any],
 ) -> tuple[dict[str, Any], ...]:
     sources = tuple(
-        thaw_json(source)
+        dict(source)
         for source in request.binding_sources
         if source.get("source_type") != "dynamic_value_store"
     )
@@ -2030,7 +2074,7 @@ def _resolve_source_operand(
         heal_amount = float(fact.heal_amount)
         healer_id = fact.healer_id
         read_alias = str(parameters.get("source_target_alias") or "")
-        if read_alias not in {"ModifierOwnerEntity", "Caster"}:
+        if read_alias not in {"ModifierOwnerEntity", "Caster", "ParamEntity"}:
             return None, {}, (
                 f"event_value_read_target_not_admitted:{read_alias or '<missing>'}"
             )
@@ -2210,7 +2254,7 @@ def _status_dynamic_value_mutation(
             "value_name": operation.destination_key,
             "hash": operation.destination_hash,
             "value": float(value),
-            "numeric_evaluation": thaw_json(evaluation),
+            "numeric_evaluation": evaluation,
             "effect_source": operation.source.to_json(),
         },
     ), ""
@@ -2234,7 +2278,7 @@ def _dynamic_value_plan_payload(
     return {
         "ok": ok,
         "operation": operation.to_json(),
-        "request": request.to_json() if request is not None else None,
+        "request": request.to_json(detach=False) if request is not None else None,
         "operation_instance_id": operation_instance_id,
         "before_state_fingerprint": before_state_fingerprint,
         "resolved_scope": resolved_scope,
@@ -2248,14 +2292,7 @@ def _dynamic_value_plan_payload(
 
 
 def _plan_id_from_payload(payload: Mapping[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        allow_nan=False,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return "dynamic_value_plan:" + hashlib.sha256(encoded).hexdigest()
+    return "dynamic_value_plan:" + json_tree_digest(payload).hex()
 
 
 def _dynamic_value_plan_id(plan: DynamicValuePlan) -> str:
@@ -2354,14 +2391,13 @@ def monster_skill_param_binding_sources(
         return ()
     entries: dict[str, JSONValue] = {}
     hashes: set[str] = set()
-    for index in range(len(definition.param_list)):
-        candidates = tuple(binding for binding in rules.skill_formula_bindings_for_action_param(
-            action_id, level, index, "direct_damage",
-        ) if binding.data_card_kind == "monster" and binding.data_card_id == card.card_id
-            and binding.owner_entity_ref == unit.template_id and binding.coverage_status == "executable")
-        if len(candidates) != 1:
+    # ReadInfo hashes belong to the whole monster card. One action can read
+    # another skill's parameters (for example the shared stacking debuff).
+    for binding in (binding for skill_id in card.skill_ids
+                    for binding in rules.skill_formula_bindings_for_action(f"monster_skill:{skill_id}", level)):
+        if (binding.data_card_kind != "monster" or binding.data_card_id != card.card_id
+                or binding.owner_entity_ref != unit.template_id or binding.coverage_status != "executable"):
             continue
-        binding = candidates[0]
         raw_hash = binding.scaling_basis_expr.get("dynamic_hash")
         value = binding.param_value.get("Value") if isinstance(binding.param_value, dict) else binding.param_value
         if (type(raw_hash) not in (str, int) or not str(raw_hash)
@@ -2466,10 +2502,18 @@ def character_declared_dynamic_binding_source(
     card = rules.character_data_card_for_entity(unit.template_id) if unit else None
     if card is None:
         return None
-    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
+    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id, detach=False)
     configured = bindings.get("by_hash") if isinstance(bindings, dict) else None
     if not isinstance(configured, dict):
         return None
+    cache = getattr(state, "_declared_binding_cache", None)
+    if cache is None:
+        cache = {}
+        object.__setattr__(state, "_declared_binding_cache", cache)
+    cache_key = (unit_id, ability_instance_id, excluded_hashes)
+    cached = cache.get(cache_key)
+    if cached is not None and cached[0] is rules and cached[1] is bindings:
+        return cached[2]
     stored = tuple(entry for entry in store_from_state(state).get("entries", {}).values()
                    if isinstance(entry, dict) and _entry_visible(entry, {
                        "target_id": unit_id, "ability_instance_id": ability_instance_id,
@@ -2513,14 +2557,17 @@ def character_declared_dynamic_binding_source(
             # Conflicting committed writers require explicit scope resolution.
             if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
                 continue
-            value = next(iter(values), 0.0)
-            basis = "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero"
+            baseline = binding.get("initial_value", 0.0)
+            if not _finite_number(baseline):
+                continue
+            value = next(iter(values), float(baseline))
+            basis = "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_value"
             producer_sources = [item.get("source_trace", {}) for item in candidates]
         entry = {"scope": "unit", "owner_id": unit_id, "hash": str(key), "name": binding.get("logical_name"), "value": value,
                  "source_trace": {"character_data_card": card.source.to_json(), "binding": binding,
                                    "value_basis": basis, "producer_sources": producer_sources}}
         entries[_entry_key(entry)] = entry
-    return (
+    result = (
         {
             "source_type": "character_declared_dynamic_values",
             "unit_id": unit_id,
@@ -2530,6 +2577,13 @@ def character_declared_dynamic_binding_source(
         if entries
         else None
     )
+    result = freeze_json(result)
+    # Ponytail: bound query variants per immutable state. New state versions
+    # start empty, so committed writes and status changes cannot reuse old values.
+    if len(cache) >= 32:
+        cache.clear()
+    cache[cache_key] = (rules, bindings, result)
+    return result
 
 
 def ability_declared_dynamic_binding_source(
@@ -2542,7 +2596,7 @@ def ability_declared_dynamic_binding_source(
     excluded_hashes: tuple[str, ...] = (),
 ) -> dict[str, JSONValue] | None:
     """Declared ability-local mutable slots, defaulting unset slots to zero."""
-    configured = rules.ability_phase_dynamic_value_bindings(ability_name)
+    configured = rules.ability_phase_dynamic_value_bindings(ability_name, detach=False)
     if not isinstance(configured, dict):
         return None
     declared = configured.get("by_hash")
@@ -2650,11 +2704,12 @@ def character_skill_param_binding_sources(
         )
         if rank_source is not None:
             sources.append(rank_source)
+        trace_owner_id = str(unit.flags.get("owner_id") or "") if unit.flags.get("summon_kind") == "servant" else unit_id
         declared = {
             *(
                 str(key)
                 for source in sources
-                if source.get("unit_id") == unit_id
+                if source.get("unit_id") in {unit_id, trace_owner_id}
                 for key in (
                     source.get("by_hash", {}).keys()
                     if isinstance(source.get("by_hash"), dict)
@@ -2691,6 +2746,12 @@ def character_trace_param_binding_source(
     unit = state.units.get(unit_id)
     if unit is None:
         return None
+    if unit.flags.get("summon_kind") == "servant":
+        definition = rules.servant_definition(str(unit.flags.get("servant_definition_id") or ""))
+        owner = state.units.get(str(unit.flags.get("owner_id") or ""))
+        if definition is None or owner is None or definition.owner_relation_for(owner.template_id) is None:
+            return None
+        unit, unit_id = owner, owner.unit_id
     card_id = unit.flags.get("character_data_card_id")
     if card_id is not None:
         if not isinstance(card_id, str) or not card_id:
@@ -2796,7 +2857,7 @@ def _character_rank_param_binding_source(
     if (card is None or card.entity_ref != unit.template_id
             or not isinstance(selected, (list, tuple))):
         return None
-    configured = rules.character_dynamic_value_bindings_for_card(card.card_id).get("by_hash", {})
+    configured = rules.character_dynamic_value_bindings_for_card(card.card_id, detach=False).get("by_hash", {})
     if not isinstance(configured, dict):
         return None
     entries: dict[str, JSONValue] = {}
@@ -3072,16 +3133,19 @@ def servant_declared_dynamic_binding_source(
         values = {float(entry["value"]) for entry in candidates if _finite_number(entry.get("value"))}
         if candidates and (len(values) != 1 or any(not _finite_number(entry.get("value")) for entry in candidates)):
             continue
+        baseline = binding.get("initial_value", 0.0)
+        if not _finite_number(baseline):
+            continue
         entry = {
             "scope": "unit",
             "owner_id": unit_id,
             "hash": str(key),
             "name": None,
-            "value": next(iter(values), 0.0),
+            "value": next(iter(values), float(baseline)),
             "source_trace": {
                 "servant_definition": definition.source.to_json(),
                 "binding": binding,
-                "value_basis": "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_zero",
+                "value_basis": "committed_dynamic_values" if candidates else "declared_mutable_numeric_slot_initial_value",
                 "producer_sources": [item.get("source_trace", {}) for item in candidates],
             },
         }
@@ -3195,7 +3259,7 @@ def character_skill_param_binding_source(
         card = rules.character_data_card_for_entity(param_unit.template_id)
     if card is None:
         return servant_skill_param_binding_source(rules, state, unit_id, excluded_hashes=excluded_hashes)
-    config_bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
+    config_bindings = rules.character_dynamic_value_bindings_for_card(card.card_id, detach=False)
     if not isinstance(config_bindings, dict):
         return None
     by_hash = config_bindings.get("by_hash")
@@ -3205,6 +3269,14 @@ def character_skill_param_binding_source(
     skill_levels_by_trigger_key = param_unit.flags.get("skill_levels_by_trigger_key")
     if not isinstance(skill_levels_by_trigger_key, dict):
         skill_levels_by_trigger_key = {}
+    param_declaring_unit_id = unit_id if param_unit is unit else str(unit.flags.get("summoner_id") or "")
+    cacheable = type(skill_levels_by_trigger_key) is FrozenJSONDict and type(config_bindings) is FrozenJSONDict
+    cache = getattr(skill_levels_by_trigger_key, "_skill_param_sources", {}) if cacheable else {}
+    cache_key = (card.card_id, unit_id, param_declaring_unit_id, type(action_level), action_level,
+                 current_action_trigger_key, excluded_hashes, excluded_names)
+    cached = cache.get(cache_key)
+    if cached is not None and cached[0] is rules and cached[1] is config_bindings:
+        return cached[2]
     param_slots = tuple(
         slot
         for slot in rules.character_mechanism_slots_for_card(card.card_id)
@@ -3261,11 +3333,7 @@ def character_skill_param_binding_source(
                 "skill_level": selected_level,
                 "skill_level_source": level_source,
                 "binding_owner_unit_id": unit_id,
-                "param_declaring_unit_id": (
-                    unit_id
-                    if param_unit is unit
-                    else str(unit.flags.get("summoner_id") or "")
-                ),
+                "param_declaring_unit_id": param_declaring_unit_id,
             },
         }
         entries[_entry_key(entry)] = entry
@@ -3287,7 +3355,7 @@ def character_skill_param_binding_source(
         )
     if not indexed["entries"]:
         return None
-    return {
+    result = {
         "source_type": "character_skill_param_slot",
         "unit_id": unit_id,
         "character_data_card_id": card.card_id,
@@ -3295,6 +3363,15 @@ def character_skill_param_binding_source(
         "by_hash": indexed["by_hash"],
         "by_name": indexed["by_name"],
     }
+    if cacheable:
+        result = freeze_json(result)
+        # Ponytail: only 64 query variants per immutable skill-level selection.
+        # A changed build gets a new selection object and therefore a fresh cache.
+        if len(cache) >= 64:
+            cache.clear()
+        cache[cache_key] = (rules, config_bindings, result)
+        skill_levels_by_trigger_key._skill_param_sources = cache
+    return result
 
 
 def character_skill_param_declared_keys(
@@ -3310,7 +3387,7 @@ def character_skill_param_declared_keys(
     card = rules.character_data_card_for_entity(unit.template_id)
     if card is None:
         return (), ()
-    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
+    bindings = rules.character_dynamic_value_bindings_for_card(card.card_id, detach=False)
     by_hash = bindings.get("by_hash") if isinstance(bindings, dict) else None
     if not isinstance(by_hash, dict):
         return (), ()
@@ -3403,6 +3480,16 @@ def binding_source_from_status_detail(
     detail: dict[str, Any],
     dynamic_values: object,
 ) -> dict[str, JSONValue] | None:
+    # Binding consumers only read this projection. A committed status version
+    # owns its cache; changed stacks, duration or values produce a new version.
+    cacheable = type(detail) is FrozenJSONDict and dynamic_values is detail.get("dynamic_values")
+    cached = getattr(detail, "_status_binding_source", None) if cacheable else None
+    if cached is not None:
+        return cached
+    filtered_cacheable = type(detail) is FrozenJSONDict and type(dynamic_values) is FrozenJSONDict and not cacheable
+    filtered_cached = getattr(detail, "_filtered_binding_source", None) if filtered_cacheable else None
+    if filtered_cached is not None and filtered_cached[0] is dynamic_values:
+        return filtered_cached[1]
     entries: dict[str, JSONValue] = {}
     source_trace = detail.get("source_trace", {})
     owner_id = str(detail.get("owner_id") or "")
@@ -3478,7 +3565,7 @@ def binding_source_from_status_detail(
     if not entries:
         return None
     indexed = _reindex({"entries": entries})
-    return {
+    result = {
         "source_type": "status_instance",
         "status_instance_id": str(detail.get("instance_id") or ""),
         "status_id": str(detail.get("status_id") or ""),
@@ -3486,6 +3573,13 @@ def binding_source_from_status_detail(
         "by_hash": indexed["by_hash"],
         "by_name": indexed["by_name"],
     }
+    if cacheable:
+        result = freeze_json(result)
+        detail._status_binding_source = result
+    elif filtered_cacheable:
+        result = freeze_json(result)
+        detail._filtered_binding_source = (dynamic_values, result)
+    return result
 
 
 def find_status_detail(

@@ -1094,6 +1094,7 @@ class CombatExecutor:
                 action_damage_modifiers=tuple(action_damage_modifiers),
                 admitted_action_target_fact=action_target_fact,
                 action_execution_token=action_execution_token,
+                damage_window_ledger=damage_window_ledger,
             )
             current_state = ability_result.after_state
             ability_task_results.append(ability_result)
@@ -1113,6 +1114,7 @@ class CombatExecutor:
                 action_command=command,
                 action_damage_modifiers=tuple(action_damage_modifiers),
                 event_dispatcher=self.event_dispatcher,
+                damage_window_ledger=damage_window_ledger,
             )
             processor_ctx = ActionHookContext(
                 state=current_state,
@@ -1151,12 +1153,7 @@ class CombatExecutor:
             processor_rng_events.extend(hook_result.rng_events)
             processor_event_normalizations.extend(hook_result.event_normalizations)
             events = (*events, *hook_result.events)
-            hook_hit_targets = tuple(
-                str(hook_event.target_id or hook_event.payload.get("target_id") or "")
-                for hook_event in hook_result.events
-                if hook_event.event_type == "damage.hit"
-            )
-            action_hit_targets.extend(t for t in hook_hit_targets if t)
+            action_hit_targets.extend(hook_result.hit_target_ids)
             if action_hit_targets and (
                 target_selection_context.dynamic_target or action_event_ir.target_mode == "bounce"
             ):
@@ -1297,6 +1294,7 @@ class CombatExecutor:
                             action_damage_modifiers=tuple(action_damage_modifiers),
                             admitted_action_target_fact=action_target_fact,
                             action_execution_token=action_execution_token,
+                            damage_window_ledger=damage_window_ledger,
                         )
                         current_state = ability_result.after_state
                         ability_task_results.append(ability_result)
@@ -1819,6 +1817,7 @@ class CombatExecutor:
                         action_damage_modifiers=tuple(action_damage_modifiers),
                         admitted_action_target_fact=action_target_fact,
                         action_execution_token=action_execution_token,
+                        damage_window_ledger=damage_window_ledger,
                     )
                     current_state = ability_result.after_state
                     ability_task_results.append(ability_result)
@@ -1851,6 +1850,21 @@ class CombatExecutor:
                 # the whole transition through the atomic boundary.
                 run_processor_hook()
             for hit_target_id in dict.fromkeys(action_hit_targets):
+                # 未实证：受击后监听以本次首个命中前的状态实例为准，避免
+                # 攻击刚施加的减益追溯触发本次攻击。多段中途施加的边界待实测。
+                initial_statuses = damage_window_ledger.target_status_instances.get(hit_target_id)
+                hit_unit = current_state.units.get(hit_target_id)
+                if initial_statuses is not None and hit_unit is not None and any(
+                    detail.get("instance_id") not in initial_statuses
+                    for detail in hit_unit.flags.get("status_details", ())
+                ):
+                    runtime_records.append(SettlementRecord(
+                        record_type="rule_assumption", source="damage_window", process_only=True,
+                        payload={"assumption_id": "after_attack_listener_snapshot", "status": "未实证",
+                                 "reason": "受击后监听取本次首个命中前的状态实例；新施加减益从下次攻击响应。",
+                                 "target_id": hit_target_id,
+                                 "todo": "游戏实测：同次攻击施加减益、多段中途施加减益的受击后触发时机。"},
+                    ).to_json())
                 for event_type in (
                     "damage.target_hit_sequence.after",
                     "damage.target_attack.after",
@@ -1864,6 +1878,7 @@ class CombatExecutor:
                             target_id=hit_target_id,
                             selected_target_ids=target_result.resolution.selected,
                             primary_target_id=action_execution_plan.primary_action_target_id,
+                            target_status_instance_ids=damage_window_ledger.target_status_instances.get(hit_target_id),
                             source_trace=action_source_metadata.get("source_trace", {}),
                             is_critical=target_hit_sequence_is_critical.get(
                                 hit_target_id,
@@ -3684,6 +3699,7 @@ def _action_window_dispatch_event(
 ) -> tuple[GameEvent, object]:
     event = GameEvent(
         event_type=f"action.window.{step.canonical_window}",
+        action_definition=action_definition,
         source_id=command.actor_id,
         target_id=(
             target_resolution.selected[0]

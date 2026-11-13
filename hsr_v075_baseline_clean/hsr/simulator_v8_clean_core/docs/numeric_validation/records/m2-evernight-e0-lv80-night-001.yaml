@@ -1,0 +1,45 @@
+comparison_record:
+  id: m2-evernight-e0-lv80-night-001
+  entries_counted: ["长夜月1413 E0满行迹", "长夜月20021/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: d070e311bdc32d92b3bc443c3a0bfd951e698eed52fb529117c7bc3c5f33acc5
+    processor: "EvernightProcessor v0.4.0 / NightProcessor v0.1.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    invocation: "原生generateContext/runStatSimulations；首次普攻，未开启终结技状态"
+  build:
+    attacker: "1413，80/P6/E0，满行迹、忆灵技能6级；焚影S1、快枪手4、仙舟2；+15无副词条，生命衣/速度鞋/生命球/生命绳"
+    companion: "娜塔莎23013/101/302既验构筑"
+    input: examples/cli/evernight_lv80_night_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, ice_resistance: 0.2, broken: false}
+  operations: "主路线32选择/64操作；独立治疗分支3选择/6操作，仅公开查询与提交。"
+  reference_values:
+    - {event: first_basic_noncrit, reference: 1822.7619930898568, simulator: 1822.7618708469536, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000006706, verdict: PASS}
+  game_comparison:
+    status: "普攻与固定构筑独立对照通过"
+    scope: "不外推为强化伤害、治疗及全部时序的游戏实证。"
+  behavior_checks:
+    - "长夜月普通攻击、终结技、战技重召；忆灵160速、普通与强化动作、五个忆灵实例。"
+    - "强化状态充能2到1再耗尽，原生OnListenTurnBegin在主人下一回合退出强化状态。"
+    - "已有忆灵时战技替换为141309，同一活实例HP从3006.2913552恢复至3164.517216。"
+    - "重建光环父状态前清理旧投影，避免新父实例继承旧父关系。"
+  sources:
+    - "固定AvatarSkillConfig141301/141302/141303/141309、AvatarServantSkillConfig1141301/1141307及对应原生状态、参数绑定。"
+  assumptions:
+    - "未实证：行迹人数包含倒下但未移除的记忆角色，不计忆灵；结果显示evernight_party_count_alive_boundary，必须游戏实测。"
+    - "共享回合与受击后边界沿用已显示的未实证解释；自检和重放不能替代游戏实测。"
+  unverified_params: ["敌人等级/冰抗为给定对照输入。"]
+  execution_checks:
+    - "evernight19主路线32选择与evernight_heal_branch3短分支通过；对应正式可运行集成测试已保存。"
+  performance:
+    advance_submit_mean_seconds: 11.487378090372658
+    verdict: "复杂路线未达到0.33秒预算"
+  artifacts: [/tmp/hsr_v1_evernight19.json.gz, /tmp/hsr_v1_evernight19.log, /tmp/hsr_v1_evernight_heal_verified.json.gz, /tmp/hsr_v1_evernight_heal_branch3.log]

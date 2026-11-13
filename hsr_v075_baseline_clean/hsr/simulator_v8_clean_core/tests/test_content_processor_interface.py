@@ -91,6 +91,103 @@ def test_mount_catalog_is_generic_and_sorted():
     assert _rules("fixture:alpha").content_processors == ()
 
 
+def test_netherwing_choices_keep_breath_tier_until_departure_and_gate_finisher():
+    from types import SimpleNamespace
+    from hsr.simulator_v8_clean_core.content_processors.castorice import CastoriceServantProcessor
+
+    processor = CastoriceServantProcessor()
+    choices = tuple(SimpleNamespace(choice_kind='summon_action', action_level=6,
+        action_id='servant_skill:' + action) for action in ('1140701', '1140702', '1140710', '1140711', '1140712'))
+    def actions(tier, hp, statuses=()):
+        actor = _unit('dragon', 'servant:11407', statuses=statuses,
+            flags={'castorice_breath_tier': tier, 'castorice_breath_finish_ratio': .25})
+        actor = replace(actor, hp=hp)
+        ctx = AvailabilityContext(BattleState(units={'dragon': actor}), actor, choices, ())
+        return {c.action_id for c in processor.filter_choices(ctx).choices}
+    assert actions(0, 100) == {'servant_skill:1140701', 'servant_skill:1140702'}
+    assert actions(1, 100) == {'servant_skill:1140701', 'servant_skill:1140710'}
+    assert actions(2, 25) == {'servant_skill:1140701', 'servant_skill:1140712'}
+    assert actions(2, 100, ('modifier:MServant_CastoriceServant_TiggerKiller',)) == {'servant_skill:1140712'}
+
+
+def test_netherwing_finisher_preserves_one_hp_until_native_damage_and_healing():
+    from hsr.simulator_v8_clean_core.core.content_hooks import ActionHookContext
+    from hsr.simulator_v8_clean_core.core.model import ActionCommand, TargetResolution
+    from hsr.simulator_v8_clean_core.content_processors.castorice import CastoriceServantProcessor
+
+    rules = _rules('servant:11407')
+    from hsr.simulator_v8_clean_core.rules.engine_rule_registry import build_engine_rule_registry
+    rules = replace(rules, ir=replace(rules.ir, damage_route_rules=build_engine_rule_registry().damage_route_rules))
+    command = ActionCommand('dragon', 'servant_skill:1140712', 6)
+    for expired in (False, True):
+        dragon = replace(_unit('dragon', 'servant:11407'), hp=25,
+            statuses=('modifier:MServant_CastoriceServant_TiggerKiller',) if expired else ())
+        state = BattleState(units={'dragon': dragon})
+        services = ProcessorServices(state, rules, producer_id='servant:11407', action_command=command,
+                                     event_dispatcher=_dispatcher(rules))
+        result = CastoriceServantProcessor().execute_action(
+            ActionHookContext(state, command, None, TargetResolution(), services))
+        assert result.ok and not result.takeover
+        assert services.unit('dragon').hp == (25 if expired else 1)
+        assert services.unit('dragon').lifecycle_status == 'active'
+
+
+def test_direct_status_callback_honors_caster_processor_replacement():
+    from hsr.simulator_v8_clean_core.rules.ir import StatusCallbackIR
+    from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem
+
+    processor = _Recorder('fixture:alpha')
+    processor.replaced_status_callbacks = frozenset({('M', 'OnBeforeBeingHeal')})
+    rules = mount_catalog(_rules('fixture:alpha'), {'fixture:alpha': lambda: processor})
+    detail = {'owner_id': 'recipient', 'caster_id': 'caster', 'modifier_name': 'M', 'instance_id': 'status'}
+    state = BattleState(units={'recipient': _unit('recipient', 'fixture:other', flags={'status_details': [detail]}),
+                               'caster': _unit('caster', 'fixture:alpha')})
+    callback = StatusCallbackIR('callback', 'M', 'OnBeforeBeingHeal', (), _source(), (0, 0))
+    rules = replace(rules, ir=replace(rules.ir, status_callbacks=(callback, replace(callback, callback_id='other', event='OnHPChange'))))
+    result = StatusCallbackSystem(rules).execute(state, unit_id='recipient', modifier_name='M', event=callback.event)
+    assert result.ok and result.after_state is state and not result.mutations
+    assert result.records[0]['payload']['reason'] == 'content_processor_replaces_callback'
+    # Another callback on the same status is still subject to normal admission.
+    assert not StatusCallbackSystem(rules).execute(state, unit_id='recipient', modifier_name='M', event='OnHPChange').ok
+
+
+def test_being_healed_callback_receives_typed_healer_and_deal_heal_keeps_victim():
+    from hsr.simulator_v8_clean_core.core.model import Mutation
+    from hsr.simulator_v8_clean_core.rules.ir import StatusCallbackIR
+    from hsr.simulator_v8_clean_core.systems.mutation_events import events_for_mutation
+    from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackSystem, StatusCallbackExecutionResult
+
+    mutation = Mutation('set', ('units', 'recipient', 'hp'), 50, 80, 'apply numeric heal effect', 'fixture')
+    event, = events_for_mutation(mutation, actor_id='healer')
+    detail = {'owner_id': 'recipient', 'caster_id': 'recipient', 'modifier_name': 'M', 'instance_id': 'status'}
+    state = BattleState(units={'recipient': _unit('recipient', 'fixture:alpha', flags={'status_details': [detail]}),
+                               'healer': _unit('healer', 'fixture:alpha')})
+    rules = _rules('fixture:alpha')
+    observed = []
+    def capture(state, callback, detail, event, *args, **kwargs):
+        from hsr.simulator_v8_clean_core.systems.status_callbacks import _condition_context
+        observed.append(_condition_context(rules, state, detail, event).param_entity_id)
+        assert event.heal_event_fact.matches_heal_after(event)
+        return StatusCallbackExecutionResult(ok=True, after_state=state)
+    for name in ('OnAfterBeingHeal', 'OnAfterDealHeal'):
+        callback = StatusCallbackIR('callback', 'M', name, (), _source(), (0, 0),
+                                    coverage_status='executable', source_mode='mainline_avatar_ability')
+        rules = replace(rules, ir=replace(rules.ir, status_callbacks=(callback,)))
+        system = StatusCallbackSystem(rules)
+        system._execute_formal_callback = capture
+        assert system.execute(state, unit_id='recipient', modifier_name='M', event=name, trigger_event=event).ok
+    assert observed == ['healer', 'recipient']
+
+
+def test_removed_content_receives_its_terminal_event_but_no_later_ordinary_events():
+    processor = _Recorder('fixture:alpha')
+    processor.subscriptions = lambda: (EventSubscription(('custom.event', 'unit.removed')),)
+    rules = mount_catalog(_rules('fixture:alpha'), {'fixture:alpha': lambda: processor})
+    state = BattleState(units={'u1': _unit('u1', 'fixture:alpha', lifecycle_status='removed')})
+    assert len(processors_for_event(rules, state, _event('unit.removed'))) == 1
+    assert not processors_for_event(rules, state, _event())
+
+
 def test_mount_rejects_identity_mismatch():
     rules = _rules("fixture:alpha")
     with pytest.raises(ValueError):
@@ -191,6 +288,30 @@ def test_processor_emitted_events_reenter_same_channel_with_depth_cap():
     dispatcher = _dispatcher(rules)
     result = dispatcher.dispatch_event(state, event=_event())
     assert result.errors and "content_processor_event_depth_exceeded" in ",".join(result.errors)
+
+
+def test_processor_resource_event_is_returned_once():
+    rules = _rules("fixture:alpha")
+
+    class _Energy(ContentProcessorBase):
+        content_id = "fixture:alpha"
+        version = "1"
+
+        def subscriptions(self):
+            return (EventSubscription(("custom.event",)),)
+
+        def on_event(self, ctx):
+            ctx.services.grant_energy("u1", 6.0, ctx.event)
+            return ctx.services.finish()
+
+    attach_processors(rules, (MountedProcessor("fixture:alpha", "1", _Energy()),))
+    state = BattleState(units={"u1": replace(_unit("u1", "fixture:alpha"), energy=0.0, max_energy=120.0)})
+    result = _dispatcher(rules).dispatch_event(state, event=_event())
+    assert not result.errors, result.errors
+    assert result.after_state.units["u1"].energy == 6.0
+    events = [event for event in result.events if event.event_type == "energy.change"]
+    assert len(events) == 1
+    assert events[0].energy_change_event_fact.delta == 6.0
 
 
 def test_action_hook_lookup_is_by_actor_identity():
@@ -414,6 +535,14 @@ def test_services_resolve_rng_records_event_deterministically():
     services2 = ProcessorServices(state, rules, producer_id="fixture:alpha:1")
     resolution2 = services2.resolve_rng(request("event:fixture:rng:1"))
     assert resolution2.selected_outcome_id == resolution.selected_outcome_id
+    from hsr.simulator_v8_clean_core.core.model import ActionCommand
+    chosen = 'miss' if resolution.selected_outcome_id == 'hit' else 'hit'
+    command = ActionCommand('u1', 'fixture_action', 1, metadata={
+        'rng_mode': 'explicit', 'rng_choices': {'fixture:event:fixture:rng:1': chosen},
+    })
+    services3 = ProcessorServices(state, rules, producer_id='fixture:alpha:1', action_command=command)
+    explicit = services3.resolve_rng(request('event:fixture:rng:1'))
+    assert explicit.selected_outcome_id == chosen and explicit.choice_source == 'explicit_ledger'
 
 
 def test_services_resolve_rng_failure_zero_output():

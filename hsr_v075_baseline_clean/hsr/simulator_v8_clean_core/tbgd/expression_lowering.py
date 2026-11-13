@@ -31,6 +31,8 @@ _DYNAMIC_RUNTIME_TARGET_ALIASES = frozenset(
         "LevelEntity",
         "ModifierOwnerEntity",
         "ParamEntity",
+        "DamageAttackerEntity",
+        "DamageDefenderEntity",
         # Battle-event callbacks write values on the event's committed creator.
         "BattleEventCaster",
     }

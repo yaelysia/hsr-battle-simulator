@@ -8,7 +8,7 @@ import sys
 from typing import Any
 
 from .battle_archive import read_archive, read_json_object, replay_archive, restore_session, write_archive
-from .session import BattleSession, command_from_json
+from .session import BattleSession, command_from_json, rule_assumption_records
 from .tbgd.battle_catalog import build_battle_rulebook
 
 
@@ -22,6 +22,9 @@ def _show_state(session: BattleSession) -> None:
         print(f"  {unit.unit_id} [{unit.side}] HP {unit.hp:g}/{unit.max_hp:g}  能量 {unit.energy:g}/{unit.max_energy:g}  韧性 {unit.toughness:g}/{unit.max_toughness:g}")
     if session.outcome:
         print(f"战斗结果：{session.outcome}")
+    for record in rule_assumption_records(session.operations):
+        payload = record['payload']
+        print(f"未实证 [{payload['assumption_id']}]：{payload['reason']} {payload['todo']}")
 
 
 def _play(session: BattleSession) -> int:

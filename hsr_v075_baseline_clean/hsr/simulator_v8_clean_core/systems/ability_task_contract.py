@@ -223,7 +223,7 @@ def ability_task_runtime_blocked_reason(
             if child.parent_task_id != task.task_id:
                 return "retarget_child_parent_mismatch"
         return ""
-    if task.opcode == "LoopExecuteTaskListWithInterval":
+    if task.opcode in {"LoopExecuteTaskList", "LoopExecuteTaskListWithInterval"}:
         runtime_count = task.source.evidence.get("repeat_count_runtime_bound") is True
         if topology_authority == "task_graph" and (task.repeat_count > 0 or runtime_count):
             # 任务图循环节点自行解析次数表达式（count_expression）。

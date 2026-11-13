@@ -1,0 +1,358 @@
+{
+  "commands": [
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140701",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140703",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140703",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140709",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "summon:servant:a41b12b84af1",
+      "action_id": "servant_skill:1140702",
+      "action_level": 6,
+      "target_ids": []
+    },
+    {
+      "actor_id": "summon:servant:a41b12b84af1",
+      "action_id": "servant_skill:1140710",
+      "action_level": 6,
+      "target_ids": []
+    },
+    {
+      "actor_id": "summon:servant:a41b12b84af1",
+      "action_id": "servant_skill:1140711",
+      "action_level": 6,
+      "target_ids": []
+    },
+    {
+      "actor_id": "summon:servant:a41b12b84af1",
+      "action_id": "servant_skill:1140712",
+      "action_level": 6,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "castorice"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140702",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140703",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "castorice",
+      "action_id": "avatar_skill:140703",
+      "action_level": 10,
+      "target_ids": []
+    }
+  ]
+}

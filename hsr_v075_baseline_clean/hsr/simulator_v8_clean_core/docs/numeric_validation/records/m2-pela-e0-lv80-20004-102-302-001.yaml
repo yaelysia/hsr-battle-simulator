@@ -1,0 +1,55 @@
+comparison_record:
+  id: m2-pela-e0-lv80-20004-102-302-001
+  game_version: "计算器未注明游戏版本，固定源码提交；限本构筑与目标条件"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮准入、伤害目标、驱散计数、受控回合及佩拉处理器改动"
+    rules_fingerprint: 454cfa18561a0c71162858aee409717350e8a960a9b98adb2fbd2f910930d9e9
+    processor: "avatar:1106:0.2.0"
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [pela_basic_hit_noncrit, pela_ult_after_dispel_noncrit]
+    invocation: "原生 generateContext/runStatSimulations，未修改外部公式"
+  build:
+    avatar: 1106
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10、全部属性及大行迹"
+    light_cone: {id: 20004, name: 幽邃, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, pieces: 4, level: 15, mains: [HP, ATK, EHR, SPD], sub_affixes: []}
+    relics_inner: {set: 302, pieces: 2, level: 15, mains: [Ice_damage, ERR], sub_affixes: []}
+    input: examples/cli/pela_lv80_dispel_and_equipment.json
+    teammate: "娜塔莎80/P6/E0满行迹、空装备，不提供本次伤害的增益"
+  target: {stage: 201210016, wave: 0, monster: 1002020, monster_level: 74, ice_resistance: 0}
+  operations: "同名commands文件12条公开选择；两段普攻、真实鼓舞增益驱散、终结技减防、追歼下次攻击增伤、冰击破、冻结取消已开始回合及后续操作"
+  rng: {note: "下列命中均非暴击；外部CR补正-0.05固定同一分支，无暴击率阈值效果"}
+  reference_values:
+    - {event: first_basic_each_of_two_hits, reference: 614.0719691853528, simulator: 614.0730738097426, relative_error: 0.000001798852, source: "Fribbels BASIC，0.5分段作为输入", independent: true}
+    - {event: first_ultimate_unbroken_second_target_after_dispel, reference: 1790.227481675655, simulator: 1790.2302090671349, relative_error: 0.000001523489, source: "Fribbels ULT，A2+A6增伤、40%减防", independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001798852, verdict: PASS}
+  game_comparison: {status: "成熟计算器普攻与追歼终结技对照通过", scope: "不含命中概率分布、冻结时机及回能的独立数值对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 佩拉、幽邃与两套遗器原生模型"
+    - "https://srl.keqingmains.com/characters/pela/ — Wipe Out：驱散后下一次攻击增伤20%"
+    - "https://www.hoyolab.com/article/19822028 — 回合内插入终结技造成击破/控制可取消敌人剩余行动；版本1.1"
+    - "固定TBGD Avatar_Pela_00_Skill01_Phase02、Skill02_Phase02、SkillTree01/02及MAvatar_Pela_SkillTree03_DamageAddedRatio"
+  unverified_params:
+    - "普攻0.5/0.5分段取自固定TBGD，作为外部输入；不声称独立验证分段参数。"
+    - "终结技只比pos:1目标：命中前未击破；pos:0已击破，未混入比较。"
+    - "幽邃入场效果与自然到期、追歼、天赋回能沿公开路线检查；数值对照不能替代概率分布验证。"
+  notes:
+    - "普攻处理器仅安排两段现有命中任务，不模拟弹道轨迹或飞行时间；每段沿L1完整命中窗口及结算。"
+    - "追歼的新授予不会被当前攻击的结束通知消费；下一次攻击结束才移除。"
+    - "归档/tmp/hsr_v1_pela_complete_v2.json.gz；运行日志/tmp/hsr_v1_pela.log。"
+  follow_up_validation:
+    reason: "修复HitSplitRatio遗漏导致的逐段削韧重复后，重新生成公开路线；保留上面的原实验指纹，不回填历史。"
+    rules_fingerprint: f08ce5a9f23ecabdef9607411936dcd4ee16e3fad23b510f9d3e18c9b9ff3854
+    archive: /tmp/hsr_v1_pela_split_verified.json.gz
+    operations: "当前同名commands文件12条；两名流浪者分别对自己鼓舞，驱散后在敌方回合插入终结技"
+    result: "普攻总削韧30；上述两组伤害值不变。追歼授予/消费、驱散成功/空目标、冻结中断与后续跳过回合均有记录。"

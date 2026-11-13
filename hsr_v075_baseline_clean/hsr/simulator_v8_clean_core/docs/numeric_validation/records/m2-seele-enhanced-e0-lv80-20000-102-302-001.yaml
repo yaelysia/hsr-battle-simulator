@@ -1,0 +1,56 @@
+comparison_record:
+  id: m2-seele-enhanced-e0-lv80-20000-102-302-001
+  game_version: "计算器未声明游戏版本；使用增强版SeeleB1，与固定TBGD EnhancedID=1一致"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: b635668065a0f1817d6d2a06f780827a41576800f402a24a898a40c784730fad
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [seele_b1_basic_0.3_noncrit, seele_b1_basic_0.7_noncrit, seele_b1_ult_buffed_noncrit]
+    invocation: "原生generateContext/runStatSimulations；角色1102b1，未修改外部公式"
+  build:
+    avatar: 1102
+    enhanced_id: 1
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10、增强版17个满级行迹节点；未混入原版行迹"
+    light_cone: {id: 20000, name: 锋镝, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, pieces: 4, level: 15, mains: [HP, ATK, CR, SPD], sub_affixes: []}
+    relics_inner: {set: 302, pieces: 2, level: 15, mains: [Quantum_DMG, ATK_percent], sub_affixes: []}
+    input: examples/cli/seele_lv80_resurgence_and_equipment.json
+    initial_condition: "满HP、120能量；娜塔莎为空装备辅助"
+  target: "Stage402120485，Lv70金人司阍2013010；量子弱点、0抗性，三个对照命中时均未击破"
+  operations: "同名commands文件17条公开选择；普攻、战技、终结技、低HP目标自动战技、击杀再现选择及胜利"
+  rng:
+    mode: deterministic_seed
+    note: "三个对照命中均非暴击；外部以CR补正到0隔离相同分支。普攻时锋镝有效，首次终结技时锋镝已到期"
+  reference_values:
+    - {event: basic_first_hit, reference: 462.10587415157414, simulator: 462.1068528002355, relative_error: 0.000002117802, independent: true}
+    - {event: basic_second_hit, reference: 1078.247039687006, simulator: 1078.2493232005495, relative_error: 0.000002117802, independent: true}
+    - {event: first_ultimate, reference: 20381.32734529872, simulator: 20381.357287780276, relative_error: 0.000001469113, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000002117802, verdict: PASS}
+  game_comparison: {status: "成熟计算器普攻与强化终结技对照通过", scope: "终结技含增幅80%增伤及25%量子抗穿；击杀增伤层数为0"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/blob/d60f0375e6649cebbc82dc6f34b34d64fb0869d2/src/lib/conditionals/character/1100/SeeleB1.ts"
+    - "固定TBGD AvatarConfigEnhanced、AvatarSkillTreeConfig、Advanced/Avatar_Advanced_Seele_00_Ability.json：增强版参数与触发规则"
+    - "固定TBGD TextMapCHS键16524344329940429355：额外回合不消耗回合数，期间不能插入终结技"
+  unverified_params:
+    - "计算器把普攻合并为一次命中；驱动以固定TBGD的0.3/0.7权重输入原生倍率，不将权重称为独立验证。"
+    - "未外推为所有击杀增伤层数、击破及每个随机分支的独立数值对照。"
+  notes:
+    - "初次数值归档/tmp/hsr_v1_seele_complete.json.gz；补齐再现开始回调后的最终归档/tmp/hsr-v1-seele-capture/seele_v1_complete.json.gz，35次操作，victory，独立CLI重放35步无错误。三项数值未变。"
+    - "test_v1_basic_routes.py额外行动分支使用公开rng_choices，让最后一段暴击击杀第二个召唤物，确认不再次触发再现；未注入HP或队列状态。"
+    - "共用抗穿公式、正式动作上下文与队列机制；没有希儿ID运行分支或第二套伤害公式。"
+  follow_up_validation:
+    reason: "按金人合法模式与默认状态时机重建操作，补惩戒中断标记幂等、龙鱼自爆和额外回合窗口恢复；原实验不回填。"
+    rules_fingerprint: 6fae588d43c7bc56752537f467312919c8e49223bd221ab18d755f3cf28d90cc
+    archive: /tmp/hsr-v1-rng-order-tests/test_lv80_enhanced_seele_damag0/seele_v1_complete.json.gz
+    operations: "16次选择取胜，2次再现；再现内击杀不再次入队，公开RNG分支不改变主会话；独立重放33步、0错误。"
+    result: "原普攻两段及首次强化终结技的对照值不变。金人儆惧的虚弱选择未命中，随机输入完整保存在commands。"

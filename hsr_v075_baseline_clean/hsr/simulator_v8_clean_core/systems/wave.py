@@ -173,7 +173,7 @@ class WaveSystem:
                 definition_reason,
                 source_trace=definition.source.to_json(),
             )
-        if _active_ally_count(state, self.lifecycle) == 0:
+        if state.global_flags.get("battle_defeat_requested") is True or _active_ally_count(state, self.lifecycle) == 0:
             return WaveTransitionPlan(
                 ok=True,
                 status="battle_defeat",

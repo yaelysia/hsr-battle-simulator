@@ -294,6 +294,10 @@ def _json_equal(left: Any, right: Any) -> bool:
             result = len(a) == len(b) and all(equal(x, y) for x, y in zip(a, b))
         elif type(a) is type(b) and type(a) in (str, int, bool, type(None)):
             return a == b
+        elif type(a) is float and type(b) is float:
+            # Preserve canonical JSON's -0.0 distinction without serializing
+            # every numeric leaf twice during archive verification.
+            return math.isfinite(a) and a == b and (a != 0.0 or math.copysign(1.0, a) == math.copysign(1.0, b))
         else:
             return _canonical_json(a) == _canonical_json(b)
         if result:

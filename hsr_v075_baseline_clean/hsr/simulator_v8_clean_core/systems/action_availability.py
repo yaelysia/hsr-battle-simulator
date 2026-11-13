@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from ..builds.models import OwnedCombatantBuildAssemblyResult
@@ -30,6 +30,7 @@ from .skill_properties import effective_action_property
 from .phase_machine import AWAITING_DECISION, CombatPhaseMachine
 from .scheduler import (
     TIMELINE_TIE_CHOICE_ACTION_ID,
+    _action_kind_allowed,
     _queue_entry_resource_policy,
     _resolution_for_drain_plan,
     queue_plan_requires_external_command,
@@ -465,7 +466,7 @@ class ActionAvailabilitySystem:
                     turn_owner_id,
                     queue,
                     blocked,
-                    requires_scheduler_step=actor_reason == "unit_defeated",
+                    requires_scheduler_step=actor_reason in {"unit_defeated", "unit_removed"},
                     actor=ActorAvailability(
                         turn_owner_id,
                         actor.side,
@@ -484,6 +485,7 @@ class ActionAvailabilitySystem:
                     turn_owner_id,
                     queue,
                     blocked,
+                    requires_scheduler_step=True,
                     actor=ActorAvailability(
                         turn_owner_id,
                         actor.side,
@@ -771,6 +773,8 @@ class ActionAvailabilitySystem:
         if not action_id or action_level is None:
             return "queue_action_resolution_missing"
         target_ids = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
+        if resolution.resolved_kind == "extra_turn_action_choice":
+            target_ids = ()  # The chosen action supplies targets, not its prepare ability.
         target_query = self.action_targets.query(state, actor_id, action_id, action_level)
         if not target_query.resolved:
             return target_query.blocked_reason or "queue_action_target_query_blocked"
@@ -850,9 +854,15 @@ class ActionAvailabilitySystem:
         actor_id = str(plan.queue_entry.get("actor_id") or "")
         actor = state.units.get(actor_id)
         actor_side = actor.side if actor is not None else ""
+        if resolution.resolved_kind == "extra_turn_action_choice" and not plan.resolved_action_id:
+            if actor is None or actor.side != "ally":
+                return ()
+            return self._ally_choices(state, actor, queue_plan=plan)[0]
         action_id = plan.resolved_action_id or str(plan.queue_entry.get("action_or_ability_ref") or "")
         action_level = int(plan.resolved_action_level or 0)
         target_ids = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
+        if resolution.resolved_kind == "extra_turn_action_choice":
+            target_ids = ()
         boundary_reason = self._queue_action_boundary_blocked_reason(state, plan, resolution)
         if boundary_reason:
             return ()
@@ -1011,6 +1021,7 @@ class ActionAvailabilitySystem:
         actor: UnitState,
         *,
         manual_ultimate_request: bool = False,
+        queue_plan: QueueDrainPlan | None = None,
     ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
         action_set = self.rules.combatant_action_set(actor.template_id)
         if action_set is None:
@@ -1085,7 +1096,7 @@ class ActionAvailabilitySystem:
                 )
             definition = self.rules.action_definition(action_id, level)
             is_ultimate = definition is not None and definition.attack_type == "Ultra"
-            if manual_ultimate_request != is_ultimate:
+            if queue_plan is None and manual_ultimate_request != is_ultimate:
                 continue
             if reason:
                 blocked.append(
@@ -1103,6 +1114,16 @@ class ActionAvailabilitySystem:
                         },
                     )
                 )
+                continue
+            if queue_plan is not None:
+                policy = self.rules.extra_action_policy_for_intent(queue_plan.queue_intent_id)
+                resolution = self.rules.queue_resolution_for_intent(queue_plan.queue_intent_id)
+                if (policy is not None and policy.coverage_status == "executable"
+                        and resolution is not None and definition is not None
+                        and (not policy.allowed_action_kinds or _action_kind_allowed(
+                            definition.attack_type, definition.skill_effect, set(policy.allowed_action_kinds)))):
+                    choices.extend(self._queue_choices(state, replace(queue_plan,
+                        resolved_action_id=action_id, resolved_action_level=level), resolution))
                 continue
             choice, reason = self._normal_action_choice(
                 state,

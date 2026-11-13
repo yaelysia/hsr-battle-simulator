@@ -797,14 +797,14 @@ def _apply_startup_ability_effects(
             for entry in _dict_items(spec.get("admitted_tasks"))
             if entry.get("task_id")
         }
-        if kind in {"formal_character_passive", "formal_character_build", "formal_servant_passive", "formal_stage"}:
+        if kind in {"formal_character_passive", "formal_character_ability", "formal_character_build", "formal_servant_passive", "formal_stage"}:
             if kind == "formal_stage":
                 result = ability_tasks.execute_stage_startup(
                     current, actor_id=unit_id, wave_definition_id=spec["wave_definition_id"],
                 )
             elif kind == "formal_servant_passive":
                 result = ability_tasks.execute_servant_startup(current, actor_id=unit_id, ability_name=ability_name)
-            elif kind == "formal_character_passive":
+            elif kind in {"formal_character_passive", "formal_character_ability"}:
                 result = ability_tasks.execute_character_startup(
                     current, invocation=CharacterStartupInvocation(
                         unit_id, spec["action_id"], spec["action_level"], spec["binding_id"],

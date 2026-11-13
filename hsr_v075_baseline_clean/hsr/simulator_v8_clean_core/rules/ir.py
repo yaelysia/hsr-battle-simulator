@@ -4204,7 +4204,7 @@ def _validate_target_node_sources(
 
     child_specs: tuple[tuple[str, tuple[str, ...]], ...] = ()
     if expression_kind == "TargetFilter":
-        child_specs = (("candidate", (".TargetType", ".Target", ".Targets")),)
+        child_specs = (("candidate", (".TargetType", ".Target", ".Targets", ".ReadTargetType")),)
     elif expression_kind == "Retarget":
         child_specs = (("target", (".TargetType",)),)
     elif expression_kind == "TargetQuery":
@@ -7839,6 +7839,7 @@ class WaveDefinitionIR:
     stage_startup_phase_ids: tuple[str, ...] = ()
     stage_environment_status: str = "blocked"
     stage_environment_blocked_reason: str = "stage_environment_not_compiled"
+    stage_environment_data: dict[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.stage_environment_status not in {"blocked", "executable"}:
@@ -7847,6 +7848,7 @@ class WaveDefinitionIR:
             raise ValueError("stage environment admission requires its exact blocked reason")
         # Startup phases follow template installation order, not set order.
         _require_unique_strings(self.stage_startup_phase_ids, "stage startup phase ids")
+        object.__setattr__(self, "stage_environment_data", freeze_json(self.stage_environment_data))
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -7864,6 +7866,7 @@ class WaveDefinitionIR:
             "stage_startup_phase_ids": list(self.stage_startup_phase_ids),
             "stage_environment_status": self.stage_environment_status,
             "stage_environment_blocked_reason": self.stage_environment_blocked_reason,
+            **({"stage_environment_data": self.stage_environment_data} if self.stage_environment_data else {}),
         }
 
 

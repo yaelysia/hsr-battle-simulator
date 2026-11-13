@@ -1,0 +1,167 @@
+{
+  "scenario_id": "pela:lv80-e0-20004-102-302",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "pela",
+      "side": "ally",
+      "entity_ref": "avatar:1106",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "pela:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1106",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1106:1106001:6",
+          "character_trace_node:character_data_card:avatar:1106:1106002:10",
+          "character_trace_node:character_data_card:avatar:1106:1106003:10",
+          "character_trace_node:character_data_card:avatar:1106:1106004:10",
+          "character_trace_node:character_data_card:avatar:1106:1106101:1",
+          "character_trace_node:character_data_card:avatar:1106:1106102:1",
+          "character_trace_node:character_data_card:avatar:1106:1106103:1",
+          "character_trace_node:character_data_card:avatar:1106:1106201:1",
+          "character_trace_node:character_data_card:avatar:1106:1106202:1",
+          "character_trace_node:character_data_card:avatar:1106:1106203:1",
+          "character_trace_node:character_data_card:avatar:1106:1106204:1",
+          "character_trace_node:character_data_card:avatar:1106:1106205:1",
+          "character_trace_node:character_data_card:avatar:1106:1106206:1",
+          "character_trace_node:character_data_card:avatar:1106:1106207:1",
+          "character_trace_node:character_data_card:avatar:1106:1106208:1",
+          "character_trace_node:character_data_card:avatar:1106:1106209:1",
+          "character_trace_node:character_data_card:avatar:1106:1106210:1"
+        ],
+        "equipment_build": {
+          "build_id": "pela:equipment:20004-102-302",
+          "character_card_id": "character_data_card:avatar:1106",
+          "light_cone": {
+            "instance_id": "pela:cone",
+            "definition_key": "20004",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:pela:relic:body",
+              "template_key": "61023",
+              "slot_key": "BODY",
+              "level": 15,
+              "main_affix_key": "53:7",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "m2:pela:relic:foot",
+              "template_key": "61024",
+              "slot_key": "FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "m2:pela:relic:hand",
+              "template_key": "61022",
+              "slot_key": "HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "m2:pela:relic:head",
+              "template_key": "61021",
+              "slot_key": "HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "m2:pela:relic:neck",
+              "template_key": "63025",
+              "slot_key": "NECK",
+              "level": 15,
+              "main_affix_key": "55:6",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "m2:pela:relic:object",
+              "template_key": "63026",
+              "slot_key": "OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "sub_affix_rolls": []
+            }
+          ],
+          "identity_labels": {}
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "110",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1105:1105001:6",
+          "character_trace_node:character_data_card:avatar:1105:1105002:10",
+          "character_trace_node:character_data_card:avatar:1105:1105003:10",
+          "character_trace_node:character_data_card:avatar:1105:1105004:10",
+          "character_trace_node:character_data_card:avatar:1105:1105101:1",
+          "character_trace_node:character_data_card:avatar:1105:1105102:1",
+          "character_trace_node:character_data_card:avatar:1105:1105103:1",
+          "character_trace_node:character_data_card:avatar:1105:1105201:1",
+          "character_trace_node:character_data_card:avatar:1105:1105202:1",
+          "character_trace_node:character_data_card:avatar:1105:1105203:1",
+          "character_trace_node:character_data_card:avatar:1105:1105204:1",
+          "character_trace_node:character_data_card:avatar:1105:1105205:1",
+          "character_trace_node:character_data_card:avatar:1105:1105206:1",
+          "character_trace_node:character_data_card:avatar:1105:1105207:1",
+          "character_trace_node:character_data_card:avatar:1105:1105208:1",
+          "character_trace_node:character_data_card:avatar:1105:1105209:1",
+          "character_trace_node:character_data_card:avatar:1105:1105210:1"
+        ],
+        "equipment_build": {
+          "build_id": "mvp:natasha:empty-equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": null,
+          "relics": [],
+          "identity_labels": {}
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "201210016",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Pela Lv80 P6 E0 full traces; Void S1, Musketeer4 Fleet2 +15 no substats, EHR/SPD/Ice/ERR. Natasha Lv80 E0 full traces, no equipment. Stage 201210016: two Lv74 Vagrants (1002020); real Encourage buff dispel, Wipe Out next attack, ultimate defense reduction and interrupted frozen turn."
+    }
+  }
+}

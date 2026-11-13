@@ -168,6 +168,7 @@ class DamageFormulaResult:
     final_damage: float
     modifier_ledger: ModifierLedger
     rng_events: tuple[RNGEvent, ...] = ()
+    weaken_mult: float = 1.0
 
     def to_json(self) -> dict[str, JSONValue]:
         result = {
@@ -193,6 +194,7 @@ class DamageFormulaResult:
                 "resistance": self.res_mult,
                 "damage_taken": self.damage_taken_mult,
                 "damage_reduction": self.damage_reduction_mult,
+                "weaken": self.weaken_mult,
                 "toughness_state": self.toughness_state_mult,
             },
             "final_damage": self.final_damage,
@@ -310,6 +312,7 @@ class DirectDamageFormula:
             formula_input,
         )
         toughness_mult, toughness_bucket = _toughness_state_bucket(target)
+        weaken = weaken_bucket(actor)
         final_damage = max(
             0.0,
             base_damage
@@ -319,6 +322,7 @@ class DirectDamageFormula:
             * res_mult
             * damage_taken_mult
             * damage_reduction_mult
+            * weaken.multiplier
             * toughness_mult,
         )
         ledger = ModifierLedger(
@@ -331,6 +335,7 @@ class DirectDamageFormula:
                 resistance_bucket,
                 damage_taken_bucket,
                 damage_reduction_bucket,
+                weaken,
                 toughness_bucket,
             ),
         )
@@ -358,6 +363,7 @@ class DirectDamageFormula:
             final_damage=final_damage,
             modifier_ledger=ledger,
             rng_events=(rng_event,),
+            weaken_mult=weaken.multiplier,
         )
 
 
@@ -672,6 +678,10 @@ def _resistance_bucket(
     selected_res = (element_res if uses_element_res else all_res) + status_res_delta
     element_pen = _resource(actor, element_pen_key) if element_pen_key else 0.0
     all_pen = _resource(actor, "all_res_pen")
+    status_pen, pen_terms, pen_skipped = _status_modifier_terms(
+        actor, source_type="actor.status", bucket="resistance",
+        keys=(element_pen_key, "all_res_pen") if element_pen_key else ("all_res_pen",),
+    )
     direct_terms = tuple(
         term
         for key in ((element_pen_key, "all_res_pen") if element_pen_key else ("all_res_pen",))
@@ -680,7 +690,7 @@ def _resistance_bucket(
     direct_pen = sum(float(term["value"]) for term in direct_terms)
     multiplier, engine_rule = evaluate_resistance_multiplier(
         resistance=selected_res,
-        penetration=element_pen + all_pen + direct_pen,
+        penetration=element_pen + all_pen + direct_pen + status_pen,
         registry=engine_rules,
     )
     target_res_term = (
@@ -693,6 +703,7 @@ def _resistance_bucket(
         _applied_term("actor.resources", actor.unit_id, "resistance", element_pen_key or "element_res_pen", "actor", f"element={element}", element_pen, _neutral_reason(element_pen), f"resources.{element_pen_key}" if element_pen_key else "resources.<element>_res_pen"),
         _applied_term("actor.resources", actor.unit_id, "resistance", "all_res_pen", "actor", "always", all_pen, _neutral_reason(all_pen), "resources.all_res_pen"),
         *status_terms,
+        *pen_terms,
         *(_direct_modifier_applied_term(term, "resistance") for term in direct_terms),
     )
     skipped_terms = (
@@ -703,7 +714,7 @@ def _resistance_bucket(
         else (
             _skipped_term("target.resources", target.unit_id, "resistance", element_res_key or "element_resistance", "target", f"element={element}", "missing_element_resistance_uses_all_resistance", f"resources.{element_res_key}" if element_res_key else "resources.<element>_resistance"),
         )
-    ) + status_skipped_terms
+    ) + status_skipped_terms + pen_skipped
     return multiplier, DamageFormulaBucket(
         bucket="resistance",
         multiplier=multiplier,
@@ -797,6 +808,23 @@ def _damage_reduction_bucket(
             "aggregation": "independent_reduction_product",
             "reduction_residuals": list(residuals),
         },
+    )
+
+
+def weaken_bucket(actor: UnitState) -> DamageFormulaBucket:
+    # Adopted formula: https://www.prydwen.gg/star-rail/guides/damage-formula
+    # Weaken is an outgoing multiplier, separate from DMG bonus and target DR.
+    # https://honkai-star-rail.fandom.com/wiki/Weaken excludes break-related
+    # and Elation damage; their stage policies do not consume this bucket.
+    # Fixed TBGD GlobalModifier_Common_Property.MCommon_FatigueRatio supplies
+    # FatigueRatio; the guide's old enemy-only restriction is not adopted.
+    value, terms, skipped = _status_modifier_terms(
+        actor, source_type="actor.status", bucket="weaken", keys=("weaken_ratio",),
+    )
+    return DamageFormulaBucket(
+        bucket="weaken", multiplier=max(0.0, 1.0 - value),
+        applied_terms=terms, skipped_terms=skipped,
+        metadata={"weaken_ratio": value},
     )
 
 

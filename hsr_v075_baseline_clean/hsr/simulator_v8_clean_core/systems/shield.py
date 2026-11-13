@@ -113,7 +113,10 @@ class ShieldSystem:
         mutation_source: str = "effect_system",
         mutation_metadata: dict[str, JSONValue] | None = None,
         max_capacity: float | None = None,
+        falling_cap_policy: str = "reject",
     ) -> ShieldApplicationResult:
+        if falling_cap_policy not in {"reject", "retain_existing"}:
+            return ShieldApplicationResult(False, blocked_reason="shield_falling_cap_policy_invalid")
         target = state.units.get(target_id)
         if target is None:
             return ShieldApplicationResult(False, blocked_reason="shield_target_missing")
@@ -150,7 +153,7 @@ class ShieldSystem:
         before = [dict(item) for item in target.shield_instances]
         after = [dict(item) for item in target.shield_instances]
 
-        def capped_noop() -> ShieldApplicationResult:
+        def unchanged_shield() -> ShieldApplicationResult:
             return ShieldApplicationResult(
                 True,
                 records=(
@@ -196,7 +199,7 @@ class ShieldSystem:
                 else amount
             )
             if remaining <= 0.0:
-                return capped_noop()
+                return unchanged_shield()
             instance = _instance(
                 shield_id=shield_id,
                 source_id=source_id,
@@ -229,6 +232,15 @@ class ShieldSystem:
                 resolved_max_capacity is not None
                 and current_remaining > resolved_max_capacity
             ):
+                if falling_cap_policy == "retain_existing" and policy == "stack_same_source":
+                    unchanged = unchanged_shield()
+                    notice = SettlementRecord('rule_assumption', 'shield_system', process_only=True,
+                        payload={'assumption_id': 'shield_falling_cap_retains_existing', 'status': '未实证',
+                            'reason': '叠盾上限下降时保留已有盾量，本次不再增加；后续叠加仍使用当时上限。',
+                            'todo': '游戏实测同袍转移或攻击力增益到期造成上限下降时，既有护盾与再次叠盾的表现。',
+                            'target_id': target_id, 'remaining': current_remaining,
+                            'current_cap': resolved_max_capacity}).to_json()
+                    return replace(unchanged, records=(*unchanged.records, notice))
                 return ShieldApplicationResult(
                     False,
                     blocked_reason="shield_existing_remaining_exceeds_max_capacity",
@@ -263,9 +275,7 @@ class ShieldSystem:
                 }
         after = _ordered(after)
         if after == before:
-            if resolved_max_capacity is not None:
-                return capped_noop()
-            return ShieldApplicationResult(False, blocked_reason="shield_effect_no_state_change")
+            return unchanged_shield()
         mutation = Mutation(
             op="set",
             path=("units", target_id, "shield_instances"),

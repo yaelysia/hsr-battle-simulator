@@ -1,0 +1,39 @@
+comparison_record:
+  id: m2-guardian-lv40-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 05e441136fec6e2478b8a151a1dbf63628eec142f0aed80167aae4e751e8cb6a
+    processor: "monster:8003030 v0.3.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy40_res0_noncrit
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101四件/302两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑"
+    input: examples/cli/guardian_shadow_lv40.json
+  target: {monster: 8003030, name: 守护者之影, stage: 301008, level: 40, physical_resistance: 0, broken: false}
+  operations: "同名commands共38次公开选择，两只守护者。六主动技能、攻击/普攻禁令反击、战技自净化避免反击；公开fork改为给队友套盾触发战技禁令，另fork显式改变雷暴首个随机目标。"
+  rng: {mode: deterministic_seed_and_explicit_choice, note: "首个对照命中非暴击；外部CR补正-0.05。雷暴八次选取各有独立身份，显式分支不改变主会话。"}
+  reference_values:
+    - {event: received_physical_basic, reference: 777.1301920497575, simulator: 777.130185428809, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000000851973, verdict: PASS}
+  game_comparison: {status: "承伤对照通过", scope: "等级、防御、抗性与未击破减伤参与的承伤；不代表敌方输出已独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 娜塔莎与固定构筑原生模型"
+    - "固定TBGD Monster_XP_Elite02_00_Config/Ability、MonsterSkillConfig：禁令原生条件/插队与反击倍率、雷暴伤害/触电参数"
+    - "https://honkai-star-rail.fandom.com/wiki/Guardian_Shadow — 普通雷暴八次；宁静禁令要求另有敌人；自身净化先于战技禁令责罚。页面未注明版本。"
+  unverified_params:
+    - "等级和抗性取固定TBGD作为计算器输入；计算器未独立提供怪物卡。敌方输出与HP上限未独立对照。"
+    - "V1队友不施加显式嘲讽；处理器发现Taunt时明确拒绝雷暴，未将未知强制目标当随机。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_guardian_bans_counter_cleanse_and_eight_bounces：1 passed/60.13秒；/tmp/hsr_v1_guardian_test.log。"
+    - "77次操作归档：/tmp/pytest-of-zhangjinhao/pytest-151/test_guardian_bans_counter_cle0/guardian_v1_complete.json.gz。"
+    - "独立CLI重放77步、0错误；/tmp/hsr_v1_guardian_replay.log。"
+    - "反击保留队列目标、控制/击破中止与伤害管线，仅省略表现、成就统计；不允许手动提交责罚。"

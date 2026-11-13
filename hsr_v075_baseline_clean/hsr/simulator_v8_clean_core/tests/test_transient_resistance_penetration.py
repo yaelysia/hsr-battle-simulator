@@ -12,6 +12,8 @@ from hsr.simulator_v8_clean_core.systems.status_callbacks import StatusCallbackS
 from hsr.simulator_v8_clean_core.tests.test_damage_modifier_transport import _case
 from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR
 from hsr.simulator_v8_clean_core.tbgd.lowering import _damage_modifier_terms
+from hsr.simulator_v8_clean_core.systems.status import _map_stack_property
+from hsr.simulator_v8_clean_core.systems.damage_pipeline import DamageStagePipeline
 
 
 def test_pinned_penetration_fields_lower_to_shared_resistance_keys():
@@ -36,6 +38,34 @@ def test_pinned_penetration_fields_lower_to_shared_resistance_keys():
         walk(json.loads(path.read_text()))
     assert found == {'Attacker_PhysicalPenetrate', 'Attacker_AllDamageTypePenetrate', 'Attacker_WindPenetrate',
                      'Attacker_ImaginaryPenetrate', 'Attacker_QuantumPenetrate'}
+
+
+@pytest.mark.parametrize('element,before,after', [('Quantum', .75, 1.10), ('Fire', .85, .95)])
+def test_status_penetration_reaches_direct_and_dot_consumers(element, before, after):
+    state, _, source = _case()
+    actor = replace(state.units['actor'], resources={'all_res_pen': .05})
+    target = replace(state.units['target'], resources={'Quantum_resistance': .30, 'all_resistance': .20})
+    state = replace(state, units={'actor': actor, 'target': target})
+    terms = []
+    for prop, value in (('QuantumPenetrate', .25), ('AllDamageTypePenetrate', .10)):
+        bucket, key, scope = _map_stack_property(prop)
+        terms.append({'property': prop, 'bucket': bucket, 'key': key, 'scope': scope, 'value': value})
+    buffed = replace(state, units={**state.units, 'actor': replace(actor, statuses=('pen',),
+        flags={'status_details': [{'instance_id': 'pen', 'status_id': 'pen', 'modifiers': terms}]})})
+    action = ActionDefinitionIR('definition', 'action', 1, 'Normal', 'SingleAttack', 'Single',
+                                0, 0, 0, 0, (), (), (), element, source)
+    packet = DamagePacket('actor', 'target', 'Normal', 'direct', action_definition=action,
+        scaling_ratio=1, scaling_basis={'kind': 'unit_stat', 'unit_ref': 'attacker', 'stat': 'attack'},
+        element_type=element, metadata={'crit_mode': 'noncrit'})
+    system = DamageSystem()
+    baseline, actual = system.apply_packet(state, packet), system.apply_packet(buffed, packet)
+    assert baseline.ok and actual.ok
+    loss = lambda result: next(m.before - m.after for m in result.mutations if m.path[-1] == 'hp')
+    assert loss(actual) == pytest.approx(loss(baseline) * after / before)
+    dot = DamageStagePipeline().calculate(buffed, family='dot', attacker_id='actor', target_id='target',
+        producer_base_amount=100, element_type=element, source_trace={})
+    assert dot.ok
+    assert next(b.multiplier for b in dot.stage_buckets if b.stage == 'resistance') == pytest.approx(after)
 
 
 @pytest.mark.parametrize('element,expected', [('Wind', 1.10), ('Fire', .90), (None, .90)])

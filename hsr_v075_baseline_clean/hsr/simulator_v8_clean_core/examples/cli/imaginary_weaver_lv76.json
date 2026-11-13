@@ -1,0 +1,220 @@
+{
+  "scenario_id": "v1:imaginary-weaver:lv76",
+  "version": "v0_200",
+  "units": [
+    {
+      "unit_id": "natasha",
+      "side": "ally",
+      "entity_ref": "avatar:1105",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 0,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1105",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1105:1105001:6",
+          "character_trace_node:character_data_card:avatar:1105:1105002:10",
+          "character_trace_node:character_data_card:avatar:1105:1105003:10",
+          "character_trace_node:character_data_card:avatar:1105:1105004:10",
+          "character_trace_node:character_data_card:avatar:1105:1105101:1",
+          "character_trace_node:character_data_card:avatar:1105:1105102:1",
+          "character_trace_node:character_data_card:avatar:1105:1105103:1",
+          "character_trace_node:character_data_card:avatar:1105:1105201:1",
+          "character_trace_node:character_data_card:avatar:1105:1105202:1",
+          "character_trace_node:character_data_card:avatar:1105:1105203:1",
+          "character_trace_node:character_data_card:avatar:1105:1105204:1",
+          "character_trace_node:character_data_card:avatar:1105:1105205:1",
+          "character_trace_node:character_data_card:avatar:1105:1105206:1",
+          "character_trace_node:character_data_card:avatar:1105:1105207:1",
+          "character_trace_node:character_data_card:avatar:1105:1105208:1",
+          "character_trace_node:character_data_card:avatar:1105:1105209:1",
+          "character_trace_node:character_data_card:avatar:1105:1105210:1"
+        ],
+        "equipment_build": {
+          "build_id": "v1:natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": {
+            "instance_id": "natasha:cone",
+            "definition_key": "23013",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "natasha:relic:HEAD",
+              "template_key": "61011",
+              "slot_key": "HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "natasha:relic:HAND",
+              "template_key": "61012",
+              "slot_key": "HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "natasha:relic:BODY",
+              "template_key": "61013",
+              "slot_key": "BODY",
+              "level": 15,
+              "main_affix_key": "53:6",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "natasha:relic:FOOT",
+              "template_key": "61014",
+              "slot_key": "FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "natasha:relic:NECK",
+              "template_key": "63025",
+              "slot_key": "NECK",
+              "level": 15,
+              "main_affix_key": "55:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "natasha:relic:OBJECT",
+              "template_key": "63026",
+              "slot_key": "OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "sub_affix_rolls": []
+            }
+          ]
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "90",
+        "initial_resource_values": []
+      }
+    },
+    {
+      "unit_id": "march",
+      "side": "ally",
+      "entity_ref": "avatar:1001",
+      "level": 80,
+      "eidolon_level": 0,
+      "position": 1,
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "march:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1001",
+        "level": 80,
+        "promotion": 6,
+        "eidolon_level": 0,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1001:1001001:6",
+          "character_trace_node:character_data_card:avatar:1001:1001002:10",
+          "character_trace_node:character_data_card:avatar:1001:1001003:10",
+          "character_trace_node:character_data_card:avatar:1001:1001004:10",
+          "character_trace_node:character_data_card:avatar:1001:1001101:1",
+          "character_trace_node:character_data_card:avatar:1001:1001102:1",
+          "character_trace_node:character_data_card:avatar:1001:1001103:1",
+          "character_trace_node:character_data_card:avatar:1001:1001201:1",
+          "character_trace_node:character_data_card:avatar:1001:1001202:1",
+          "character_trace_node:character_data_card:avatar:1001:1001203:1",
+          "character_trace_node:character_data_card:avatar:1001:1001204:1",
+          "character_trace_node:character_data_card:avatar:1001:1001205:1",
+          "character_trace_node:character_data_card:avatar:1001:1001206:1",
+          "character_trace_node:character_data_card:avatar:1001:1001207:1",
+          "character_trace_node:character_data_card:avatar:1001:1001208:1",
+          "character_trace_node:character_data_card:avatar:1001:1001209:1",
+          "character_trace_node:character_data_card:avatar:1001:1001210:1"
+        ],
+        "equipment_build": {
+          "build_id": "v1:march:equipment",
+          "character_card_id": "character_data_card:avatar:1001",
+          "light_cone": {
+            "instance_id": "march:cone",
+            "definition_key": "20003",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "march:relic:HEAD",
+              "template_key": "61031",
+              "slot_key": "HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "march:relic:HAND",
+              "template_key": "61032",
+              "slot_key": "HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "march:relic:BODY",
+              "template_key": "61033",
+              "slot_key": "BODY",
+              "level": 15,
+              "main_affix_key": "53:3",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "march:relic:FOOT",
+              "template_key": "61034",
+              "slot_key": "FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "march:relic:NECK",
+              "template_key": "63045",
+              "slot_key": "NECK",
+              "level": 15,
+              "main_affix_key": "55:3",
+              "sub_affix_rolls": []
+            },
+            {
+              "instance_id": "march:relic:OBJECT",
+              "template_key": "63046",
+              "slot_key": "OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "sub_affix_rolls": []
+            }
+          ]
+        }
+      },
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "120",
+        "initial_resource_values": []
+      }
+    }
+  ],
+  "stage_ref": "201320336",
+  "wave_index": 0,
+  "route": [],
+  "battle_setup": {
+    "timeline": {
+      "mode": "runtime_initialize"
+    },
+    "metadata": {
+      "stage_scope": "wave_only",
+      "scope": "Lv76 Imaginary Weaver, native entry and all active skills; full Natasha/March builds."
+    }
+  }
+}

@@ -15,7 +15,8 @@ from types import MappingProxyType
 from typing import Any, NamedTuple, cast
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
-from .adopted_modifier_counts import ADOPTED_MODIFIER_COUNTS, ADOPTED_MODIFIER_INITIAL_VALUES, ADOPTED_MODIFIER_COUNT_CONDITIONS
+from .adopted_modifier_counts import ADOPTED_MODIFIER_COUNTS, ADOPTED_MODIFIER_INITIAL_VALUES, ADOPTED_MODIFIER_COUNT_CONDITIONS, ADOPTED_PRESENCE_COUNTS, ADOPTED_DYNAMIC_MAXIMUMS
+from .adopted_stage_environment import compile_stage_environment
 from .coverage import ability_task_execution_mode, classify_opcode
 from .character_ability_scope import (
     CharacterAbilityRawSnapshot,
@@ -61,7 +62,7 @@ from .light_cone_cards import (
     require_complete_light_cone_catalog,
 )
 from .relic_cards import build_relic_catalog, require_complete_relic_catalog
-from .monster_cards import build_monster_card_ir, exclude_presentation_passives
+from .monster_cards import build_monster_card_ir, exclude_presentation_passives, MONSTER_SHARED_ABILITY_SOURCES
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..equipment.models import (
@@ -2173,6 +2174,8 @@ class TBGDLowering:
                 if source.source_id in selected_source_ids
             }
             selected_paths.update(phase.source.source_path for phase in ability_phases)
+            for monster_id in monster_ids:
+                selected_paths.update(MONSTER_SHARED_ABILITY_SOURCES.get(monster_id, ()))
             for slot in passive_mechanism_slots:
                 selected_paths.update(slot.linked_ir_ids.get("ability_file_paths", ()))
             selected_ability_files = [
@@ -2606,6 +2609,28 @@ class TBGDLowering:
             status_callback_tasks,
             effects,
         )
+        # Range admission must observe the final target closure, just like its
+        # leaf tasks. A previously unresolved servant alias is not a stale veto.
+        stale_range_reason = "ability_property_range_branch_task_not_executable"
+        recovered_callbacks = {
+            callback.callback_id for callback in status_callbacks
+            if callback.blocked_reason == stale_range_reason and callback.task_ids
+            and all(task.coverage_status == "executable" or task.blocked_reason == "source_proven_presentation_only"
+                    for task in status_callback_tasks if task.callback_id == callback.callback_id)
+        }
+        status_callbacks = [replace(callback, coverage_status="executable", admission_status="executable",
+                                    blocked_reason="", blocking_dependency="")
+                            if callback.callback_id in recovered_callbacks else callback for callback in status_callbacks]
+        callback_index = {item.callback_id: item for item in status_callbacks}
+        ability_property_ranges = [replace(item, coverage_status="executable", blocked_reason="")
+            if item.blocked_reason == stale_range_reason and all(callback_index[cid].coverage_status == "executable"
+                for cid in (item.enter_callback_id, item.exit_callback_id, item.change_callback_id) if cid)
+            else item for item in ability_property_ranges]
+        range_index = {item.range_id: item for item in ability_property_ranges}
+        ability_property_watchers = [replace(item, coverage_status="executable", blocked_reason="")
+            if item.blocked_reason == stale_range_reason and all(range_index[rid].coverage_status == "executable"
+                for rid in item.range_ids) else item for item in ability_property_watchers]
+        effects = _link_status_effect_runtime_fields(effects, entities, status_callbacks, ability_property_watchers)
         control_flow_catalog = self.build_character_control_flow_contract_catalog(
             snapshot=getattr(self, "_runtime_task_raw_snapshot", None) or self._character_ability_raw_snapshot,
             scope_catalog=getattr(self, "_runtime_task_scope_catalog", None) or self._character_ability_scope_catalog,
@@ -3257,6 +3282,7 @@ class TBGDLowering:
                     stage_startup_phase_ids=stage_phases,
                     stage_environment_status="blocked" if environment_reason else "executable",
                     stage_environment_blocked_reason=environment_reason,
+                    stage_environment_data=environment.get("battle_event", {}),
                 )
             )
         return definitions
@@ -3271,6 +3297,17 @@ class TBGDLowering:
                 continue
             refs = list(row.get("StageAbilityConfig") or ())
             reason = ""
+            battle_event = {}
+            event_refs = [item.get("MNDFOPKBHKP") for item in row.get("StageConfigData", ())
+                          if isinstance(item, dict) and item.get("BFLIFKBEOPJ") == "_CreateBattleEvent"]
+            if event_refs:
+                if len(event_refs) != 1 or not isinstance(event_refs[0], str) or not event_refs[0].isdecimal():
+                    reason = "stage_battle_event_identity_invalid"
+                else:
+                    try:
+                        battle_event = compile_stage_environment(self.tbgd_root, str(row["StageID"]), event_refs[0])
+                    except (ValueError, KeyError, TypeError) as exc:
+                        reason = "stage_battle_event_not_admitted:" + str(exc)
             template_path = str(row.get("LevelGraphPath") or "")
             template = self._read_json_dict(template_path) if template_path else {}
             if template_path and not template:
@@ -3300,13 +3337,18 @@ class TBGDLowering:
             if any(not isinstance(name, str) or not name for name in refs):
                 reason = "stage_ability_reference_invalid"
                 refs = [name for name in refs if isinstance(name, str) and name]
-            for field in ("SubLevelGraphs", "LevelLoseCondition", "LevelWinCondition", "TrialAvatarList"):
+            for subgraph in row.get("SubLevelGraphs", ()):
+                if (not isinstance(subgraph, dict) or not isinstance(subgraph.get("KACPIAGHKMN"), str)
+                        or any(value for key, value in subgraph.items() if key not in {"BFLIFKBEOPJ", "KACPIAGHKMN"})
+                        or not _stage_subgraph_is_presentation_only(self._read_json_dict(subgraph["KACPIAGHKMN"]) or {})):
+                    reason = reason or "stage_environment_field_not_admitted:SubLevelGraphs"
+            for field in ("LevelLoseCondition", "LevelWinCondition", "TrialAvatarList"):
                 if row.get(field):
                     reason = reason or f"stage_environment_field_not_admitted:{field}"
             if row.get("BattleScoringGroup"):
                 reason = reason or "stage_environment_field_not_admitted:BattleScoringGroup"
             if any(not isinstance(item, dict) or set(item) != {"BFLIFKBEOPJ", "MNDFOPKBHKP"}
-                   or item["BFLIFKBEOPJ"] not in {"_Wave", "_IsEliteBattle", "_BGM", "_BGM_Wave2", "_BGM_Wave3"}
+                   or item["BFLIFKBEOPJ"] not in {"_Wave", "_IsEliteBattle", "_BGM", "_BGM_Wave2", "_BGM_Wave3", "_CreateBattleEvent"}
                    for item in row.get("StageConfigData", ())):
                 reason = reason or "stage_environment_field_not_admitted:StageConfigData"
             known_fields = {"StageID", "StageType", "StageName", "HardLevelGroup", "Level", "EliteGroup", "LevelGraphPath",
@@ -3318,6 +3360,7 @@ class TBGDLowering:
             selected[str(row["StageID"])] = {
                 "row_index": row_index, "ability_refs": tuple(dict.fromkeys(refs)),
                 "blocked_reason": reason, "template_path": template_path,
+                "battle_event": battle_event,
             }
             wanted.update(refs)
         locations: dict[str, list[tuple[str, int]]] = {}
@@ -6577,6 +6620,7 @@ class TBGDLowering:
         source_json_path: str = "",
         template_stack: tuple[str, ...] = (),
         lower_children: bool = True,
+        death_animation_preparation: bool = False,
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         condition: ConditionIR | None = None
@@ -6742,7 +6786,7 @@ class TBGDLowering:
             )
             return lowered
 
-        if opcode == "LoopExecuteTaskListWithInterval":
+        if opcode in {"LoopExecuteTaskList", "LoopExecuteTaskListWithInterval"}:
             repeat_expression = lower_numeric_expression(task.get("MaxLoopCount"))
             repeat_value = _fixed_expr_value(repeat_expression)
             repeat_count = (
@@ -6860,6 +6904,15 @@ class TBGDLowering:
                         parent_task_id=task_id,
                         source_context=source_context,
                         target_alias_registry=target_alias_registry,
+                        # The paired ForceKill owns the real death. Its preceding
+                        # immediate-death marker only suppresses the animation.
+                        death_animation_preparation=(
+                            child == {"$type": "RPG.GameCore.SetDieImmediately",
+                                      "TargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "ParamEntity"}}
+                            and child_index + 1 < len(raw_children)
+                            and raw_children[child_index + 1] == {
+                                "$type": "RPG.GameCore.ForceKill", "TargetType": child.get("TargetType")}
+                        ),
                     )
                     lowered.merge(child_lowered)
                     child_ids.extend(
@@ -7076,6 +7129,8 @@ class TBGDLowering:
             ):
                 task_target_expression_id = target_ref["target_expression_id"]
         execution_mode = ability_task_execution_mode(opcode)
+        if death_animation_preparation and opcode == "SetDieImmediately":
+            execution_mode = "process_only"
         if presentation_predicate or (opcode in {"Retarget", "FireProjectile", "CharacterChangePhase"} and not _process_only_ability_task_source_blocked_reason(task, opcode, action_id=definition.action_id)):
             execution_mode = "process_only"
         process_only_blocked_reason = (
@@ -7226,6 +7281,10 @@ class TBGDLowering:
             source_json_path=source_json_path,
             template_stack=template_stack,
             lower_children=False,
+            death_animation_preparation=(
+                source_opcode == "SetDieImmediately"
+                and _paired_death_animation_marker(source_document, source_json_path, task)
+            ),
         )
         if len(lowered.ability_tasks) != 1:
             raise ValueError("formal ability task node lowering is not singular")
@@ -7727,9 +7786,12 @@ class TBGDLowering:
                 target_info = skill_config.get("TargetInfo")
                 target_type = str(target_info.get("TargetType") or "") if isinstance(target_info, dict) else ""
                 target_mode = _monster_target_mode(target_type)
+                if target_type == "EnemySelect" and target_info.get("SubTargetType") == "TargetAdjoinEntity":
+                    target_mode = "blast"
                 source = {
                     "target_mode": target_mode,
                     "target_type": target_type,
+                    "use_type": str(skill_config.get("UseType") or ""),
                     "skill_trigger_key": trigger_key,
                     "monster_id": str(row.get("MonsterID") or ""),
                     "template_id": template_id,
@@ -7763,7 +7825,8 @@ class TBGDLowering:
                 }
                 existing = result.get(skill_id)
                 if existing is not None:
-                    if existing.get("target_mode") != target_mode or existing.get("target_type") != target_type:
+                    if (existing.get("target_mode") != target_mode or existing.get("target_type") != target_type
+                            or existing.get("use_type") != source["use_type"]):
                         result[skill_id] = {
                             **existing,
                             "target_mode": "unknown",
@@ -8414,6 +8477,9 @@ class TBGDLowering:
     ) -> list[ServantDefinitionIR]:
         definitions: list[ServantDefinitionIR] = []
         action_set_by_entity = {item.entity_ref: item for item in combatant_action_sets}
+        active_ability_names = {name for binding in action_ability_bindings
+                                if binding.config_source.get("use_type") != "Passive"
+                                for name in binding.ability_names}
         bindings_by_action: dict[
             tuple[str, int], list[ActionAbilityBindingIR]
         ] = {}
@@ -8459,11 +8525,15 @@ class TBGDLowering:
             )
             if isinstance(servant_config_data, dict):
                 action_set["startup_abilities"] = list(dict.fromkeys([
-                    *servant_config_data.get("AbilityList", []),
+                    # AbilityList also loads bodies invoked by the summoner's
+                    # active skills. Loading one does not execute its OnStart.
+                    *(name for name in servant_config_data.get("AbilityList", []) if name not in active_ability_names),
                     *(skill["EntryAbility"] for skill in servant_config_data.get("SkillList", [])
                       if isinstance(skill, dict) and skill.get("UseType") == "Passive" and skill.get("EntryAbility")),
                 ]))
-                action_set["dynamic_value_bindings"] = _dynamic_value_bindings(servant_config_data.get("DynamicValues"))
+                from .adopted_dynamic_parameters import adopt_charge_parameters
+                action_set["dynamic_value_bindings"] = adopt_charge_parameters(
+                    _dynamic_value_bindings(servant_config_data.get("DynamicValues")), config_path)
             spawn_sources = (*spawn_sources_by_servant.get(servant_id, ()), *spawn_sources_by_servant.get("*", ()))
             stat_source = _servant_stat_source(
                 row,
@@ -8810,6 +8880,20 @@ class TBGDLowering:
                     task_templates=task_templates,
                     formal_source_context=formal_status_source_context,
                 )
+                # Non-shield stance modifiers use Resilience for hit animation
+                # reactions. They have no HP shield pool to synchronize.
+                if "Shield" not in modifier.get("BehaviorFlagList", ()):
+                    callback_lowered.status_callback_tasks = [
+                        replace(task, coverage_status="blocked", blocked_reason="source_proven_presentation_only")
+                        if task.opcode == "SetResilience" and task.coverage_status == "executable"
+                        else task for task in callback_lowered.status_callback_tasks
+                    ]
+                    if callback_lowered.status_callback_tasks and all(
+                        task.blocked_reason == "source_proven_presentation_only"
+                        for task in callback_lowered.status_callback_tasks
+                    ):
+                        presentation_only = True
+                        callback_source_context["source_proven_presentation_only"] = True
                 lowered.merge(callback_lowered)
                 trigger_effects.extend(
                     effect.effect_id
@@ -9011,19 +9095,21 @@ class TBGDLowering:
                         modifier_name=modifier_name,
                     )
                 )
-            watcher_lowered, callback_index = self._lower_ability_property_watchers(
-                modifier.get("OnAbilityPropertyChange"),
-                relative=relative,
-                map_name=map_name,
-                modifier_name=modifier_name,
-                ability_file_order=ability_file_order,
-                callback_index=callback_index,
-                queue_priority_lookup=queue_priority_lookup,
-                source_context=source_context,
-                task_templates=task_templates,
-                formal_source_context=formal_status_source_context,
-            )
-            lowered.merge(watcher_lowered)
+            for watcher_event in ("OnAbilityPropertyChange", "OnDynamicValueChange"):
+                watcher_lowered, callback_index = self._lower_ability_property_watchers(
+                    modifier.get(watcher_event),
+                    watcher_event=watcher_event,
+                    relative=relative,
+                    map_name=map_name,
+                    modifier_name=modifier_name,
+                    ability_file_order=ability_file_order,
+                    callback_index=callback_index,
+                    queue_priority_lookup=queue_priority_lookup,
+                    source_context=source_context,
+                    task_templates=task_templates,
+                    formal_source_context=formal_status_source_context,
+                )
+                lowered.merge(watcher_lowered)
         source_snapshot = getattr(self, "_character_ability_raw_snapshot", None)
         if (
             type(source_snapshot) is CharacterAbilityRawSnapshot
@@ -9145,6 +9231,7 @@ class TBGDLowering:
         self,
         raw_watchers: Any,
         *,
+        watcher_event: str = "OnAbilityPropertyChange",
         relative: str,
         map_name: str,
         modifier_name: str,
@@ -9156,6 +9243,7 @@ class TBGDLowering:
         formal_source_context: _AbilityFormalTaskSourceContext | None,
     ) -> tuple["_LoweredAbility", int]:
         lowered = _LoweredAbility()
+        prefix = "dynamic_value_watcher" if watcher_event == "OnDynamicValueChange" else "ability_property_watcher"
         if raw_watchers is None:
             return lowered, callback_index
         if not isinstance(raw_watchers, list):
@@ -9165,12 +9253,12 @@ class TBGDLowering:
                 raw_id=modifier_name,
                 evidence={
                     **_json_safe(source_context),
-                    "json_path": f"{source_context.get('json_path')}.OnAbilityPropertyChange",
+                    "json_path": f"{source_context.get('json_path')}.{watcher_event}",
                 },
             )
             lowered.ability_property_watchers.append(
                 AbilityPropertyWatcherIR(
-                    watcher_id=f"ability_property_watcher:{relative}:{modifier_name}:invalid",
+                    watcher_id=f"{prefix}:{relative}:{modifier_name}:invalid",
                     modifier_name=modifier_name,
                     property_name="",
                     range_ids=(),
@@ -9183,10 +9271,10 @@ class TBGDLowering:
         for watcher_index, raw_watcher in enumerate(raw_watchers):
             watcher_path = (
                 f"{source_context.get('json_path')}"
-                f".OnAbilityPropertyChange[{watcher_index}]"
+                f".{watcher_event}[{watcher_index}]"
             )
             watcher_id = (
-                f"ability_property_watcher:{relative}:{modifier_name}:"
+                f"{prefix}:{relative}:{modifier_name}:"
                 f"{watcher_index}"
             )
             property_name = (
@@ -9194,6 +9282,17 @@ class TBGDLowering:
                 if isinstance(raw_watcher, dict)
                 else ""
             )
+            property_source = "unit_property"
+            if watcher_event == "OnDynamicValueChange" and isinstance(raw_watcher, dict):
+                key = raw_watcher.get("Key")
+                value_hash = key.get("Hash") if isinstance(key, dict) else None
+                property_name = str(value_hash) if type(value_hash) is int else ""
+                property_source = {
+                    "ContextOwner": "owner_dynamic_value",
+                    "ContextCaster": "caster_dynamic_value",
+                    "ContextModifier": "status_dynamic_value",
+                    "": "status_dynamic_value",
+                }.get(str(raw_watcher.get("ContextScope") or ""), "unsupported_dynamic_scope")
             raw_ranges = (
                 raw_watcher.get("Ranges")
                 if isinstance(raw_watcher, dict)
@@ -9212,7 +9311,8 @@ class TBGDLowering:
             )
             range_ids: list[str] = []
             watcher_blocked_reason = ""
-            if not ability_property_is_runtime_readable(property_name):
+            if (not property_name or property_source == "unsupported_dynamic_scope"
+                    or property_source == "unit_property" and not ability_property_is_runtime_readable(property_name)):
                 watcher_blocked_reason = (
                     f"ability_property_not_runtime_readable:{property_name or 'missing'}"
                 )
@@ -9253,6 +9353,16 @@ class TBGDLowering:
                             property_range.blocked_reason
                             or "ability_property_range_not_executable"
                         )
+            branches = [tasks for item in (raw_ranges if isinstance(raw_ranges, list) else ())
+                        if isinstance(item, dict) for key in ("OnEnterRange", "OnExitRange", "OnChange")
+                        if isinstance(tasks := item.get(key), list) and tasks]
+            if branches and all(_status_callback_presentation_only(tasks) for tasks in branches):
+                watcher_blocked_reason = "source_proven_presentation_only"
+                callback_ids = {callback.callback_id for callback in lowered.status_callbacks
+                                if callback.source.evidence.get("ability_property_watcher_id") == watcher_id}
+                lowered.status_callback_tasks = [replace(task, coverage_status="blocked",
+                    blocked_reason="source_proven_presentation_only") if task.callback_id in callback_ids else task
+                    for task in lowered.status_callback_tasks]
             if watcher_blocked_reason:
                 lowered.status_callbacks = [
                     replace(
@@ -9275,6 +9385,7 @@ class TBGDLowering:
                     modifier_name=modifier_name,
                     property_name=property_name,
                     range_ids=tuple(range_ids),
+                    property_source=property_source,
                     source=watcher_source,
                     coverage_status=(
                         "executable" if not watcher_blocked_reason else "blocked"
@@ -9951,6 +10062,13 @@ class TBGDLowering:
         if coverage_status == "executable" and not source_admitted:
             coverage_status = "blocked"
             blocked_reason = "status_callback_source_mode_not_admitted"
+        if (relative == "Config/ConfigAbility/Servant/Servant_PlayerBoyServant_30_Ability.json"
+                and opcode == "SetModifierValue"
+                and _value_field(task.get("ModifierName")) == "MAvatar_PlayerBoy_30_TeamSP"
+                and set(task) == {"$type", "TargetType", "ModifierName", "Value"}):
+            # Fixed source: this modifier has UIConfig + RetainCountZero only.
+            # Its fractional charge display is not an integer status layer.
+            coverage_status, blocked_reason = "blocked", "source_proven_presentation_only"
         if template_blocked_reason:
             coverage_status = "blocked"
             blocked_reason = template_blocked_reason
@@ -11149,6 +11267,29 @@ class _StandaloneActionRef:
     level: int
 
 
+def _stage_subgraph_is_presentation_only(document: dict[str, Any]) -> bool:
+    """Ponytail: only linear background dialogue; other subgraphs need review.
+
+    StageBgTalk_20101011 waits for the wave presentation, plays dialogue, and
+    finishes its own subgraph. These waits do not advance combat action values.
+    """
+    fields = {
+        "RPG.GameCore.WaitCustomString": {"$type", "CustomString"},
+        "RPG.GameCore.WaitSecond": {"$type", "WaitTime"},
+        "RPG.GameCore.PlayMissionTalk": {"$type", "MuteBattleVO", "SimpleTalkList"},
+        "RPG.GameCore.FinishLevelGraph": {"$type"},
+    }
+    sequences = document.get("OnStartSequece")
+    if (not document or set(document) - {"OnInitSequece", "OnStartSequece"}
+            or document.get("OnInitSequece") or not isinstance(sequences, list)):
+        return False
+    return all(isinstance(sequence, dict) and set(sequence) == {"TaskList"}
+        and isinstance(sequence["TaskList"], list)
+        and all(isinstance(task, dict) and task.get("$type") in fields
+                and not set(task) - fields[task["$type"]] for task in sequence["TaskList"])
+        for sequence in sequences)
+
+
 def _read_json_file(path: Path) -> Any:
     if not path.exists():
         return None
@@ -11351,6 +11492,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnTriggerStanceCountDown": ("toughness.segment_depleted",),
     "OnListenCharacterCreate": ("unit.created",),
     "OnListenAllowAction": ("turn.begin",),
+    "OnListenTurnBegin": ("turn.begin",),
     "OnListenTurnEnd": ("turn.end",),
     "OnListenTurnPhase1Begin": ("turn.begin",),
     "OnBeforeSkillUse": ("action.window.before_skill_use",),
@@ -13806,6 +13948,7 @@ def _modifier_range_dynamic_hashes(modifier: dict[str, Any]) -> set[str]:
     for raw_watchers in (
         modifier.get("OnElationPointChange"),
         modifier.get("OnAbilityPropertyChange"),
+        modifier.get("OnDynamicValueChange"),
     ):
         if raw_watchers is None:
             continue
@@ -14517,6 +14660,12 @@ def _action_role_contract(
             "blocked_reason": "action_definition_reference_missing",
         }
     attack_type = definition.attack_type
+    # MonsterSkillConfig.AttackType classifies damage, not activation: native
+    # entry passives also use Normal. Character-config UseType owns activation.
+    monster_source = definition.source.evidence.get("monster_target_source", {})
+    if (definition.action_id.startswith("monster_skill:")
+            and isinstance(monster_source, dict) and monster_source.get("use_type") == "Passive"):
+        attack_type = "Passive"
     role_source = (
         action_entry.get("role_source")
         if isinstance(action_entry, dict)
@@ -14868,6 +15017,12 @@ def _action_definition_from_row(
         else None
     )
     target_mode = monster_target_mode or _target_mode(skill_effect)
+    # A servant's AllEnemy selection is the candidate pool. Its native task
+    # graph owns the random hit loop; the display label Bounce must not add
+    # a second, player-selected primary target and a second bounce sequence.
+    if (entity_type == "servant_skill" and target_mode == "bounce"
+            and (servant_target_source or {}).get("target_type") == "AllEnemy"):
+        target_mode = "aoe"
     target_source = monster_target_source or servant_target_source or {}
     target_relation = _target_relation_from_action_source(
         target_source,
@@ -14919,7 +15074,9 @@ def _action_definition_from_row(
         stance_damage_type=element_type,
         source=source,
         coverage_status="executable",
-        damage_kind=_damage_kind(skill_effect),
+        # Monster targeting can select an opponent for a mark/charge without
+        # attacking. MonsterSkillConfig declares DamageType on damaging skills.
+        damage_kind="non_damage" if entity_type == "monster_skill" and element_type is None else _damage_kind(skill_effect),
         damage_formula_family=_damage_formula_family(attack_type, skill_effect),
         element_type=element_type,
         source_mode=source_mode,
@@ -15478,7 +15635,9 @@ def _link_battle_event_creations(
                     "startup_ability_names": startup_names,
                     "phase_ids": phase_ids,
                     "speed_binding": speed_binding,
-                    "startup_produces_base_speed": bool(startup_speed_expressions),
+                    # Both event startup and an owner-applied BaseSpeed modifier
+                    # are the runtime producer; the birth panel is only its seed.
+                    "startup_produces_base_speed": bool(startup_speed_expressions) or speed_binding.get("kind") == "owner_skill_param",
                     "timeline_admitted": True,
                     "actionable": actionable,
                     "unselectable": True,
@@ -16322,6 +16481,8 @@ def _link_status_effect_runtime_fields(
         callbacks_by_modifier.setdefault(callback.modifier_name, []).append(callback)
     watchers_by_modifier: dict[str, list[AbilityPropertyWatcherIR]] = {}
     for watcher in ability_property_watchers:
+        if watcher.blocked_reason == "source_proven_presentation_only":
+            continue
         watchers_by_modifier.setdefault(watcher.modifier_name, []).append(watcher)
 
     linked: list[EffectIR] = []
@@ -18445,6 +18606,12 @@ def _lower_damage_emissions(
     damage_tag_registry: dict[int, tuple[dict[str, Any], ...]],
 ) -> list[DamageEmissionIR]:
     effect_by_id = {effect.effect_id: effect for effect in effects}
+    creation_parameter_hashes = {
+        str(entry["hash"])
+        for effect in effects if effect.opcode == "CreateServant"
+        for entry in effect.payload.get("standard", {}).get("dynamic_values", {}).values()
+        if isinstance(entry, dict) and entry.get("hash") is not None
+    }
     direct_basis_bindings = _direct_damage_binding_lookup(skill_formula_bindings, tasks)
     profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
     tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
@@ -18482,6 +18649,13 @@ def _lower_damage_emissions(
                     profile,
                     direct_basis_bindings,
                 )
+                if (effect is not None and task.source.source_path.startswith("Config/ConfigAbility/Servant/")
+                        and str(_damage_percentage_dynamic_hash(effect)) in creation_parameter_hashes):
+                    # A companion hit reads its committed CreateServant argument.
+                    # The owner's text-derived main-hit parameter is not a
+                    # fallback for a different component of the joint skill.
+                    scaling_ratio_expr = {key: value for key, value in scaling_ratio_expr.items()
+                                          if key != "binding_source"}
                 blocked_reason = _damage_emission_blocked_reason(
                     task,
                     effect,
@@ -19111,8 +19285,8 @@ def _lower_standalone_hit_profiles(
             task_bindings = card_bindings
         binding = _standalone_binding_for_damage_task(task_bindings, effect)
         if binding is None and target_group != "unknown":
-            # 显式声明 FormulaType 的 AttackData 自带基数与运行时倍率，
-            # 不需要技能行参数；省略 FormulaType 的默认攻击伤害仍要求绑定。
+            # Explicit formulas and owner-attributed additional damage use the
+            # same native AttackData interpretation as ordinary action bodies.
             attack = payload.get("AttackProperty") if isinstance(payload, dict) else None
             explicit_formula = (
                 isinstance(attack, dict)
@@ -19120,6 +19294,8 @@ def _lower_standalone_hit_profiles(
                 and attack["FormulaType"] in _TASK_DECLARED_DAMAGE_FORMULA_BASES
                 and attack["FormulaType"] != "ByAttack"
             )
+            owner_damage = (isinstance(attack, dict) and isinstance(attack.get("DamageType"), dict)
+                            and attack["DamageType"].get("SourceType") == "ReadTargetType")
             # 削韧取所属忆灵技能行的固定 ShowStanceList（经 SkillAbilityList 归属）。
             owner_definition = (declared_stance_definitions or {}).get(task.action_id)
             owner_fallback = (
@@ -19130,7 +19306,7 @@ def _lower_standalone_hit_profiles(
             declared = _task_declared_hit_profile(
                 task, effect,
                 stance_fallbacks={(task.action_id, task.level): owner_fallback} if owner_fallback else None,
-            ) if explicit_formula else None
+            ) if explicit_formula or owner_damage else None
             if declared is not None:
                 profiles.append(replace(declared, hit_index=len(profiles)))
                 continue
@@ -19187,6 +19363,15 @@ def _formula_declaration_key(binding: SkillFormulaBindingIR) -> tuple:
     parameter forwarded twice); only then they may be deduplicated.
     """
     evidence = binding.source.evidence if isinstance(binding.source.evidence, dict) else {}
+    if binding.source.raw_type == "MonsterSkillFormulaBinding":
+        # SkillAbilityList exposes one card parameter to several abilities.
+        # Their ability names are routes, not distinct parameter declarations.
+        return (
+            binding.source.source_path, binding.source.raw_type,
+            binding.data_card_id, binding.owner_entity_ref,
+            json.dumps(_json_safe(evidence.get("skill_source")), sort_keys=True),
+            json.dumps(_json_safe(evidence.get("dynamic_value_source")), sort_keys=True),
+        )
     nested = evidence.get("skill_formula_binding_source")
     if isinstance(nested, dict):
         return (
@@ -19349,6 +19534,7 @@ def _project_standalone_skill_formula_bindings(
                     raw_id=child_task.task_id,
                     evidence={
                         "source_binding_id": source_binding.binding_id,
+                        "action_id": source_binding.source.evidence.get("action_id"),
                         "source_binding_ids": [item.binding_id for item in source_candidates],
                         "source_trigger_task_id": trigger_task_id,
                         "linked_standalone_graph_id": linked_graph_id,
@@ -20172,6 +20358,16 @@ def _toughness_amount_expr(effect: EffectIR | None, profile: HitProfileIR | None
                 "source_trace": profile.stance_expr["source_trace"],
             },
         }
+    # HitSplitRatio splits the hit's toughness as well as its damage. Keep
+    # explicit StanceValue expressions (including bounce multipliers) intact.
+    # https://srl.keqingmains.com/characters/pela/
+    # https://srl.keqingmains.com/characters/wind/dan-heng
+    # publish basic totals of 30 and Dan Heng's skill total of 60 (old units).
+    if "HitSplitRatio" in attack_property:
+        split = _fixed_expr_value(lower_numeric_expression(attack_property["HitSplitRatio"]))
+        if split is None:
+            return numeric_missing("toughness_hit_split_ratio_not_fixed")
+        expr = _multiply_numeric_expression_by_fixed(expr, split)
     return {
         **expr,
         "raw_path": "AttackProperty.StanceValue",
@@ -20214,6 +20410,11 @@ def _monster_hit_energy_gain(
     attack = effect.payload.get("AttackProperty") if effect is not None else None
     if not isinstance(attack, dict):
         return None, "hit_energy_attack_property_missing"
+    if "SPHitRatio" not in attack:
+        # Hit energy is a request-local weight, not an automatic skill-wide
+        # grant. The pinned Dragonfish friendly-fire deathrattle has no such
+        # request; inheriting its skill parameters must not fabricate one.
+        return None, ""
     ratio = _fixed_expr_value(_numeric_expr_summary(attack.get("SPHitRatio")))
     if ratio is None or not math.isfinite(ratio) or ratio < 0:
         return None, "hit_energy_request_weight_not_admitted"
@@ -20414,8 +20615,13 @@ def _hit_profiles_from_skill_formula_bindings(
         seen.add(key)
         selected.append(binding)
     profiles: list[HitProfileIR] = []
-    for hit_index, binding in enumerate(selected):
-        target_group = _target_group_from_formula_binding(definition, binding)
+    # Monster cards bind parameters, while each native hit owns its target.
+    # A shared parameter can hit both the centre and neighbours; the damage
+    # task's target alias and dynamic hash select the actual packet below.
+    entries = [(binding, group) for binding in selected for group in (
+        ("primary", "adjacent") if definition.action_id.startswith("monster_skill:")
+        and definition.target_mode == "blast" else (_target_group_from_formula_binding(definition, binding),))]
+    for hit_index, (binding, target_group) in enumerate(entries):
         blocked_reason = _hit_profile_blocked_reason(definition, target_group)
         if binding.coverage_status != "executable":
             blocked_reason = binding.blocked_reason or f"skill_formula_binding_not_executable:{binding.coverage_status}"
@@ -20761,16 +20967,20 @@ def _stance_expr(
         return {"kind": "missing", "blocked_reason": "show_stance_not_present"}
     # Adopted ordinary skill amounts use the old 30-unit basic scale. The table
     # slots are primary / all enemies / adjacent, matched to the raw hit operand.
-    # Ponytail: bouncing, mixed target modes and dynamic amounts need dedicated
-    # bindings; their display totals must never be spread over the hit requests.
+    # A fixed bounce base is not a display total: each native StanceValue keeps
+    # its own multiplier (Asta: primary 30, four bounces at 0.5 × 30).
+    # https://srl.keqingmains.com/characters/fire/asta — old toughness units.
+    # Ponytail: mixed columns and dynamic amounts still need dedicated bindings.
     slots = {
         ("single", "selected"): (0, 1659254037),
         ("single", "primary"): (0, 1659254037),
         ("blast", "primary"): (0, 1659254037),
         ("blast", "adjacent"): (2, -1315627076),
         ("aoe", "selected"): (1, 1182064154),
+        ("bounce", "primary"): (0, 1659254037),
     }
-    slot = slots.get((definition.target_mode, target_group))
+    stance_group = "primary" if definition.target_mode == "bounce" and target_group.startswith("bounce:") else target_group
+    slot = slots.get((definition.target_mode, stance_group))
     values = tuple(
         item.get("Value") if isinstance(item, dict) and set(item) == {"Value"} else item
         for item in show_stance_list
@@ -20808,7 +21018,7 @@ def _stance_expr(
         and len(values) == 3
         and all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in values)
         and (
-            (definition.target_mode == "single" and values[1:] == (0, 0))
+            (definition.target_mode in {"single", "bounce"} and values[1:] == (0, 0))
             or (definition.target_mode == "blast" and values[1] == 0)
             or (definition.target_mode == "aoe" and values[0] == values[2] == 0)
         )
@@ -20822,7 +21032,7 @@ def _stance_expr(
             "source_trace": {
                 "kind": "adopted_mechanism_data",
                 "unit": "old_toughness",
-                "condition": "fixed single/blast/aoe skill; retain each raw hit's multiplier",
+                "condition": "fixed single/blast/aoe/bounce skill; retain each raw hit's multiplier",
                 "raw_path": f"ShowStanceList[{index}]",
                 "action_source": definition.source.to_json(),
                 "research_source": "https://srl.keqingmains.com/characters/fire/himeko",
@@ -20916,6 +21126,8 @@ def _selection_mode(target_mode: str) -> str:
 
 
 def _action_definition_is_attack(definition: ActionDefinitionIR) -> bool:
+    if definition.damage_kind == "non_damage":
+        return False
     skill_effect = definition.skill_effect.lower()
     attack_type = definition.attack_type.lower()
     if definition.target_mode in {"single", "blast", "aoe", "bounce"}:
@@ -21629,6 +21841,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             "operation": "modify_modifier_value", "target_alias": target_alias,
             "modifier_name": modifier_name,
             "value_kind": value_kind, "modify_function": function, "amount": amount,
+            **({"value_kind_from_instance": True}
+               if own_modifier_layer or implicit_add_layer or explicit_value_layer_default else {}),
             **({"count_bootstrap_policy": "single_instance_presence"}
                if count_rule and count_rule.get("bootstrap_single_instance") is True else {}),
             **({"modifier_selector": "param_modifier"} if param_lifetime else {}),
@@ -21691,7 +21905,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
     if opcode == "ModifySkillPropertyByType":
         payload["standard"] = _standard_modify_skill_property_payload(value)
     if opcode == "AddModifier":
-        payload["standard"] = _standard_add_modifier_payload(value)
+        payload["standard"] = _standard_add_modifier_payload(value, source=source)
     elif opcode in {"FireProjectile", "NewFireProjectile"}:
         payload["standard"] = _standard_single_projectile_payload(value)
     elif opcode in REMOVE_MODIFIER_OPCODES:
@@ -21706,6 +21920,12 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_set_hp_payload(value)
     elif opcode in SHIELD_OPCODES:
         payload["standard"] = _standard_shield_payload(value, opcode, source_modifier_name)
+        if (opcode == "StackShield" and source is not None
+                and source.source_path == "Config/ConfigAbility/Avatar/Avatar_DanHengPT_00_Ability.json"
+                and source_modifier_name in {"MAvatar_DanHengPT_00_Shield", "MAvatar_DanHengPT_00_LongLingExtraShield"}):
+            # 14c1d18f text supplies the numeric cap. Its falling-cap boundary
+            # is adopted provisionally under the user's marked-assumption rule.
+            payload["standard"]["falling_cap_policy"] = "retain_existing"
     elif opcode in REMOVE_SHIELD_OPCODES:
         payload["standard"] = _standard_remove_shield_payload(value)
     elif opcode in MECHANISM_BAR_OPCODES:
@@ -21824,15 +22044,15 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         # A non-muted ForceKill is a real forced death: the target's own lethal
         # HP/lifecycle facts are produced by the shared lifecycle boundary, with
         # no hit, damage packet or kill credit. Admit only the complete shape:
-        # both mute flags absent or explicitly false, abort explicitly true, and
-        # one of the two aliases actually used by this shape in TBGD.
+        # both mute flags absent or explicitly false. The native retargeted
+        # absorption shape omits abort (false); it still produces real death.
         forced_admitted = (
             not unknown
             and flags_are_bool
             and (not mute_hp_declared or mute_hp_change is False)
             and (not mute_death_declared or mute_all_trigger_death is False)
-            and abort_unused_insert is True
-            and alias in {"AbilityTargetEntity", "Caster"}
+            and (abort_unused_insert is True or (not abort_declared and alias == "ParamEntity"))
+            and alias in {"AbilityTargetEntity", "Caster", "ParamEntity"}
         )
         # The retired muted shape keeps both mute flags explicitly true. The
         # abort cleanup is now implemented by the muted retirement executor, so
@@ -21848,7 +22068,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
             payload["standard"] = {
                 "operation": "formal_forced_death",
                 "target_alias": alias,
-                "abort_unused_insert_ability": True,
+                "abort_unused_insert_ability": abort_unused_insert is True,
                 "mute_hp_change": False,
                 "mute_all_trigger_death": False,
                 "source_shape_admitted": True,
@@ -22094,6 +22314,10 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_set_dynamic_value_payload(
             value, default_context_scope=default_context_scope
         )
+        limit = ADOPTED_DYNAMIC_MAXIMUMS.get((source.source_path, payload["standard"].get("value_name"))) if source else None
+        if limit and value.get("Value") == limit["expected_value"]:
+            payload["standard"]["max_value"] = numeric_fixed(limit["maximum"])
+            payload["standard"]["adopted_limit_source"] = limit["basis"]
     elif opcode == "SetDynamicValueByAddValue":
         payload["standard"] = _standard_set_dynamic_value_by_add_value_payload(
             value, default_context_scope=default_context_scope
@@ -22179,6 +22403,8 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
     "CharacterPlayVO": {"TargetType": "mapping", "VOType": "string"},
     "TriggerEffect": {
         "TargetType": "mapping", "EffectPath": "string", "AttachPoint": "string",
+        "TowardTarget": "mapping", "TowardAttachPoint": "string",
+        "AliveOnly": "bool",
         "RotationOffset": "mapping", "PositionOffset": "mapping",
         "ForceSimulateImmediately": "bool",
         # Visual-effect placement flags (Resident/Field/...); they only
@@ -22189,7 +22415,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
         # Presentation timing only; the effect fires later in the animation.
         "Delay": "number",
     },
-    "StartAim": {"TargetType": "mapping", "TargetAttachPoint": "string", "TransitTime": "number"},
+    "StartAim": {"TargetType": "mapping", "TargetAttachPoint": "string", "TransitTime": "number", "VerticalAlpha": "number"},
     "StopAim": {"TransitTime": "number"},
     "SetNoShadowCaster": {"NodeName": "string", "IsNoShadow": "bool"},
     "SetCameraRootFollow": {"TargetType": "mapping", "PointName": "string", "IsReset": "bool"},
@@ -22212,6 +22438,7 @@ _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
         "Team": "string", "CustomTargetType": "mapping", "CustomCenterTargetType": "mapping",
         "CenterOffset": "mapping", "CenterRootYaw": "number",
         "IgnoreCharacterRootOffset": "bool", "DeltaMultiplier": "list",
+        "IgnoreHitBoxRadius": "bool",
         "FormationDeltaMaxRange": "mapping", "FormationDeltaMinRange": "mapping",
         "SetBodyPartPos": "bool", "TargetFormation": "mapping_or_empty",
         "LeftSideFormations": "list", "RightSideFormations": "list",
@@ -22570,6 +22797,7 @@ def _servant_formation_presentation_blocked_reason(task: dict[str, Any]) -> str:
         "CenterOffset",
         "CenterRootYaw",
         "IgnoreCharacterRootOffset",
+        "IgnoreHitBoxRadius",
         "DeltaMultiplier",
         "FormationDeltaMaxRange",
         "FormationDeltaMinRange",
@@ -22580,13 +22808,13 @@ def _servant_formation_presentation_blocked_reason(task: dict[str, Any]) -> str:
     }
     if set(task) - allowed_fields:
         return "skill_target_formation_presentation_shape_missing"
-    required_fields = {"CustomCenterTargetType", "TargetFormation"}
+    required_fields = {"TargetFormation"}
     if not required_fields.issubset(task):
         return "skill_target_formation_presentation_shape_missing"
     if ("Team" in task and (not isinstance(task["Team"], str) or not task["Team"])) or (
             "Team" not in task and "CustomTargetType" not in task):
         return "skill_target_formation_presentation_shape_missing"
-    target_alias_fields = ["CustomCenterTargetType"]
+    target_alias_fields = ["CustomCenterTargetType"] if "CustomCenterTargetType" in task else []
     if "CustomTargetType" in task:
         target_alias_fields.append("CustomTargetType")
     for key in target_alias_fields:
@@ -22640,6 +22868,8 @@ def _servant_formation_presentation_blocked_reason(task: dict[str, Any]) -> str:
     if any(not isinstance(task.get(key, []), list) for key in ("LeftSideFormations", "RightSideFormations")):
         return "skill_target_formation_offset_shape_not_admitted"
     for item in (*task.get("LeftSideFormations", []), *task.get("RightSideFormations", [])):
+        if item == {}:
+            continue  # Native empty entries restore presentation defaults.
         if (
             not isinstance(item, dict)
             or set(item) - {"LocalDelta", "Yaw"}
@@ -22656,6 +22886,24 @@ def _servant_formation_presentation_blocked_reason(task: dict[str, Any]) -> str:
     return ""
 
 
+def _paired_death_animation_marker(document, json_path, task):
+    """Only suppress a marker immediately followed by the actual death producer."""
+    parent_path, _, index = json_path.rpartition("[")
+    siblings = _value_at_rooted_json_path(document, parent_path)
+    if not isinstance(siblings, list) or not index.rstrip("]").isdigit():
+        return False
+    following = int(index[:-1]) + 1
+    if following >= len(siblings):
+        return False
+    target = task.get("TargetType")
+    kill = {"$type": "RPG.GameCore.ForceKill", "TargetType": target}
+    if target == {"$type": "RPG.GameCore.TargetAlias", "Alias": "CasterSelfCreateBattleEvent"}:
+        kill.update(MuteHpChange=True, MuteAllTriggerDeath=True)
+    elif target != {"$type": "RPG.GameCore.TargetAlias", "Alias": "ParamEntity"}:
+        return False
+    return set(task) == {"$type", "TargetType"} and siblings[following] == kill
+
+
 def _process_only_ability_task_source_blocked_reason(
     task: dict[str, Any],
     opcode: str,
@@ -22664,6 +22912,23 @@ def _process_only_ability_task_source_blocked_reason(
 ) -> str:
     if _short_gamecore_type(task.get("$type")) != opcode:
         return "process_only_task_source_type_mismatch"
+    if opcode in {"TaskConfig", "AbortModifierPhasePerform"}:
+        return "" if set(task) == {"$type"} else "empty_task_has_fields"
+    if opcode in {"CreateTeamFormationSnapshot", "RestoreTeamFormationSnapshot"}:
+        return "" if set(task) == {"$type", "Team"} and task['Team'] in {'TeamLight', 'TeamDark'} else "formation_snapshot_shape_invalid"
+    if opcode == "SetDieImmediately":
+        # Promoted only by the adjacent SetDieImmediately/ForceKill pair above.
+        return "" if set(task) == {"$type", "TargetType"} and task["TargetType"] in (
+            {"$type": "RPG.GameCore.TargetAlias", "Alias": "ParamEntity"},
+            {"$type": "RPG.GameCore.TargetAlias", "Alias": "CasterSelfCreateBattleEvent"},
+        ) else "death_animation_marker_shape_invalid"
+    if opcode == "SetBattleAchievement":
+        # Fixed TBGD Mecha03 reports achievement IDs; no combat state changes.
+        return "" if (
+            set(task) == {"$type", "AchievementID", "TagMatch"}
+            and type(task["AchievementID"]) is int and task["AchievementID"] > 0
+            and type(task["TagMatch"]) is bool
+        ) else "battle_achievement_bookkeeping_shape_not_admitted"
     if opcode in {"SetDynamicValueClientOnly", "SetDynamicValueByPropertyClientOnly"}:
         # The opcode itself is the client-only boundary: these writes never
         # enter authoritative battle state, so they are presentation for every
@@ -22778,7 +23043,7 @@ def _process_only_ability_task_source_blocked_reason(
                     and isinstance(task.get("OnlyAlive", False), bool)
                     and isinstance(task["PhaseName"], str) and bool(task["PhaseName"])
                     and isinstance(animations, dict)
-                    and set(animations) in ({"Die", "DieHit"}, {"Hit", "HitH"})
+                    and set(animations) in ({"Die", "DieHit"}, {"Hit", "HitH"}, {"StandBy", "Hit", "Die"}, {"StandBy"})
                     and all(isinstance(v, str) and v for v in animations.values())
                     and task["TargetType"] == {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"})
         return "" if admitted else "character_phase_gameplay_contract_not_admitted"
@@ -23156,6 +23421,8 @@ def _attach_target_expressions_to_effect_payload(
 ) -> tuple[dict[str, Any], list[TargetExpressionIR]]:
     expressions: list[TargetExpressionIR] = []
     refs_by_field: dict[str, Any] = {}
+    filtered_count = (_short_gamecore_type(task.get("$type")) == "SetDynamicValueByCharacterCount"
+                      and isinstance(task.get("Predicate"), dict))
     for field_name, raw_value in _iter_target_expression_fields(task):
         expression = _target_expression_from_raw(
             raw_value,
@@ -23165,6 +23432,19 @@ def _attach_target_expressions_to_effect_payload(
         )
         if expression is None:
             continue
+        if filtered_count and field_name == "ReadTargetType":
+            # The count task's predicate is a candidate filter, not a second
+            # interpreter. Retain the real task/ReadTargetType/Predicate paths.
+            filter_source = _target_expression_source(source,
+                expression_id=f"target_expression:{effect_id}", field_name="$self", expression_kind="TargetFilter")
+            predicate = _condition_ir_from_typed_target_predicate(task["Predicate"],
+                _target_child_source(filter_source, "Predicate", "TargetPredicate"))
+            node = TargetExpressionNodeIR.build("TargetFilter", filter_source,
+                {"candidate": expression.node, "predicate": predicate})
+            reason = _target_node_contract_blocked_reason(node)
+            expression = replace(expression, expression_kind="TargetFilter", alias="",
+                node=node, source=filter_source, coverage_status="blocked" if reason else "executable",
+                blocked_reason=reason)
         if target_language_definitions:
             from .target_source import close_target_expression_language
             expression = close_target_expression_language(expression, target_language_definitions)
@@ -23210,7 +23490,14 @@ def _attach_target_expressions_to_effect_payload(
                 standard["operand_parameters"] = {
                     **standard.get("operand_parameters", {}),
                     "source_target_expression_id": read_ref["target_expression_id"],
+                    **({"predicate": None} if filtered_count else {}),
                 }
+                if (source.source_path == "Config/ConfigAbility/Avatar/Avatar_Evernight_00_Ability.json"
+                        and task.get("DynamicKey") == "_S02_Char_Count" and "AliveOnly" not in task):
+                    # Skill text counts party members; omitted alive-only flag
+                    # is interpreted as including defeated members. Unverified
+                    # boundary is surfaced by the card's processor, not a number guess.
+                    standard["operand_parameters"]["alive_only"] = False
                 standard["dynamic_operation"] = lower_dynamic_value_operation_spec(
                     "SetDynamicValueByCharacterCount", standard,
                 )
@@ -25208,6 +25495,8 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if standard.get("inherit_caster", "effect_caster") not in {"effect_caster", "target_self"}:
             return "blocked"
+        if type(standard.get("life_step_immediately", False)) is not bool:
+            return "blocked"
         if not standard.get("modifier_name"):
             return "blocked"
         if standard.get("target_expression_coverage_status") == "executable":
@@ -25953,6 +26242,10 @@ def _status_callback_task_admission(
         return ("executable", "") if coverage == "executable" else ("blocked", _effect_blocked_reason(opcode, payload, coverage))
     if opcode == "Remodifier" and event in STATUS_EVENT_RUNTIME_SOURCES:
         return _remodifier_task_admission(task)
+    if opcode == "LoseHPByRatio" and event == "OnBeforeSkillUse":
+        payload = source_effect_payload if source_effect_payload is not None else _effect_payload(task, opcode, source_modifier_name)
+        coverage = _effect_coverage_status(opcode, payload)
+        return ("executable", "") if coverage == "executable" else ("blocked", _effect_blocked_reason(opcode, payload, coverage))
     if opcode == "ForceKill":
         payload = source_effect_payload if source_effect_payload is not None else _effect_payload(task, opcode, source_modifier_name)
         return ("executable", "") if _effect_coverage_status(opcode, payload) == "executable" else ("blocked", "force_kill_death_semantics_not_admitted")
@@ -26478,6 +26771,9 @@ def _status_callback_task_admission(
     }:
         # The ability-property watcher is the producer for its own branches;
         # effects still need their executable payload and target closure.
+        if opcode in {"ModifyActionDelay", "SetActionDelay"}:
+            expr = _action_delay_expr(task, opcode)
+            return ("executable", "") if _numeric_expr_can_be_runtime_bound(expr) else ("blocked", "action_delay_value_not_executable")
         if opcode in {
             "IncludeTaskListTemplate",
             "TriggerParallelTaskListTemplate",
@@ -27379,7 +27675,7 @@ def _status_damage_emission_from_task(
     if damage_formula_family == "unresolved":
         coverage_status, blocked_reason = "blocked", "pure_damage_family_unproven"
     if coverage_status == "executable" and not _status_callback_source_admitted(
-        source.source_path,
+        str(source.evidence.get("admission_source_path") or source.source_path),
         stage_source_admitted=source.evidence.get("stage_ability_source_admitted") is True,
         equipment_source_admitted=bool(
             source.evidence.get("equipment_ability_source_admitted")
@@ -27433,7 +27729,7 @@ def _damage_modifier_from_task(
             task,
         )
     if coverage_status == "executable" and not _status_callback_source_admitted(
-        source.source_path,
+        str(source.evidence.get("admission_source_path") or source.source_path),
         stage_source_admitted=source.evidence.get("stage_ability_source_admitted") is True,
         equipment_source_admitted=bool(
             source.evidence.get("equipment_ability_source_admitted")
@@ -27572,7 +27868,7 @@ def _action_delay_emission_from_task(
             local_aliases=local_aliases,
         )
     if coverage_status == "executable" and not _status_callback_source_admitted(
-        source.source_path,
+        str(source.evidence.get("admission_source_path") or source.source_path),
         stage_source_admitted=source.evidence.get("stage_ability_source_admitted") is True,
         equipment_source_admitted=bool(
             source.evidence.get("equipment_ability_source_admitted")
@@ -29286,6 +29582,8 @@ def _lower_extra_action_policies(
             "queue_intent_source": intent.source.to_json() if intent is not None else {},
             "queue_lifecycle_policy": lifecycle.to_json() if lifecycle is not None else {},
             "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
+            # Fixed game tutorial: extra turns cannot insert Ultimates.
+            "ultimate_exclusion_source": "TextMapCHS:16524344329940429355",
         }
         blocked_reason = ""
         if not window_ok:
@@ -29298,8 +29596,8 @@ def _lower_extra_action_policies(
                 queue_intent_id=window.queue_intent_id,
                 queue_window_id=window.queue_window_id,
                 source_kind="true_extra_turn",
-                action_selection_kind="route_or_source_selected_action",
-                allowed_action_kinds=("basic", "skill", "ultimate"),
+                action_selection_kind="route_or_source_selected_non_ultimate_action",
+                allowed_action_kinds=("basic", "skill"),
                 fixed_action_ref="",
                 lifecycle_policy_id=lifecycle.queue_lifecycle_policy_id if lifecycle is not None else "",
                 source_basis=source_basis,
@@ -29940,6 +30238,8 @@ def _condition_payload_executable(
         )
     if opcode in {"ByInTurnBasedGameModeState", "ByIsDamageCritical"}:
         return True
+    if opcode == "ByIsMazeSkillAffectCurrentWave":
+        return not payload
     if opcode == "ByIsPropertyValueMinOrMax":
         return (
             _condition_target_value_executable(payload.get("TargetType"), local_aliases=local_aliases)
@@ -30371,7 +30671,9 @@ def _standard_modify_skill_property_payload(value: dict[str, Any]) -> dict[str, 
     }
 
 
-def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
+def _standard_add_modifier_payload(value: dict[str, Any], *, source: IRSource | None = None) -> dict[str, Any]:
+    count_role = ADOPTED_PRESENCE_COUNTS.get((source.source_path, _value_field(value.get("ModifierName")))) if source else None
+    presence_count = count_role if count_role and value.get("Count") == count_role["expected_count"] else None
     dynamic_values = {
         str(key): _numeric_expr_summary(item)
         for key, item in (value.get("DynamicValues") or {}).items()
@@ -30389,9 +30691,12 @@ def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
         "lifetime": lifetime,
         "life_step_moment": life_step_moment,
         "duration_admission": _duration_admission_payload(lifetime, life_step_moment),
+        "life_step_immediately": value.get("LifeStepImmediately", False),
         "layer_add_when_stack": _numeric_expr_summary(value.get("LayerAddWhenStack")),
         "max_layer": _numeric_expr_summary(value.get("MaxLayer")),
-        **({"count": _numeric_expr_summary(value.get("Count"))} if "Count" in value else {}),
+        **({"count": _numeric_expr_summary(value.get("Count"))} if "Count" in value and not presence_count else {}),
+        **({"count_admission": {"kind": "presence_identity_tag", "source_expression": _numeric_expr_summary(value["Count"]),
+                                "basis": presence_count["basis"]}} if presence_count else {}),
         "chance": _numeric_expr_summary(value.get("Chance")),
         "chance_field_present": "Chance" in value and value.get("Chance") is not None,
         "omitted_chance_semantics": "guaranteed_no_resistance",
@@ -30550,6 +30855,14 @@ def _standard_dispel_status_payload(
         }
         and _target_alias(value.get("TargetType")) in {"Caster", "ModifierOwnerEntity"}
     )
+    # Memory Trailblazer 800708 explicitly clears all control effects from Mem.
+    # This native count-less, control-filtered form uses the existing unbounded
+    # dispel consumer; no arbitrary number substitutes for "all".
+    unbounded_control_dispel = (
+        not set(value) - {"$type", "TargetType", "BehaviorFlags", "OnlyAlive", "IsSilentDispel"}
+        and value.get("BehaviorFlags") in (["STAT_CTRL"], ["DisableAction", "STAT_CTRL"])
+        and _target_alias(value.get("TargetType")) in {"Caster", "ModifierOwnerEntity", "CasterServant"}
+    )
     payload = {
         "kind": "status_dispel",
         "operation": (
@@ -30557,7 +30870,7 @@ def _standard_dispel_status_payload(
         ),
         **(
             {"dispel_scope": "all_eligible"}
-            if limbo_cleanup_all or unbounded_self_dispel
+            if limbo_cleanup_all or unbounded_self_dispel or unbounded_control_dispel
             else {}
         ),
         "target_alias": _target_alias(value.get("TargetType")),
@@ -30570,10 +30883,13 @@ def _standard_dispel_status_payload(
         "mute_all_visual_effect": value.get("MuteAllVisualEffect") if isinstance(value.get("MuteAllVisualEffect"), bool) else None,
         "behavior_flags": _list_json_values(value.get("BehaviorFlags")),
         "dispel_count_key": _value_field(value.get("DispelCountKey")),
+        "dispel_count_hash": (str(tbgd_dynamic_key_hash(_value_field(value.get("DispelCountKey"))))
+                              if isinstance(_value_field(value.get("DispelCountKey")), str)
+                              and _value_field(value.get("DispelCountKey")) else None),
     }
     if deathrattle_cleanup:
         return payload
-    if limbo_cleanup_all or unbounded_self_dispel:
+    if limbo_cleanup_all or unbounded_self_dispel or unbounded_control_dispel:
         payload["order"] = "LastAdded"
         return payload
     if not _numeric_expr_can_be_runtime_bound(count_expr):
@@ -31648,10 +31964,9 @@ def _monster_custom_value_binding_source(
 ) -> dict[str, Any]:
     """Bind one monster card's CustomValues to their hashed runtime identities.
 
-    Both the MonsterConfig table row and the per-monster character config are
-    formal inputs. A name is admitted only when both sources carry the same
-    finite numeric value, so an ability file shared by several cards can never
-    inherit another card's table row or serialized default.
+    Character-config defaults belong to that monster's selected template; an
+    empty table entry does not erase them. Conflicting explicit values remain
+    blocked, and the binding retains the owning monster/template scope.
     """
 
     table_source_path = str(config_source.get("relative_path") or "")
@@ -31736,6 +32051,9 @@ def _monster_custom_value_binding_source(
     for name in sorted(set(table_entries) | set(character_entries)):
         table_entry = table_entries.get(name)
         character_entry = character_entries.get(name)
+        config_default = table_entry is None and character_entry is not None and not table_issues
+        if config_default:
+            table_entry = {"value": character_entry["value"], "raw_path": ""}
         if table_entry is None or character_entry is None:
             # A name declared by only one formal source stays unbound; the missing
             # side is recorded instead of being filled from the other source.
@@ -31781,6 +32099,7 @@ def _monster_custom_value_binding_source(
             "hash": hash_value,
             "value": character_entry["value"],
             "source_type": "monster_config_custom_value",
+            "value_origin": "character_config_default" if config_default else "matching_table_and_config",
             "source_path": character_path,
             "config_source_path": table_source_path,
             "config_row_index": _json_safe(table_row_index),

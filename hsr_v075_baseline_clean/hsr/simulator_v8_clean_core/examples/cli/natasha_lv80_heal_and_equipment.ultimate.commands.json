@@ -1,0 +1,6 @@
+{
+  "commands": [
+    {"actor_id":"natasha","action_id":"avatar_skill:110503","action_level":10,"target_ids":[]},
+    {"actor_id":"natasha","action_id":"avatar_skill:110503","action_level":10,"target_ids":[]}
+  ]
+}

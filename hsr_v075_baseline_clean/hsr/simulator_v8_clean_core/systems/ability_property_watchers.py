@@ -7,10 +7,15 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
+from ..rules.expression_ir import numeric_dynamic_hash, numeric_dynamic_hashes
 from ..rules.ir import AbilityPropertyRangeIR, AbilityPropertyWatcherIR
 from ..rules.rulebook import RuleBook
-from .dynamic_values import status_binding_sources
-from .status_callbacks import StatusCallbackExecutionResult, StatusCallbackSystem
+from .dynamic_values import (
+    status_binding_sources, binding_source_from_store, binding_source_from_status_detail,
+    character_declared_dynamic_binding_source, servant_declared_dynamic_binding_source,
+    store_from_state,
+)
+from .status_callbacks import StatusCallbackExecutionResult, StatusCallbackSystem, _condition_context
 from .task_graph import (
     TaskGraphContinuation,
     TaskGraphExecutionHooks,
@@ -39,11 +44,13 @@ class AbilityPropertyChangeFact:
     _producer_token: object
     _issued: tuple[object, ...]
     _event_signature: tuple[object, ...]
+    status_instance_id: str
+    rules: RuleBook
 
     def __post_init__(self) -> None:
         import math
         issued = (id(self.before_state), id(self.after_state), id(self.watcher), self.range_id,
-                  self.unit_id, self.before, self.after, self.event_id, self.event_source_id, self.event_target_id, self._event_signature)
+                  self.unit_id, self.before, self.after, self.event_id, self.event_source_id, self.event_target_id, self._event_signature, self.status_instance_id, id(self.rules))
         if self._producer_token is not _PROPERTY_CHANGE_PRODUCER or self._issued != issued:
             raise ValueError("property change fact requires its issued native reads")
         if (type(self.watcher) is not AbilityPropertyWatcherIR
@@ -53,8 +60,8 @@ class AbilityPropertyChangeFact:
                 or self.unit_id not in self.before_state.units or self.unit_id not in self.after_state.units
                 or self.range_id not in self.watcher.range_ids):
             raise ValueError("property change fact source is incomplete")
-        before, before_reason = _watcher_property_value(self.before_state, self.before_state.units[self.unit_id], self.watcher)
-        after, after_reason = _watcher_property_value(self.after_state, self.after_state.units[self.unit_id], self.watcher)
+        before, before_reason = _watcher_property_value(self.before_state, self.before_state.units[self.unit_id], self.watcher, self.rules, self.status_instance_id)
+        after, after_reason = _watcher_property_value(self.after_state, self.after_state.units[self.unit_id], self.watcher, self.rules, self.status_instance_id)
         if before_reason or after_reason or before != self.before or after != self.after:
             raise ValueError("property change fact must match its native state reads")
 
@@ -275,6 +282,23 @@ class AbilityPropertyWatcherSystem:
             instance_removed = False
             for watcher in watchers:
                 assert watcher is not None
+                if watcher.property_source.endswith("_dynamic_value") and state_initialized:
+                    fact = trigger_event.dynamic_value_change_fact if trigger_event else None
+                    # The dedicated producer owns this change. Parent HP/action
+                    # notifications must not replay a nested dynamic callback.
+                    bound_hashes = {str(key) for item in self.rules.ability_property_ranges_for_watcher(watcher.watcher_id)
+                                    for bound in (item.minimum, item.maximum) for key in numeric_dynamic_hashes(bound)}
+                    if (fact is None or trigger_event.event_type != "dynamic.value.changed"
+                            or str(fact.plan.operation.destination_hash) not in {watcher.property_name, *bound_hashes}):
+                        continue
+                    value_owner = (str(current_detail.get("caster_id") or "")
+                                   if watcher.property_source == "caster_dynamic_value" else unit_id)
+                    if fact.plan.resolved_scope.get("target_id") != value_owner:
+                        continue
+                    if (watcher.property_source == "status_dynamic_value"
+                            and fact.plan.resolved_scope.get("scope_kind") == "status"
+                            and fact.plan.resolved_scope.get("status_instance_id") != instance_id):
+                        continue
                 if watcher.coverage_status != "executable":
                     return _blocked(
                         state,
@@ -285,7 +309,7 @@ class AbilityPropertyWatcherSystem:
                 property_value, value_reason = _watcher_property_value(
                     property_read_state,
                     current_state.units[unit_id],
-                    watcher,
+                    watcher, self.rules, instance_id,
                 )
                 if value_reason:
                     return _blocked(state, value_reason)
@@ -322,12 +346,12 @@ class AbilityPropertyWatcherSystem:
                 changed_range_ids: list[str] = []
                 if before_state is not None and active_ids:
                     previous_unit = before_state.units.get(unit_id)
-                    if previous_unit is not None:
+                    if previous_unit is not None and _status_detail_by_instance(before_state, unit_id, instance_id) is not None:
                         previous_value, previous_reason = (
                             _watcher_property_value(
                                 before_state,
                                 previous_unit,
-                                watcher,
+                                watcher, self.rules, instance_id,
                             )
                         )
                         if previous_reason:
@@ -412,12 +436,12 @@ class AbilityPropertyWatcherSystem:
                                       unit_id, previous_value, property_value, trigger_event.event_id,
                                       trigger_event.source_id, trigger_event.target_id,
                                       (trigger_event.event_type, trigger_event.event_id, trigger_event.source_id,
-                                       trigger_event.target_id, trigger_event.window, trigger_event.process_only))
+                                       trigger_event.target_id, trigger_event.window, trigger_event.process_only), instance_id, id(self.rules))
                             property_fact = AbilityPropertyChangeFact(before_state, property_read_state, watcher,
                                 property_range.range_id, unit_id, previous_value, property_value,
                                 trigger_event.event_id, trigger_event.source_id, trigger_event.target_id,
                                 _PROPERTY_CHANGE_PRODUCER, issued, (trigger_event.event_type, trigger_event.event_id,
-                                    trigger_event.source_id, trigger_event.target_id, trigger_event.window, trigger_event.process_only))
+                                    trigger_event.source_id, trigger_event.target_id, trigger_event.window, trigger_event.process_only), instance_id, self.rules)
                             callback_trigger_event = replace(
                                 trigger_event, payload=change_payload, ability_property_change_fact=property_fact,
                             )
@@ -553,11 +577,12 @@ class AbilityPropertyWatcherSystem:
                 property_range.blocked_reason
                 or "ability_property_range_not_executable"
             )
-        dynamic_values = _numeric_bindings(detail.get("dynamic_values"))
-        bindings = status_binding_sources(
-            state,
-            (str(detail.get("owner_id") or ""),),
-        )
+        dynamic_values = {}
+        # Constant bounds need no status/store bindings. Building that context
+        # on every HP/event notification otherwise copies the whole party's sources.
+        bindings = (() if all(bound is None or bound.get("kind") == "fixed"
+                              for bound in (property_range.minimum, property_range.maximum))
+                    else _condition_context(self.rules, state, detail, None).binding_sources)
         minimum, reason = self._bound_value(
             property_range.minimum,
             dynamic_values,
@@ -621,6 +646,8 @@ def _watcher_property_value(
     state: BattleState,
     unit: object,
     watcher: object,
+    rules: RuleBook | None = None,
+    instance_id: str = "",
 ) -> tuple[float | None, str]:
     """Resolve a watcher's formal value source without adjacent fallbacks."""
 
@@ -634,6 +661,28 @@ def _watcher_property_value(
             return elation_base_points(state), ""
         except (TypeError, ValueError) as exc:
             return None, str(exc)
+    if source in {"owner_dynamic_value", "caster_dynamic_value", "status_dynamic_value"}:
+        detail = _status_detail_by_instance(state, unit.unit_id, instance_id)
+        if detail is None or rules is None:
+            return None, "dynamic_watcher_status_instance_missing"
+        owner_id = str(detail.get("caster_id") or "") if source == "caster_dynamic_value" else unit.unit_id
+        if owner_id not in state.units:
+            return None, "dynamic_watcher_value_owner_missing"
+        key = watcher.property_name
+        local = source == "status_dynamic_value"
+        stored = binding_source_from_store(store_from_state(state), visible_scope={
+            "target_id": owner_id, "status_instance_id": instance_id if local else "",
+        })
+        sources = [stored]
+        if key not in stored.get("by_hash", {}):
+            baseline = (binding_source_from_status_detail(detail, detail.get("dynamic_values")) if local else
+                character_declared_dynamic_binding_source(rules, state, owner_id)
+                or servant_declared_dynamic_binding_source(rules, state, owner_id))
+            if baseline:
+                sources.append(baseline)
+        result = RuleEvaluator().evaluate_numeric(numeric_dynamic_hash(key),
+            NumericEvaluationContext(binding_sources=tuple(sources)))
+        return (float(result.value), "") if result.ok and result.value is not None else (None, result.blocked_reason)
     return None, f"ability_property_watcher_source_not_admitted:{source or 'missing'}"
 
 

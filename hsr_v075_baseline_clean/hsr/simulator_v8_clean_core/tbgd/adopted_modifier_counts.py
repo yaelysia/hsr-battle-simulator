@@ -96,6 +96,44 @@ for path, function, value in (
     }
 
 LINGSHA_SOURCE = "Config/ConfigAbility/Avatar/Avatar_Lingsha_00_Ability.json"
+# AvatarSkillConfig 122204, ParamList[4] is 5 at every skill level in 14c1d18f;
+# its description explicitly caps Fuyuan's remaining actions at this value.
+# The native increment leaves omit that clamp. Keep the actual +3 expression.
+ADOPTED_DYNAMIC_MAXIMUMS = {
+    (LINGSHA_SOURCE, "Lingsha_AttackTime"): {
+        "expected_value": {"IsDynamic": True, "PostfixExpr": {
+            "OpCodes": "AQABAQIR", "FixedValues": [], "DynamicHashes": [592537088, 121154993]}},
+        "maximum": 5,
+        "basis": "AvatarSkillConfig:122204.ParamList[4]及天赋描述，固定14c1d18f，全部技能等级",
+    },
+}
+ADOPTED_PRESENCE_COUNTS = {
+    (LINGSHA_SOURCE, "MAvatar_Lingsha_BPSkill_BattleEvent"): {
+        "expected_count": {"IsDynamic": True, "PostfixExpr": {
+            "OpCodes": "AQAR", "FixedValues": [], "DynamicHashes": [-584750360]}},
+        "basis": "固定源码Count为BattleEvent_Lingsha_00_IndexID；该标记仅供Lingsha_BattleEventEntity存在性查询。正式单位身份已由出生系统提供，索引不是增益层数或剩余次数。",
+    },
+}
+COMMON_ENTANGLE_SOURCE = "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+# The native delayed-damage formula reads (MDF_BeingHitDamageValue + 1);
+# these setters mirror that count on the callback's own status instance.
+# Actual amounts remain the native expressions. Monster parameters are verified
+# at https://honkai-star-rail.fandom.com/wiki/Voidranger%3A_Trampler (version unspecified).
+for path, operation, opcodes, hashes in (
+    ("[2].CallbackConfig[3]", "Set", "AQAAAAIR", [-434232686]),
+    ("[4].CallbackConfig[0].SuccessTaskList[0].FailedTaskList[2]", "Add", "AAAR", []),
+    ("[5].CallbackConfig[1].FailedTaskList[2]", "Add", "AAAR", []),
+):
+    ADOPTED_MODIFIER_COUNTS[(COMMON_ENTANGLE_SOURCE, "$.ModifierMap.MCommon_Entangle._CallbackList" + path)] = {
+        "expected_task": {"$type": "RPG.GameCore.SetModifierValue",
+            "Value": {"IsDynamic": True, "PostfixExpr": {"OpCodes": opcodes,
+                "FixedValues": [{"Value": 1}], "DynamicHashes": hashes}},
+            **({"ModifyFunction": "Add"} if operation == "Add" else {})},
+        "operation": operation, "target_alias": "ModifierOwnerEntity", "modifier_name": "MCommon_Entangle",
+        "research": "Fixed TBGD common Entanglement: own count mirrors delayed-damage stack expression",
+        "version": "14c1d18f", "condition": "monster-applied common Entanglement; numeric expressions unchanged",
+    }
+
 LINGSHA_MODIFIER = "MAvatar_Lingsha_BPSkill_BattleEvent_LifeTime"
 LINGSHA_RESEARCH = (
     "TBGD fixed source shape: the modifier's own OnPhase1 SetModifierValue{ModifyFunction:Add} "
@@ -108,19 +146,26 @@ ADOPTED_MODIFIER_COUNTS[(
 )] = {
     "expected_task": {"$type": "RPG.GameCore.SetModifierValue", "ModifyFunction": "Add"},
     "operation": "Add",
-    "amount": 1,
+    "amount": -1,
     "bootstrap_single_instance": True,
     "modifier_name": LINGSHA_MODIFIER,
     "target_alias": "ModifierOwnerEntity",
     "research": LINGSHA_RESEARCH,
     "version": "fixed TBGD 14c1d18f91a8101d610e6c523447a7517de3fae1",
     "condition": (
-        "attack-time counter increments by one per phase; omitted target/modifier "
+        "remaining attacks decrease by one per phase, matching the same callback's explicit _AttackTime - 1; omitted target/modifier "
         "resolve to the callback's own modifier on its owner"
     ),
 }
 
 ADOPTED_MODIFIER_INITIAL_VALUES = {
+    ("Config/ConfigAbility/Monster/Monster_W1_Mecha03_01_Ability.json", "Monster_W1_Mecha03_01_Frozen"): {
+        "expected_slot": {"ReadInfo": {"Type": "None", "Index": 0}},
+        "by_hash": {"-797864550": 1.0},
+        "research": "https://honkai-star-rail.fandom.com/wiki/Frigid_Prowler",
+        "version": "unspecified; pinned TBGD 14c1d18f supplies 12% SPD / 20% Ice RES and max 3",
+        "condition": "ordinary Deep Freeze adds one stack per successful application; native LayerAddWhenStack slot is unassigned",
+    },
     (ENTANGLE_SOURCE, ENTANGLE_MODIFIER): {
         "expected_slot": {"ReadInfo": {"Type": "None", "Index": 0}},
         "by_hash": {"808921108": 5.0, "560166466": 1.0},

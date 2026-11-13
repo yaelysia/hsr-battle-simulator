@@ -982,6 +982,9 @@ class BreakSystem:
                 owner_id=packet.target_id,
                 param_entity_id=packet.target_id,
                 current_action_target_id=packet.target_id,
+                # This break owns its parameters; a previous break status on
+                # the target must not supply competing snapshots of them.
+                include_ambient_status_bindings=False,
                 binding_sources=(binding_source,) if binding_source else (),
             ),
         )

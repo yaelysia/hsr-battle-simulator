@@ -26,6 +26,7 @@ from hsr.simulator_v8_clean_core.systems.dynamic_values import (
     _reindex,
     empty_dynamic_value_store,
     normalized_dynamic_value_store,
+    store_from_state,
     remove_status_instance_entries,
     upsert_dynamic_value,
 )
@@ -71,6 +72,56 @@ def _unit_entry(store):
         source_id="source:fixture:unit",
         source_trace={"effect_id": "effect:fixture:unit"},
     )
+
+
+def test_immutable_store_validation_is_reused_without_trusting_new_or_mutable_inputs(monkeypatch):
+    import pytest
+    from hsr.simulator_v8_clean_core.immutable_json import freeze_json, thaw_json
+    from hsr.simulator_v8_clean_core.systems import dynamic_values
+
+    store = freeze_json(_fixture_store(with_ledger=True))
+    expected = normalized_dynamic_value_store(store)
+    def unexpected(_item):
+        raise AssertionError('unchanged immutable ledger was revalidated')
+    with monkeypatch.context() as patch:
+        patch.setattr(dynamic_values, '_ledger_record_fingerprint', unexpected)
+        copied = normalized_dynamic_value_store(store)
+        assert copied is expected
+        assert normalized_dynamic_value_store(copied) is copied
+        with pytest.raises(TypeError):
+            copied['entries'].clear()
+        detached = thaw_json(copied)
+        detached['entries'].clear()
+        assert normalized_dynamic_value_store(store)['entries'] == expected['entries']
+    for frozen in (False, True):
+        changed = thaw_json(store)
+        changed['by_hash'].clear()
+        with pytest.raises(ValueError, match='store_index_mismatch'):
+            normalized_dynamic_value_store(freeze_json(changed) if frozen else changed)
+    mutable = thaw_json(store)
+    normalized_dynamic_value_store(mutable)
+    mutable['by_name'].clear()
+    with pytest.raises(ValueError, match='store_index_mismatch'):
+        normalized_dynamic_value_store(mutable)
+
+
+def test_unit_binding_projection_validates_input_and_keeps_foreign_status_slots():
+    import pytest
+    from hsr.simulator_v8_clean_core.systems.dynamic_values import binding_source_from_store_for_units
+
+    store = _fixture_store(with_ledger=True)
+    for owner in ('selected', 'other'):
+        store = upsert_dynamic_value(store, scope='unit', owner_id=owner, value=2,
+                                     value_name='shared', hash_key='123')
+    source = binding_source_from_store_for_units(store, ('selected',))
+    assert {e['owner_id'] for e in source['entries'].values() if e['scope'] == 'unit'} == {'selected'}
+    assert {k for k,e in source['entries'].items() if e['scope'] == 'status'} == {
+        k for k,e in store['entries'].items() if e['scope'] == 'status'}
+    assert 'operation_ledger' not in source
+    broken = copy.deepcopy(store)
+    next(iter(broken['operation_ledger'].values()))['record_fingerprint'] = 'invalid'
+    with pytest.raises(ValueError, match='operation_ledger_entry_mismatch'):
+        binding_source_from_store_for_units(broken, ('selected',))
 
 
 def _fixture_store(*, with_ledger=False):
@@ -356,13 +407,13 @@ def test_cleanup_audit_rejects_changes_to_retained_store_entries():
     }
 
 
-@lru_cache(maxsize=1)
-def _dispel_case():
+def _dispel_case(raw=None):
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
     relative = "Config/ConfigAbility/Equip/EquipmemtAbility.json"
     source = IRSource(relative, "DispelStatus", "dispel", {"json_path": "$.fixture.DispelStatus"})
-    raw = {
+    raw = raw or {
         "$type": "RPG.GameCore.DispelStatus",
+        "DispelCountKey": "BuffNumber",
         "TargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "AllTeamMember"},
         "Numbers": {"IsDynamic": False, "FixedValue": {"Value": 1}},
         "Order": "LastAdded",
@@ -387,6 +438,24 @@ def _dispel_case():
         )
     )
     return rules, effect
+
+
+def test_control_only_unbounded_dispel_removes_all_controls_and_keeps_dot():
+    raw = {'$type': 'RPG.GameCore.DispelStatus',
+           'TargetType': {'$type': 'RPG.GameCore.TargetAlias', 'Alias': 'Caster'},
+           'BehaviorFlags': ['STAT_CTRL']}
+    rules, effect = _dispel_case(raw)
+    assert effect.payload['standard']['dispel_scope'] == 'all_eligible'
+    details = [{'instance_id': f'status:{i}', 'status_id': f'modifier:fixture{i}',
+                'modifier_name': f'fixture{i}', 'owner_id': 'caster', 'caster_id': 'caster',
+                'can_dispel': True, 'lifecycle_state': 'active', 'status_type': 'Debuff',
+                'control_kind': control} for i, control in enumerate(('CTRL_Frozen', 'CTRL_Imprison', ''))]
+    state = BattleState(units={'caster': UnitState('caster', 'ally', 'fixture', hp=100, max_hp=100,
+        statuses=tuple(d['status_id'] for d in details), flags={'status_details': details})})
+    result = StatusSystem(rules).apply_dispel_status(state, effect, caster_id='caster', source_id='dispel')
+    assert result.ok, result.unsupported
+    assert result.dispelled_count == 2
+    assert MutationReducer().apply_all(state, result.mutations).units['caster'].statuses == ('modifier:fixture2',)
 
 
 def test_multi_target_dispel_merges_dynamic_value_cleanup_atomically():
@@ -431,6 +500,19 @@ def test_multi_target_dispel_merges_dynamic_value_cleanup_atomically():
         if mutation.path == ("global_flags", "dynamic_value_store")
     ]
     assert len(cleanup_mutations) == 2
+    assert result.dispelled_count == 2
     after = MutationReducer().apply_all(state, result.mutations)
     store_after = normalized_dynamic_value_store(after.global_flags.get("dynamic_value_store"))
     assert store_after["entries"] == {}
+    from hsr.simulator_v8_clean_core.systems.effect import EffectExecutionContext, EffectRegistry
+
+    registry = EffectRegistry(StatusSystem(rules))
+    context = EffectExecutionContext(state, "caster", "dispel", ability_instance_id="ability:dispel")
+    for expected in (2, 0):
+        result = registry.execute(effect, context)
+        assert not result.unsupported, result.unsupported
+        after = MutationReducer().apply_all(context.state, result.mutations)
+        entries = store_from_state(after)["entries"].values()
+        values = [entry["value"] for entry in entries if entry["name"] == "BuffNumber"]
+        assert values == [expected]
+        context = replace(context, state=after)

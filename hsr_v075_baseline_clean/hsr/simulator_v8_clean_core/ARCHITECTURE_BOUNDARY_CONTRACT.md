@@ -132,6 +132,12 @@ L1 负责通用战斗结算：
 - mutation、原子提交、结算明细、replay、确定性 RNG。
 - 供内容专属处理器使用的公共挂点（动作执行、事件监听、生命周期节点等）和通用结算函数。
 
+`OneMore` 表示同一回合中的下一次行动：消费其 ActionPhaseEnd 时长后重新开放选择，
+不重复回合开始、回合结束或重置 AV；真正额外回合仍由 `extra_turn` 队列处理。
+未显式指定时机的普通状态在持有者 `TurnEnd` 扣减；持有者当前回合新授予的状态从下一回合
+计时，来源 `LifeStepImmediately` 可显式要求本回合计时。显式 DOT/控制等生命周期时机优先。
+状态实例保存本回合跳过标记，调度和回调不能从日志重建这个事实。
+
 ### 允许
 
 内核可以认识稳定机制契约，例如：
@@ -247,6 +253,8 @@ L2 负责把通用机制实例化到具体内容上：
   为前置清理，编译图继续执行；`takeover=True` 替换根效果图（OnStart）与 damage_plan，处理器伤害
   命中接回 action_hit_targets 与 post-action notice）；H2 事件监听（监听器分派后，同一 dispatch
   通道与去重规则，重入深度上限 8）；H4 可用性过滤。生命周期节点由 H2 事件覆盖。
+- H4 的 `filter_target_candidates` 仅缩小 L1 已计算的候选集；查询与提交复核调用同一入口，
+  不能添加非法目标。用于锁定攻击等内容约束，UI 和外部推演器不重算目标。
 - 处理器数值解析：倍率经正式技能参数绑定（L1 binding source，servant 配置 ReadInfo 链）；
   削韧经 L1 ToughnessSystem（compiled emission canonical 表达式优先，action definition 形式
   show_stance_list 回退），随后经 BreakSystem 完成击破与多层溢出；不得按 ParamList 位置猜测
@@ -254,11 +262,32 @@ L2 负责把通用机制实例化到具体内容上：
 - H1 的 ProcessorServices 接收攻击前窗口的类型化增伤贡献，仅合并到当前行动者的伤害包；
   保留包自身贡献，同一贡献只应用一次，HP 消耗不应用增伤。
 - 分派：按单位自身 template_id 字典查找（与 action_set 同构），在场门禁；内核不按名称/固定 ID 分支。
+- H2可用 `replaced_status_callbacks` 声明由本卡处理器替换的精确 `(modifier_name, callback_event)`；限本卡持有或本卡施加的状态回调（包括施加给队友的光环）。
+  其余原生回调照常执行，处理器在事件分派后运行。佩拉用于追歼下一次攻击的消费时机。
+  `ProcessorServices.execute_damage_tasks` 复用 L1 命中任务的完整结算与回调；`remove_status` 复用状态生命周期。
+  重复执行同一命中须提供不同 `execution_key`，共用当前处理器的伤害窗口记录；
+  `execute_effect_task` 复用已编译效果叶，保留目标解析、参数、状态概率与生命周期校验。
+  `apply_status_effect` 将已编译 AddModifier 施加给内容处理器选定的目标；复用 L1 参数、概率和
+  生命周期，保留独立实例身份。重复调用同一效果需使用不同 `execution_key`。
+  `resolve_rng` 同时支持确定种子与当前命令的显式选择，结果进入同一事务的 RNG 账本。
+  `execute_status_tasks` 在现存状态的原生条件下执行指定回调叶，复用状态、条件和队列消费者；
+  原回调整体没有条件时可不传条件节点，不得用此入口跳过已有条件。
+  `set_dynamic_value` 经 L1 类型化动态值计划写入单位槽并派发变化通知，供专属资源汇总使用。
+  银鬃尉官用于省略评分计数，保留反击条件、计数和入队。
+- `standalone_body_overrides` 可声明本卡插队能力的实际结算体。原队列身份、目标、时机、
+  中止与完成流程照常校验，执行体必须是已编译能力；银鬃尉官用它跳过仅调用结算体和镜头的包装层。
+  `standalone_body_leaf_opcodes` 可进一步选择该体的根级效果叶，仍走同一结算通路；
+  守护者之影只保留反击伤害，省略成就计数与表现。没有匹配叶或所选叶不可执行时拒绝。
 - 图覆盖旁路：处理器 `claims_action` 命中的动作，仅跳过 `GRAPH_COVERAGE_BLOCK_PREFIXES` 枚举的
   编译图覆盖类阻断（task_graph_* / effect_coverage_* / bounce_not_executable / condition_not_executable /
-  damage_emission_scaling_ratio_not_runtime_bound / process_only_task_coverage_mismatch）；
+  damage_emission_scaling_ratio_not_runtime_bound / process_only_task_coverage_mismatch / projectile_source_shape_not_admitted /
+  retarget_child_task_blocked / fixed_positive_loop_count_required / target_language_dependency_blocked）；
+  后三项仅用于处理器接管的内部选取和循环，公开动作的目标查询与提交仍独立校验。
   availability 与 executor 共用同一枚举。目标、资源、生命周期、控制、身份门禁一律照常，不得绕过。
 - 输出与结算：HookResult 携带类型化 mutations/events/rng_events/records，以及内部已派发事件身份与
+  伤害生产者提供的 `hit_target_ids`（不从日志反推命中）；当前动作共用伤害窗口记录。
+  时序/边界假设输出 `rule_assumption` 结算记录，含稳定标识、“未实证”、解释与待实测事项；
+  API、CLI、UI 与回放保留提示，提示不能反向成为规则输入。其余输出包括
   归一化结果；外层不得重新派发已消费事件，内部事件沿用原重入深度。ProcessorServices 门面包装
   L1 系统（召唤/状态/伤害/RNG/队列/MutationReducer），内部候选 state 推进；失败零 mutation 零 RNG，
   经既有原子边界整事务拒绝。

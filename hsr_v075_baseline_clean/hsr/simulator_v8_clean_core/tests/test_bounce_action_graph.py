@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
+from hsr.simulator_v8_clean_core.rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from hsr.simulator_v8_clean_core.tbgd.character_cards import (
     _bounce_policy_from_row, skill_formula_bindings_from_row,
 )
@@ -63,6 +64,13 @@ def test_real_bounce_action_keeps_template_parameters_loop_and_two_damage_reques
     tasks = _admit_damage_ability_tasks(tasks, damage, toughness, profiles)
     damage_tasks = [task for task in tasks if task.opcode == 'DamageByAttackProperty']
     assert len(damage_tasks) == len(damage) == len(toughness) == 2
+    for emission in toughness:
+        expression = emission.toughness_amount_expr
+        value = RuleEvaluator().evaluate_numeric(
+            expression, NumericEvaluationContext(binding_sources=(expression["binding_source"],)),
+        )
+        assert value.ok, value.to_json()
+        assert value.value == (30 if emission.target_group == "primary" else 15)
     assert all(task.coverage_status == 'executable' and not task.blocked_reason for task in damage_tasks), [
         (task.task_path, task.blocked_reason) for task in damage_tasks]
     control = [task for task in tasks if task.opcode in {

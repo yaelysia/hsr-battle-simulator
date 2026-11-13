@@ -13,6 +13,8 @@ adopted guide references are cited per behavior where used.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..core.content_hooks import (
     ActionHookContext,
     AvailabilityContext,
@@ -25,6 +27,8 @@ from ..core.model import BattleState
 from ..systems.damage import DamagePacket, DamageSourceFrame
 from ..systems.dynamic_values import servant_skill_param_binding_source
 from ..systems.toughness import ToughnessPacket
+from ..systems.action_availability import BlockedActionReason
+from ..core.settlement import SettlementRecord
 
 _CASTORICE_ULTIMATE = "avatar_skill:140703"
 _NETHERWING_REF = "servant:11407"
@@ -120,20 +124,38 @@ class CastoriceServantProcessor(ContentProcessorBase):
          Skill02 param #1 (0.12 at Lv1 / 0.336 at Lv10). Implemented as
          direct packets with scaling_basis attacker_summoner max_hp on the
          generically resolved targets.
-       - Multi-cast loop (UseSkillOneMore) and BP-level multiplier stacking
-         (params #2/#3) are NOT yet implemented; v0.2.0 is a single cast
-         per turn. Tracked for v0.3.0 (queue insertion proposal to lead).
+       - UseSkillOneMore reuses the formal OneMore status and scheduler; the
+         next breath tier is retained until this dragon disappears. The tier's
+         damage still comes from the corresponding formal skill binding.
+       - Low-HP and lifetime finishers select the native Skill23 action, whose
+         compiled graph owns six bounces, healing, and silent removal in order.
     """
 
     content_id = "servant:11407"
-    version = "0.4.0"
+    version = "0.8.0"
 
     _BREATH_ACTIONS = frozenset({
         "servant_skill:1140702", "servant_skill:1140710", "servant_skill:1140711",
     })
 
     def claims_action(self, state: BattleState, action_id: str, action_level: int) -> bool:
-        return action_id in self._BREATH_ACTIONS
+        return action_id in self._BREATH_ACTIONS or action_id == "servant_skill:1140712"
+
+    def filter_choices(self, ctx: AvailabilityContext) -> AvailabilityContext:
+        tier = int(ctx.actor.flags.get("castorice_breath_tier", 0))
+        selected = ("servant_skill:1140702", "servant_skill:1140710", "servant_skill:1140711")[tier]
+        expired = "modifier:MServant_CastoriceServant_TiggerKiller" in ctx.actor.statuses
+        threshold = ctx.actor.flags.get("castorice_breath_finish_ratio")
+        low_hp = isinstance(threshold, (int, float)) and ctx.actor.hp <= ctx.actor.max_hp * threshold
+        allowed = {"servant_skill:1140712"} if expired else {"servant_skill:1140701", selected}
+        if low_hp:
+            allowed.discard(selected)
+            allowed.add("servant_skill:1140712")
+        rejected = tuple(c for c in ctx.choices if c.choice_kind in {"normal_action", "summon_action"}
+                         and c.action_id not in allowed)
+        return replace(ctx, choices=tuple(c for c in ctx.choices if c not in rejected),
+            blocked=ctx.blocked + tuple(BlockedActionReason("netherwing_current_breath_tier", "content",
+                actor_id=ctx.actor.unit_id, action_id=c.action_id, action_level=c.action_level) for c in rejected))
 
     def _primary_damage_hash(self, ctx: ActionHookContext) -> str | None:
         """Formal primary damage dynamic hash of this action's attack data.
@@ -190,6 +212,23 @@ class CastoriceServantProcessor(ContentProcessorBase):
         dragon = ctx.state.units.get(dragon_id)
         if dragon is None or dragon.lifecycle_status != "active":
             return ctx.services.block("castorice_breath_dragon_not_active")
+        threshold = dragon.flags.get("castorice_breath_finish_ratio")
+        if ctx.command.action_id == "servant_skill:1140712":
+            # The low-HP breath spends HP down to 1 before Skill23. A lifetime
+            # finish enters Skill23 directly. Its native graph performs damage,
+            # healing, then ForceKill(MuteHpChange/MuteAllTriggerDeath).
+            expired = "modifier:MServant_CastoriceServant_TiggerKiller" in dragon.statuses
+            if not expired and dragon.hp > 1:
+                ctx.services.apply_damage(DamagePacket(dragon_id, dragon_id, "hp_loss", "hp_loss",
+                    amount=dragon.hp - 1, amount_stage="fixed_final", damage_kind="hp_loss",
+                    source_frame=DamageSourceFrame(dragon_id, "content_processor:castorice:finish_cost",
+                        "effect_damage", f"netherwing_finish_cost:{ctx.state.event_index}:{dragon_id}",
+                        dragon_id, can_continue_after_lethal=False),
+                    source_trace={"rule": "1140702 low-HP LoseHP floor 1 before native Skill23",
+                                  "tbgd_commit": "14c1d18f91a8101d610e6c523447a7517de3fae1"}))
+            return ctx.services.finish(takeover=False)
+        if isinstance(threshold, (int, float)) and dragon.hp <= dragon.max_hp * threshold:
+            return ctx.services.block("castorice_breath_replaced_by_finisher")
         params = ctx.action_definition.param_list
         if not params:
             return ctx.services.block("castorice_breath_params_missing")
@@ -226,6 +265,10 @@ class CastoriceServantProcessor(ContentProcessorBase):
                 metadata={"content_processor": self.content_id, "breath_hp_cost_ratio": cost_ratio},
             ))
         # AoE damage on the generically resolved targets.
+        ctx.services.add_record(SettlementRecord("rule_assumption", self.content_id, process_only=True,
+            payload={"assumption_id": "netherwing_breath_chain_settlement_window", "status": "未实证",
+                "reason": "连续吐息复用同回合OneMore，每次吐息作为一次公开技能提交；原生SkipAttackSettlement的整链结算边界暂未完整复刻。",
+                "todo": "游戏实测连续吐息对迷迷真伤、小伊卡等受击后及技能后监听的触发次数，确认是否应整链只结算一次。"}).to_json())
         targets = tuple(ctx.target_resolution.selected)
         if not targets:
             return ctx.services.block("castorice_breath_no_targets")
@@ -317,12 +360,49 @@ class CastoriceServantProcessor(ContentProcessorBase):
                 },
             )
             ctx.services.apply_toughness(packet)
+        dragon = ctx.services.unit(dragon_id)
+        if dragon is not None and dragon.lifecycle_status == "active" and dragon.hp > 0:
+            tier = min(2, int(dragon.flags.get("castorice_breath_tier", 0)) + 1)
+            ctx.services.set_unit_flag(dragon_id, "castorice_breath_tier", tier,
+                                      reason="retain the skill-text breath damage tier until disappearance")
+            from ..unit_eligibility import runtime_unit_combat_team
+            team = runtime_unit_combat_team(dragon)
+            if any(u.hp > 0 and u.lifecycle_status == "active" and runtime_unit_combat_team(u) != team
+                   and u.flags.get("entity_type") != "battle_event" for u in ctx.services.state.units.values()):
+                effect_id = getattr(self, "_one_more_effect_id", "")
+                if not effect_id:
+                    one_more = next((effect for effect in ctx.services.rules.ir.effects
+                        if effect.opcode == "AddModifier" and effect.owner_modifier_name == "OneMorePerTurn"
+                        and effect.payload.get("standard", {}).get("modifier_name") == "OneMore"), None)
+                    if one_more is None:
+                        return ctx.services.block("castorice_one_more_effect_missing")
+                    effect_id = self._one_more_effect_id = one_more.effect_id
+                ctx.services.apply_status_effect(effect_id, caster_id=dragon_id, target_id=dragon_id)
         return ctx.services.finish(takeover=True)
 
     def subscriptions(self) -> tuple[EventSubscription, ...]:
         return (
-            EventSubscription(("summon.spawned", "unit.defeated", "summon.removed"), scope="self_units"),
+            EventSubscription(("summon.spawned", "turn.begin"), scope="self_units"),
         )
 
     def on_event(self, ctx: EventHookContext) -> HookResult:
+        dragon_id = ctx.event.target_id or ctx.event.source_id
+        dragon = ctx.services.unit(dragon_id)
+        if dragon is None or dragon.template_id != self.content_id:
+            return ctx.services.finish()
+        if ctx.event.event_type == "summon.spawned":
+            levels = dragon.flags.get("owned_combatant_build_result", {}).get("effective_skill_levels", ())
+            level = next((item["effective_level"] for item in levels if item["skill_id"] == "1140702"), None)
+            action = ctx.services.rules.action_definition("servant_skill:1140702", level) if level is not None else None
+            if action is None or len(action.param_list) < 5:
+                return ctx.services.block("castorice_breath_threshold_source_missing")
+            ctx.services.set_unit_flag(dragon_id, "castorice_breath_finish_ratio", float(action.param_list[4]["Value"]),
+                                      reason="1140702 parameter 5 defines the finisher HP threshold")
+            ctx.services.set_unit_flag(dragon_id, "castorice_breath_tier", 0, reason="new dragon starts at the first breath tier")
+        elif (dragon.lifecycle_status == "active"
+              and "modifier:MServant_CastoriceServant_TiggerKiller" in dragon.statuses):
+            ctx.services.add_record(SettlementRecord("rule_assumption", self.content_id, process_only=True,
+                payload={"assumption_id": "netherwing_lifetime_finish_window", "status": "未实证",
+                    "reason": "自身回合开始的原生寿命监听产生到期标记后，仅开放原生终结技能，按弹射、治疗、静默消失的源顺序结算。",
+                    "todo": "游戏实测第三个回合的自动消失窗口，以及其与插队终结技、锁血承担的先后。"}).to_json())
         return ctx.services.finish()

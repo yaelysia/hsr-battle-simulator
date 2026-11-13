@@ -98,7 +98,7 @@ def test_custom_value_binding_rejects_table_and_config_conflict_per_name():
     assert str(tbgd_dynamic_key_hash("SummonID01")) in binding["by_hash"]
 
 
-def test_custom_value_binding_requires_both_formal_sources():
+def test_custom_value_binding_uses_selected_template_defaults_without_table_repetition():
     config = _read(_MONSTER_CONFIG)
     config_source = {
         "relative_path": "ExcelOutput/MonsterConfig.json",
@@ -113,12 +113,13 @@ def test_custom_value_binding_requires_both_formal_sources():
         character_path=_MONSTER_CONFIG,
     )
     reasons = {reason for item in binding["unbound"] for reason in item["reasons"]}
-    assert "custom_value_table_row_missing" in reasons
+    assert "custom_value_table_row_missing" not in reasons
     assert "custom_value_character_config_missing" in reasons
     assert binding["conflict_count"] == 0
     assert "OnlyInTable" not in binding["by_name"]
-    # Names declared by only one formal source stay unbound but do not create a
-    # conflict; the summary records the missing side.
+    assert binding['by_name']
+    assert all(entry['value_origin'] == 'character_config_default' for entry in binding['entries'].values())
+    # A missing character declaration still cannot invent a binding.
     summary_module = __import__(
         "hsr.simulator_v8_clean_core.tbgd.lowering", fromlist=["_custom_value_binding_summary"]
     )

@@ -1,0 +1,96 @@
+{
+  "commands": [
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307214:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:a6270d43dc51f6a1": "not_applied",
+          "rng:status_apply:fc203f2fbb4d6166": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307214:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:aecf02ee95969e80": "not_applied",
+          "rng:status_apply:b8e1953bd87dd36d": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307214:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:c506f3c4cbc30d72": "not_applied",
+          "rng:status_apply:5913be7c9d1fd19e": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100801",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307214:wave:0:pos:0"
+      ]
+    }
+  ]
+}

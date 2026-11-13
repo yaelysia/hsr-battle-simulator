@@ -1,0 +1,44 @@
+comparison_record:
+  id: m2-topaz-e0-lv80-numby-001
+  entries_counted: ["托帕与账账E0满行迹", "托帕20000/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: caa04cff51251abdf3333eede7e90f41c24f9bb63d04b22a1a943ec9364fb22f
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: topaz_teammate_fleet_basic_res0.2_prooffalse_noncrit
+    invocation: "原生generateContext/runStatSimulations；无伤害倍率改写"
+  build:
+    attacker: "托帕80/P6/E0满行迹，锋镝S1、快枪手4、仙舟2；+15无副词条，攻击衣/速度鞋/火球/攻击绳"
+    companion: "娜塔莎23013/101/302既验构筑，提供额外仙舟8%攻击"
+    input: examples/cli/topaz_lv80_numby_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, fire_resistance: 0.2, broken: false, proof_of_debt: false}
+  operations: "35次公开选择/70操作。首个己方回合自动给另一敌人施加负债证明，托帕普攻未标记织叶者；随后施放战技、终结技并观察账账自动行动、强化消耗和转移标记。"
+  reference_values:
+    - {event: basic_follow_up_hit, reference: 1458.1746956366444, simulator: 1458.1771758940752, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001701, verdict: PASS}
+  game_comparison: {status: "普攻及固定构筑独立对照通过", scope: "该普攻同时保留普攻与追击分类；未把此对照外推为账账所有强化伤害和行动提前边界的独立游戏实测。"}
+  behavior_checks:
+    - "主动能力OnAdd在正式出生入口安装一次；源SpecialMarkAdder在入场存在。"
+    - "账账速度80；出生面板与主人BaseSpeed状态为同一来源，只计一次。"
+    - "首个己方回合补负债证明；存活敌人最多一个标记，两名敌人先后被标记。"
+    - "账账存在独立自动伤害；强化次数观察到2、1、0，末次消耗后退出强化。"
+    - "托帕普攻视为追击仍得到快枪手普攻增伤；类型匹配一次，不重复叠加同一贡献。"
+  sources:
+    - "固定AvatarSkillConfig111201/111202/111203/111204、Avatar_Topaz_00_Ability及BattleEvent11216。"
+    - "https://hsr.keqingmains.com/topaz-and-numby/ — 普攻同时属于追击、负债证明及账账行为；适用版本未注明。"
+  assumptions:
+    - "topaz_debt_window：己方回合/动作开始补标记；结果显示未实证，需游戏实测回合初持续伤害、敌人阵亡和插队准备的先后顺序。"
+  unverified_params:
+    - "敌方等级、火抗及队友仙舟8%攻击来自固定来源，非独立实测参数。"
+  execution_checks:
+    - "test_v1_summon_routes.py::test_topaz_auto_debt_numby_speed_enhancement_and_equipment通过；/tmp/hsr_v1_topaz_complete_test.log。"
+    - "启动入口、秘技归属、嵌套邻接和双攻击分类组件6项通过；/tmp/hsr_v1_summon_components.log。"
+  performance: {advance_submit_mean_seconds: 3.8385774014118526, verdict: "复杂追击场景未达性能目标，留待V1性能收敛"}
+  artifacts: [/tmp/hsr_v1_topaz6.json.gz, /tmp/hsr_v1_topaz_complete_test.log, /tmp/hsr_v1_fribbels_topaz_final.log]

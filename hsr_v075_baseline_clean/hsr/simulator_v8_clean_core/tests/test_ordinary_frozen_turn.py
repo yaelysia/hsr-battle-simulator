@@ -74,6 +74,31 @@ def test_expiring_control_consumes_only_its_required_turn(modifier, control_kind
     assert step.after_state.global_flags["combat_phase"] == ("turn_end" if consumes_turn else "awaiting_decision")
 
 
+def test_removed_turn_owner_closes_without_dispatching_another_turn_end():
+    from hsr.simulator_v8_clean_core.systems.action_availability import ActionAvailabilitySystem
+    from hsr.simulator_v8_clean_core.systems.unit_lifecycle import UnitLifecycleSystem
+
+    scheduler, state = _scheduler('ally')
+    state = scheduler.advance_to_next_turn(state).after_state
+    removals = UnitLifecycleSystem().remove_mutations(state, 'holder',
+        reason='completed summoned action', source='test', removed_record={}, source_trace={})
+    state = MutationReducer().apply_all(state, removals)
+    assert state.units['holder'].hp > 0  # Muted retirement does not imply lethal HP.
+    assert ActionAvailabilitySystem(scheduler.rules).view(state).requires_scheduler_step
+    result = scheduler.step(state)
+    assert result.transition.outcome.successor_eligible, result.transition.outcome.reason_codes
+    assert result.after_state.global_flags['combat_phase'] == 'idle'
+    assert not result.after_state.global_flags.get('turn_owner_id')
+    assert not any(e.event_type == 'turn.end' for e in result.transition.transaction.events)
+    from hsr.simulator_v8_clean_core.systems.event_dispatch import _status_details_for_modifier
+    from hsr.simulator_v8_clean_core.systems.trigger import _iter_status_details
+    retired = replace(state.units['holder'], flags={'status_details': [
+        {'modifier_name': 'remaining_listener', 'owner_id': 'holder'}]})
+    state = replace(state, units={'holder': retired})
+    assert _status_details_for_modifier(state, 'remaining_listener') == ()
+    assert _iter_status_details(state) == ()
+
+
 def test_turn_begin_callback_rng_reaches_formal_transition():
     scheduler, state = _scheduler("ally")
     original = scheduler.event_dispatcher.dispatch_event

@@ -1,0 +1,66 @@
+comparison_record:
+  id: m2-natasha-e0-lv80-23013-101-302-001
+  game_version: "外部计算器未标明游戏版本；固定源码提交，限目标HP高于30%的直接治疗与构筑面板"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮未提交的被动准入和阵亡入队修复"
+    modified_runtime_sha256:
+      systems/status_callbacks.py: 2a07539872817f51f8038b6493ad019818920864e1797ba1ca409f2a73a4a565
+      tbgd/monster_cards.py: 76b4b80b55808b43c75b1e10a11fb5bd7a7701a7e2da76f1a0818af63a27aa27
+    rules_fingerprint: f954486c9555cfed33f7dfb8c33aeda4b960c6d69ae02429cd4737423a6c620d
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    vitest: 4.1.12
+    package_lock_sha256: cc985997bc77a3dde3dc54addb5697d2f0c5a6fe0f3c28742fe896f86fc83138
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_heal
+    invocation: "原生 generateFullDefaultForm → generateContext → runStatSimulations；无公式改动或结果修正"
+  build:
+    avatar: 1105
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10，三大行迹及全部属性节点"
+    light_cone: {id: 23013, name: 时节不居, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 101, name: 云无留迹的过客, pieces: 4, level: 15, mains: [HP, ATK, outgoing_healing, SPD], sub_affixes: []}
+    relics_inner: {set: 302, name: 不老者的仙舟, pieces: 2, level: 15, mains: [HP_percent, energy_regeneration], sub_affixes: []}
+    input: examples/cli/natasha_lv80_heal_and_equipment.json
+    initial_hp: "50%，通过正式 initial_condition 输入"
+    initial_energy: 90
+    teammate: "阿兰80/P6/E0、23002/102/302固定构筑；其仙舟攻击增益不影响本记录的治疗"
+  target: {stage: 307214, wave: 0, monster: 2013010, monster_level: 44, heal_target: natasha, heal_target_hp_ratio: 0.5}
+  operations:
+    skill: "阿兰普攻 → 娜塔莎对自己施放战技 → 后续8条公开选择，覆盖持续治疗与时节不居记录消费"
+    ultimate: "同一正式初始状态 fork → 请求娜塔莎终结技 → 执行排队终结技；比较娜塔莎自身治疗，排除满血队友溢出"
+  rng: {note: "治疗无暴击；本记录不验证战斗RNG算法"}
+  reference_values:
+    - {event: skill_heal_self, reference: 1446.3531302283739, simulator: 1446.3496955685791, relative_error: 0.00000237470346831, source: "Fribbels SKILL_HEAL", independent: true}
+    - {event: ultimate_heal_self, reference: 1900.9212568715773, simulator: 1900.9167427472755, relative_error: 0.00000237470346831, source: "Fribbels ULT_HEAL", independent: true}
+  panel_comparison:
+    hp: {reference: 5603.45166015625, simulator: 5603.45184}
+    attack: {reference: 1305.3599853515625, simulator: 1305.36}
+    defense: {reference: 1091.4749755859375, simulator: 1091.475}
+    speed: {reference: 123.03199768066406, simulator: 123.032}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000237470346831, verdict: PASS}
+  game_comparison: {status: "成熟计算器对照通过", scope: "两项直接治疗及固定构筑面板；低生命天赋、持续治疗和装备附伤未外推"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 原生娜塔莎治疗与角色/装备独立数据"
+    - "TBGD AvatarSkillTreeConfig、EquipmentConfig、RelicMainAffixConfig — 正式场景中的行迹与成品装备身份"
+  unverified_params:
+    - "该计算器的娜塔莎模型未表达目标低于30%HP的天赋增疗；不能用于该分支对照。当前实测目标为50%HP。"
+    - "持续治疗、清除、光锥附伤的行为复用R05/R06，并补本构筑运行证据；本记录没有声称它们已独立对照。"
+  notes:
+    - "运行时面板与外部面板的微小差异来自独立数据/浮点精度；无拟合修正。"
+    - "过客四件套入场战技点=4；本路线有3次时节不居附伤消费及2次自然持续治疗。"
+    - "战技路线：examples/cli/natasha_lv80_heal_and_equipment.commands.json；终结技分支：同目录 natasha_lv80_heal_and_equipment.ultimate.commands.json。"
+    - "原生归档：/tmp/hsr_v1_natasha_skill.json.gz、/tmp/hsr_v1_natasha_ultimate.json.gz、/tmp/hsr_v1_natasha_continued.json.gz；后者从已校验恢复的战技分支继续。"
+    - "复用范围：docs/archive/completed_tasks/CHARACTER_BUILD_AND_ORDINARY_PARTY_CLOSURE.md 与 EQUIPMENT_EFFECTS_AND_BUILD_CLOSURE.md。"
+  follow_up_validation:
+    reason: "将普通模式金人的旧戒退命令改为合法儆惧；原实验保留。"
+    operations: "当前战技路线10次选择，直接治疗、持续治疗、时节不居附伤及继续操作通过；终结技独立分支通过。"
+    result: "初次治疗仍与原Fribbels对照值一致。"
+    validation: /tmp/hsr_v1_three_refreshed_tests.log

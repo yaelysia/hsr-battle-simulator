@@ -1,0 +1,46 @@
+comparison_record:
+  id: m2-basic-enemies-lv40-received-damage-001
+  game_version: "外部计算器未声明游戏版本，固定源码提交；范围限普通敌人的承伤"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprints:
+      baryons: 8c34ab0598bc0a8c6e7549a9b1a2f47d292f2b03f6642377987dcac2bea26a33
+      silvermane: 526f0babe5321fd5be08013499a39745bb428797c981e06d26d535f39f126c3e
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [natasha_enemy40_res0_noncrit, natasha_enemy40_res0.2_noncrit]
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无分段修改"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101过客四件、302仙舟两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七既有20003/103/304满级构筑；只为自身施盾，敌人攻击娜塔莎，未触发反击干扰对照"
+    initial_condition: "双方满HP；初始能量及构筑完整输入见两个场景文件"
+    inputs: [examples/cli/basic_enemies_baryons_lv40.json, examples/cli/basic_enemies_silvermane_lv40.json]
+  targets:
+    - {monster: 8011010, name: 重子, level: 40, stage: 3062011, physical_resistance: 0.2}
+    - {monster: 8011020, name: 反重子, level: 40, stage: 3062011, physical_resistance: 0}
+    - {monster: 1002040, name: 银鬃近卫, level: 40, stage: 1022512, physical_resistance: 0.2}
+    - {monster: 1002050, name: 银鬃射手, level: 40, stage: 1022512, physical_resistance: 0}
+  operations: "同名commands文件分别9/10条选择：四种怪物各自完整普通技能、娜塔莎攻击两类目标、三月七重复施加完整护盾；均可继续下一次合法选择"
+  rng: {mode: deterministic_seed, note: "对照命中均非暴击；外部CR补正-0.05，敌人命中前未击破"}
+  reference_values:
+    - {monster: 8011010, event: received_physical_basic, reference: 621.7041536398061, simulator: 621.7041483430473, independent: true}
+    - {monster: 8011020, event: received_physical_basic, reference: 777.1301920497575, simulator: 777.130185428809, independent: true}
+    - {monster: 1002040, event: received_physical_basic, reference: 621.7041536398061, simulator: 621.7041483430473, independent: true}
+    - {monster: 1002050, event: received_physical_basic, reference: 777.1301920497575, simulator: 777.130185428809, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000000008520, verdict: PASS}
+  game_comparison: {status: "四种敌人的承伤对照通过", scope: "覆盖等级、防御、抗性及未击破减伤参与的承伤结果；不等于敌方输出伤害已独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 娜塔莎、时节不居与遗器原生模型"
+    - "固定TBGD StageConfig、MonsterConfig、MonsterSkillConfig：上述四种普通怪物的入场、属性及唯一普通动作"
+  unverified_params:
+    - "敌方等级、抗性按固定游戏数据填入外部计算器；Fribbels没有本次四张怪物卡，故这些参数不是其独立提供的。"
+    - "敌方输出、HP上限没有独立数值记录；本条按PROJECT_GOALS每条目至少一组数值对照计量，不外推。"
+  notes:
+    - "原生归档/tmp/hsr_v1_baryons_complete.json.gz（19次操作）、/tmp/hsr_v1_silvermane_complete.json.gz（21次操作）。"
+    - "test_v1_basic_enemy_routes.py两条集成通过；无需新增敌人处理器。"

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+
+if TYPE_CHECKING:
+    from .wave import WaveSystem
 
 
 COMBAT_PHASE_SCHEMA_VERSION = "combat_phase_machine_v1"
@@ -27,7 +31,7 @@ LEGAL_TRANSITIONS: dict[str, tuple[str, ...]] = {
     PRE_ACTION: (AWAITING_DECISION, TURN_END),
     AWAITING_DECISION: (ACTION_EXECUTION, INSERT_WINDOW, WAVE_TRANSITION, ENDED),
     ACTION_EXECUTION: (POST_ACTION,),
-    POST_ACTION: (TURN_END, INSERT_WINDOW, EXTRA_ACTION, ENDED),
+    POST_ACTION: (AWAITING_DECISION, TURN_END, INSERT_WINDOW, EXTRA_ACTION, ENDED),
     INSERT_WINDOW: (ACTION_EXECUTION, AWAITING_DECISION, TURN_END, EXTRA_ACTION, ENDED),
     EXTRA_ACTION: (ACTION_EXECUTION, POST_ACTION, INSERT_WINDOW, TURN_END, ENDED),
     TURN_END: (IDLE, WAVE_TRANSITION, ENDED),
@@ -95,6 +99,9 @@ class PhaseTransitionResult:
 
 
 class CombatPhaseMachine:
+    def __init__(self, *, wave: WaveSystem | None = None) -> None:
+        self.wave = wave
+
     def current_phase(self, state: BattleState) -> str:
         if "combat_phase" not in state.global_flags or state.global_flags.get("combat_phase") is None:
             return IDLE
@@ -105,8 +112,19 @@ class CombatPhaseMachine:
         current = self.current_phase(state)
         allowed = LEGAL_TRANSITIONS.get(current, ())
         actor = state.units.get(str(state.global_flags.get("turn_owner_id") or ""))
-        if current == AWAITING_DECISION and actor is not None and actor.hp <= 0:
+        if current == AWAITING_DECISION and actor is not None and self.wave is not None:
+            # A queued action can clear a wave while a living ally still owns
+            # the turn. The wave authority decides whether that turn may close.
+            plan = self.wave.plan_transition(state)
+            if plan.ok and plan.status == "advance_to_next_wave":
+                return (*allowed, TURN_END)
+        if current == AWAITING_DECISION and actor is not None and (actor.hp <= 0 or actor.lifecycle_status == "removed"):
             return (*allowed, TURN_END)
+        if current == AWAITING_DECISION and actor is not None:
+            from .status import status_control_gate_for_actor
+
+            if status_control_gate_for_actor(actor) is not None:
+                return (*allowed, TURN_END)
         if (
             current == AWAITING_DECISION
             and actor is not None

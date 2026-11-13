@@ -1,0 +1,56 @@
+comparison_record:
+  id: m2-academic-rumors-anchor-001
+  entries_counted: ["锚点上下半场及当期增益"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint:
+      numeric: af2a7f4d6313157e6435afed897e805f9d3bb4dc5e0a391048915d8131a6067c
+      upper: 19d4fe3c957964322876e48b0b556cf76c3adbb46c78469e7ff8d8eb28dbd8e8
+      lower: 45299f9963135c1e4b86fdd808fc2574a8d9265fc376eda7fddf72c45b1a7d29
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [arlan_academic_ult_0.3_noncrit, arlan_academic_ult_0.1_noncrit, arlan_academic_ult_0.6_noncrit]
+    invocation: "原生generateContext/runStatSimulations；输入增伤0.5及TBGD段比，不改计算器公式或返回结果"
+  build:
+    numeric: "阿兰80/P6/E0满行迹，既验23002/102/302构筑，满血、110能量；仅阿兰以排除队友增益"
+    upper: "阿兰/希露瓦/艾丝妲/娜塔莎，四套既验满级构筑"
+    lower: "增强希儿/丹恒/存护三月七/玲可，四套既验满级构筑"
+    inputs: [examples/cli/academic_rumors_numeric.json, examples/cli/academic_rumors_upper.json, examples/cli/academic_rumors_lower.json]
+  target: {monster: 1023020, stage: 30123061, level: 80, lightning_resistance: 0, broken: false}
+  operations: "控制变量路线公开请求并施放一次终结技；上下半均full_stage，各两波、四人存活通关。上半174次选择/349操作，下半137次选择/275操作。下半承接上半已用12轮，结束累计20轮，共用30轮上限。"
+  rng: {mode: deterministic_seed, numeric_critical_branch: noncrit}
+  reference_values:
+    - {event: ultimate_primary_hit_1, reference: 2779.799971949773, simulator: 2779.8043302128694, independent: true}
+    - {event: ultimate_primary_hit_2, reference: 926.5999906499244, simulator: 926.6014434042899, independent: true}
+    - {event: ultimate_primary_hit_3, reference: 5559.599943899546, simulator: 5559.608660425739, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001568, verdict: PASS}
+  game_comparison: {status: "当期终结技增伤的独立数值对照通过", scope: "不外推环境真实伤害的独立游戏实测，也不把工程重放当作游戏证据。"}
+  sources:
+    - "固定BattleEventConfig30146参数0.5/1/15/0.12/0.02/0.012；BattleEventAbility_Challenge_Month_46读取目标BaseHP并按怪物等级类别选择倍率。"
+    - "ChallengeMazeConfig5206：Stage30123061/30123062，共用ChallengeCountDown30；GlobalModifier_Common_Specific.MCommon_ChallengeTurnLimit：首轮额外0.5规范化行动值。"
+  execution_checks:
+    - "下半场归档独立CLI重放275步、0错误；/tmp/hsr_v1_anchor_lower_replay.log。上半首160选择已严格恢复后续跑通关。"
+    - "上半累计充能25段，消费22段、余3段；下半充能30段，消费26段、余4段，包含三月七入队反击。"
+    - "精英真实伤害每段3830.80657608或4179.06171936，按各自来源BaseHP*0.02结算；该项仅来源一致性自检。"
+    - "轮次边界、追击多段只计一次、非增伤攻击不获得贡献的组件检查通过。"
+    - "换波时关闭存活的旧回合持有者，经同一波次权威判定；控制/波次组件24项通过。"
+  assumptions:
+    - "academic_rumors_wave_boundary：跨波保留未消费段数并重置首轮时长；未入队追击按当前动作合并计次。须游戏实测复杂嵌套同名追击、跨波及上下半轮次边界。"
+    - "wave_action_order_boundary、after_attack_listener_snapshot、envoy_lock_timing沿用已显示的未实证说明，后续仍需游戏实测。"
+  unverified_params:
+    - "段比0.3/0.1/0.6、敌方等级/抗性来自TBGD，非独立实测输入。"
+  performance:
+    upper_late_advance_submit_seconds: 2.5757732049595297
+    lower_resumed_advance_submit_seconds: 3.207428593057352
+    verdict: "四人场景未达性能预算；此记录仅计内容可战斗及数值对照，不能据此宣布V1封版"
+  artifacts:
+    - /tmp/hsr_v1_anchor_upper2.json.gz
+    - /tmp/hsr_v1_anchor_lower2.json.gz
+    - /tmp/hsr_v1_academic_numeric.json.gz
+    - /tmp/hsr_v1_fribbels_academic.log

@@ -60,6 +60,10 @@ def test_source_empty_passive_has_no_runtime_behavior(tmp_path):
     result = slot()
     assert result.mechanism_kind == 'empty_ability_declaration'
     assert result.coverage_status == 'skipped_with_reason' and result.runtime_system == 'none'
+    declaration['OnStart'] = []
+    (tmp_path / COMMON).write_text(json.dumps(source))
+    assert slot().mechanism_kind == 'empty_ability_declaration'
+    assert slot().runtime_system == 'none'
     # An unknown field could carry inherited/native behavior; it is not empty.
     declaration['UnknownBehavior'] = 'unresolved'
     (tmp_path / COMMON).write_text(json.dumps(source))

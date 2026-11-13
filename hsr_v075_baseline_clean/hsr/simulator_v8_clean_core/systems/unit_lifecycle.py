@@ -136,6 +136,7 @@ class UnitLifecycleSystem:
                      "death_transition_stage": stage, "lifecycle_mutation_id": lifecycle_id,
                      "pending_defeat_id": plan.pending_id, "param_entity_id": plan.unit_id},
             pending_defeat_plan=plan,
+            action_definition=terminal.action_definition,
         ) for event_type, callback, stage in LIMBO_CALLBACKS)
 
     def finalize_pending_defeat_mutations(

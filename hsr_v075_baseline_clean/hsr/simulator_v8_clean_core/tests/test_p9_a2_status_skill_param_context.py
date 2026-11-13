@@ -33,7 +33,7 @@ def _rules(slots: tuple[object, ...]) -> object:
         character_data_card_for_entity=lambda template_id: (
             card if template_id == card.entity_ref else None
         ),
-        character_dynamic_value_bindings_for_card=lambda _card_id: {
+        character_dynamic_value_bindings_for_card=lambda _card_id, *, detach=True: {
             "by_hash": {
                 "passive": {
                     "read_info": {"Type": "SkillParam", "TriggerKey": "Passive", "Index": 0}
@@ -120,6 +120,31 @@ def test_skill_param_uses_caster_configured_trigger_level_not_outer_action_level
     assert entry["value"] == 2.5
     assert entry["source_trace"]["skill_level"] == 5
     assert entry["source_trace"]["skill_level_source"] == "unit.skill_levels_by_trigger_key"
+
+
+def test_skill_param_cache_follows_build_and_rules() -> None:
+    from dataclasses import replace
+    from hsr.simulator_v8_clean_core.immutable_json import freeze_json
+
+    rules = _rules((_slot("slot:passive"),))
+    bindings = freeze_json(rules.character_dynamic_value_bindings_for_card('card:caster'))
+    rules.character_dynamic_value_bindings_for_card = lambda _, **kwargs: bindings
+    state = _battle_state()
+    source = character_skill_param_binding_source(rules, state, 'caster')
+    assert character_skill_param_binding_source(rules, state, 'caster') is source
+    wounded = replace(state, units={**state.units, 'caster': replace(state.units['caster'], hp=50.)})
+    assert character_skill_param_binding_source(rules, wounded, 'caster') is source
+    changed = replace(state, units={**state.units, 'caster': replace(state.units['caster'], flags={
+        **state.units['caster'].flags, 'skill_levels_by_trigger_key': {'Passive': 6}})})
+    assert character_skill_param_binding_source(rules, changed, 'caster') is None
+    assert character_skill_param_binding_source(rules, state, 'caster', excluded_hashes=('passive',)) is None
+    assert character_skill_param_binding_source(_rules((_slot('other', level=6),)), state, 'caster') is None
+    unset = replace(state, units={**state.units, 'caster': replace(state.units['caster'], flags={
+        **state.units['caster'].flags, 'skill_levels_by_trigger_key': {}})})
+    assert character_skill_param_binding_source(rules, unset, 'caster',
+        action_level=5, current_action_trigger_key='Passive') is not None
+    assert character_skill_param_binding_source(rules, unset, 'caster',
+        action_level=5.0, current_action_trigger_key='Passive') is None
 
 
 def test_skill_param_missing_or_ambiguous_slot_stays_unbound() -> None:

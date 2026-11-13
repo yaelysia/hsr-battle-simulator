@@ -13,7 +13,9 @@ from .ir import (
 )
 
 
-ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v8"
+# State revisions use a canonical tree digest with immutable subtree reuse.
+# The changed internal identities require a new replay/rule identity.
+ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v12"
 ENGINE_RULE_SOURCE_KIND = "engine_convention"
 TIMELINE_RULE_APPLICABILITY = "all timeline units with positive effective speed"
 ULTIMATE_COST_RULE_APPLICABILITY = "admitted ultimate action committed from the ultimate queue window"

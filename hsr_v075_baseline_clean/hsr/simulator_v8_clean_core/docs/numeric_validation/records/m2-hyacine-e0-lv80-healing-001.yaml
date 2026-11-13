@@ -1,0 +1,48 @@
+comparison_record:
+  id: m2-hyacine-e0-lv80-healing-001
+  entries_counted: ["风堇1409 E0满行迹", "风堇20021/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 97b008bb2e59ffc310e989f6cf9bc9d1109eaab0d0592267bd5e43783029036a
+    processor: "HyacineProcessor v0.1.0，仅声明治疗累计边界假设"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [hyacine_basic_enemy80_crit]
+    invocation: "原生generateContext/runStatSimulations；首次普攻，未开启终结技状态，行迹提供100%暴击率"
+  build:
+    attacker: "1409，80/P6/E0，满行迹、忆灵技能6级；焚影S1、快枪手4、仙舟2；+15无副词条，治疗衣/速度鞋/生命球/充能绳"
+    companion: "娜塔莎23013/101/302既验构筑"
+    input: examples/cli/hyacine_lv80_healing_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, wind_resistance: 0.2, broken: false}
+  operations: "32次公开选择/64操作，普攻、战技治疗、终结技、小伊卡额外行动、晴空状态持续与耗尽重开。"
+  reference_values:
+    - {event: first_basic_crit, reference: 1158.1467868652346, simulator: 1158.14680458233, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000001530, verdict: PASS}
+  game_comparison:
+    status: "普攻与固定构筑独立对照通过"
+    scope: "没有将普攻对照外推为全部治疗、小伊卡伤害和治疗累计边界的游戏实证。"
+  behavior_checks:
+    - "小伊卡速度0，经正式额外行动队列输出；公开commands不直接提交小伊卡普通回合。"
+    - "路线包含至少10次正式治疗、至少2次非浮点残差的小伊卡伤害。"
+    - "终结技持续计数经历3/2/1/0；忆灵伤害使用构筑节点6级的正式0.2参数。"
+    - "结果保留hyacine_heal_tally_boundary未实证提示。"
+  sources:
+    - "固定AvatarSkillConfig140901至140904、AvatarSkillTreeConfig1409101、AvatarServantSkillConfig1140901；倍率与回合数来自正式参数绑定。"
+    - "https://www.prydwen.gg/star-rail/characters/hyacine ：3.2评测/3.4构筑说明，核对小伊卡0速、额外行动与行迹100%暴击率；未提供满血/溢出计量的明确实测结论。"
+  assumptions:
+    - "未实证：治疗累计暂用实际恢复的HP；满血治疗与溢出不计入。游戏实测若包含溢出，应改接治疗producer总治疗量事实，不从日志取值。"
+    - "必须实测此边界及其对小伊卡累计伤害、治疗增伤触发的影响；沿用共享时序标记。"
+  unverified_params: ["敌人等级/风抗为给定对照输入。"]
+  execution_checks:
+    - "test_v1_summon_routes.py::test_hyacine_heals_ica_extra_actions_duration_and_equipment通过。"
+  performance:
+    advance_submit_mean_seconds: 8.020
+    scope: "前一版同构筑40选择探针；正式32选择集成未单独计时。"
+    verdict: "复杂路线仍未达到0.33秒预算"
+  artifacts: [/tmp/hsr_v1_hyacine_verified.json.gz, /tmp/hsr_v1_hyacine_complete_test.log, /tmp/hsr_v1_fribbels_last_roster2.log]

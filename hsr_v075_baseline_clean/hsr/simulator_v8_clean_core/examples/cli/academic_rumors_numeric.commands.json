@@ -1,0 +1,20 @@
+{
+  "commands": [
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100803",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100803",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    }
+  ]
+}

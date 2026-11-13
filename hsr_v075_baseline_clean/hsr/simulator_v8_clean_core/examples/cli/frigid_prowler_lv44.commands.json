@@ -1,0 +1,180 @@
+{
+  "commands": [
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307211:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302005",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:summon:ff627c259a5f:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:summon:ff627c259a5f:0",
+      "action_id": "monster_skill:102201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:3c8547136379:1",
+      "action_id": "monster_skill:102201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302006",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302007",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307211:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:ff627c259a5f:0",
+      "action_id": "monster_skill:102201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302009",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302007",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307211:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302009",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302008",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:307211:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:307211:wave:0:pos:0",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    }
+  ]
+}

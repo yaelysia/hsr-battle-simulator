@@ -1,0 +1,425 @@
+{
+  "battle_setup": {
+    "metadata": {
+      "scope": "V1 environment route",
+      "stage_scope": "full_stage"
+    },
+    "timeline": {
+      "mode": "runtime_initialize"
+    }
+  },
+  "route": [],
+  "scenario_id": "v1:environment:30123061:full_stage",
+  "stage_ref": "30123061",
+  "units": [
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "m2:arlan:e0-lv80-p6-full-traces",
+        "character_card_id": "character_data_card:avatar:1008",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "m2:arlan:equipment:102-302-23002",
+          "character_card_id": "character_data_card:avatar:1008",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "23002",
+            "instance_id": "m2:arlan:cone:23002",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:arlan:relic:body",
+              "level": 15,
+              "main_affix_key": "53:2",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:arlan:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:arlan:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:arlan:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:arlan:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:7",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:arlan:relic:object",
+              "level": 15,
+              "main_affix_key": "56:4",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1008:1008001:6",
+          "character_trace_node:character_data_card:avatar:1008:1008002:10",
+          "character_trace_node:character_data_card:avatar:1008:1008003:10",
+          "character_trace_node:character_data_card:avatar:1008:1008004:10",
+          "character_trace_node:character_data_card:avatar:1008:1008101:1",
+          "character_trace_node:character_data_card:avatar:1008:1008102:1",
+          "character_trace_node:character_data_card:avatar:1008:1008103:1",
+          "character_trace_node:character_data_card:avatar:1008:1008201:1",
+          "character_trace_node:character_data_card:avatar:1008:1008202:1",
+          "character_trace_node:character_data_card:avatar:1008:1008203:1",
+          "character_trace_node:character_data_card:avatar:1008:1008204:1",
+          "character_trace_node:character_data_card:avatar:1008:1008205:1",
+          "character_trace_node:character_data_card:avatar:1008:1008206:1",
+          "character_trace_node:character_data_card:avatar:1008:1008207:1",
+          "character_trace_node:character_data_card:avatar:1008:1008208:1",
+          "character_trace_node:character_data_card:avatar:1008:1008209:1",
+          "character_trace_node:character_data_card:avatar:1008:1008210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1008",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 0,
+      "side": "ally",
+      "unit_id": "arlan"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "serval:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1103",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "serval:equipment:20006-102-302",
+          "character_card_id": "character_data_card:avatar:1103",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "20006",
+            "instance_id": "serval:cone:20006",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:serval:relic:body",
+              "level": 15,
+              "main_affix_key": "53:2",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:serval:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:serval:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:serval:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:serval:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:7",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:serval:relic:object",
+              "level": 15,
+              "main_affix_key": "56:4",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1103:1103001:6",
+          "character_trace_node:character_data_card:avatar:1103:1103002:10",
+          "character_trace_node:character_data_card:avatar:1103:1103003:10",
+          "character_trace_node:character_data_card:avatar:1103:1103004:10",
+          "character_trace_node:character_data_card:avatar:1103:1103101:1",
+          "character_trace_node:character_data_card:avatar:1103:1103102:1",
+          "character_trace_node:character_data_card:avatar:1103:1103103:1",
+          "character_trace_node:character_data_card:avatar:1103:1103201:1",
+          "character_trace_node:character_data_card:avatar:1103:1103202:1",
+          "character_trace_node:character_data_card:avatar:1103:1103203:1",
+          "character_trace_node:character_data_card:avatar:1103:1103204:1",
+          "character_trace_node:character_data_card:avatar:1103:1103205:1",
+          "character_trace_node:character_data_card:avatar:1103:1103206:1",
+          "character_trace_node:character_data_card:avatar:1103:1103207:1",
+          "character_trace_node:character_data_card:avatar:1103:1103208:1",
+          "character_trace_node:character_data_card:avatar:1103:1103209:1",
+          "character_trace_node:character_data_card:avatar:1103:1103210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1103",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "0",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 1,
+      "side": "ally",
+      "unit_id": "serval"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "asta:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1009",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "asta:equipment:20005-102-302",
+          "character_card_id": "character_data_card:avatar:1009",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "20005",
+            "instance_id": "asta:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:asta:relic:body",
+              "level": 15,
+              "main_affix_key": "53:2",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:asta:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:asta:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:asta:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:asta:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:5",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:asta:relic:object",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1009:1009001:6",
+          "character_trace_node:character_data_card:avatar:1009:1009002:10",
+          "character_trace_node:character_data_card:avatar:1009:1009003:10",
+          "character_trace_node:character_data_card:avatar:1009:1009004:10",
+          "character_trace_node:character_data_card:avatar:1009:1009101:1",
+          "character_trace_node:character_data_card:avatar:1009:1009102:1",
+          "character_trace_node:character_data_card:avatar:1009:1009103:1",
+          "character_trace_node:character_data_card:avatar:1009:1009201:1",
+          "character_trace_node:character_data_card:avatar:1009:1009202:1",
+          "character_trace_node:character_data_card:avatar:1009:1009203:1",
+          "character_trace_node:character_data_card:avatar:1009:1009204:1",
+          "character_trace_node:character_data_card:avatar:1009:1009205:1",
+          "character_trace_node:character_data_card:avatar:1009:1009206:1",
+          "character_trace_node:character_data_card:avatar:1009:1009207:1",
+          "character_trace_node:character_data_card:avatar:1009:1009208:1",
+          "character_trace_node:character_data_card:avatar:1009:1009209:1",
+          "character_trace_node:character_data_card:avatar:1009:1009210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1009",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "120",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 2,
+      "side": "ally",
+      "unit_id": "asta"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1105",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "v1:natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": {
+            "definition_key": "23013",
+            "instance_id": "natasha:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "natasha:relic:HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61011"
+            },
+            {
+              "instance_id": "natasha:relic:HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61012"
+            },
+            {
+              "instance_id": "natasha:relic:BODY",
+              "level": 15,
+              "main_affix_key": "53:6",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61013"
+            },
+            {
+              "instance_id": "natasha:relic:FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61014"
+            },
+            {
+              "instance_id": "natasha:relic:NECK",
+              "level": 15,
+              "main_affix_key": "55:1",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "natasha:relic:OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1105:1105001:6",
+          "character_trace_node:character_data_card:avatar:1105:1105002:10",
+          "character_trace_node:character_data_card:avatar:1105:1105003:10",
+          "character_trace_node:character_data_card:avatar:1105:1105004:10",
+          "character_trace_node:character_data_card:avatar:1105:1105101:1",
+          "character_trace_node:character_data_card:avatar:1105:1105102:1",
+          "character_trace_node:character_data_card:avatar:1105:1105103:1",
+          "character_trace_node:character_data_card:avatar:1105:1105201:1",
+          "character_trace_node:character_data_card:avatar:1105:1105202:1",
+          "character_trace_node:character_data_card:avatar:1105:1105203:1",
+          "character_trace_node:character_data_card:avatar:1105:1105204:1",
+          "character_trace_node:character_data_card:avatar:1105:1105205:1",
+          "character_trace_node:character_data_card:avatar:1105:1105206:1",
+          "character_trace_node:character_data_card:avatar:1105:1105207:1",
+          "character_trace_node:character_data_card:avatar:1105:1105208:1",
+          "character_trace_node:character_data_card:avatar:1105:1105209:1",
+          "character_trace_node:character_data_card:avatar:1105:1105210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1105",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "90",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 3,
+      "side": "ally",
+      "unit_id": "natasha"
+    }
+  ],
+  "version": "v0_200",
+  "wave_index": 0
+}

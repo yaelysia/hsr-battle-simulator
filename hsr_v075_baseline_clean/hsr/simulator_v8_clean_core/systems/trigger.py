@@ -10,7 +10,7 @@ from ..rules.ir import ActionDefinitionIR, ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
-from .action_event_contract import admitted_action_condition_fact_provider
+from .action_event_contract import admitted_action_condition_fact_provider, condition_skill_type
 from .target import TargetSystem
 from .unit_relation import TargetEvaluationContext, committed_turn_owner_id
 
@@ -245,6 +245,7 @@ class TriggerSystem:
                         effect,
                         EffectExecutionContext(
                             state=current,
+                            action_definition=action_definition,
                             application_instance_id=(
                                 f"trigger:{state.event_index}:{command.actor_id}:{canonical_window}:"
                                 f"{trigger.trigger_id}:{effect_index}:{owner_id}"
@@ -466,6 +467,8 @@ class TriggerSystem:
 def _iter_status_details(state: BattleState) -> tuple[tuple[str, dict[str, JSONValue]], ...]:
     pairs: list[tuple[str, dict[str, JSONValue]]] = []
     for unit_id, unit in sorted(state.units.items()):
+        if unit.lifecycle_status == "removed":
+            continue
         details = unit.flags.get("status_details", ())
         if not isinstance(details, (list, tuple)):
             continue
@@ -605,7 +608,7 @@ def _condition_event_payload(
     tbgd_event: str,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
-        "SkillType": action_definition.skill_effect,
+        "SkillType": condition_skill_type(action_definition),
         "AttackType": action_definition.attack_type,
         "canonical_window": canonical_window,
         "tbgd_event": tbgd_event,
@@ -645,7 +648,7 @@ def _window_metadata(
         "per_hit_target_context_not_implemented": False,
         "action_id": command.action_id,
         "action_level": command.action_level,
-        "SkillType": action_definition.skill_effect,
+        "SkillType": condition_skill_type(action_definition),
         "AttackType": action_definition.attack_type,
         "damage_kind": action_definition.damage_kind,
         "damage_formula_family": action_definition.damage_formula_family,

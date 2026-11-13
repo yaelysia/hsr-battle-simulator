@@ -1,0 +1,49 @@
+comparison_record:
+  id: m2-memory-e0-lv80-support-001
+  entries_counted: ["记忆开拓者8007 E0满行迹", "记忆开拓者20021/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 74ed03060237ea7a7cbacc168dda3ae87a8375aa15e79d80340876d452825777
+    processor: "MemoryTrailblazerProcessor v0.3.0；MemProcessor v0.1.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [memory_basic_enemy80_noncrit]
+    invocation: "原生generateContext/runStatSimulations；首次普攻，无迷迷、无支援"
+  build:
+    attacker: "8007，80/P6/E0，满常规行迹、两个忆灵技能节点6级、史诗节点8007501；焚影S1、快枪手4、仙舟2；+15无副词条，暴伤衣/速度鞋/生命球/充能绳"
+    companion: "娜塔莎23013/101/302既验构筑，提供额外仙舟8%攻击"
+    input: examples/cli/memory_lv80_support_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, ice_resistance: 0.2, broken: false}
+  operations: "44次公开选择/88操作；普攻、终结技、满充能支援拉条、真伤、史诗强化普攻及耗尽恢复、战技治疗、忆灵被击倒并重召。"
+  reference_values:
+    - {event: first_basic_noncrit, reference: 623.7718684729729, simulator: 623.7718346457042, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000005423, verdict: PASS}
+  game_comparison:
+    status: "普攻与固定构筑独立对照通过"
+    scope: "没有将首次普攻对照外推为全部真伤、充能、支援和忆灵分支的独立游戏实测。"
+  behavior_checks:
+    - "忆灵130速度，单位作用域充能不超过100；满充能只开放支援动作，支援后归零并恢复攻击。"
+    - "两次支援均选择主人，将主人行动值设为0；实际产生真伤。"
+    - "队伍回能汇总至开拓者一份计数；实际域事实输入，无日志回读。"
+    - "首次召唤50%+行迹40%+终结技40%，在100%处封顶；没有删掉合法的首次召唤行迹充能。"
+    - "800709治疗、800708史诗强化普攻均执行；耗尽史诗后恢复800701。"
+    - "两个忆灵实例：第一个被击倒后正式移除，再由原生召唤任务创建第二个。"
+  sources:
+    - "固定AvatarSkillConfig800704、AvatarServantSkillConfig1800703/1800705、AvatarSkillTreeConfig8007101及8007501。"
+    - "充能单位按原生百分比乘100的表达式确定；100%上限与每10能量1%来自技能文本，显式记录在tbgd/adopted_dynamic_parameters.py，不把缺省0当已知参数。"
+    - "UltraState_Sub.DependencyOnRemove；PlayerBoy_30_TryCreateServant；Mem EnableSkill与Skill11原生控制映射。"
+  assumptions:
+    - "沿用结果中after_attack_listener_snapshot等共享时序标记，仍需游戏实测对应边界。"
+  unverified_params:
+    - "敌人等级/冰抗、队友仙舟加成为给定对照输入，不是独立实测参数。"
+  execution_checks:
+    - "test_v1_summon_routes.py::test_memory_charge_support_true_damage_epic_and_resummon通过。"
+    - "动态值域读取、重复写入、类型化通知、来源常量、正式回合持有者、纯显隐监听过滤组件通过。"
+  performance: {advance_submit_mean_seconds: 1.7051453913604333, verdict: "路线仍未达到0.33秒预算"}
+  artifacts: [/tmp/hsr_v1_memory_verified.json.gz, /tmp/hsr_v1_memory_complete_test2.log, /tmp/hsr_v1_fribbels_last_roster.log]

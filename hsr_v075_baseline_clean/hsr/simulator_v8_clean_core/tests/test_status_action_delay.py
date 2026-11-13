@@ -40,6 +40,15 @@ def test_real_normalized_delay_resolves_both_hashes_and_failure_is_atomic():
         task_id=task.task_id, modifier_name=callback.modifier_name, event=callback.event,
         opcode=task.opcode, task=raw, source=source)
     assert emission.coverage_status == 'executable', emission.blocked_reason
+    # A shared template inherits its importing callback's admitted source;
+    # its original file remains available for audit.
+    imported = replace(source, source_path='Config/ConfigTaskListTemplate/Shared.json',
+        evidence={**source.evidence, 'admission_source_path': relative})
+    shared = _action_delay_emission_from_task(callback_id=callback.callback_id,
+        task_id=task.task_id, modifier_name=callback.modifier_name, event=callback.event,
+        opcode=task.opcode, task=raw, source=imported)
+    assert shared.coverage_status == 'executable', shared.blocked_reason
+    assert shared.source.source_path == imported.source_path
     clock = TimelineRuleIR('test:clock', 10000, 'base_action_gauge_div_speed',
         'base_action_gauge_div_speed', 'engine_convention', IRSource('fixture:clock', 'TimelineRule', 'clock'),
         registry_version=ENGINE_RULE_REGISTRY_VERSION, applicability=TIMELINE_RULE_APPLICABILITY)

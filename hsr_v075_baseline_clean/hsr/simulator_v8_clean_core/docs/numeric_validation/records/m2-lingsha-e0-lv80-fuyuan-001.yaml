@@ -1,0 +1,49 @@
+comparison_record:
+  id: m2-lingsha-e0-lv80-fuyuan-001
+  entries_counted: ["灵砂E0满行迹", "灵砂23013/101/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: b1388837cc1b884c493d4f22eb18edb7230797e42550f48053f1a528f361cdc0
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: lingsha_basic_enemy80_noncrit
+    invocation: "原生generateContext/runStatSimulations；无伤害倍率改写"
+  build:
+    attacker: "灵砂80/P6/E0满行迹，时节不居S1、过客4、仙舟2；+15无副词条，治疗衣/速度鞋/攻击球/充能绳"
+    companion: "阿兰既验固定构筑，提供额外仙舟8%攻击"
+    input: examples/cli/lingsha_lv80_fuyuan_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, fire_resistance: 0.2, broken: true}
+  operations: "原记录50次公开选择/100操作，命令保留于历史归档。2026-11-13修正应急追击后，现行脚本为48次选择/96操作：首个普攻的对照条件不变，调整后续终结技目标和行动顺序。浮元两次耗尽退场并再次召唤，另从首次召唤处分支检查补充次数上限。"
+  reference_values:
+    - {event: basic_noncrit_hit, reference: 966.2053740166346, simulator: 966.205397844865, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.0000000247, verdict: PASS}
+  game_comparison:
+    status: "普攻及固定构筑独立对照通过"
+    scope: "未把单次普攻对照外推为治疗、应急追击、净化和退场时序的独立游戏实测。"
+  behavior_checks:
+    - "浮元速度90，次数3/2/1与状态动态值一致；两次最后行动完成后清理并退场，之后可再召唤，共三个实例。"
+    - "战技、终结技和浮元自动伤害/治疗可执行。旧检查仅命中BE_PassiveSkill（出生），不足以证明应急追击；2026-11-13改为核对60%以下实际应急入队恰好一次及PointB3_CD状态。"
+    - "同一会话公开分支补充现存浮元，剩余次数和显示值均封顶5。上限取122204.ParamList[4]，不是经验值。"
+    - "退场单位不再接受普通状态监听，仍接收自身终止事件以执行标记OnDestroy；主人浮元数量正常减回零。"
+  sources:
+    - "固定AvatarSkillConfig122201/122202/122203/122204技能文本与参数、Avatar_Lingsha_00_Ability及BattleEvent11222。"
+    - "LifeTime.OnPhase1明确_AttackTime减1；出生标记Count是实例索引，仅用于存在性查询，非增益层数。"
+  assumptions:
+    - "fuyuan_last_action_lifetime：先同步次数，再移除归零状态，最后一次追击沿原队列完成；结果标未实证，需游戏实测最后行动、应急追击与补次数同时发生时的顺序。"
+  unverified_params:
+    - "目标等级、抗性、已击破状态及队友仙舟输入来自固定来源/正式战斗状态，不是独立实测参数。"
+  execution_checks:
+    - "2026-11-13：FuyuanProcessor v0.3.0按队伍最低血量检查一次应急触发，沿用原生阈值、控制判断和队列叶；创建时单位变量的后续重置不再写入能力局部副本。正式规则v12，48次选择和补次数fork测试通过（/tmp/hsr_v1_lingsha_final_test.log）。旧版本指纹和普攻对照值保留，不回填。"
+    - "test_v1_summon_routes.py::test_lingsha_fuyuan_last_action_resummon_count_cap_and_equipment通过；/tmp/hsr_v1_lingsha_complete_test3.log。"
+    - "计数/构筑组件26项、终止挂点/回合组件33项通过；普通回归全通过，/tmp/hsr_v1_shared_normal_regression.log。后续模板来源及忆灵参数改动另行验证。"
+  performance:
+    route_advance_submit_mean_seconds: 1.710547939427197
+    fixed_small_scene_advance_submit_mean_seconds: 0.2627515309335043
+    verdict: "此处为原记录版本的历史性能，当前测量见CODEX_HANDOFF.md；用户已同意复杂性能留作试用后工作。"
+  artifacts: [/tmp/hsr_v1_lingsha_verified.json.gz, /tmp/hsr_v1_lingsha_complete_test3.log, /tmp/hsr_v1_benchmark_fuyuan.log, /tmp/hsr_v1_lingsha_v12_verified.json.gz, /tmp/hsr_v1_lingsha_final_test.log]

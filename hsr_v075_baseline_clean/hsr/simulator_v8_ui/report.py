@@ -633,8 +633,10 @@ def process_notice_records(
             notices.append(
                 _readable_record(
                     record,
-                    category="过程提示",
-                    impact="该记录用于说明执行过程或当前 UI/模拟器覆盖边界，不代表来源审计失败。",
+                    category="未实证" if record.get("record_type") == "rule_assumption" else "过程提示",
+                    impact=(str(_dict(record.get("payload")).get("todo") or "待游戏实测。")
+                            if record.get("record_type") == "rule_assumption" else
+                            "该记录用于说明执行过程或当前 UI/模拟器覆盖边界，不代表来源审计失败。"),
                 )
             )
     for event in _list(transition_json.get("events")):
@@ -848,6 +850,7 @@ TRUE_BLOCKING_RECORD_TYPES = {
 }
 
 PROCESS_NOTICE_RECORD_TYPES = {
+    "rule_assumption",
     "listener_dispatch_blocked",
     "toughness_emission_blocked",
 }

@@ -1,0 +1,57 @@
+comparison_record:
+  id: m2-danheng-e0-lv80-20000-102-302-001
+  game_version: "计算器未注明游戏版本，固定源码提交；限本构筑与目标条件"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1改动、状态概率请求身份与HitSplitRatio削韧修正"
+    rules_fingerprint: 3ec5c7f142ab6c1452efe083a6b5258a7605c6d7b3c2b7f40356246f433bd7e8
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [danheng_basic_0.45_noncrit, danheng_basic_0.55_noncrit, danheng_skill_first_hit_pen_noncrit, danheng_ult_slow_noncrit]
+    invocation: "原生 generateContext/runStatSimulations，未修改外部公式"
+  build:
+    avatar: 1002
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10、全部属性及大行迹"
+    light_cone: {id: 20000, name: 锋镝, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, pieces: 4, level: 15, mains: [HP, ATK, CR, SPD], sub_affixes: []}
+    relics_inner: {set: 302, pieces: 2, level: 15, mains: [Wind_damage, ATK_percent], sub_affixes: []}
+    input: examples/cli/danheng_lv80_slow_and_equipment.json
+    teammate: "娜塔莎80/P6/E0满行迹、空装备；以战技选中丹恒，触发一次天赋"
+  target: {stage: 402120485, wave: 0, monster: 2013010, monster_level: 70, wind_resistance: 0, weakness_broken: false}
+  operations: "同名commands文件16条公开选择；普攻、队友选中、四段暴击/减速判定、天赋穿透消费与冷却、对减速目标终结技、低HP减仇恨和继续操作"
+  rng: {note: "下列四个事件均非暴击；外部CR补正-0.494，锋镝入场暴击增益开启。其它技能段保留各自真实暴击与状态判定"}
+  reference_values:
+    - {event: first_basic_hit1, reference: 700.6282422161448, simulator: 700.6295141917833, relative_error: 0.000001815479, source: "Fribbels BASIC × 输入分段0.45", independent: true}
+    - {event: first_basic_hit2, reference: 856.323407153066, simulator: 856.3249617899573, relative_error: 0.000001815479, source: "Fribbels BASIC × 输入分段0.55", independent: true}
+    - {event: first_skill_hit_with_talent_penetration, reference: 1555.1865709990761, simulator: 1555.1895640284279, relative_error: 0.000001924547, source: "Fribbels SKILL × 输入分段0.3，天赋穿透开启", independent: true}
+    - {event: first_ultimate_slow_target, reference: 7623.463583328807, simulator: 7623.478255041314, relative_error: 0.000001924547, source: "Fribbels ULT，减速条件开启、天赋穿透关闭", independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001924547, verdict: PASS}
+  game_comparison: {status: "成熟计算器四组直接伤害对照通过", scope: "未外推为所有概率分布与击破伤害的独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 丹恒、锋镝与遗器模型"
+    - "https://srl.keqingmains.com/characters/wind/dan-heng — 普攻/战技/终结技总削韧30/60/90（旧单位）；减速、穿透及大行迹条件；页面默认技能等级非本次等级，参数取固定数据"
+    - "固定TBGD Avatar_DanHeng_00_Skill01_Phase02、Skill02_Phase02：HitSplitRatio；AvatarSkillConfig满级参数"
+  unverified_params:
+    - "分段0.45/0.55及战技首段0.3取自固定TBGD，仅作为外部输入，不声称独立验证分段参数。"
+    - "金人司阍实际为风弱点、风抗0；未采用错误的20%风抗假设。"
+    - "修正前每段重复削韧使目标提前击破，导致终结技多出1/0.9倍；修正后目标尚未击破，与外部输入一致。"
+  notes:
+    - "归档/tmp/hsr_v1_danheng_split.json.gz；运行日志/tmp/hsr_v1_danheng.log。"
+    - "同一次四段战技的减速判定使用不同的调用身份，避免原先的task_graph_duplicate_rng_identity。"
+    - "补充分支danheng_lv80_slow_and_equipment.slow_basic.commands.json：从终结技后分支，对减速目标普攻触发A6。两段实际1296.3768778592312（暴击）、1056.307085663077（非暴击），外部1296.3749477013569、1056.3055197416033，均在容差内；分支不改变原会话。"
+    - "原生归档独立CLI重放33步0错误；含A6分支的集成检查1 passed（30.62秒）。"
+  follow_up_validation:
+    reason: "金人普通模式使用儆惧，通过公开RNG输入选择虚弱未命中；原实验指纹保留。"
+    rules_fingerprint: 4fdad61c106b052a1cb30d1af912d06ecf8ad33bcc73ddf734ab26c21b5149c1
+    archive: /tmp/hsr-v1-rng-order-tests/test_lv80_danheng_slow_talent_0/danheng_v1_complete.json.gz
+    operations: "当前16次选择，另有慢目标普攻fork分支；独立CLI重放33步、0错误。"
+    result: "原普攻、穿透战技首段和减速目标终结技数值不变。慢目标普攻现为非暴击/暴击：864.251251906对照864.249970698，1584.460628495对照1584.458269413。"
+    calculator_samples: [danheng_slow_basic_0.45_noncrit, danheng_slow_basic_0.55_crit]

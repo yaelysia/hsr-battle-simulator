@@ -1,0 +1,234 @@
+{
+  "commands": [
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140901",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140902",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "hyacine"
+      ]
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140902",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140902",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "hyacine"
+      ]
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140902",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "hyacine"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140902",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "hyacine",
+      "action_id": "avatar_skill:140903",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    }
+  ]
+}

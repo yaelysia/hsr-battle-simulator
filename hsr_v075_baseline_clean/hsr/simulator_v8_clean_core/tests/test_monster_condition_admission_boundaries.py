@@ -324,3 +324,27 @@ def test_force_kill_keeps_alias_boundary_outside_the_admitted_pair():
         "",
     )
     assert _effect_coverage_status("ForceKill", payload) == "blocked"
+
+
+def test_retargeted_absorption_kills_only_the_bound_minion_without_damage_credit():
+    from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR, EffectIR
+    from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+    from hsr.simulator_v8_clean_core.systems.effect import EffectExecutionContext, EffectRegistry
+    from hsr.simulator_v8_clean_core.systems.status import StatusSystem
+
+    payload = _effect_payload(_force_kill('ParamEntity'), 'ForceKill', '')
+    assert payload['standard']['abort_unused_insert_ability'] is False
+    assert _effect_coverage_status('ForceKill', payload) == 'executable'
+    effect = EffectIR('absorb', 'ForceKill', payload, IRSource('test', 'test', 'absorb'), 'executable')
+    state = BattleState(units={
+        name: UnitState(name, 'enemy', f'monster:{name}', hp=100, max_hp=100)
+        for name in ('owner', 'first', 'second')
+    })
+    result = EffectRegistry(StatusSystem(RuleBook(CanonicalIR(version='test')))).execute(effect,
+        EffectExecutionContext(state, 'owner', 'test', param_entity_id='first'))
+    assert not result.unsupported
+    assert {m.path[1] for m in result.mutations} == {'first'}
+    assert next(m.after for m in result.mutations if m.path[-1] == 'hp') == 0
+    defeated = next(e for e in result.events if e.event_type == 'unit.defeated')
+    assert defeated.target_id == 'first' and not defeated.payload['kill_credit_owner_id']
+    assert not any(e.event_type.startswith('damage.') for e in result.events)

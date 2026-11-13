@@ -330,6 +330,18 @@ def test_real_subsequent_wave(wave_sources: WaveSources) -> None:
     system = WaveSystem(wave_sources.rules)
     plan = system.plan_transition(state)
     assert plan.ok and plan.status == "advance_to_next_wave", plan.blocked_reason
+    # A queued follow-up cleared the enemies before the living holder chose
+    # its next action. Close that turn first, using the same wave authority.
+    waiting = replace(state, global_flags={**state.global_flags,
+        "combat_phase": "awaiting_decision", "turn_owner_id": ally.unit_id,
+        "active_turn": {"actor_id": ally.unit_id, "turn_kind": "regular"}})
+    scheduler = CombatScheduler(wave_sources.rules)
+    closed = scheduler._try_wave_transition(waiting)
+    assert closed.transition.outcome.successor_eligible, closed.transition.outcome.reason_codes
+    assert closed.after_state.wave_index == 0
+    assert not closed.after_state.global_flags.get("turn_owner_id")
+    living_enemy = replace(waiting, units={**waiting.units, initial[0].unit_id: initial[0]})
+    assert "turn_end" not in scheduler.phases.allowed_next_phases(living_enemy)
     assert plan.spawn_requests
     for request, encoded in zip(
         plan.spawn_requests, plan.spawn_unit_plans, strict=True

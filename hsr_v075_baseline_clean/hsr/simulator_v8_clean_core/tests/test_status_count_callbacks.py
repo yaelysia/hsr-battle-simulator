@@ -172,8 +172,8 @@ def test_real_callback_admission_reuses_closed_operands_and_preserves_gaps(sourc
         assert all(task.coverage_status == 'executable' and not task.blocked_reason for task in tasks)
     count = next(task for task in lowered.status_callback_tasks
                  if task.event == 'OnBeforeHitAll' and task.opcode == 'SetDynamicValueByStatusCount')
-    assert count.coverage_status == 'blocked'
-    assert count.blocked_reason == 'unsupported_dynamic_source_target_alias:DamageDefenderEntity'
+    assert count.coverage_status == 'executable'
+    assert not count.blocked_reason
     damage = next(task for task in lowered.status_callback_tasks
                   if task.event == 'OnAfterAttack' and task.opcode == 'DamageByAttackProperty')
     assert damage.coverage_status == 'blocked'  # The E6 damage shape remains outside this change.
@@ -188,14 +188,15 @@ def test_real_callback_admission_reuses_closed_operands_and_preserves_gaps(sourc
 
 
 @pytest.mark.parametrize('malformed', [False, True])
-def test_real_count_callback_reads_retargeted_status_instances_atomically(source, malformed):
+@pytest.mark.parametrize('callback_event', ['OnAfterAttack', 'OnBeforeHitAll'])
+def test_real_count_callback_reads_retargeted_status_instances_atomically(source, malformed, callback_event):
     lowered, _ = source
     task = next(task for task in lowered.status_callback_tasks
-                if task.event == 'OnAfterAttack' and task.opcode == 'SetDynamicValueByStatusCount')
+                if task.event == callback_event and task.opcode == 'SetDynamicValueByStatusCount')
     callback = next(item for item in lowered.status_callbacks if item.callback_id == task.callback_id)
     effect = next(item for item in lowered.effects if item.effect_id == task.effect_id)
     accumulation = next(item for item in lowered.status_callback_tasks
-                        if item.callback_id == task.callback_id and item.opcode == 'SetDynamicValue')
+                        if item.event == 'OnAfterAttack' and item.opcode == 'SetDynamicValue')
     accumulation_effect = next(item for item in lowered.effects if item.effect_id == accumulation.effect_id)
     rules = RuleBook(CanonicalIR('callback-check', effects=(effect, accumulation_effect)))
     detail = {'instance_id': 'passive', 'status_id': 'passive', 'modifier_name': task.modifier_name,
@@ -215,6 +216,8 @@ def test_real_count_callback_reads_retargeted_status_instances_atomically(source
     before = original.snapshot().to_json()
     event = GameEvent(event_id='after-attack:retarget', event_type='action.window.after_attack', source_id='actor', target_id='target',
                       payload={'param_entity_id': 'target'})
+    if callback_event == 'OnBeforeHitAll':
+        event = replace(event, event_type='damage.hit_sequence.before', payload={'param_entity_id': 'actor'})
     result = StatusCallbackSystem(rules)._execute_effect_task(original, callback, task, detail, event, None)
     assert original.snapshot().to_json() == before
     if malformed:
@@ -223,8 +226,14 @@ def test_real_count_callback_reads_retargeted_status_instances_atomically(source
         return
     assert result.ok, result.errors
     entries = result.after_state.global_flags['dynamic_value_store']['entries'].values()
-    assert [entry['value'] for entry in entries if entry['name'] == 'DebuffNumber_SingleTarget'] == [2.0]
+    name = 'DebuffNumber' if callback_event == 'OnBeforeHitAll' else 'DebuffNumber_SingleTarget'
+    assert [entry['value'] for entry in entries if entry['name'] == name] == [2.0]
     assert MutationReducer().replay_snapshot(original, result.mutations, result.after_state.snapshot().to_json()).ok
+    if callback_event == 'OnBeforeHitAll':
+        missing = replace(event, event_type='action.window.after_attack', payload={'damage_defender_id': 'target'})
+        refused = StatusCallbackSystem(rules)._execute_effect_task(original, callback, task, detail, missing, None)
+        assert not refused.ok and not refused.mutations and not refused.rng_events
+        return
     # The native accumulator has no source-proven initializer here. Reject that
     # missing input, rather than misreporting the preceding write as ambiguous.
     uninitialized = StatusCallbackSystem(rules)._execute_effect_task(

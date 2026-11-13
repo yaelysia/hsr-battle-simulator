@@ -169,7 +169,7 @@ def test_lingsha_event_lifetime_counter_is_an_adopted_independent_count():
     rule = ADOPTED_MODIFIER_COUNTS[
         ('Config/ConfigAbility/Avatar/Avatar_Lingsha_00_Ability.json', path)
     ]
-    assert rule['operation'] == 'Add' and rule['amount'] == 1
+    assert rule['operation'] == 'Add' and rule['amount'] == -1
     assert rule['modifier_name'] == 'MAvatar_Lingsha_BPSkill_BattleEvent_LifeTime'
     assert rule['target_alias'] == 'ModifierOwnerEntity'
     assert rule['research'] and rule['version'] and rule['condition']

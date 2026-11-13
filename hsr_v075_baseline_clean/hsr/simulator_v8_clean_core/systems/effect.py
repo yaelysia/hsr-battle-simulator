@@ -23,6 +23,7 @@ from .dynamic_values import (
     binding_source_from_store,
     binding_source_from_store_for_units,
     execute_dynamic_value_plan,
+    dynamic_value_change_events,
     find_status_detail,
     plan_dynamic_value_operation,
     status_binding_sources,
@@ -1747,6 +1748,8 @@ class EffectRegistry:
             target_ids = selected
         elif alias == "Caster":
             target_ids = (context.caster_id,)
+        elif alias == "ParamEntity" and context.param_entity_id:
+            target_ids = (context.param_entity_id,)
         else:
             return _unsupported_effect(effect, "formal_forced_death_target_alias_not_admitted")
         if len(target_ids) != 1:
@@ -2371,6 +2374,11 @@ class EffectRegistry:
                     context, include_heal_snapshot_protocol=True
                 )
             result = handler(effect, context)
+        if context is not None and context.action_definition is not None and result.events:
+            result = replace(result, events=tuple(
+                replace(event, action_definition=context.action_definition)
+                if event.action_definition is None else event for event in result.events
+            ))
         if context is not None and not result.unsupported and effect_requires_native_fact(effect):
             fact = EffectExecutionFact(effect.effect_id, context)
             result = replace(result, mutations=tuple(
@@ -2706,6 +2714,38 @@ class EffectRegistry:
             expected_action_window_scope=context.expected_action_window_scope,
             template_target_ids=context.template_target_ids,
         )
+        count_key = standard.get("dispel_count_key") if isinstance(standard, dict) else None
+        if result.ok and count_key:
+            if (not isinstance(count_key, str) or type(result.dispelled_count) is not int
+                    or not standard.get("dispel_count_hash")):
+                return _unsupported_effect(effect, "dispel_count_result_context_missing")
+            after_dispel = MutationReducer().apply_all(context.state, result.mutations)
+            before = store_from_state(after_dispel)
+            after = upsert_dynamic_value(
+                before, scope="unit", owner_id=context.caster_id,
+                value=float(result.dispelled_count), value_name=count_key,
+                hash_key=standard["dispel_count_hash"], effect_id=effect.effect_id,
+                source_id=context.source_id, source_trace=effect.source.to_json(),
+            )
+            mutation = Mutation(
+                "set", ("global_flags", "dynamic_value_store"),
+                before if "dynamic_value_store" in after_dispel.global_flags else None, after,
+                before_exists="dynamic_value_store" in after_dispel.global_flags,
+                reason="publish successful dispel count on the caster",
+                source="effect_system",
+                metadata={"effect_id": effect.effect_id, "opcode": effect.opcode,
+                          "value_name": count_key, "value": result.dispelled_count},
+            )
+            return EffectResult(
+                events=result.events, mutations=(*result.mutations, mutation),
+                rng_events=result.rng_events,
+                records=(*result.records, SettlementRecord(
+                    record_type="dispel_count", source="effect_system",
+                    mutation_id=mutation.stable_id(), process_only=False,
+                    payload={"value_name": count_key, "count": result.dispelled_count},
+                    trace=effect.source.to_json(),
+                ).to_json()),
+            )
         return EffectResult(
             events=result.events,
             mutations=result.mutations,
@@ -3779,6 +3819,7 @@ def _execute_fixed_unit_delta(
             opcode=effect.opcode,
             amount=amount,
             max_capacity=max_capacity,
+            falling_cap_policy=str(standard.get("falling_cap_policy") or "reject"),
             source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
             actor_id=context.caster_id,
             event_source_id=context.source_id,
@@ -5151,6 +5192,7 @@ def _execute_dynamic_value_operation(
         return _blocked_dynamic_value_effect(executed.blocked_reason)
     return EffectResult(
         mutations=executed.mutations,
+        events=dynamic_value_change_events(context.state, plan, rules),
         records=tuple(dict(record) for record in executed.records),
     )
 

@@ -1,0 +1,1479 @@
+{
+  "commands": [
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "seele"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "seele"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100201",
+      "action_level": 6,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111002",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100201",
+      "action_level": 6,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100201",
+      "action_level": 6,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111002",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:0:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:0:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "seele"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "seele"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:801301001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:1",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:1"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "seele"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100101",
+      "action_level": 6,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:100103",
+      "action_level": 10,
+      "actor_id": "march",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": []
+    },
+    {
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "actor_id": "lynx",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "actor_id": "enemy:stage:30123062:wave:1:pos:0",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "actor_id": "danheng",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    },
+    {
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "actor_id": "seele",
+      "metadata": {},
+      "queue_name": null,
+      "source": "manual",
+      "target_ids": [
+        "enemy:stage:30123062:wave:1:pos:0"
+      ]
+    }
+  ]
+}

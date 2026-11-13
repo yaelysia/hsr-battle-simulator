@@ -815,7 +815,6 @@ def _bounce_mechanism_slot(policy: BouncePolicyIR) -> CharacterMechanismSlotIR:
 def _eidolon_mechanism_slots(slot: CharacterEidolonSlotIR) -> tuple[CharacterMechanismSlotIR, ...]:
     skill_add_level_list = slot.semantics.get("skill_add_level_list")
     rank_ability = slot.semantics.get("rank_ability")
-    extra_effect_id_list = slot.semantics.get("extra_effect_id_list")
     common_linked_ids = {
         "eidolon_slot_id": slot.eidolon_slot_id,
         "rank_id": slot.rank_id,
@@ -860,21 +859,8 @@ def _eidolon_mechanism_slots(slot: CharacterEidolonSlotIR) -> tuple[CharacterMec
                 coverage_status="executable",
             )
         )
-    if isinstance(extra_effect_id_list, (list, tuple)) and extra_effect_id_list:
-        result.append(
-            CharacterMechanismSlotIR(
-                mechanism_slot_id=f"character_mechanism_slot:{slot.character_data_card_id}:eidolon:{slot.rank}:extra_effect",
-                character_data_card_id=slot.character_data_card_id,
-                mechanism_kind="eidolon_extra_effect",
-                runtime_system="event_dispatch_or_effect_registry",
-                linked_ir_ids=common_linked_ids,
-                activation=activation,
-                semantics={"extra_effect_id_list": extra_effect_id_list},
-                source=slot.source,
-                coverage_status="blocked",
-                blocked_reason="eidolon_extra_effect_id_runtime_admission_pending",
-            )
-        )
+    # ExtraEffectConfig contains glossary text/icons, not executable effects.
+    # Keep its IDs on the eidolon metadata; require actual ability/selector evidence.
     if not result:
         result.append(
             CharacterMechanismSlotIR(
@@ -1154,6 +1140,10 @@ def _build_selector_ledger(
         ):
             raise ValueError("typed S0 selector projection is incomplete")
         if avatar_ids is not None and owner_avatar_id not in avatar_ids:
+            continue
+        if ".ModifierAffectedPreshowConfig" in branch_root_path:
+            # Buff preview predicates affect display only; the source inventory
+            # retains them, but they do not create executable build roots.
             continue
         card_id = f"character_data_card:avatar:{owner_avatar_id}"
         contexts = contexts_by_scope.get(record.record_id, ())
@@ -1561,8 +1551,6 @@ def _finalize_selection_bindings(
     allow_parameter_only: bool = False,
 ) -> tuple[CharacterBuildBindingIR, ...]:
     generic_gap_reasons = {
-        "trace_extra_effect_has_no_structured_effect_source",
-        "eidolon_extra_effect_has_no_structured_effect_source",
         "trace_node_has_no_structured_effect_source",
         "eidolon_runtime_effect_not_admitted_v0_265",
         "eidolon_slot_has_no_runtime_effect_source",
@@ -1733,23 +1721,6 @@ def _trace_build_bindings(
                     )
                 )
                 ordinal += 1
-        elif slot.mechanism_kind == "trace_extra_effect":
-            target_ids = (*node.extra_effect_ids, *node.simple_extra_effect_ids)
-            for target_id in target_ids or (mechanism_slot_id,):
-                bindings.append(
-                    _source_gap_build_binding(
-                        card_id=node.character_data_card_id,
-                        avatar_id=node.avatar_id,
-                        selection_kind="trace",
-                        selection_ref_id=node.trace_node_id,
-                        mechanism_slot_id=mechanism_slot_id,
-                        target_ref_id=str(target_id),
-                        ordinal=ordinal,
-                        source=node.source,
-                        reason="trace_extra_effect_has_no_structured_effect_source",
-                    )
-                )
-                ordinal += 1
         else:
             bindings.append(
                 _source_gap_build_binding(
@@ -1856,28 +1827,6 @@ def _eidolon_build_bindings(
                         ability_name=str(ability_name),
                         ordinal=ordinal,
                         source=eidolon.source,
-                    )
-                )
-                ordinal += 1
-        elif slot.mechanism_kind == "eidolon_extra_effect":
-            raw_ids = slot.semantics.get("extra_effect_id_list")
-            target_ids = (
-                tuple(str(value) for value in raw_ids)
-                if isinstance(raw_ids, (list, tuple))
-                else ()
-            )
-            for target_id in target_ids or (mechanism_slot_id,):
-                bindings.append(
-                    _source_gap_build_binding(
-                        card_id=eidolon.character_data_card_id,
-                        avatar_id=eidolon.avatar_id,
-                        selection_kind="eidolon",
-                        selection_ref_id=eidolon.eidolon_slot_id,
-                        mechanism_slot_id=mechanism_slot_id,
-                        target_ref_id=target_id,
-                        ordinal=ordinal,
-                        source=eidolon.source,
-                        reason="eidolon_extra_effect_has_no_structured_effect_source",
                     )
                 )
                 ordinal += 1
@@ -2202,30 +2151,8 @@ def _trace_nodes_and_slots(
             simple_extra_effect_ids = tuple(
                 str(value) for value in row.get("SimpleExtraEffectIDList") or ()
             )
-            if extra_effect_ids or simple_extra_effect_ids:
-                slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:extra_effect"
-                linked_slot_ids.append(slot_id)
-                slots.append(
-                    CharacterMechanismSlotIR(
-                        mechanism_slot_id=slot_id,
-                        character_data_card_id=card_id,
-                        mechanism_kind="trace_extra_effect",
-                        runtime_system="event_dispatch_or_effect_registry",
-                        linked_ir_ids={"trace_node_id": trace_node_id},
-                        activation={
-                            "kind": "trace_unlock",
-                            "trace_node_id": trace_node_id,
-                            "default_enabled": default_unlocked,
-                        },
-                        semantics={
-                            "extra_effect_ids": list(extra_effect_ids),
-                            "simple_extra_effect_ids": list(simple_extra_effect_ids),
-                        },
-                        source=source,
-                        coverage_status="blocked",
-                        blocked_reason="trace_extra_effect_runtime_admission_pending",
-                    )
-                )
+            # ExtraEffectConfig is the tooltip glossary. Preserve these references
+            # on the node below without inventing runtime mechanism slots.
             if not linked_slot_ids:
                 slot_id = (
                     f"character_mechanism_slot:{card_id}:trace:"
@@ -2283,6 +2210,15 @@ def _character_config_dynamic_value_bindings_by_avatar_version(
     avatar_ids: frozenset[str] | None = None,
 ) -> dict[tuple[str, str], dict[str, JSONValue]]:
     result: dict[tuple[str, str], dict[str, JSONValue]] = {}
+    trace_skills: dict[tuple[str, str], set[int]] = {}
+    for filename in ("AvatarSkillTreeConfig.json", "AvatarSkillTreeConfigLD.json"):
+        path = tbgd_root / "ExcelOutput" / filename
+        if path.exists():
+            for trace in json.loads(path.read_text(encoding="utf-8")):
+                key = (str(trace["AvatarID"]), str(trace.get("EnhancedID", "")))
+                trace_skills.setdefault(key, set()).update(trace.get("LevelUpSkillID") or ())
+    servant_path = tbgd_root / "ExcelOutput/AvatarServantConfig.json"
+    servants = json.loads(servant_path.read_text(encoding="utf-8")) if servant_path.exists() else []
     for relative_path in (
         "ExcelOutput/AvatarConfig.json",
         "ExcelOutput/AvatarConfigLD.json",
@@ -2308,6 +2244,20 @@ def _character_config_dynamic_value_bindings_by_avatar_version(
             augmented = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(row))
             bindings = augmented.get("_character_config_dynamic_value_bindings")
             if isinstance(bindings, dict):
+                # Owned servants can consume their owner's trace parameters.
+                # Use the same skill-list join as servant ownership; do not
+                # infer owners from IDs or import unrelated mutable slots.
+                for servant in servants:
+                    if not trace_skills.get((avatar_id, enhanced_key), set()).intersection(servant.get("SkillIDList") or ()):
+                        continue
+                    owned = _augment_avatar_row_with_config_dynamic_values(tbgd_root, {"JsonPath": servant.get("Config")})
+                    for key, entry in owned["_character_config_dynamic_value_bindings"]["by_hash"].items():
+                        if not isinstance(entry.get("read_info"), dict) or entry["read_info"].get("Type") != "SkillTreeParam":
+                            continue
+                        existing = bindings["by_hash"].get(key)
+                        if existing is not None and existing.get("read_info") != entry["read_info"]:
+                            raise ValueError("owner_servant_trace_parameter_conflict:" + key)
+                        bindings["by_hash"].setdefault(key, entry)
                 result[(avatar_id, enhanced_key)] = _json_safe(bindings)
     return result
 
@@ -2411,10 +2361,6 @@ def _eidolon_slots_from_avatar_row(
             if semantics["rank_ability"]:
                 mechanism_slot_ids.append(
                     f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:ability"
-                )
-            if semantics["extra_effect_id_list"]:
-                mechanism_slot_ids.append(
-                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:extra_effect"
                 )
         if not mechanism_slot_ids:
             mechanism_slot_ids.append(
@@ -2792,7 +2738,9 @@ def _augment_avatar_row_with_config_dynamic_values(tbgd_root: Path, row: dict[st
                 "raw_path": f"ContextCaster writer:{key_name}",
                 "logical_name": key_name,
             })
-    row["_character_config_dynamic_value_bindings"] = {"by_hash": by_hash, "source_path": json_path}
+    from .adopted_dynamic_parameters import adopt_charge_parameters
+    row["_character_config_dynamic_value_bindings"] = adopt_charge_parameters(
+        {"by_hash": by_hash, "source_path": json_path}, json_path)
     return row
 
 

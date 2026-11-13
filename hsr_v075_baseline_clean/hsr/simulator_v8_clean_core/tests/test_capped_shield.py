@@ -29,7 +29,7 @@ class CappedShieldTest(unittest.TestCase):
             }
         )
 
-    def _apply(self, state: BattleState, amount: float, *, max_capacity=None):
+    def _apply(self, state: BattleState, amount: float, *, max_capacity=None, falling_cap_policy="reject"):
         return self.shields.apply_effect(
             state,
             target_id="target",
@@ -44,6 +44,7 @@ class CappedShieldTest(unittest.TestCase):
             owner_modifier_name="synthetic:modifier",
             status_instance_id="synthetic:instance",
             max_capacity=max_capacity,
+            falling_cap_policy=falling_cap_policy,
         )
 
     @staticmethod
@@ -87,6 +88,17 @@ class CappedShieldTest(unittest.TestCase):
         self.assertTrue(result.records[0]["process_only"])
         self.assertIsNone(result.records[0]["mutation_id"])
 
+    def test_explicit_falling_cap_policy_preserves_existing_and_reports_assumption(self):
+        state = self._stacked_state(2500)
+        result = self._apply(state, 1000, max_capacity=2000, falling_cap_policy="retain_existing")
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.mutation)
+        notice = next(r['payload'] for r in result.records if r['record_type'] == 'rule_assumption')
+        self.assertEqual(notice['status'], '未实证')
+        self.assertEqual((notice['remaining'], notice['current_cap']), (2500, 2000))
+        increased = self._apply(state, 1000, max_capacity=3000, falling_cap_policy="retain_existing")
+        self.assertEqual(increased.mutation.after[0]['remaining'], 3000)
+
     def test_zero_cap_is_successful_noop_without_zero_shield_instance(self) -> None:
         result = self._apply(self._state(), 1000, max_capacity=0)
 
@@ -95,6 +107,18 @@ class CappedShieldTest(unittest.TestCase):
         self.assertEqual(result.events, ())
         self.assertTrue(result.records[0]["process_only"])
         self.assertIsNone(result.records[0]["mutation_id"])
+
+    def test_reapplying_an_undamaged_shield_is_successful_without_fake_mutation(self) -> None:
+        kwargs = dict(target_id="target", shield_id="shield", source_id="caster", source_kind="status",
+            opcode="Shield", amount=1000, source_trace={"fixture": "refresh"}, actor_id="caster",
+            event_source_id="shield", status_instance_id="same-instance")
+        first = self.shields.apply_effect(self._state(), **kwargs)
+        state = self._commit(self._state(), first)
+        repeated = self.shields.apply_effect(state, **kwargs)
+        self.assertTrue(repeated.ok)
+        self.assertIsNone(repeated.mutation)
+        self.assertFalse(repeated.events)
+        self.assertTrue(repeated.records[0]["process_only"])
 
     def test_missing_cap_preserves_existing_stack_behavior(self) -> None:
         result = self._apply(self._stacked_state(500), 1000)

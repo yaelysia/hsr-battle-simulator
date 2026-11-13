@@ -89,6 +89,16 @@ def test_unknown_operation_and_missing_order_are_blocked():
     assert not finished.plan.ok and not finished.mutations
 
 
+def test_turn_end_after_departure_does_not_delete_an_already_cleared_owner():
+    _, state, _, _, rule = _case()
+    state = replace(state, global_flags={k: v for k, v in state.global_flags.items() if k != 'turn_owner_id'})
+    result = TimelineSystem().end_turn(state, 'holder', rule)
+    assert result.plan.ok
+    after = MutationReducer().apply_all(state, result.mutations)
+    assert 'active_turn' not in after.global_flags and 'turn_owner_id' not in after.global_flags
+    assert after.global_flags['current_window'] == 'idle'
+
+
 def test_extra_turn_does_not_consume_ordinary_cost():
     rules, state, callback, task, rule = _case()
     candidate = _apply(rules, state, callback, task, "Set", "event:1").after_state

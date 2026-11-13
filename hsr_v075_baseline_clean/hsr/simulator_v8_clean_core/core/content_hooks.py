@@ -33,11 +33,21 @@ from .model import (
     UnitState,
 )
 
+def processor_replaces_status_callback(rules, state, detail, event):
+    """Use the same card ownership rule for dispatched and direct callbacks."""
+    return any(
+        (detail.get("modifier_name"), event) in mount.processor.replaced_status_callbacks
+        for unit_id in {detail.get("owner_id"), detail.get("caster_id")}
+        if unit_id in state.units
+        for mount in rules._processors_by_entity.get(state.units[unit_id].template_id, ())
+    )
+
+
 if TYPE_CHECKING:
     from ..rules.ir import ActionDefinitionIR
     from ..rules.rulebook import RuleBook
     from ..systems.action_availability import ActionChoice, BlockedActionReason
-    from ..systems.damage import DamageModifierContribution
+    from ..systems.damage import DamageModifierContribution, DamageWindowLedger
     from ..systems.event_dispatch import EventDispatchSystem, EventNormalization
 
 
@@ -54,6 +64,10 @@ GRAPH_COVERAGE_BLOCK_PREFIXES = (
     "condition_not_executable",
     "damage_emission_scaling_ratio_not_runtime_bound",
     "process_only_task_coverage_mismatch",
+    "projectile_source_shape_not_admitted",
+    "retarget_child_task_blocked",
+    "fixed_positive_loop_count_required",
+    "target_language_dependency_blocked",
 )
 
 
@@ -91,6 +105,8 @@ class HookResult:
     takeover: bool = False
     dispatched_event_ids: frozenset[str] = frozenset()
     event_normalizations: tuple[EventNormalization, ...] = ()
+    hit_target_ids: tuple[str, ...] = ()
+    damage_modifiers: tuple[DamageModifierContribution, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,7 +123,7 @@ class EventSubscription:
     scope: str = "self_units"
 
     def __post_init__(self) -> None:
-        if self.scope not in {"self_units", "owned_units"}:
+        if self.scope not in {"self_units", "owned_units", "battle"}:
             raise ValueError("event subscription scope is not admitted")
         if not self.event_types or any(not isinstance(item, str) or not item for item in self.event_types):
             raise ValueError("event subscription requires non-empty event types")
@@ -147,6 +163,12 @@ class ContentProcessorBase:
 
     content_id: str = ""
     version: str = "0"
+    # Exact native status callbacks replaced by this card's event handler.
+    replaced_status_callbacks: frozenset[tuple[str, str]] = frozenset()
+    # Content may select an already compiled gameplay body instead of its
+    # presentation wrapper; the native queue still owns start/finish/abort.
+    standalone_body_overrides: tuple[tuple[str, str], ...] = ()
+    standalone_body_leaf_opcodes: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def claims_action(self, state: BattleState, action_id: str, action_level: int) -> bool:
         return False
@@ -162,6 +184,12 @@ class ContentProcessorBase:
 
     def filter_choices(self, ctx: AvailabilityContext) -> AvailabilityContext:
         return ctx
+
+    def filter_target_candidates(
+        self, state: BattleState, actor: UnitState, action_id: str,
+        action_level: int, candidates: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        return candidates
 
 
 @dataclass(frozen=True)
@@ -190,8 +218,10 @@ class ProcessorServices:
         action_damage_modifiers: tuple[DamageModifierContribution, ...] = (),
         event_dispatcher: EventDispatchSystem | None = None,
         processor_depth: int = 0,
+        damage_window_ledger: DamageWindowLedger | None = None,
     ) -> None:
         from .reducer import MutationReducer
+        from ..systems.damage import DamageWindowLedger
 
         self._rules = rules
         self._reducer = MutationReducer()
@@ -208,6 +238,9 @@ class ProcessorServices:
         self._processor_depth = processor_depth
         self._dispatched_event_ids: set[str] = set()
         self._event_normalizations: list[EventNormalization] = []
+        self._damage_window_ledger = damage_window_ledger or DamageWindowLedger()
+        self._hit_target_ids: list[str] = []
+        self._damage_modifiers: list[DamageModifierContribution] = []
 
     @property
     def state(self) -> BattleState:
@@ -249,6 +282,33 @@ class ProcessorServices:
 
     def unit(self, unit_id: str) -> UnitState | None:
         return self._state.units.get(unit_id)
+
+    def spawn_unit(self, unit: UnitState, *, reason: str) -> None:
+        from ..systems.unit_lifecycle import UnitLifecycleSystem
+        from ..systems.mutation_events import events_for_mutation
+
+        mutation = UnitLifecycleSystem().spawn_mutation(self._state, unit, reason=reason, source="content_processor",
+            source_trace={"content_processor": self._producer_id})
+        self._apply((mutation,))
+        self._events.extend(events_for_mutation(mutation, actor_id=unit.unit_id,
+                            source_id=self._producer_id, event_index=self._state.event_index))
+
+    def set_action_value(self, unit_id: str, value: float) -> None:
+        from ..systems.timeline import TimelineSystem
+
+        self._apply((TimelineSystem().set_action_value(self._state, unit_id, value, "content_processor"),))
+
+    def request_battle_defeat(self, reason: str) -> None:
+        key = "battle_defeat_requested"
+        self._apply((Mutation("set", ("global_flags", key), self._state.global_flags.get(key), True,
+            before_exists=key in self._state.global_flags, reason=reason, source="content_processor"),))
+
+    def add_damage_modifier(self, contribution: DamageModifierContribution) -> None:
+        from ..systems.damage import DamageModifierContribution
+
+        if type(contribution) is not DamageModifierContribution:
+            raise ProcessorBlocked("content_damage_modifier_requires_typed_contribution")
+        self._damage_modifiers.append(contribution)
 
     def set_unit_flag(
         self,
@@ -293,6 +353,35 @@ class ProcessorServices:
         return mutation
 
     # -- L1 system calls ------------------------------------------------------
+
+    def set_dynamic_value(self, unit_id: str, key: str, hash_key: str, value: float, event: GameEvent) -> None:
+        """Write a content-declared unit slot through L1, including its watchers."""
+        from ..rules.expression_ir import DynamicValueOperationIR, NumericOperandIR, numeric_fixed, DYNAMIC_VALUE_OPERATION_SCHEMA
+        from ..rules.ir import IRSource
+        from ..systems.dynamic_values import (DynamicValueExecutionRequest, plan_dynamic_value_operation,
+            execute_dynamic_value_plan, dynamic_value_change_events)
+
+        operation_id = f"{self._producer_id}:set:{key}"
+        operand = NumericOperandIR(operation_id + ":value", "expression", {"formula_role": "value"},
+                                   expression=numeric_fixed(value), coverage_status="executable")
+        operation = DynamicValueOperationIR.from_spec({
+            "schema_version": DYNAMIC_VALUE_OPERATION_SCHEMA, "operation_kind": "set", "destination_key": key,
+            "destination_hash": hash_key, "target_alias": "Caster", "scope_kind": "unit", "lifecycle": "combat",
+            "operand": operand.to_json(), "minimum": None, "maximum": None,
+            "coverage_status": "executable", "blocked_reason": "",
+        }, IRSource(self._producer_id, "content_processor", key))
+        request = DynamicValueExecutionRequest(unit_id, self._producer_id, operation_id, "SetDynamicValue",
+            owner_id=unit_id, operation_event_id=event.event_id)
+        before = self._state
+        plan = plan_dynamic_value_operation(before, operation, request, rules=self._rules)
+        result = execute_dynamic_value_plan(before, plan, rules=self._rules)
+        if not result.ok:
+            raise ProcessorBlocked(result.blocked_reason)
+        self._apply(result.mutations)
+        self._records.extend(dict(record) for record in result.records)
+        for changed in dynamic_value_change_events(before, plan, self._rules):
+            self._events.append(changed)
+            self._dispatch_event(changed)
 
     def spawn_servant(
         self,
@@ -401,6 +490,194 @@ class ProcessorServices:
                     self._dispatch_event(event)
         return result
 
+    def execute_damage_tasks(
+        self, task_ids: tuple[str, ...], *,
+        action_definition: "ActionDefinitionIR", target_resolution: TargetResolution,
+        execution_key: str = "",
+    ) -> None:
+        """Run content-selected compiled hits through the ordinary hit pipeline.
+
+        Only ordering belongs to the processor. Numeric binding, hit windows,
+        energy, toughness, break and death still belong to AbilityTaskSystem.
+        """
+        from ..systems.ability import AbilityTaskSystem, _ability_task_records_blocked_reason
+        from ..systems.effect import EffectRegistry
+        from ..systems.event_dispatch import EventDispatchSystem
+        from ..systems.status import StatusSystem
+
+        command = self._action_command
+        if command is None or not task_ids or len(set(task_ids)) != len(task_ids):
+            raise ProcessorBlocked("content_processor_damage_task_context_invalid")
+        if execution_key:
+            command = replace(command, metadata={**command.metadata, "ability_task_execution_path": execution_key})
+        effects = EffectRegistry(StatusSystem(self._rules))
+        if self._event_dispatcher is None:
+            self._event_dispatcher = EventDispatchSystem(self._rules, effects, reducer=self._reducer)
+        system = AbilityTaskSystem(self._rules, effects, reducer=self._reducer,
+                                   event_dispatcher=self._event_dispatcher)
+        ledger = self._damage_window_ledger
+        sequence_id = f"processor_action:{self._state.event_index}:{command.actor_id}:{command.action_id}"
+        if execution_key:
+            sequence_id += f":{execution_key}"
+        for task_id in task_ids:
+            task = self._rules.ability_task(task_id)
+            if (task is None or task.opcode != "DamageByAttackProperty"
+                    or task.action_id != command.action_id or task.level != command.action_level
+                    or task.coverage_status != "executable" or task.blocked_reason):
+                raise ProcessorBlocked("content_processor_damage_task_not_admitted")
+            _, mutations, events, rng_events, records, _ = system._execute_damage_task(
+                self._state, task, command=command, action_definition=action_definition,
+                primary_target=target_resolution.primary,
+                target_resolution=target_resolution, task_graph_continuation=None,
+                nested_ability_hooks=None, dispatched_event_ids=self._dispatched_event_ids,
+                action_damage_modifiers=self._action_damage_modifiers,
+                window_ledger=ledger, packet_sequence_id=sequence_id,
+                hit_target_ids=self._hit_target_ids,
+            )
+            reason = _ability_task_records_blocked_reason(records)
+            if reason:
+                raise ProcessorBlocked(reason)
+            self._apply(tuple(mutations))
+            self._events.extend(events)
+            self._rng_events.extend(rng_events)
+            self._records.extend(records)
+            # The hit pipeline already dispatched its events and produced its
+            # process-only callback markers; the outer hook must not repeat them.
+            self._dispatched_event_ids.update(str(event.to_json()["event_id"]) for event in events)
+
+    def execute_effect_task(
+        self, task_id: str, *, action_definition: "ActionDefinitionIR",
+        target_resolution: TargetResolution, execution_key: str = "",
+    ) -> None:
+        """Apply a selected compiled leaf through the ordinary effect pipeline."""
+        from ..systems.ability import AbilityTaskSystem, _ability_task_records_blocked_reason
+        from ..systems.effect import EffectRegistry
+        from ..systems.status import StatusSystem
+
+        command = self._action_command
+        task = self._rules.ability_task(task_id)
+        if (command is None or task is None or task.action_id != command.action_id
+                or task.level != command.action_level or task.child_task_ids
+                or task.opcode == "DamageByAttackProperty"):
+            raise ProcessorBlocked("content_processor_effect_task_context_invalid")
+        command = replace(command, metadata={**command.metadata, "ability_task_execution_path": execution_key})
+        system = AbilityTaskSystem(self._rules, EffectRegistry(StatusSystem(self._rules)),
+                                   reducer=self._reducer, event_dispatcher=self._event_dispatcher)
+        _, mutations, events, rng_events, records, _ = system._execute_ability_leaf_task(
+            self._state, task, command=command, action_definition=action_definition,
+            primary_target=target_resolution.primary, target_resolution=target_resolution,
+            topology_authority="external_legacy", dispatched_event_ids=self._dispatched_event_ids,
+        )
+        reason = _ability_task_records_blocked_reason(records)
+        if reason:
+            raise ProcessorBlocked(reason)
+        self._apply(tuple(mutations))
+        self._events.extend(events)
+        self._rng_events.extend(rng_events)
+        self._records.extend(records)
+
+    def apply_status_effect(self, effect_id: str, *, caster_id: str, target_id: str, execution_key: str = "") -> None:
+        """Apply a compiled modifier to a content-selected target through L1."""
+        from ..systems.status import StatusSystem
+
+        effect = self._rules.effect(effect_id)
+        if effect is None or effect.opcode != "AddModifier" or effect.coverage_status != "executable":
+            raise ProcessorBlocked("content_status_effect_not_admitted")
+        result = StatusSystem(self._rules).apply_add_modifier(
+            self._state, effect, caster_id=caster_id, source_id=effect_id,
+            owner_id=caster_id, _resolved_target_ids=(target_id,),
+            application_instance_id=f"processor:{self._producer_id}:{self._state.event_index}:{caster_id}:{target_id}:{effect_id}:{execution_key}",
+        )
+        if not result.ok:
+            raise ProcessorBlocked(",".join(result.unsupported))
+        self._absorb(result)
+
+    def remove_status(self, target_id: str, detail: dict[str, JSONValue]) -> None:
+        from ..systems.status import StatusSystem
+
+        result = StatusSystem(self._rules).remove_status_instance(
+            self._state, target_id=target_id, detail=detail,
+            source="content_processor", source_trace={"processor": self._producer_id},
+        )
+        if not result.ok:
+            raise ProcessorBlocked(",".join(result.unsupported))
+        self._apply(result.mutations)
+        self._events.extend(result.events)
+        self._records.extend(result.records)
+
+    def execute_status_tasks(
+        self, owner_id: str, modifier_name: str, callback_event: str,
+        task_ids: tuple[str, ...], predicate_task_id: str | None, trigger_event: GameEvent,
+        *, parameter_entity_id: str | None = None,
+    ) -> None:
+        """Run selected compiled leaves under their native status predicate.
+
+        Content chooses the gameplay leaves; status ownership, condition values,
+        queue admission and mutations remain with their existing L1 consumers.
+        """
+        from ..systems.status_callbacks import StatusCallbackSystem, _retarget_event
+
+        unit = self.unit(owner_id)
+        details = [d for d in unit.flags.get("status_details", ())
+                   if d.get("modifier_name") == modifier_name] if unit is not None else []
+        callbacks = self._rules.status_callbacks_for_modifier_event(modifier_name, callback_event)
+        if len(details) != 1 or len(callbacks) != 1:
+            raise ProcessorBlocked("content_status_callback_identity_missing_or_ambiguous")
+        detail, callback = details[0], callbacks[0]
+        tasks = {t.task_id: t for t in self._rules.status_callback_tasks_for_callback(callback.callback_id)}
+        predicate = tasks.get(predicate_task_id)
+        condition = self._rules.condition(predicate.condition_id) if predicate is not None else None
+        if any(task_id not in tasks for task_id in task_ids):
+            raise ProcessorBlocked("content_status_task_missing")
+        system = (self._event_dispatcher.status_callbacks if self._event_dispatcher is not None
+                  else StatusCallbackSystem(self._rules))
+        event = trigger_event
+        if parameter_entity_id is not None:
+            if parameter_entity_id not in self._state.units:
+                raise ProcessorBlocked("content_status_parameter_entity_missing")
+            event = _retarget_event(trigger_event, parameter_entity_id)
+        if predicate_task_id is None:
+            if any(t.condition_id for t in tasks.values()):
+                raise ProcessorBlocked("content_status_callback_requires_predicate")
+        else:
+            if condition is None:
+                raise ProcessorBlocked("content_status_task_missing")
+            decision, rng, event = system._evaluate_callback_condition(
+                condition, self._state, callback, predicate, detail, event,
+            )
+            if not decision.ok or decision.result is None:
+                raise ProcessorBlocked(decision.reason)
+            self._rng_events.extend(rng)
+            if not decision.result:
+                return
+        for task_id in task_ids:
+            detail = next((d for d in self.unit(owner_id).flags.get('status_details', ())
+                           if d.get('instance_id') == detail.get('instance_id')), detail)
+            result = system._execute_formal_leaf_task(
+                self._state, callback, tasks[task_id], detail, event, None,
+            )
+            if not result.ok:
+                raise ProcessorBlocked(",".join(result.errors))
+            self._absorb(result)
+
+    def grant_energy(self, unit_id: str, amount: float, event: GameEvent) -> None:
+        from ..systems.resource import ResourceSystem
+        from ..systems.mutation_events import events_for_mutation
+        from .settlement import SettlementRecord
+
+        mutation = ResourceSystem().change_unit_energy(self._state, unit_id, amount, "content_processor")
+        mutation = replace(mutation, mutation_id=f"{mutation.mutation_id}:{event.event_id}")
+        self._apply((mutation,))
+        self._events.extend(events_for_mutation(
+            mutation, actor_id=unit_id, source_id=unit_id, event_index=self._state.event_index,
+        ))
+        self._records.append(SettlementRecord(
+            record_type="content_energy", source="content_processor",
+            mutation_id=mutation.stable_id(), process_only=False,
+            payload={"unit_id": unit_id, "raw_amount": amount, "before": mutation.before,
+                     "after": mutation.after, "trigger_event_id": event.event_id},
+        ).to_json())
+
     def apply_damage(self, packet: Any) -> Any:
         """Apply one typed damage packet through the shared DamageSystem.
 
@@ -422,10 +699,16 @@ class ProcessorServices:
                   if item not in packet.modifier_contributions),
                 *packet.modifier_contributions,
             ))
-        result = DamageSystem(self._rules).apply_packet(self._state, packet)
+        result = DamageSystem(self._rules).apply_packet(
+            self._state, packet, window_ledger=self._damage_window_ledger,
+        )
         if not result.ok:
             raise ProcessorBlocked(",".join(result.errors) or "content_processor_damage_blocked")
         self._absorb(result)
+        if packet.damage_kind == "hp_damage" and packet.damage_formula_family in {"direct", "elation"}:
+            self._hit_target_ids.append(packet.target_id)
+        for event in result.events:
+            self._damage_window_ledger.record_defeat_event(event)
         return result
 
     def resolve_rng(self, request: Any) -> Any:
@@ -435,9 +718,11 @@ class ProcessorServices:
         event is recorded in the hook output and committed (or discarded)
         with the owning atomic transition.
         """
-        from ..systems.rng import resolve_rng_request
+        from ..systems.rng import resolve_rng_request, rng_choices_from_payload, rng_mode_from_payload
 
-        resolution = resolve_rng_request(request)
+        metadata = self._action_command.metadata if self._action_command is not None else {}
+        resolution = resolve_rng_request(request, rng_choices=rng_choices_from_payload(metadata),
+                                         rng_mode=rng_mode_from_payload(metadata))
         if not resolution.ok:
             raise ProcessorBlocked(resolution.blocked_reason or "content_processor_rng_blocked")
         if resolution.event is None:
@@ -480,6 +765,8 @@ class ProcessorServices:
             takeover=takeover,
             dispatched_event_ids=frozenset(self._dispatched_event_ids),
             event_normalizations=tuple(self._event_normalizations),
+            hit_target_ids=tuple(dict.fromkeys(self._hit_target_ids)),
+            damage_modifiers=tuple(self._damage_modifiers),
         )
 
     def block(self, reason: str) -> HookResult:
@@ -512,6 +799,24 @@ def run_hook(
 
 def _unit_present(unit: UnitState | None) -> bool:
     return unit is not None and unit.lifecycle_status != "removed"
+
+
+def processor_standalone_body(rules: "RuleBook", actor: UnitState, ability_name: str) -> str | None:
+    names = {dict(mount.processor.standalone_body_overrides)[ability_name]
+             for mount in getattr(rules, "_processors_by_entity", {}).get(actor.template_id, ())
+             if ability_name in dict(mount.processor.standalone_body_overrides)}
+    if len(names) > 1:
+        raise ProcessorBlocked("content_standalone_body_ambiguous")
+    return next(iter(names), None)
+
+
+def processor_standalone_leaf_opcodes(rules: "RuleBook", actor: UnitState, body_name: str) -> frozenset[str] | None:
+    selections = {frozenset(dict(mount.processor.standalone_body_leaf_opcodes)[body_name])
+                  for mount in getattr(rules, "_processors_by_entity", {}).get(actor.template_id, ())
+                  if body_name in dict(mount.processor.standalone_body_leaf_opcodes)}
+    if len(selections) > 1 or frozenset() in selections:
+        raise ProcessorBlocked("content_standalone_leaf_selection_invalid")
+    return next(iter(selections), None)
 
 
 def _self_units(state: BattleState, content_id: str) -> tuple[str, ...]:
@@ -571,6 +876,14 @@ def _content_present(rules: "RuleBook", content_id: str) -> bool:
         return rules.servant_definition(content_id) is not None
     if content_id.startswith("monster:"):
         return rules.monster_data_card_for_entity(content_id) is not None
+    if content_id.startswith("battle_event:"):
+        # Scoped cards retain the formal birth definition in CreateBattleEvent,
+        # even when the catalog's standalone entity row is outside their scope.
+        return rules.entity(content_id) is not None or any(
+            effect.opcode == "CreateBattleEvent" and effect.coverage_status == "executable"
+            and effect.payload.get("standard", {}).get("definition", {}).get("entity_ref") == content_id
+            for effect in rules.ir.effects
+        )
     return rules.entity(content_id) is not None
 
 
@@ -601,16 +914,23 @@ def processors_for_event(
         subscriptions = mount.processor.subscriptions()
         if not any(event.event_type in subscription.event_types for subscription in subscriptions):
             continue
-        if not _self_units(state, mount.content_id):
+        self_units = _self_units(state, mount.content_id)
+        retired = state.units.get(event.target_id) if event.event_type == "unit.removed" else None
+        if retired is not None and retired.template_id == mount.content_id:
+            self_units = tuple(dict.fromkeys((*self_units, retired.unit_id)))
+        if not self_units:
             continue
         scopes = {
             subscription.scope for subscription in subscriptions
             if event.event_type in subscription.event_types
         }
+        if "battle" in scopes:
+            matched.append(mount)
+            continue
         if "owned_units" in scopes:
             scope_units = set(_owned_units(state, mount.content_id))
         else:
-            scope_units = set(_self_units(state, mount.content_id))
+            scope_units = set(self_units)
         if any(unit_id in scope_units for unit_id in referenced):
             matched.append(mount)
     return tuple(matched)

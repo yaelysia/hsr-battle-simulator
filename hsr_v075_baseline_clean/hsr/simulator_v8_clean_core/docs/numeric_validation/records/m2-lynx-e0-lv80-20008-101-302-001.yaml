@@ -1,0 +1,51 @@
+comparison_record:
+  id: m2-lynx-e0-lv80-20008-101-302-001
+  game_version: "计算器未注明游戏版本，固定源码提交；限无生存反应时的自身治疗"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复；玲可复用既有R05/R06实现，无新增专属处理器"
+    rules_fingerprint: 777b151aa534a8cefa1cfb4521b333fad791b0263ba0c6fa3fa7c970b4c0cdb3
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: lynx_ultimate_heal
+    invocation: "原生 generateContext/runStatSimulations，未修改外部公式"
+  build:
+    avatar: 1110
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10、全部属性及大行迹"
+    light_cone: {id: 20008, name: 嘉果, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 101, pieces: 4, level: 15, mains: [HP, ATK, OHB, SPD], sub_affixes: []}
+    relics_inner: {set: 302, pieces: 2, level: 15, mains: [HP_percent, ERR], sub_affixes: []}
+    input: examples/cli/lynx_lv80_survival_and_equipment.json
+    initial_condition: "50%HP、94能量；嘉果入场后100能量，过客入场4战技点"
+    teammate: "阿兰80/P6/E0满行迹、23002/102/302构筑；嘉果入场获得6能量"
+  target: "自身；初始HP2194.83936，生命上限4389.67872；首次直接治疗与首次HoT均未触及满血截断"
+  operations: "同名commands文件25条公开选择；先终结技，自然战斗中为阿兰施加生存反应，三回合HoT，待敌人造成减防与残血后再次终结技净化救援，再继续提交"
+  rng: {note: "治疗数值没有暴击；战斗中的伤害与状态判定保留正式RNG"}
+  reference_values:
+    - {event: first_ultimate_self_heal, reference: 1377.0976519864946, simulator: 1377.0938559200831, relative_error: 0.000002756570, source: "Fribbels ULT_HEAL", independent: true}
+    - {event: first_talent_self_hot, reference: 367.22604052973185, simulator: 367.22502824535553, relative_error: 0.000002756570, source: "Fribbels TALENT_HEAL", independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000002756570, verdict: PASS}
+  game_comparison: {status: "成熟计算器终结技与持续治疗对照通过", scope: "不外推为生存反应目标额外HoT及所有概率分布的独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 玲可、嘉果与遗器原生模型"
+    - "固定TBGD Avatar_Lynx_00_Ability.json、AvatarSkillTreeConfig：生存反应、持续治疗与行迹；既有R05/R06路线复用"
+  unverified_params:
+    - "外部skillBuff=false；比较的治疗目标是玲可自身，生存反应实际施加给阿兰，未混用两种目标条件。"
+    - "后续HoT的amount是满血截断前请求值；独立比较选择首次、未截断的一次。"
+  notes:
+    - "第一次归档/tmp/hsr_v1_lynx.json.gz经正式restore_session重放验证，再续跑第二次终结技净化。"
+    - "完整归档/tmp/hsr_v1_lynx_complete.json.gz；清除modifier:MCommon_DefenceRatioDown，阿兰由4.643109HP恢复到1381.736965HP，之后继续行动。"
+  follow_up_validation:
+    reason: "适应金人合法双行动与状态默认回合末扣减，保留旧记录。"
+    rules_fingerprint: 944d660116ba086b633c3c4dc5265222493d668b987082f2e9cf1c9287ed1385
+    operations: "当前48次公开选择；治疗目标包含阿兰与玲可自身；真实减防净化后阿兰HP3589.3872，生存反应自然到期。"
+    result: "初次终结技1377.093855920及首个持续治疗367.225028245仍与原外部值一致；净化、残血续航与HP上限恢复检查通过。"
+    validation: /tmp/hsr_v1_sustain_refreshed_tests.log

@@ -1,0 +1,40 @@
+comparison_record:
+  id: m2-ordinary-stage-waves-lv10-001
+  entries_counted: ["来源波次", "普通公共环境full_stage"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 8634dc4e136d7a919b9fdc9cb5e5aae913011d58ab73e0d8b89c3319f6e72034
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy10_res0_noncrit
+    invocation: "原生generateContext/runStatSimulations；无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹，23013/101/302既验构筑"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑"
+    input: examples/cli/ordinary_stage_lv10.json
+  target: {monster: 1002050, stage: 201010110, level: 10, physical_resistance: 0, broken: false}
+  operations: "9次公开选择通关两波：首波近卫/射手，次波近卫/射手/近卫；装配StageAbility_BattleCommonRule及StageAbility_Elation。插队终结技击杀当前回合最后一个敌人后，先关闭旧回合，再换波并重置行动值。"
+  rng: {mode: deterministic_seed, note: "两波娜塔莎首次普攻均非暴击"}
+  reference_values:
+    - {event: wave0_received_basic, reference: 956.4679286766248, simulator: 956.468004678554, independent: true}
+    - {event: wave1_received_basic, reference: 956.4679286766248, simulator: 956.468004678554, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000007946104, verdict: PASS}
+  game_comparison: {status: "两波承伤对照通过", scope: "基础公共环境装配及换波不污染当前构筑、敌人等级和伤害。未外推欢愉队伍、锚点当期增益或所有关卡。"}
+  sources:
+    - "固定TBGD StageConfig 201010110、StageCommonTemplate、Level_BattleCommonRule_Ability、StageAbility_Elation。"
+    - "StageBgTalk_20101011只有等待、背景对白和结束自身子图，按纯表现过滤；其余未知子图仍拒绝。"
+    - "https://honkai-star-rail.fandom.com/wiki/Forgotten_Hall — 换波重置行动顺序；规则未注明版本。"
+  assumptions:
+    - "wave_action_order_boundary：按当前速度重置在场可行动单位AV，保留HP/能量/状态；跨波控制、行动提前及召唤物边界待游戏实测，实际结果显示提醒。"
+  unverified_params:
+    - "敌人等级与物理抗性来自固定TBGD；此对照不验证敌方HP上限。"
+  notes:
+    - "test_v1_environments.py::test_full_stage_two_waves_and_ultimate_interrupt_cleanup；与波次来源、公共环境组件合计16 passed/40.30秒，/tmp/hsr_v1_environment_checks.log。"
+    - "19操作归档：/tmp/hsr-v1-environments/ordinary_stage_v1_complete.json.gz。"
+    - "Fribbels驱动1 passed；/tmp/hsr_v1_fribbels_environment.log。"

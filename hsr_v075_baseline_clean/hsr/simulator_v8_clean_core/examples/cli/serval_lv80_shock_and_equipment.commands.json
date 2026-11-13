@@ -1,0 +1,123 @@
+{
+  "commands": [
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110301",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ],
+      "metadata": {
+        "rng_choices": {
+          "rng:crit:e93627c7db7e758c": "noncrit"
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:c5eadbc4baa8ab3e": "not_applied",
+          "rng:status_apply:eced78e558a4b2f5": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110302",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ],
+      "metadata": {
+        "rng_choices": {
+          "rng:crit:5130a1f88176280a": "noncrit",
+          "rng:crit:f87d03c85be56cc0": "noncrit"
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:ba0fc54299a65799": "not_applied",
+          "rng:status_apply:deb4a5f38c33ab98": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "serval"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110302",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110303",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "serval",
+      "action_id": "avatar_skill:110303",
+      "action_level": 10,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:crit:0f138bac73789920": "noncrit",
+          "rng:crit:c2afabedc332e42e": "noncrit",
+          "rng:crit:aa45546d0eb94f75": "noncrit",
+          "rng:crit:fd3ba4a90f415c81": "noncrit",
+          "rng:crit:393193c2ad21c80d": "noncrit",
+          "rng:crit:2d0453338c8e7db9": "noncrit"
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "serval"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "serval"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:afaf4ab5b798:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    }
+  ]
+}

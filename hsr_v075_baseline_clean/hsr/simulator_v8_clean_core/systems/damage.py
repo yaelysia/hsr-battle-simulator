@@ -28,6 +28,34 @@ from .elation import ElationDamageContext
 from .scaling_basis import resolve_scaling_basis
 
 
+_DAMAGE_ROLE_EVENT_TYPES = frozenset({
+    "damage.before_hit",
+    "damage.hit",
+    "damage.attacker_hit",
+    "damage.hit_sequence.before",
+    "damage.hit_sequence.after",
+    "damage.target_attack.before",
+    "damage.target_attack.after",
+    "damage.target_hit_sequence.before",
+    "damage.target_hit_sequence.after",
+})
+
+
+def event_damage_identity_ids(
+    state: BattleState,
+    event: GameEvent | None,
+) -> tuple[str | None, str | None]:
+    """Damage roles from a damage window's own typed event identities."""
+    if event is None or event.event_type not in _DAMAGE_ROLE_EVENT_TYPES:
+        return None, None
+    # A committed hit's source is its owner, not necessarily its attacker.
+    attacker_known = event.event_type not in {"damage.hit", "damage.attacker_hit"}
+    return (
+        event.source_id if attacker_known and event.source_id in state.units else None,
+        event.target_id if event.target_id in state.units else None,
+    )
+
+
 DamageFormulaFamily = Literal[
     "direct",
     "additional",
@@ -160,6 +188,7 @@ class DamageWindowLedger:
 
     def __init__(self) -> None:
         self.defeated_targets: dict[str, dict[str, JSONValue]] = {}
+        self.target_status_instances: dict[str, tuple[str, ...]] = {}
 
     def admit_packet(self, state: BattleState, packet: "DamagePacket") -> tuple[bool, str, bool]:
         target = state.units.get(packet.target_id)
@@ -167,6 +196,10 @@ class DamageWindowLedger:
             return False, "damage_target_missing", False
         lifecycle = UnitLifecycleSystem().view(state, packet.target_id)
         if lifecycle.can_receive_damage:
+            if packet.damage_kind == 'hp_damage' and packet.damage_formula_family in {'direct', 'elation'}:
+                self.target_status_instances.setdefault(packet.target_id, tuple(
+                    detail['instance_id'] for detail in target.flags.get('status_details', ())
+                    if isinstance(detail.get('instance_id'), str)))
             return True, "", False
         if lifecycle.is_removed:
             return False, "damage_source_target_removed", False
@@ -1999,6 +2032,7 @@ def _damage_hit_event(
     source_frame = source_frame_for_packet(packet)
     return GameEvent(
         event_type="damage.hit",
+        action_definition=packet.action_definition,
         source_id=source_frame.owner_id,
         target_id=packet.target_id,
         window=str(packet.metadata.get("window") or "damage"),
@@ -2066,6 +2100,7 @@ def _damage_defeat_event(
     source_frame = source_frame_for_packet(packet)
     return GameEvent(
         event_type="unit.defeated",
+        action_definition=packet.action_definition,
         source_id=source_frame.owner_id,
         target_id=packet.target_id,
         event_id=mutation_backed_event_id(

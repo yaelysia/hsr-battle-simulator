@@ -1,0 +1,39 @@
+comparison_record:
+  id: m2-trampler-lv40-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: a19251df0b37c9b48d439121bdeb6dffd85cb4ebd003865c87496e087189ed96
+    processor: "monster:8013010 v0.1.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy40_res0_noncrit
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101四件/302两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑"
+    input: examples/cli/voidranger_trampler_lv40.json
+  target: {monster: 8013010, name: 虚卒·践踏者, stage: 301005, level: 40, physical_resistance: 0, broken: false}
+  operations: "两只践踏者，22次公开选择；五技能、同速选择、蓄力目标约束、纠缠1/2/3/4层、控制跳过和到期量子附伤。"
+  rng: {mode: deterministic_seed, note: "首个承伤对照非暴击，原生纠缠100%基础概率仍经过效果抵抗结算"}
+  reference_values:
+    - {event: received_physical_basic, reference: 777.1301920497575, simulator: 777.130185428809, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000000851973, verdict: PASS}
+  game_comparison: {status: "承伤对照通过", scope: "等级、防御、抗性与未击破减伤参与的承伤；不外推敌方输出或HP上限"}
+  sources:
+    - "固定TBGD Monster_AML_Elite01_00_Config/Ability；GlobalModifier_Common_Specific.MCommon_Entangle提供叠层与到期伤害。"
+    - "https://honkai-star-rail.fandom.com/wiki/Voidranger%3A_Trampler — 五技能、强攻600%ATK、纠缠100%基础概率、50%推迟及每层80%ATK；版本未注明，与固定来源参数一致。"
+    - "固定Fribbels源码的娜塔莎原生模型。"
+  assumptions:
+    - "after_attack_listener_snapshot：共用首个命中前的监听状态快照；同次攻击新施加减益不追溯触发，边界待游戏实测并在结算显示。"
+  unverified_params:
+    - "等级和抗性取固定TBGD作为计算器输入；敌方输出、HP上限未独立对照。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_trampler_charge_target_entangle_stacks_and_expiry"
+    - "45操作归档：/tmp/hsr-v1-last-enemies/trampler_v1_complete.json.gz；独立CLI重放45步、0错误，/tmp/hsr_v1_trampler_replay.log。"
+    - "强攻复用原伤害与状态管线，只过滤动画/镜头/投射表现；8013012变体不在当前名单。"

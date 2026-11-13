@@ -1,0 +1,42 @@
+comparison_record:
+  id: m2-aurumaton-lv70-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 5f624bf78a6cb25eea1ea2e0173dd868d6b359cb37b7498ef9ebb1598ba2876a
+    processor: "monster:2013010 v0.1.0，限定普通/惩戒模式合法动作，不选择动作或目标"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy70_res0.2_noncrit
+    invocation: "原生generateContext/runStatSimulations，娜塔莎普攻无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹，23013/101/302既验构筑；同队存护三月七80/P6/E0，20003/103/304"
+    input: examples/cli/aurumaton_lv70_sanction.json
+  target: {monster: 2013010, name: 金人司阍, stage: 402120485, level: 70, physical_resistance: 0.2, broken: false}
+  operations: "同名commands共19次公开选择：3次儆惧自然积累惩戒，自动召唤两条龙鱼，两个完整惩戒回合每回合戒退/缚束各一次，龙鱼行动、禁锢和惩戒结束；未提交被动201301001"
+  rng: {mode: deterministic_seed, note: "首次承伤非暴击；外部CR补正-0.05。弱化与禁锢在原生路线自然命中"}
+  reference_values:
+    - {event: received_physical_basic_before_weaken, reference: 523.5403399072051, simulator: 523.5403617960114, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000000041809, verdict: PASS}
+  game_comparison: {status: "承伤对照通过", scope: "不外推敌方输出和HP上限；虚弱20%乘区另有规则与定向检查，不称为Fribbels独立对照"}
+  sources:
+    - "https://honkai-star-rail.fandom.com/wiki/Aurumaton_Gatekeeper — 普通版动作、惩戒、30速度、保护弱点与虚弱"
+    - "https://www.prydwen.gg/star-rail/guides/damage-formula — Weaken独立乘区1-Weaken；不采用旧文仅敌方适用的限制"
+    - "https://honkai-star-rail.fandom.com/wiki/Weaken — 击破相关与欢愉伤害不受虚弱影响"
+    - "固定TBGD Mecha03普通卡、GlobalModifier_Common_Specific.OneMore、Common_Property.FatigueRatio"
+  unverified_params:
+    - "敌方等级和抗性取固定TBGD作为计算器输入，计算器未独立提供该怪物卡参数。"
+    - "该路线验证由儆惧触发惩戒；由玩家攻击触发的即时行动分支随丹恒/希儿路线重验。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_aurumaton_natural_sanction_keeps_two_actions_and_two_turns 通过（35.76秒）；原生归档独立CLI重放39步、0错误。"
+    - "归档 /tmp/hsr-v1-aurumaton-verified/test_aurumaton_natural_sanctio0/aurumaton_v1_complete.json.gz。"
+  follow_up_validation:
+    reason: "补齐常驻延迟惩戒标记幂等与龙鱼自爆的参数接线后复验；原指纹保留。"
+    rules_fingerprint: dcf477bff56f803edfe3db951042f2eb7c26cba14168e41d3e69c6e23369a6d9
+    archive: /tmp/hsr-v1-post-lifecycle-tests/test_aurumaton_natural_sanctio0/aurumaton_v1_complete.json.gz
+    result: "19次选择、两个完整惩戒回合各两次行动、首个承伤对照保持通过；独立重放39步、0错误。玩家攻击触发及被量子击破打断的惩戒分支由当前丹恒/希儿路线覆盖。"

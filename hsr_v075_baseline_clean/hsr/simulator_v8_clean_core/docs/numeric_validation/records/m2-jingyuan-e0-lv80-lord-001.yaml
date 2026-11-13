@@ -1,0 +1,45 @@
+comparison_record:
+  id: m2-jingyuan-e0-lv80-lord-001
+  entries_counted: ["景元E0满行迹", "景元20006/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: d596d72e84f3ab4e761da21d6399f41af01c2de47281609405166fbf36e12f6f
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [jingyuan_teammate_fleet_basic_0.45_noncrit, jingyuan_teammate_fleet_basic_0.55_noncrit]
+    invocation: "原生generateContext/runStatSimulations；TBGD段比和娜塔莎仙舟8%攻击为输入，未改公式或返回结果"
+  build:
+    attacker: "景元80/P6/E0满行迹，智库S1、快枪手4、仙舟2；+15无副词条，攻击衣/速度鞋/雷球/攻击绳"
+    companion: "娜塔莎23013/101/302既验固定构筑，仙舟提供额外8%攻击"
+    input: examples/cli/jingyuan_lv80_lord_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, lightning_resistance: 0, broken: false}
+  operations: "35次公开选择/70操作；秘技入场、普攻、战技、终结技、神君自动行动与重置。此路线用于角色验收，不要求击杀全部高血量敌人。"
+  reference_values:
+    - {event: basic_hit_1, reference: 887.5681842761473, simulator: 887.5699735577738, independent: true}
+    - {event: basic_hit_2, reference: 1084.8055585597358, simulator: 1084.8077454595013, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000002017, verdict: PASS}
+  game_comparison: {status: "普攻与固定装备独立对照通过", scope: "神君及控制边界为来源一致性与工程验证，不外推为逐项独立游戏实测。"}
+  behavior_checks:
+    - "115初始能量+A4入场15=130；秘技使神君初始6段/90速度。"
+    - "战技+2段、终结技+3段，达到10段上限/130速度；行动后恢复3段/60速度。"
+    - "神君每段随机主目标0.66倍率、相邻0.165倍率；修复重选主目标后丢失邻接目标。无秘技对照路线首轮8段产生16次伤害。"
+    - "满行迹神君至少6段时暴伤0.75；战技后10%暴击状态存在。战技整招回复30能量，未叠加原生两笔部分回能。"
+    - "原生控制中止与主人阵亡退场路径复用；此前无治疗探针已观察主人阵亡后神君移除，不宣称控制时序已游戏实证。"
+  sources:
+    - "固定AvatarSkillConfig120401/120402/120403/120404/120407及AvatarSkillTreeConfig1204101/102/103。"
+    - "https://srl.keqingmains.com/characters/lightning/jing-yuan — 战技整招30能量、行迹与神君行为；页面未注明版本。"
+  assumptions:
+    - "jingyuan_skill_energy_timing：回能量来自SPBase；在战技结束时一次结算，结果显示未实证，需游戏实测分段回能与中途充能效率变化。"
+  unverified_params:
+    - "普攻段比0.45/0.55、敌人等级/抗性及队友仙舟8%攻击来自固定来源，不是计算器独立验证的输入参数。"
+  execution_checks:
+    - "test_v1_summon_routes.py::test_jingyuan_technique_lord_hits_energy_traces_and_equipment通过；/tmp/hsr_v1_jingyuan_complete_test.log。"
+    - "邻接伤害组件15项、初始秘技归属与入场顺序2项通过；阿兰整场及环境数值受影响回归2项通过。"
+  performance: {advance_submit_mean_seconds: 1.203642762997853, verdict: "未达性能目标，留待V1性能收敛"}
+  artifacts: [/tmp/hsr_v1_jingyuan10.json.gz, /tmp/hsr_v1_jingyuan_complete_test.log, /tmp/hsr_v1_fribbels_jingyuan_team.log]

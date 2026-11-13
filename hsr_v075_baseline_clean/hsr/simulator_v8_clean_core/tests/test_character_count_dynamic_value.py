@@ -15,6 +15,45 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import _attach_target_expressions
 from hsr.simulator_v8_clean_core.tbgd.target_source import build_target_language_definitions
 
 
+def test_path_filtered_count_reuses_target_predicates():
+    from hsr.simulator_v8_clean_core.rules.ir import AvatarProfileIR, CharacterDataCardIR
+    from hsr.simulator_v8_clean_core.systems.summon_runtime import empty_summon_runtime
+
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    source = IRSource('fixture/count.json', 'SetDynamicValueByCharacterCount', 'filtered', {'json_path': '$.Task'})
+    raw = {'$type': 'RPG.GameCore.SetDynamicValueByCharacterCount', 'DynamicKey': 'count', 'AliveOnly': False,
+           'ReadTargetType': {'$type': 'RPG.GameCore.TargetAlias',
+                              'Alias': 'AllLightTeamWithAllLightTeamUnselectable.RemoveServant'},
+           'Predicate': {'$type': 'RPG.GameCore.ByAnd', 'PredicateList': [
+               {'$type': 'RPG.GameCore.ByAvatarBaseType', 'BaseTypeList': ['Memory'],
+                'TargetType': {'$type': 'RPG.GameCore.TargetAlias', 'Alias': 'ParamEntity'}},
+               {'$type': 'RPG.GameCore.ByIsBattleEventEntity', 'Inverse': True,
+                'TargetType': {'$type': 'RPG.GameCore.TargetAlias', 'Alias': 'ParamEntity'}},
+           ]}}
+    definitions = build_target_language_definitions(root)
+    payload, expressions = _attach_target_expressions_to_effect_payload(
+        _effect_payload(raw, 'SetDynamicValueByCharacterCount', '', source=source), raw,
+        effect_id='count', source=source, target_language_definitions=definitions)
+    assert payload['standard']['dynamic_operation']['coverage_status'] == 'executable'
+    effect = EffectIR('count', 'SetDynamicValueByCharacterCount', payload, source, 'executable')
+    paths = ('Memory', 'Priest', 'Memory')
+    profiles = tuple(AvatarProfileIR('profile:' + str(i), str(i), path, 'Ice', (), (), None, None,
+                                     source, 'executable') for i, path in enumerate(paths))
+    cards = tuple(CharacterDataCardIR('card:' + str(i), 'avatar:' + str(i), profile.avatar_profile_id,
+                                      (), (), (), source, 'executable') for i, profile in enumerate(profiles))
+    rules = RuleBook(CanonicalIR('filtered-count', effects=(effect,), avatar_profiles=profiles,
+        character_data_cards=cards, target_expressions=(*expressions, *(d.expression for d in definitions))))
+    units = {str(i): UnitState(str(i), 'ally', card.entity_ref, hp=100, max_hp=100,
+                 flags={'character_data_card_id': card.card_id}) for i, card in enumerate(cards)}
+    state = BattleState(units=units, global_flags={'summon_runtime': empty_summon_runtime()})
+    result = EffectRegistry(StatusSystem(rules)).execute(effect,
+        EffectExecutionContext(state, '0', 'fixture:count', owner_id='0', ability_instance_id='count',
+                               event_payload={'operation_event_id': 'count:filtered'}))
+    assert not result.unsupported, result.unsupported
+    entries = store_from_state(MutationReducer().apply_all(state, result.mutations))['entries'].values()
+    assert [e['value'] for e in entries] == [2]
+
+
 def test_real_misha_count_commits_audited_store_and_missing_target_does_not_write(monkeypatch):
     path = "Config/ConfigAbility/Avatar/Avatar_Misha_00_Ability.json"
     root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"

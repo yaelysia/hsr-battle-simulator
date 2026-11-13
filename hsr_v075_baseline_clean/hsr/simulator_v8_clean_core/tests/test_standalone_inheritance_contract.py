@@ -180,3 +180,29 @@ def test_propagation_cycle_terminates_and_depth_limit_keeps_refusal():
         deep_linked, deep_effects, [declaration])
     assert {binding.source.raw_id for binding in deep_inherited} == {
         deep_ids["H1"], deep_ids["H2"], deep_ids["H3"], deep_ids["H4"]}
+
+
+def test_monster_parameter_repeated_in_skill_abilities_keeps_one_declaration():
+    tasks, effects, graphs, damage_ids = _chain("A", "B")
+    linked = _link_trigger_ability_graphs(tasks, effects, graphs, [])
+    declarations = [replace(
+        _declaration(f"standalone_ability:{ability}", "skill", binding_id=ability),
+        data_card_kind="monster", owner_entity_ref="monster:fixture",
+        source=IRSource("fixture/monster_config", "MonsterSkillFormulaBinding", "skill", {
+            "action_id": "monster_skill:fixture",
+            "skill_source": {"relative_path": "fixture/skills", "row_index": 0},
+            "dynamic_value_source": {"hash": INHERITANCE_HASH, "param_index": 3},
+            "standalone_ability_name": ability,
+        }),
+    ) for ability in ("A", "B")]
+    projected = _project_standalone_skill_formula_bindings(linked, effects, declarations)
+    assert {item.source.raw_id for item in projected} == set(damage_ids.values())
+    assert all(item.source.evidence["action_id"] == "monster_skill:fixture" for item in projected)
+    lookup = _direct_damage_binding_lookup(declarations + projected, tasks)
+    for task in tasks:
+        if task.opcode == "DamageByAttackProperty":
+            assert _direct_basis_binding(lookup, task, 3) is not None
+    # A different card's identical hash is still a conflicting declaration.
+    foreign = replace(declarations[1], binding_id="foreign", data_card_id="other-card")
+    ambiguous = _project_standalone_skill_formula_bindings(linked, effects, declarations + [foreign])
+    assert damage_ids["B"] not in {item.source.raw_id for item in ambiguous}

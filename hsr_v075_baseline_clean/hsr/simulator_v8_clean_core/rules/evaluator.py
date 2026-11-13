@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..unit_eligibility import (
+    runtime_regarded_attack_type,
     runtime_unit_combat_team,
     runtime_unit_is_active,
     runtime_unit_is_battle_event_entity,
@@ -143,6 +144,7 @@ _PRE_P9_EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareParamValue",
     "ByCompareSPRatio",
     "ByCompareWaveCount",
+    "ByIsMazeSkillAffectCurrentWave",
     "ByHasStanceWeak",
     "ByInTurnBasedGameModeState",
     "ByIsDamageCritical",
@@ -1139,10 +1141,10 @@ def _condition_by_is_turn_owner_entity(
     condition_id: str,
     source_trace: dict[str, Any],
 ) -> ConditionEvaluationResult:
-    event_payload = context.event_payload or {}
     target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
-    turn_owner_id = event_payload.get("turn_owner_id") or event_payload.get("actor_id") or event_payload.get("event_source_id")
-    if target_id is None or not isinstance(turn_owner_id, str) or not turn_owner_id:
+    from ..systems.unit_relation import committed_turn_owner_id
+    turn_owner_id = committed_turn_owner_id(context.state) if context.state is not None else None
+    if target_id is None or context.state is None:
         return _condition_blocked(condition_id, opcode, "turn_owner_identity_missing", target_details, source_trace)
     return _condition_result(target_id == turn_owner_id, condition_id, opcode, "turn_owner_compared", {"target_id": target_id, "turn_owner_id": turn_owner_id}, source_trace)
 
@@ -1290,12 +1292,20 @@ def _condition_by_attack_type(
     actual = (context.event_payload or {}).get("AttackType") or (context.event_payload or {}).get("attack_type")
     if not isinstance(actual, str) or not actual:
         return _condition_blocked(condition_id, opcode, "attack_type_context_missing", {"expected": expected}, source_trace)
+    actual_types = {actual}
+    event = context.trigger_event
+    definition = event.action_definition if event is not None else None
+    actor = context.state.units.get(event.source_id) if context.state is not None and event is not None else None
+    if definition is not None and runtime_regarded_attack_type(actor, definition.attack_type) == actual:
+        # A regarded type adds a classification; it does not erase the attack's
+        # original kind (e.g. Basic + follow-up). Each predicate still fires once.
+        actual_types.add(definition.attack_type)
     return _condition_result(
-        str(actual) in {str(item) for item in expected},
+        bool(actual_types.intersection(expected)),
         condition_id,
         opcode,
         "attack_type_compared",
-        {"expected": expected, "actual": actual},
+        {"expected": expected, "actual": actual, "actual_types": sorted(actual_types)},
         source_trace,
     )
 
@@ -1829,6 +1839,17 @@ def _condition_by_compare_sp_ratio(
     if not expected.ok or expected.value is None:
         return _condition_blocked(condition_id, opcode, expected.blocked_reason or "compare_value_blocked", {}, source_trace)
     return _comparison_condition(condition_id, opcode, float(current) / float(maximum), payload.get("CompareType"), expected.value, source_trace)
+
+
+def _condition_by_maze_skill_wave(evaluator, opcode, payload, context, *, condition_id, source_trace):
+    state = context.state
+    if state is None or not context.actor_id:
+        return _condition_blocked(condition_id, opcode, "technique_wave_context_missing", {}, source_trace)
+    scopes = state.global_flags.get("initial_technique_waves", {})
+    if not isinstance(scopes, dict) or any(type(value) is not int for value in scopes.values()):
+        return _condition_blocked(condition_id, opcode, "technique_wave_scope_invalid", {}, source_trace)
+    return _condition_result(scopes.get(context.actor_id) == state.wave_index,
+        condition_id, opcode, "activated_technique_entry_wave", {}, source_trace)
 
 
 def _condition_by_compare_wave_count(
@@ -3605,15 +3626,18 @@ def _evaluate_contextual_condition(
             return _condition_blocked(
                 condition_id, opcode, "turn_action_targets_unresolved", details, source_trace
             )
-        operand = _transient_operand(context, "turn.action_entity.identity")
-        if operand.status != "resolved" or operand.value_type != "string":
-            return _transient_operand_blocked(condition_id, opcode, operand, source_trace)
+        from ..systems.unit_relation import committed_turn_owner_id
+
+        # Same producer as TargetFetchTurnActionEntity / CurrentTurnActionEntity.
+        turn_owner = committed_turn_owner_id(context.state) if context.state is not None else None
+        if turn_owner is None:
+            return _condition_blocked(condition_id, opcode, "turn_action_entity_missing", details, source_trace)
         return _condition_result(
-            operand.value in target_ids,
+            turn_owner in target_ids,
             condition_id,
             opcode,
             "turn_action_entity_checked",
-            {"operand": operand.to_json(), "target_ids": list(target_ids)},
+            {"turn_owner_id": turn_owner, "target_ids": list(target_ids)},
             source_trace,
         )
     boolean_facts = {
@@ -4739,6 +4763,7 @@ _CONDITION_HANDLERS = {
     'ByCompareUnusedInsertAbilityCount': _evaluate_contextual_condition,
     'ByCompareUnusedUltraSkillCount': _evaluate_contextual_condition,
     'ByCompareWaveCount': _condition_by_compare_wave_count,
+    'ByIsMazeSkillAffectCurrentWave': _condition_by_maze_skill_wave,
     'ByContainBehaviorFlag': _condition_by_contain_behavior_flag,
     'ByContainsParamFlag': _condition_by_contains_param_flag,
     'ByContainsRedStance': _evaluate_committed_state_condition,

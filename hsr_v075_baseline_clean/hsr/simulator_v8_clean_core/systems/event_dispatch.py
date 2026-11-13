@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from ..core.content_hooks import processor_replaces_status_callback
 
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, PendingDefeatPlan, RNGEvent, TargetResolution, QueueActionStartFact, QueueActionTerminalFact, StanceCountDownFact, StatusImmunityFact
+from ..core.model import ActionCommand, BattleState, GameEvent, HitWindowInvocationFact, JSONValue, Mutation, PendingDefeatPlan, RNGEvent, TargetResolution, QueueActionStartFact, QueueActionTerminalFact, StanceCountDownFact, StatusImmunityFact
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
@@ -542,6 +543,7 @@ class EventDispatchSystem:
             return replace(
                 result,
                 errors=(*result.errors, "content_processor_event_depth_exceeded"),
+                damage_modifiers=(), task_graph_projections=(),
                 node_results=(
                     *result.node_results,
                     ExecutionNodeResult(
@@ -561,6 +563,7 @@ class EventDispatchSystem:
         errors: list[str] = []
         normalizations = list(result.event_normalizations)
         dispatched_ids = set(result.dispatched_event_ids)
+        damage_modifiers = list(result.damage_modifiers)
         for mount in mounts:
             services = ProcessorServices(
                 current, self.rules,
@@ -587,6 +590,7 @@ class EventDispatchSystem:
             current = reduction.after_state
             mutations.extend(hook.mutations)
             records.extend(hook.records)
+            damage_modifiers.extend(hook.damage_modifiers)
             rng_events.extend(hook.rng_events)
             normalizations.extend(hook.event_normalizations)
             dispatched_ids.update(hook.dispatched_event_ids)
@@ -599,8 +603,8 @@ class EventDispatchSystem:
                             f"{mount.content_id}:{index}:{hook_event.event_type}"
                         ),
                     )
-                events.append(hook_event)
                 if hook_event.event_id in dispatched_ids:
+                    events.append(hook_event)
                     continue
                 dispatched = self.dispatch_event(
                     current,
@@ -610,7 +614,9 @@ class EventDispatchSystem:
                 )
                 current = dispatched.after_state
                 mutations.extend(dispatched.mutations)
-                events.extend(dispatched.events)
+                # dispatch_event already includes its input event. Appending it
+                # before dispatch would duplicate the identity inside task graphs.
+                events.extend(dispatched.events or (hook_event,))
                 rng_events.extend(dispatched.rng_events)
                 records.extend(dispatched.records)
                 node_results.extend(dispatched.node_results)
@@ -626,6 +632,7 @@ class EventDispatchSystem:
                 result,
                 errors=tuple(dict.fromkeys(errors)),
                 node_results=tuple(node_results),
+                damage_modifiers=(), task_graph_projections=(),
             )
         return replace(
             result,
@@ -637,6 +644,7 @@ class EventDispatchSystem:
             node_results=tuple(node_results),
             event_normalizations=tuple(normalizations),
             dispatched_event_ids=frozenset(dispatched_ids),
+            damage_modifiers=tuple(damage_modifiers),
         )
 
     def _complete_battle_event_dependencies(
@@ -899,6 +907,14 @@ class EventDispatchSystem:
     ) -> EventDispatchResult:
         if result.errors:
             return _atomic_dispatch_failure(before_state, result)
+        if event.event_type == "dynamic.value.changed":
+            from .dynamic_values import DynamicValueChangeFact
+            fact = event.dynamic_value_change_fact
+            if type(fact) is not DynamicValueChangeFact or not fact.matches_event(event):
+                return self.dispatch_blocked(before_state, event=event,
+                    listener_kind="dynamic_value_watcher", scope="global_listener",
+                    reason="dynamic_value_change_fact_missing_or_mismatched")
+            before_state = fact.before_state
         unit_ids = _ability_property_recheck_unit_ids(
             result.after_state,
             event,
@@ -1482,6 +1498,25 @@ class EventDispatchSystem:
                         )
                         if match is not None:
                             matches.append(match)
+        fact = event.hit_window_invocation_fact
+        if (event.event_type in {'damage.target_attack.after', 'damage.target_hit_sequence.after'}
+                and type(fact) is HitWindowInvocationFact and fact.matches(event)
+                and fact.target_status_instance_ids is not None):
+            # The damage producer captured listeners at the first admitted hit.
+            # Debuffs applied after damage cannot react to that earlier attack.
+            matches = [replace(match, status='skipped', reason='status_not_present_at_attack_start')
+                       if match.unit_id == event.target_id and match.status_instance_id
+                       and match.status_instance_id not in fact.target_status_instance_ids else match for match in matches]
+        # L2 can replace an exact callback on its own card; all unrelated
+        # listeners and the subsequent content-event dispatch stay unchanged.
+        for index, match in enumerate(matches):
+            unit = state.units.get(match.unit_id)
+            detail = next((d for d in unit.flags.get("status_details", ())
+                           if d.get("instance_id") == match.status_instance_id), {}) if unit else {}
+            if match.status == "matched" and processor_replaces_status_callback(
+                self.rules, state, detail, match.callback_event
+            ):
+                matches[index] = replace(match, status="skipped", reason="content_processor_replaces_callback")
         pre_mutation_reason = _pre_mutation_listener_block_reason(event)
         if pre_mutation_reason:
             matches = [
@@ -1805,6 +1840,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "turn.begin": (
         ("OnListenAllowAction", "owner_local", ""),
+        ("OnListenTurnBegin", "global_listener", ""),
     ),
     "turn.end": (
         ("OnListenTurnEnd", "global_listener", ""),
@@ -1935,6 +1971,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 
 
 CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
+    "dynamic.value.changed",
     "unit.before_dying",
     "unit.hp_overflow",
     "unit.defeated",
@@ -1956,6 +1993,8 @@ LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES = {
 
 
 def _dispatch_only_without_listener(event: GameEvent, aliases: tuple[EventAlias, ...]) -> bool:
+    if event.event_type == "dynamic.value.changed":
+        return True
     if (
         event.event_type not in LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES
         and event.event_type not in MUTATION_BACKED_EVENT_TYPES
@@ -2261,7 +2300,7 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
                     else ()
                 ),
             )
-        elif fact.queue_kind == "turn_insert_action" and fact.window_family == "insert_action":
+        elif fact.queue_kind == "turn_insert_action" and fact.window_family in {"insert_action", "extra_turn"}:
             callbacks = ("OnBeforeInsertActionPrepare", "OnInsertActionStart")
         return tuple(_event_alias_for_callback(event, callback, "queue_action_start_fact", rules)
                      for callback in callbacks)
@@ -2519,7 +2558,7 @@ def _ability_property_recheck_unit_ids(
         and event.target_id in state.units
     ):
         unit_ids.append(event.target_id)
-    if event.event_type == "elation.points.changed":
+    if event.event_type in {"elation.points.changed", "dynamic.value.changed"}:
         # A battle resource change can cross a range on any wearer that owns a
         # source-backed watcher; only those units are rechecked.
         unit_ids.extend(
@@ -2622,6 +2661,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
 def _status_details_for_modifier(state: BattleState, modifier_name: str) -> tuple[dict[str, JSONValue], ...]:
     details: list[dict[str, JSONValue]] = []
     for unit in state.units.values():
+        if unit.lifecycle_status == "removed":
+            continue
         for detail in unit.flags.get("status_details", ()):
             if isinstance(detail, dict) and detail.get("modifier_name") == modifier_name:
                 details.append(detail)

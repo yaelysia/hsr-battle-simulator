@@ -316,7 +316,12 @@ def test_corrupt_cache_rebuilds_and_failed_build_publishes_nothing(tmp_path):
 def test_source_changed_during_build_is_not_published(tmp_path):
     root, cache = _source(tmp_path), tmp_path / 'cache'
     def build():
-        (root / 'Config/ability.json').write_text('{"value":3}')
+        source = root / 'Config/ability.json'
+        before = source.stat()
+        source.write_text('{"value":3}')
+        # Local cache invalidation uses metadata. Equal-size writes may share a
+        # filesystem clock tick, so make the observed revision deterministic.
+        os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         return _ir()
     with pytest.raises(RuntimeError, match='changed during IR compilation'):
         cached_ir(root, LoweringLimits(), {}, build, cache_dir=cache)

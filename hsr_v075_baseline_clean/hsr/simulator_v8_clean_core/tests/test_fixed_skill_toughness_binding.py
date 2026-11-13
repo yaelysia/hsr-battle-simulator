@@ -75,3 +75,34 @@ def test_fixed_skill_toughness_uses_target_slots_and_preserves_hit_weights():
         }}},
     })
     assert "binding_source" not in _toughness_amount_expr(unsupported, profile)
+
+
+@pytest.mark.parametrize("name,skill,phase,total", [
+    ("Pela", 110601, "Skill01", 30),
+    ("DanHeng", 100201, "Skill01", 30),
+    ("DanHeng", 100202, "Skill02", 60),
+])
+def test_split_hit_toughness_is_not_repeated_for_every_damage_packet(name, skill, phase, total):
+    root = Path(__file__).resolve().parents[4] / "turnbasedgamedata-main"
+    rows = json.loads((root / "ExcelOutput/AvatarSkillConfig.json").read_text())
+    index, row = next((i, r) for i, r in enumerate(rows) if r["SkillID"] == skill and r["Level"] == 1)
+    definition = _action_definition_from_row("ExcelOutput/AvatarSkillConfig.json", "avatar_skill", "SkillID", index, row)
+    profile = _hit_profiles_from_definition(definition)[0]
+    relative = f"Config/ConfigAbility/Avatar/Avatar_{name}_00_Ability.json"
+    ability = next(a for a in json.loads((root / relative).read_text())["AbilityList"]
+                   if a["Name"] == f"Avatar_{name}_00_{phase}_Phase02")
+    pending, amounts = [ability], []
+    while pending:
+        item = pending.pop()
+        if isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, dict):
+            if item.get("$type") == "RPG.GameCore.DamageByAttackProperty":
+                effect = EffectIR("split", "DamageByAttackProperty", item, IRSource(relative, "AbilityTask", ability["Name"]))
+                expr = _toughness_amount_expr(effect, profile)
+                value = RuleEvaluator().evaluate_numeric(expr, NumericEvaluationContext(binding_sources=(expr["binding_source"],)))
+                assert value.ok, value.to_json()
+                amounts.append(value.value)
+            pending.extend(item.values())
+    assert len(amounts) > 1
+    assert sum(amounts) == pytest.approx(total)

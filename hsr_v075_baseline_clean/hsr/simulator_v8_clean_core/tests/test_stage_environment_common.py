@@ -16,11 +16,20 @@ from hsr.simulator_v8_clean_core.tbgd.lowering import (
     TBGDLowering, _dedupe_target_expressions, _link_status_effect_runtime_fields,
     _link_status_trigger_ability_graphs, _link_trigger_ability_graphs,
     _lower_status_event_families, _synchronize_effect_target_expression_metadata,
+    _stage_subgraph_is_presentation_only,
 )
 from hsr.simulator_v8_clean_core.tbgd.target_source import close_target_expression_language
 from hsr.simulator_v8_clean_core.tbgd.task_graph_materializer import (
     attach_task_graph_catalog, materialize_selected_character_task_graphs,
 )
+
+
+def test_background_dialogue_does_not_block_combat_but_gameplay_subgraphs_do():
+    root = Path(__file__).resolve().parents[4] / 'turnbasedgamedata-main'
+    dialogue = json.loads((root / 'Config/Level/SubLevelGraph/StageBgTalk_20101011.json').read_text())
+    assert _stage_subgraph_is_presentation_only(dialogue)
+    dialogue['OnStartSequece'][0]['TaskList'].append({'$type': 'RPG.GameCore.ForceKill'})
+    assert not _stage_subgraph_is_presentation_only(dialogue)
 
 
 def build_common_stage_component(directory: Path) -> tuple[RuleBook, WaveDefinitionIR]:

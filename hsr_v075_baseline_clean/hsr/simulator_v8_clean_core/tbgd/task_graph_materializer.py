@@ -197,9 +197,11 @@ def _admitted_insert_action_task_ids(canonical: CanonicalIR) -> frozenset[str]:
             len(windows) != 1
             or len(resolutions) != 1
             or windows[0].coverage_status != "executable"
-            or windows[0].window_family != "insert_action"
             or resolutions[0].coverage_status != "executable"
-            or resolutions[0].resolved_kind != "action_definition"
+            or (windows[0].window_family, resolutions[0].resolved_kind) not in {
+                ("insert_action", "action_definition"),
+                ("extra_turn", "extra_turn_action_choice"),
+            }
             or not intent.source_task_id
         ):
             continue
@@ -518,24 +520,25 @@ def _validate_status_callback_denominator(
                     if not isinstance(callback, Mapping):
                         raise ValueError("status callback source record is invalid")
                     expected.add((source_path, f"{path}._CallbackList[{index}]"))
-            watchers = value.get("OnAbilityPropertyChange")
-            if isinstance(watchers, Sequence) and not isinstance(watchers, str):
-                for watcher_index, watcher in enumerate(watchers):
-                    ranges = watcher.get("Ranges") if isinstance(watcher, Mapping) else None
-                    if not isinstance(ranges, Sequence) or isinstance(ranges, str):
-                        continue
-                    for range_index, item in enumerate(ranges):
-                        if not isinstance(item, Mapping):
+            for watcher_event in ("OnAbilityPropertyChange", "OnDynamicValueChange"):
+                watchers = value.get(watcher_event)
+                if isinstance(watchers, Sequence) and not isinstance(watchers, str):
+                    for watcher_index, watcher in enumerate(watchers):
+                        ranges = watcher.get("Ranges") if isinstance(watcher, Mapping) else None
+                        if not isinstance(ranges, Sequence) or isinstance(ranges, str):
                             continue
-                        base = f"{path}.OnAbilityPropertyChange[{watcher_index}].Ranges[{range_index}]"
-                        for branch in (
-                            "OnEnterRange",
-                            "OnExitRange",
-                            "OnChange",
-                        ):
-                            tasks = item.get(branch)
-                            if isinstance(tasks, Sequence) and not isinstance(tasks, str) and tasks:
-                                expected.add((source_path, f"{base}.{branch}"))
+                        for range_index, item in enumerate(ranges):
+                            if not isinstance(item, Mapping):
+                                continue
+                            base = f"{path}.{watcher_event}[{watcher_index}].Ranges[{range_index}]"
+                            for branch in (
+                                "OnEnterRange",
+                                "OnExitRange",
+                                "OnChange",
+                            ):
+                                tasks = item.get(branch)
+                                if isinstance(tasks, Sequence) and not isinstance(tasks, str) and tasks:
+                                    expected.add((source_path, f"{base}.{branch}"))
             point_callbacks = value.get("OnElationPointChange")
             if point_callbacks is not None:
                 point_rows = point_callbacks if isinstance(point_callbacks, (list, tuple)) else (point_callbacks,)

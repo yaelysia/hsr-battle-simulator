@@ -337,9 +337,9 @@ class TransientConditionOperandResolution:
             if not finite:
                 raise ValueError("transient numeric fact must be finite")
         if self.value_type == "string" and (
-            not isinstance(value, str) or not value
+            not isinstance(value, str) or (not value and self.fact_kind != "event.param_string")
         ):
-            raise TypeError("transient string fact must be non-empty")
+            raise TypeError("transient string fact is invalid")
         if self.value_type == "identity_set":
             if not isinstance(value, (list, tuple)):
                 raise TypeError("transient identity-set fact must be a sequence")

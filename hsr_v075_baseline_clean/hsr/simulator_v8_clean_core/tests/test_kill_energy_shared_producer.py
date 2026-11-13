@@ -101,6 +101,18 @@ def test_missing_kill_rule_rejects_entire_lethal_damage():
     assert "resource_engine_rule_missing:kill_energy_gain" in result.errors
 
 
+def test_lethal_windows_retain_native_action_for_synchronous_kill_buffs():
+    from hsr.simulator_v8_clean_core.rules.ir import ActionDefinitionIR, IRSource
+
+    state, packet = _primitive_case()
+    action = ActionDefinitionIR('definition', 'action', 1, 'Ultra', 'SingleAttack', 'Single',
+        0, 0, 0, 0, (), (), (), 'Quantum', IRSource('fixture', 'fixture', 'lethal-action'))
+    result = _settle_packet(state, replace(packet, action_definition=action))
+    assert not result.errors, result.errors
+    windows = [e for e in result.events if e.event_type.startswith('unit.')]
+    assert windows and all(e.action_definition is action for e in windows)
+
+
 def test_missing_lethal_source_is_a_typed_atomic_rejection():
     state, packet = _primitive_case()
     result = DamageSystem().apply_packet(state, replace(packet, source_trace={}))

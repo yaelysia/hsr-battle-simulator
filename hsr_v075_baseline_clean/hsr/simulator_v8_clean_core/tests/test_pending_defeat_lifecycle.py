@@ -25,6 +25,11 @@ def test_native_pending_cause_survives_restore_and_closes_atomically():
     hp = next(m for m in native.mutations if m.path == ("units", "target", "hp"))
     plan = PendingDefeatPlan("target", before.event_index, hp, "owner",
                              packet.source_frame.to_json(), packet.source_trace)
+    from hsr.simulator_v8_clean_core.immutable_json import freeze_json
+    frozen_cause = freeze_json(plan.to_json())
+    decoded = PendingDefeatPlan.from_json(frozen_cause)
+    assert decoded == plan
+    assert PendingDefeatPlan.from_json(frozen_cause) is decoded
     lifecycle, reducer, integrity = UnitLifecycleSystem(), MutationReducer(), CommittedStateIntegrityGate()
     entering = (hp, *lifecycle.begin_limbo_mutations(before, plan))
     pending = reducer.apply_all(before, entering)

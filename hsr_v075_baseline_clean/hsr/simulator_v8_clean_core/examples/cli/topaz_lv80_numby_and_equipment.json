@@ -1,0 +1,221 @@
+{
+  "battle_setup": {
+    "metadata": {
+      "scope": "Topaz Lv80 P6 E0 full traces; Arrows S1/Musketeer4/Fleet2 +15 no substats, ATK/SPD/Fire/ATK. Natasha fixed healer. Stage30123061 wave_only Lv80.",
+      "stage_scope": "wave_only"
+    },
+    "timeline": {
+      "mode": "runtime_initialize"
+    }
+  },
+  "route": [],
+  "scenario_id": "v1:topaz:20000-102-302",
+  "stage_ref": "30123061",
+  "units": [
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "topaz:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1112",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "topaz:equipment:20000-102-302",
+          "character_card_id": "character_data_card:avatar:1112",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "20000",
+            "instance_id": "topaz:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:topaz:relic:body",
+              "level": 15,
+              "main_affix_key": "53:2",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:topaz:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:topaz:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:topaz:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:topaz:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:5",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:topaz:relic:object",
+              "level": 15,
+              "main_affix_key": "56:4",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1112:1112001:6",
+          "character_trace_node:character_data_card:avatar:1112:1112002:10",
+          "character_trace_node:character_data_card:avatar:1112:1112003:10",
+          "character_trace_node:character_data_card:avatar:1112:1112004:10",
+          "character_trace_node:character_data_card:avatar:1112:1112101:1",
+          "character_trace_node:character_data_card:avatar:1112:1112102:1",
+          "character_trace_node:character_data_card:avatar:1112:1112103:1",
+          "character_trace_node:character_data_card:avatar:1112:1112201:1",
+          "character_trace_node:character_data_card:avatar:1112:1112202:1",
+          "character_trace_node:character_data_card:avatar:1112:1112203:1",
+          "character_trace_node:character_data_card:avatar:1112:1112204:1",
+          "character_trace_node:character_data_card:avatar:1112:1112205:1",
+          "character_trace_node:character_data_card:avatar:1112:1112206:1",
+          "character_trace_node:character_data_card:avatar:1112:1112207:1",
+          "character_trace_node:character_data_card:avatar:1112:1112208:1",
+          "character_trace_node:character_data_card:avatar:1112:1112209:1",
+          "character_trace_node:character_data_card:avatar:1112:1112210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1112",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "130",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 0,
+      "side": "ally",
+      "unit_id": "topaz"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:natasha:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1105",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "v1:natasha:equipment",
+          "character_card_id": "character_data_card:avatar:1105",
+          "light_cone": {
+            "definition_key": "23013",
+            "instance_id": "natasha:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "natasha:relic:HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61011"
+            },
+            {
+              "instance_id": "natasha:relic:HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61012"
+            },
+            {
+              "instance_id": "natasha:relic:BODY",
+              "level": 15,
+              "main_affix_key": "53:6",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61013"
+            },
+            {
+              "instance_id": "natasha:relic:FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61014"
+            },
+            {
+              "instance_id": "natasha:relic:NECK",
+              "level": 15,
+              "main_affix_key": "55:1",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "natasha:relic:OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1105:1105001:6",
+          "character_trace_node:character_data_card:avatar:1105:1105002:10",
+          "character_trace_node:character_data_card:avatar:1105:1105003:10",
+          "character_trace_node:character_data_card:avatar:1105:1105004:10",
+          "character_trace_node:character_data_card:avatar:1105:1105101:1",
+          "character_trace_node:character_data_card:avatar:1105:1105102:1",
+          "character_trace_node:character_data_card:avatar:1105:1105103:1",
+          "character_trace_node:character_data_card:avatar:1105:1105201:1",
+          "character_trace_node:character_data_card:avatar:1105:1105202:1",
+          "character_trace_node:character_data_card:avatar:1105:1105203:1",
+          "character_trace_node:character_data_card:avatar:1105:1105204:1",
+          "character_trace_node:character_data_card:avatar:1105:1105205:1",
+          "character_trace_node:character_data_card:avatar:1105:1105206:1",
+          "character_trace_node:character_data_card:avatar:1105:1105207:1",
+          "character_trace_node:character_data_card:avatar:1105:1105208:1",
+          "character_trace_node:character_data_card:avatar:1105:1105209:1",
+          "character_trace_node:character_data_card:avatar:1105:1105210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1105",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "90",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 1,
+      "side": "ally",
+      "unit_id": "natasha"
+    }
+  ],
+  "version": "v0_200",
+  "wave_index": 0
+}

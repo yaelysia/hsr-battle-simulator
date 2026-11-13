@@ -1,0 +1,39 @@
+comparison_record:
+  id: m2-envoy-lv66-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 5fcc13f1b19dae1a748b8a4ca5779aa156fbd3b63e35dfe7eb15eeaf490c16c1
+    processor: "monster:2013020 v0.4.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy66_res0_noncrit
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101四件/302两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑"
+    input: examples/cli/aurumaton_envoy_lv66.json
+  target: {monster: 2013020, name: 金人勾魂使, stage: 3099044, level: 66, physical_resistance: 0, broken: false}
+  operations: "15次公开选择：五主动技能，震荡升级、锁定、强烈震荡自然结束后的无追加天坠、五段追加天坠；fork验证三月七净化及错误目标原子拒绝。"
+  rng: {mode: deterministic_seed_and_explicit_choice, note: "镇魂通过显式RNG选择施加；承伤对照为非暴击"}
+  reference_values:
+    - {event: received_physical_basic, reference: 668.4990899352752, simulator: 668.4991039623559, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000002098295, verdict: PASS}
+  game_comparison: {status: "承伤对照通过；时序带未实证标记", scope: "等级、防御、抗性与未击破减伤参与的承伤；不外推敌方输出、HP上限或全部时序"}
+  sources:
+    - "固定TBGD Monster_W2_Valkyrie02_00_Config/Ability/AI；共享震荡在Monster_W2_Valkyrie01_00_Ability，仅装配所需定义。"
+    - "固定Fribbels源码的娜塔莎原生模型。"
+  assumptions:
+    - "after_attack_listener_snapshot：首个命中前已有的状态才响应本次受击后回调；多段中途施加减益待游戏实测。"
+    - "envoy_lock_timing：自身攻击升级后立即锁定；插队按已提交回合归属；状态阶段中止只影响表现。锁定、净化和控制到期顺序待游戏实测。"
+  unverified_params:
+    - "等级和抗性取固定TBGD作为计算器输入，计算器未独立提供怪物卡。敌方输出和HP上限未独立对照。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_envoy_shake_lock_cleanse_skyfall_and_marked_timing"
+    - "31操作归档：/tmp/hsr-v1-last-enemies/envoy_v1_complete.json.gz；独立CLI重放31步、0错误，/tmp/hsr_v1_envoy_replay.log。"
+    - "未实证解释进入rule_assumption结算，CLI、UI及归档保留；模拟器自检通过不等于游戏时序已实证。"

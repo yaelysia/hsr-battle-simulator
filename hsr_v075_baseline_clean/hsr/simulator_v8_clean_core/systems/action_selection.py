@@ -529,6 +529,13 @@ class ActionTargetSelectionSystem:
                 revision,
                 reason,
             )
+        for mount in self.rules._processors_by_entity.get(actor.template_id, ()):
+            filtered = mount.processor.filter_target_candidates(state, actor, action_id, action_level, candidates)
+            if (type(filtered) is not tuple or len(set(filtered)) != len(filtered)
+                    or any(item not in candidates for item in filtered)):
+                return self._blocked_query(actor_id, action_id, action_level, revision,
+                                           "content_target_filter_must_narrow_candidates")
+            candidates = filtered
         if not candidates:
             return self._blocked_query(
                 actor_id,

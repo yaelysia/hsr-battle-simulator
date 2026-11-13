@@ -1,0 +1,94 @@
+{
+  "commands": [
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110601",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201210016:wave:0:pos:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:201210016:wave:0:pos:0",
+      "action_id": "monster_skill:100202002",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201210016:wave:0:pos:1",
+      "action_id": "monster_skill:100202002",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110602",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110603",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110603",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110602",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:201210016:wave:0:pos:0",
+      "action_id": "monster_skill:100202002",
+      "action_level": 1,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "pela",
+      "action_id": "avatar_skill:110602",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:201210016:wave:0:pos:0"
+      ]
+    }
+  ]
+}

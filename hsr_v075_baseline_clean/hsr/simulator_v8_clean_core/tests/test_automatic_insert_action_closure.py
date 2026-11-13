@@ -178,8 +178,8 @@ def test_queue_terminal_tag_fact_covers_finish_conditions() -> None:
     resolved = provider.resolve_transient(_request(invocation_id, window))
     assert resolved.status == "resolved" and resolved.value == _TAG
 
-    # An entry without a tag has a real but empty tag fact; the condition is
-    # implementation-blocked instead of being compared against a guess.
+    # A manual ultimate has a real empty tag. Comparing it to an automatic
+    # insertion tag must be false, not block the completed ultimate.
     plain_state = _fixture_state()
     plain_entry, plain_mutation, plain_after = _enqueue(queue, plain_state, tag="")
     plain_dequeue = queue.dequeue_entry(
@@ -191,9 +191,8 @@ def test_queue_terminal_tag_fact_covers_finish_conditions() -> None:
         plain_after_dequeue, invocation_id, window, plain_event, "seele",
         plain_event.queue_action_terminal_fact,
     )
-    missing = plain_provider.resolve_transient(_request(invocation_id, window))
-    assert missing.status == "blocked"
-    assert missing.blocked_reason == "queue_event_param_string_custom_tag_fact_missing"
+    empty = plain_provider.resolve_transient(_request(invocation_id, window))
+    assert empty.status == "resolved" and empty.value == ""
 
 
 def test_skill_property_overrides_are_status_instance_scoped() -> None:

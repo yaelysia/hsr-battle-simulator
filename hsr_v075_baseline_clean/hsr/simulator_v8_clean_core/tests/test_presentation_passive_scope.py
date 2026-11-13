@@ -1,4 +1,5 @@
 """Closed-source proof for visual monster startup controllers."""
+from dataclasses import replace
 import json
 from pathlib import Path
 from shutil import copy2
@@ -6,6 +7,9 @@ from shutil import copy2
 import pytest
 
 from hsr.simulator_v8_clean_core.dynamic_key_hash import tbgd_dynamic_key_hash
+from hsr.simulator_v8_clean_core.rules.ir import CanonicalIR
+from hsr.simulator_v8_clean_core.rules.rulebook import RuleBook
+from hsr.simulator_v8_clean_core.systems.startup import _passive_runtime_activation
 from hsr.simulator_v8_clean_core.tbgd.monster_cards import (
     build_monster_card_ir,
     exclude_presentation_passives,
@@ -25,11 +29,62 @@ COMBAT = "Monster_Common_PassiveSkill_StanceBreak_Action"
 CONTROLLER = "MMonster_AML_Minion01_00_EffectController"
 
 
+def test_lieutenant_stance_animation_mapping_is_presentation_only():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+
+    source = json.loads((ROOT / 'Config/ConfigAbility/Monster/Monster_W1_Soldier03_00_Ability.json').read_text())
+    tasks = [task for ability in source['AbilityList'] for task in ability.get('OnStart', [])
+             if task.get('$type') == 'RPG.GameCore.CharacterChangePhase']
+    assert tasks and {task['PhaseName'] for task in tasks} == {'Phase1', 'Phase2'}
+    for task in tasks:
+        assert not _process_only_ability_task_source_blocked_reason(task, 'CharacterChangePhase')
+        assert _process_only_ability_task_source_blocked_reason(
+            {**task, 'GameplayState': 1}, 'CharacterChangePhase')
+    aim = [task for ability in source['AbilityList'] for task in ability.get('OnStart', [])
+           if task.get('$type') == 'RPG.GameCore.StartAim']
+    assert aim and all(not _process_only_ability_task_source_blocked_reason(t, 'StartAim') for t in aim)
+
+    from hsr.simulator_v8_clean_core.tbgd.lowering import TBGDLowering
+
+    path = ROOT / 'Config/ConfigAbility/Monster/Monster_W1_Soldier03_00_Ability.json'
+    lowered = TBGDLowering(ROOT)._lower_ability_file(path, {}, ability_file_order=0)
+    resilience = [t for t in lowered.status_callback_tasks if t.opcode == 'SetResilience']
+    assert resilience and all(t.blocked_reason == 'source_proven_presentation_only' for t in resilience)
+    destroy = next(c for c in lowered.status_callbacks
+                   if c.modifier_name == 'MMonster_W1_Soldier03_00_ListenBeingAttacked' and c.event == 'OnDestroy')
+    assert destroy.blocked_reason == 'source_proven_presentation_only'
+
+
 def _copy_sources(tmp_path: Path) -> None:
     for relative in SOURCES:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         copy2(ROOT / relative, target)
+
+
+def test_aurumaton_achievement_and_team_formation_have_no_combat_effect():
+    from hsr.simulator_v8_clean_core.tbgd.lowering import _process_only_ability_task_source_blocked_reason
+    from hsr.simulator_v8_clean_core.tbgd.coverage import ability_task_execution_mode
+
+    source = json.loads((ROOT / 'Config/ConfigAbility/Monster/Monster_W2_Mecha03_00_Ability.json').read_text())
+    found = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            opcode = value.get('$type', '').split('.')[-1]
+            if opcode in {'SetBattleAchievement', 'SetSkillTargetFormationByPos'}:
+                assert ability_task_execution_mode(opcode) == 'process_only'
+                assert not _process_only_ability_task_source_blocked_reason(value, opcode)
+                assert _process_only_ability_task_source_blocked_reason({**value, 'Damage': 1}, opcode)
+                found.append(opcode)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(source)
+    assert found.count('SetBattleAchievement') == 2 and 'SetSkillTargetFormationByPos' in found
 
 
 def _slot(name: str, monster_id: str = "8011010"):
@@ -68,6 +123,26 @@ def test_real_8011010_visual_controller_is_skipped_only_with_closed_scope(tmp_pa
     assert CONTROLLER in scope["private_identities"]
     assert "TimeSlowSpeed" in scope["private_identities"]
     assert len(scope["source_fingerprints"]) == len(SOURCES)
+
+
+@pytest.mark.parametrize("monster_id,suffix", [("8001040", "02"), ("8001050", "03")])
+def test_visual_on_start_controller_does_not_block_monster_entry(tmp_path, monster_id, suffix):
+    _copy_sources(tmp_path)
+    relative = f"Config/ConfigAbility/Monster/Monster_XP_Minion01_{suffix}_Ability.json"
+    copy2(ROOT / relative, tmp_path / relative)
+    slot = _slot(f"Monster_XP_Minion01_{suffix}_PassiveSkillInitiate", monster_id)
+    result = _exclude(slot, tmp_path, SOURCES | {relative})
+
+    assert result.mechanism_kind == "presentation_only"
+    assert result.coverage_status == "skipped_with_reason"
+    card = build_monster_card_ir(
+        ROOT, max_records_per_table=None, monster_ids=frozenset({monster_id}),
+    ).monster_data_cards[0]
+    card = replace(card, passive_mechanism_slot_ids=(result.passive_slot_id,))
+    rules = RuleBook(CanonicalIR("visual-startup", monster_data_cards=(card,), passive_mechanism_slots=(result,)))
+    activation = _passive_runtime_activation(rules, card)
+    assert not activation["startup_specs"]
+    assert not activation["flags"].get("blocked_passive_mechanism_slots")
 
 
 def test_visual_controller_with_battle_opcode_remains_a_passive_slot(tmp_path):

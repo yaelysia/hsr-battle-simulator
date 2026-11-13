@@ -27,7 +27,7 @@ from simulator_v8_clean_core.queries.content_support import (
 )
 from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.scenarios.loader import ScenarioLoader
-from simulator_v8_clean_core.session import BattleSession, command_from_json, command_to_json
+from simulator_v8_clean_core.session import BattleSession, command_from_json, command_to_json, rule_assumption_records
 from simulator_v8_clean_core.tbgd.battle_catalog import build_battle_rulebook, list_stage_choices
 from simulator_v8_clean_core.tbgd.character_cards import _load_text_map, list_character_choices
 from simulator_v8_clean_core.tbgd.content_support_catalog import build_content_support_catalog
@@ -36,7 +36,7 @@ from simulator_v8_clean_core.tbgd.relic_cards import load_relic_set_display_name
 from .report import (
     blocked_records, build_action_prompt, build_battlefield_view, build_event_replay_view,
     build_step_report, damage_records, panel_source_breakdown, settlement_records,
-    transition_summary,
+    transition_summary, process_notice_records,
 )
 
 
@@ -524,6 +524,7 @@ class LiveBattle:
                     'target_before_hp', 'target_after_hp',
                 )} for record in damage_records(records)],
                 'blocked_records': blocked_records(records, transition),
+                'process_notice_records': process_notice_records(records, transition),
             })
             if result.transition.outcome.successor_eligible:
                 session.advance()
@@ -607,6 +608,9 @@ class LiveBattle:
                 'panel_source_breakdown': panel_source_breakdown(snapshot, session.scenario_data),
                 'steps': list(self.steps), 'event_replay_view': events,
                 'blocked_records': [r for step in self.steps for r in step['blocked_records']],
+                'process_notice_records': process_notice_records(rule_assumption_records(session.operations), {}) + [
+                    r for step in self.steps for r in step.get('process_notice_records', [])
+                    if r.get('record_type') != 'rule_assumption'],
             }
 
     def compare_observation(self, request: dict[str, Any]) -> dict[str, Any]:

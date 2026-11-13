@@ -45,7 +45,8 @@
 ```
 
 此文件验证正式入场后的处理器 H1/H2 接线，处理器本身是明确标注的组件输入，不能当作完整角色验收。
-遐蝶自然路线入口为 `test_content_processor_castorice.py`；尚未通过的再创建链不得标为已完成。
+遐蝶当前完整路线入口为 `test_v1_summon_routes.py::test_castorice_joint_breath_finisher_resummon_lifetime_and_equipment`，
+覆盖吐息、终结、重召、寿命到期与锁血；`test_content_processor_castorice.py` 保留早期处理器检查。
 
 公开操作路线应检查当前合法选择、命令成功、必要数值和后续可继续操作。
 参考输出用于工程回归，不代替游戏实测或成熟计算器；不要自动把当前输出批准为正确答案。

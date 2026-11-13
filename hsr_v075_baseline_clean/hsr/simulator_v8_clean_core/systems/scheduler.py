@@ -68,6 +68,7 @@ from .startup import apply_monster_startup
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 from .unit_lifecycle import UnitLifecycleSystem
 from .wave import WaveSystem
+from .unit_stats import effective_unit_stat
 
 
 _DECISION_AUTHORIZATION_ISSUER = object()
@@ -236,7 +237,7 @@ class CombatScheduler:
             event_dispatcher=self.event_dispatcher,
         )
         self.wave = WaveSystem(rules)
-        self.phases = CombatPhaseMachine()
+        self.phases = CombatPhaseMachine(wave=self.wave)
 
     def action_availability(self, state: BattleState):
         from .action_availability import ActionAvailabilitySystem
@@ -625,9 +626,21 @@ class CombatScheduler:
             actor_id = active_actor_id
             decision_state = state
             if command is None:
-                if UnitLifecycleSystem().view(state, actor_id).hp <= 0:
+                actor_lifecycle = UnitLifecycleSystem().view(state, actor_id)
+                if actor_lifecycle.hp <= 0 or actor_lifecycle.is_removed:
                     return self.end_current_turn(state)
                 auto_turn_actor = state.units.get(actor_id)
+                control_gate = status_control_gate_for_actor(auto_turn_actor)
+                if control_gate is not None:
+                    # An interrupt can control the already-started turn's owner.
+                    # Cancel its remaining action without ticking turn-start twice;
+                    # the new control keeps its normal next-turn expiry.
+                    # https://www.hoyolab.com/article/19822028 (StarRail 1.1)
+                    return _with_scheduler_record(
+                        self.end_current_turn(state),
+                        record_type="status_control_turn_interrupted",
+                        payload={"actor_id": actor_id, "control_gate": control_gate},
+                    )
                 if (
                     auto_turn_actor is not None
                     and auto_turn_actor.flags.get("entity_type") == "battle_event"
@@ -937,7 +950,7 @@ class CombatScheduler:
                 state, "status:action_lifecycle",
                 ",".join(action_lifecycle.errors), {"actor_id": actor_id},
             )
-        end_result = self.end_current_turn(action_lifecycle.after_state)
+        end_result = self._continue_action_or_end_turn(after_post_action, action_lifecycle.after_state, actor_id)
         combined = _combine_scheduler_transitions(
             before_state=state,
             after_state=end_result.after_state,
@@ -1489,6 +1502,40 @@ class CombatScheduler:
             ),
         )
 
+    def _continue_action_or_end_turn(
+        self, before_action_tick: BattleState, state: BattleState, actor_id: str,
+    ) -> SchedulerStepResult:
+        # Fixed GlobalModifier_Common_Specific.OneMore expires at ActionPhaseEnd.
+        # Its flag grants another action inside this turn, not another turn:
+        # preserve AV, turn identity and turn-based durations after consuming it.
+        actor = state.units[actor_id]
+        pending = any(
+            "OneMore" in detail.get("behavior_flags", ())
+            and detail.get("status_id") in before_action_tick.units[actor_id].statuses
+            for detail in before_action_tick.units[actor_id].flags.get("status_details", ())
+        )
+        if not pending or actor.hp <= 0 or status_control_gate_for_actor(actor) is not None:
+            return self.end_current_turn(state)
+        phase = self.phases.transition(state, AWAITING_DECISION, actor_id=actor_id,
+            reason="OneMore grants another action in the current turn")
+        if not phase.plan.ok:
+            return self._blocked(state, "scheduler:one_more", phase.plan.blocked_reason, {"actor_id": actor_id})
+        after = self.reducer.apply_all(state, phase.mutations)
+        active_turn = state.global_flags["active_turn"]
+        window = self.timeline.open_decision_window(after, TurnAdvancePlan(
+            True, str(active_turn["timeline_rule_id"]), actor_id,
+            plan_id=f"turn_advance_plan:{state.event_index}:{actor_id}:one_more",
+        ))
+        after = self.reducer.apply_all(after, window.mutations)
+        transition = _combine_scheduler_transitions(
+            before_state=state, after_state=after, actor_id=actor_id,
+            events=(*phase.events, *window.events), mutations=(*phase.mutations, *window.mutations),
+            records=phase.records,
+            target_resolution=TargetResolution(reason="one_more_action_choice", source="timeline_scheduler"),
+            child_transitions=(), coverage={"scheduler_step": "one_more_action_choice"},
+        )
+        return SchedulerStepResult(after, transition)
+
     def end_current_turn(self, state: BattleState) -> SchedulerStepResult:
         active_turn = state.global_flags.get("active_turn")
         actor_id = ""
@@ -1529,8 +1576,9 @@ class CombatScheduler:
             phase_end_mutations = phase_end.mutations
             phase_end_records = phase_end.records
             after_phase_end = self.reducer.apply_all(state, phase_end_mutations)
-        actor_defeated = after_phase_end.units[actor_id].hp <= 0
-        lifecycle = (_StatusLifecycleSweep(after_phase_end) if actor_defeated else
+        actor_lifecycle = UnitLifecycleSystem().view(after_phase_end, actor_id)
+        actor_inactive = actor_lifecycle.hp <= 0 or actor_lifecycle.is_removed
+        lifecycle = (_StatusLifecycleSweep(after_phase_end) if actor_inactive else
                      self._apply_status_lifecycle_tick(after_phase_end, "TurnEnd", actor_id=actor_id))
         if lifecycle.errors:
             return self._blocked(
@@ -1551,7 +1599,7 @@ class CombatScheduler:
                 "combat_phase": TURN_END,
             },
         )
-        dispatch = (EventDispatchResult(lifecycle.after_state) if actor_defeated else
+        dispatch = (EventDispatchResult(lifecycle.after_state) if actor_inactive else
                     self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event))
         if dispatch.errors:
             return self._blocked(
@@ -1749,6 +1797,12 @@ class CombatScheduler:
         plan = self.wave.plan_transition(state)
         if plan.status == "no_change" or plan.blocked_reason == "wave_runtime_not_configured":
             return None
+        if (plan.ok and plan.status == "advance_to_next_wave"
+                and (state.global_flags.get("active_turn") or state.global_flags.get("turn_owner_id"))):
+            # An interrupt can clear the wave while another unit owns the turn.
+            # Close that turn through its existing lifecycle before replacing
+            # units and returning the phase machine to idle.
+            return self.end_current_turn(state)
         result = self.wave.apply_transition(state, plan)
         plan = result.plan
         if plan.status == "blocked":
@@ -1820,6 +1874,29 @@ class CombatScheduler:
             events.extend(startup.events)
             rng_events.extend(startup.rng_events)
             nodes.append(_scheduler_node("monster_startup", "wave:monster_startup"))
+            # New waves restart action order using current speeds; HP, energy
+            # and statuses persist. https://honkai-star-rail.fandom.com/wiki/Forgotten_Hall
+            rule, reason = self.rules.select_timeline_rule()
+            if rule is None:
+                return self._blocked(state, "wave:timeline_reset", reason, {})
+            resets = tuple(self.timeline.set_action_value(
+                candidate, unit_id, self.timeline.full_action_value(effective_unit_stat(unit, "speed").value, rule),
+                "wave_system", metadata={"wave_index": candidate.wave_index,
+                    "timeline_rule_id": rule.timeline_rule_id, "source_trace": rule.source.to_json()},
+            ) for unit_id, unit in candidate.units.items()
+                if self.timeline.lifecycle.can_act(candidate, unit_id)[0]
+                and unit.flags.get("timeline_admitted", unit.side != "summon")
+                and not unit.flags.get("action_disabled") and unit.flags.get("on_field") is not False
+                and not unit.flags.get("off_field") and not unit.flags.get("backline"))
+            candidate = self.reducer.apply_all(candidate, resets)
+            mutations.extend(resets)
+            records.extend(SettlementRecord(record_type="timeline", source="wave_system", process_only=False,
+                mutation_id=m.stable_id(), payload={"reason": "wave_action_value_reset", "unit_id": m.path[1],
+                    "before": m.before, "after": m.after}).to_json() for m in resets)
+            records.append(SettlementRecord(record_type="rule_assumption", source="wave_system", process_only=True,
+                payload={"assumption_id": "wave_action_order_boundary", "status": "未实证",
+                    "reason": "换波按当前速度重置在场可行动单位的行动值，保留生命、能量和状态。",
+                    "todo": "游戏实测：跨波控制、行动提前效果与召唤物的重置边界及触发顺序。"}).to_json())
         halo_result = self.status.reconcile_halo_relations(candidate)
         events_to_dispatch: tuple[GameEvent, ...] = ()
         if not halo_result.ok:
@@ -2250,6 +2327,9 @@ class CombatScheduler:
                 source="queue",
                 queue_name=plan.queue_name,
                 metadata={
+                    **{key: selected_command.metadata[key]
+                       for key in ("rng_choices", "rng_mode", "target_random_choices")
+                       if key in selected_command.metadata},
                     # The body command keeps the typed insertion identity that
                     # its accepted action derived; rebuilding the command must
                     # not drop it before action window dispatch.
@@ -2350,7 +2430,7 @@ class CombatScheduler:
             after_state = after_action
             mutations = (*mutations, *action_transition.transaction.mutations)
             rng_events = (*rng_events, *action_transition.rng_events)
-            if window_family in {"ultimate", "insert_action"}:
+            if window_family in {"ultimate", "insert_action", "extra_turn"}:
                 definition = self.rules.require_action_definition(queue_command.action_id, queue_command.action_level)
                 action_event = self.rules.require_action_event(queue_command.action_id, queue_command.action_level)
                 restore_window = Mutation(
@@ -2820,7 +2900,7 @@ class CombatScheduler:
                 state, "status:deferred_action_lifecycle",
                 ",".join(action_lifecycle.errors), {"actor_id": actor_id},
             )
-        end_result = self.end_current_turn(action_lifecycle.after_state)
+        end_result = self._continue_action_or_end_turn(state, action_lifecycle.after_state, actor_id)
         clear_mutation = self._clear_pending_turn_end_mutation(end_result.after_state, actor_id)
         after_clear = self.reducer.apply_all(end_result.after_state, (clear_mutation,))
         clear_record = SettlementRecord(

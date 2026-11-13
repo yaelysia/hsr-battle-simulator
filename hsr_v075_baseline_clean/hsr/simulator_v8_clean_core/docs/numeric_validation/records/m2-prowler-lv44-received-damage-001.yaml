@@ -1,0 +1,39 @@
+comparison_record:
+  id: m2-prowler-lv44-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 4ceba4597383901928f5f77b98d6b9f50ac8709d0f64592ce7cb261e17326098
+    processor: "monster:1023020 v0.1.0，召唤前提与过热退出"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy44_res0.2_noncrit
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101四件/302两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑，仅自盾"
+    input: examples/cli/frigid_prowler_lv44.json
+  target: {monster: 1023020, name: 深寒徘徊者, stage: 307211, level: 44, physical_resistance: 0.2, broken: false}
+  operations: "同名commands共23次公开选择：六主动技能，召唤两只永冬灾影并分别行动，两次随机吸收、两次强化十段攻击、深寒叠到三层、过热后再次行动恢复防御"
+  rng: {mode: deterministic_seed, note: "首个对照命中非暴击；外部CR补正-0.05；吸收使用原生Retarget随机选择"}
+  reference_values:
+    - {event: received_physical_basic, reference: 606.5406376973718, simulator: 606.5406476008576, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000000016328, verdict: PASS}
+  game_comparison: {status: "承伤对照通过", scope: "等级、防御、抗性与未击破减伤参与的承伤；不代表敌方输出已独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 娜塔莎与固定构筑原生模型"
+    - "固定TBGD Monster_W1_Mecha03_01_Config/Ability/AI、MonsterSkillConfig：五段/十段、召唤、吸收、标记、50%增攻、过热减防50%"
+    - "https://honkai-star-rail.fandom.com/wiki/Frigid_Prowler — Deep Freeze每次一层，最多三层，每层减12%速度与20%冰抗；页面未注明版本，倍率与固定TBGD一致"
+  unverified_params:
+    - "等级和抗性取固定TBGD作为计算器输入；计算器未独立提供怪物卡。敌方输出与HP上限未独立对照。"
+    - "五段合回能10、十段合回能20、随机吸收无伤害/击杀归属、叠层与过热采用正式源路线验证，未作独立外部数值对照。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_prowler_absorption_stacks_and_overheat：1 passed/36.78秒；/tmp/hsr_v1_prowler_test.log。"
+    - "47次操作归档：/tmp/pytest-of-zhangjinhao/pytest-150/test_prowler_absorption_stacks0/prowler_v1_complete.json.gz。"
+    - "怪物配置默认参数不再要求表内重复；跨技能参数按本卡绑定。普通标记动作不发攻击窗口；旧来源路径传递正式目标事实。"
+    - "SetDieImmediately紧邻同目标ForceKill的ParamEntity形状只跳过死亡动画，正式死亡仍由ForceKill公共生命周期产生；未静默删除ForceKill。"

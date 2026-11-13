@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from ..immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
+from ..immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json, json_tree_digest
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
 def current_max_hp(unit: Any) -> float:
@@ -31,10 +31,12 @@ def current_max_hp(unit: Any) -> float:
 
 
 if TYPE_CHECKING:
+    from ..rules.ir import ActionDefinitionIR
     from ..systems.battle_event import BattleEventExecutionFact, BattleEventRetirementFact
     from ..systems.unit_spawn import UnitBirthFact
     from ..systems.effect import EffectExecutionFact
     from ..systems.mutation_events import EnergyChangeEventFact, HealEventFact, HPChangeEventFact, HPOverflowFact
+    from ..systems.dynamic_values import DynamicValueChangeFact
     from ..systems.ability_property_watchers import AbilityPropertyChangeFact
     from ..systems.shield import ShieldExhaustionFact
     from ..systems.status import StatusLifecyclePlan
@@ -541,14 +543,7 @@ def battle_state_full_fingerprint(state: BattleState) -> str:
     cached = getattr(state, "_state_full_fingerprint_cache", None)
     if cached is not None:
         return cached
-    encoded = json.dumps(
-        state.snapshot().to_json(detach=False),
-        ensure_ascii=True,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    fingerprint = "state:" + hashlib.sha256(encoded).hexdigest()
+    fingerprint = "state:" + json_tree_digest(state.snapshot().to_json(detach=False)).hex()
     object.__setattr__(state, "_state_full_fingerprint_cache", fingerprint)
     return fingerprint
 
@@ -659,6 +654,7 @@ class HitWindowInvocationFact:
     sequence_id: str
     in_callback_stack: bool
     _producer_token: object = field(repr=False, compare=False)
+    target_status_instance_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self._producer_token is not _HIT_WINDOW_INVOCATION_PRODUCER:
@@ -670,6 +666,10 @@ class HitWindowInvocationFact:
             or type(self.in_callback_stack) is not bool
         ):
             raise ValueError("hit window fact identity is invalid")
+        if self.target_status_instance_ids is not None and (
+                type(self.target_status_instance_ids) is not tuple
+                or any(not isinstance(value, str) or not value for value in self.target_status_instance_ids)):
+            raise ValueError("hit window status snapshot is invalid")
 
     def matches(self, event: GameEvent) -> bool:
         """Bind the fact to this exact event, invocation and transport copy."""
@@ -691,6 +691,7 @@ def with_hit_window_invocation_fact(
     *,
     sequence_id: str,
     in_callback_stack: bool,
+    target_status_instance_ids: tuple[str, ...] | None = None,
 ) -> GameEvent:
     """Attach the native hit-window fact; called only by window producers."""
 
@@ -702,6 +703,7 @@ def with_hit_window_invocation_fact(
         sequence_id=sequence_id,
         in_callback_stack=in_callback_stack,
         _producer_token=_HIT_WINDOW_INVOCATION_PRODUCER,
+        target_status_instance_ids=target_status_instance_ids,
     ))
 
 
@@ -1148,6 +1150,9 @@ class GameEvent:
     window: str = "unspecified"
     process_only: bool = True
     payload: dict[str, JSONValue] = field(default_factory=dict)
+    # The executing action supplies this to synchronous child callbacks. It is
+    # transient context, never reconstructed from exported event payloads.
+    action_definition: ActionDefinitionIR | None = field(default=None, repr=False, compare=False)
     admitted_action_target_fact: AdmittedActionTargetFact | None = field(
         default=None,
         repr=False,
@@ -1199,6 +1204,9 @@ class GameEvent:
         default=None, repr=False, compare=False,
     )
     hp_change_event_fact: HPChangeEventFact | None = field(
+        default=None, repr=False, compare=False,
+    )
+    dynamic_value_change_fact: DynamicValueChangeFact | None = field(
         default=None, repr=False, compare=False,
     )
     ability_property_change_fact: AbilityPropertyChangeFact | None = field(
@@ -1505,7 +1513,8 @@ class PendingDefeatPlan:
                 raise ValueError("pending_defeat_terminal_event_mismatch")
             # Retain the producer's complete context, including skill/hit identity.
             # A later finalizer must not rebuild it from a displayed event or log.
-            object.__setattr__(self, "terminal_event", GameEvent(**freeze_json(event.to_json())))
+            object.__setattr__(self, "terminal_event", replace(event,
+                event_id=str(event.to_json()["event_id"]), payload=freeze_json(event.payload)))
 
     @property
     def pending_id(self) -> str:
@@ -1520,7 +1529,12 @@ class PendingDefeatPlan:
 
     @classmethod
     def from_json(cls, value: object) -> PendingDefeatPlan:
-        raw = thaw_json(value)
+        cached = getattr(value, "_pending_defeat_plan_cache", None) if type(value) is FrozenJSONDict else None
+        if cached is not None:
+            return cached
+        # The decoder only reads its input. Keep frozen evidence shared instead
+        # of thawing and refreezing the same cause at every limbo window.
+        raw = value
         fields = {"unit_id", "event_index", "hp_mutation", "kill_credit_owner_id", "source_frame", "source_trace", "terminal_event"}
         if not isinstance(raw, dict) or set(raw) != fields or not isinstance(raw["hp_mutation"], dict):
             raise ValueError("pending_defeat_payload_invalid")
@@ -1530,9 +1544,12 @@ class PendingDefeatPlan:
             mutation = Mutation(**hp)
             if mutation.stable_id() != claimed_id:
                 raise ValueError("pending_defeat_hp_identity_mismatch")
-            return cls(raw["unit_id"], raw["event_index"], mutation, raw["kill_credit_owner_id"],
+            plan = cls(raw["unit_id"], raw["event_index"], mutation, raw["kill_credit_owner_id"],
                        raw["source_frame"], raw["source_trace"],
                        GameEvent(**raw["terminal_event"]) if raw["terminal_event"] is not None else None)
+            if type(value) is FrozenJSONDict:
+                value._pending_defeat_plan_cache = plan
+            return plan
         except (TypeError, KeyError) as exc:
             raise ValueError("pending_defeat_payload_invalid") from exc
 
@@ -1601,6 +1618,8 @@ class BattleTransition:
 
 
 def _stable_id(prefix: str, payload: dict[str, JSONValue]) -> str:
+    if prefix == "mutation":
+        return f"{prefix}:{json_tree_digest(payload).hex()[:16]}"
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}:{digest}"

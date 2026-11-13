@@ -487,6 +487,18 @@ class ScenarioStateBuilder:
             )
 
         global_flags = dict(scenario.global_flags)
+        if "battle_defeat_requested" in global_flags or "challenge_cycles_used" in global_flags:
+            raise ValueError("scenario.global_flags cannot inject stage outcome or cycle runtime")
+        if "initial_technique_waves" in global_flags:
+            raise ValueError("activated techniques must use battle_setup.techniques")
+        cycles_used = scenario.battle_setup.metadata.get("challenge_cycles_used", 0)
+        if stage_definition is not None and stage_definition.stage_environment_data:
+            limit = stage_definition.stage_environment_data["cycle_limit"]
+            if type(cycles_used) is not int or not 0 <= cycles_used < limit:
+                raise ValueError("challenge_cycles_used must be an integer below the source cycle limit")
+            global_flags["challenge_cycles_used"] = cycles_used
+        elif cycles_used != 0:
+            raise ValueError("challenge_cycles_used requires a supported challenge environment")
         if FORMAL_BUILD_MANIFEST_FLAG in global_flags:
             raise ValueError(
                 "scenario.global_flags cannot inject formal build manifest"
@@ -617,7 +629,7 @@ class ScenarioStateBuilder:
         equipment_startup_blocked = tuple(
             trace
             for trace in startup_traces
-            if trace.get("kind") in {"formal_equipment_ability", "formal_character_passive", "formal_character_build", "formal_stage"}
+            if trace.get("kind") in {"formal_equipment_ability", "formal_character_passive", "formal_character_ability", "formal_character_build", "formal_stage"}
             and trace.get("status") == "blocked"
         )
         if equipment_startup_blocked:
@@ -1226,9 +1238,16 @@ def _apply_initial_techniques(rules: RuleBook, state: BattleState, scenario: Sce
         return _SetupApplyResult(state=state)
     registry = EffectRegistry(StatusSystem(rules))
     runtime = AbilityTaskSystem(rules, registry, event_dispatcher=EventDispatchSystem(rules, registry))
-    current = state
+    # A normalized, already-activated technique belongs to its entry wave.
+    # This formal input survives callbacks; runtime never rereads the scenario.
+    scope = Mutation(op="set", path=("global_flags", "initial_technique_waves"),
+        before=None, before_exists=False,
+        after={spec.actor_id: state.wave_index for spec in scenario.battle_setup.techniques},
+        reason="bind activated techniques to their battle-entry wave", source="scenario_setup",
+        mutation_id=f"mutation:initial_technique_waves:{scenario.scenario_id}")
+    current = MutationReducer().apply_all(state, (scope,))
     records: list[dict[str, JSONValue]] = []
-    mutations: list[Mutation] = []
+    mutations: list[Mutation] = [scope]
     events: list[GameEvent] = []
     rng_events: list[RNGEvent] = []
     traces: list[dict[str, JSONValue]] = []
@@ -2609,7 +2628,7 @@ def _formal_character_activation(
     if passive_diagnostics:
         raise ValueError("battle-admitted character build contains blocked passive startup")
     startup_specs.extend({
-        "kind": "formal_character_passive",
+        "kind": "formal_character_passive" if binding.config_source.get("use_type") == "Passive" else "formal_character_ability",
         "ability_name": binding.entry_ability,
         "action_id": binding.action_id,
         "action_level": binding.level,

@@ -1,0 +1,53 @@
+comparison_record:
+  id: m2-castorice-e0-lv80-netherwing-001
+  entries_counted: ["遐蝶1407 E0满行迹", "遐蝶20021/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: e70d3f15cd17dace84f57dc468050b71116b206fc2c2508f7446ef81222da903
+    engine_rule_version: hsr_v8_engine_rules_v9
+    processor: "CastoriceProcessor v0.3.0 / CastoriceServantProcessor v0.8.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [castorice_basic_enemy80_noncrit]
+    invocation: "原生generateContext/runStatSimulations；首次普攻，天赋增伤0层。"
+  build:
+    attacker: "1407，80/P6/E0，满行迹、忆灵技能6级；焚影S1、快枪手4、仙舟2；+15无副词条，生命衣/速度鞋/生命球/生命绳"
+    companion: "娜塔莎23013/101/302既验构筑"
+    input: examples/cli/castorice_lv80_netherwing_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, quantum_resistance: 0.2, broken: false}
+  operations: "主分支48选择/96操作；到期分支33选择/66操作；锁血分支33选择/66操作，均由公开查询与提交产生。"
+  reference_values:
+    - {event: first_basic_noncrit, reference: 1872.3072661053538, simulator: 1872.3072839827182, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000000009548, verdict: PASS}
+  game_comparison:
+    status: "首次普攻与固定构筑独立对照通过"
+    scope: "不外推为全部死龙伤害、治疗与时序的游戏实证。"
+  behavior_checks:
+    - "正常损血/治疗积累新蕾，终结技召唤165速死龙；强化战技的死龙分量读取召唤时正式传入的0.5。"
+    - "三档连续吐息同一回合执行，倍率0.24/0.28/0.34，生命消耗与削韧由L1结算。"
+    - "低HP终结先降至1，原生任务执行6次随机单体伤害、两人各1201.35205376治疗、静默移除；随后正常积累并再次召龙。"
+    - "不用吐息的分支在死龙第三个自身回合到期，34000满血进入终结，6次伤害后移除。"
+    - "致命受击分支包含同一攻击连续两次锁血，角色保持1HP，死龙34000降至32750.56477736899；此后仍可合法提交。"
+    - "不限定存活成员的光环在limbo救援期间保留成员关系，避免第一段锁血后丢失下一段的保护。"
+  sources:
+    - "固定AvatarSkillConfig140701/140702/140703/140709、AvatarServantSkillConfig1140701/1140702/1140703/1140710/1140711/1140712及相应原生任务。"
+    - "https://www.prydwen.gg/star-rail/characters/castorice ：核对溢出承担为500%，与固定参数5及原生乘法一致；不能将文本占位格式误读成5%。"
+  assumptions:
+    - "未实证：连续吐息每次公开提交的技能后边界，原生SkipAttackSettlement整链边界暂未完整复刻；须实测迷迷真伤、小伊卡等联动触发次数。"
+    - "未实证：第三回合到期标记后开放原生终结动作；须实测自动消失窗口与插队、锁血承担的先后。"
+    - "共享回合与受击后边界沿用结果中的未实证提示，仍需游戏实测。"
+  unverified_params: ["敌人等级/量子抗为给定对照输入。"]
+  execution_checks:
+    - "castorice11主路线与自然到期分支、castorice_lock_branch2公开致命受击分支通过。"
+    - "test_v1_summon_routes.py保留三分支可运行检查；旧19级队伍测试在召龙前结束，不作为本次通过证据。"
+  performance:
+    main_advance_submit_mean_seconds: 9.234982805894106
+    lifetime_advance_submit_mean_seconds: 7.350460324753922
+    verdict: "验收时仍未达到0.33秒预算；后续v10性能优化单独记录，不回填本次指纹。"
+  artifacts: [/tmp/hsr_v1_castorice11_main.json.gz, /tmp/hsr_v1_castorice11_lifetime.json.gz, /tmp/hsr_v1_castorice_lock2_verified.json.gz, /tmp/hsr_v1_castorice11.log, /tmp/hsr_v1_castorice_lock_branch2.log]

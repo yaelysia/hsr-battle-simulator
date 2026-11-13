@@ -4,6 +4,8 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Callable, cast
+from ..core.content_hooks import processor_replaces_status_callback
+from ..immutable_json import FrozenJSONDict, freeze_json
 
 from ..core.model import BattleState, BreakNotificationFact, GameEvent, JSONValue, Mutation, PendingDefeatPlan, QueueActionStartFact, QueueActionTerminalFact, RNGEvent, StanceCountDownFact, StatusLifecycleFact, TargetResolution, current_max_hp, with_hit_window_invocation_fact
 from ..core.reducer import MutationReducer
@@ -39,7 +41,7 @@ from ..unit_eligibility import (
     runtime_units_are_opposing_combat_teams,
     runtime_units_share_combat_team,
 )
-from .damage import DamageModifierContribution, DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
+from .damage import DamageModifierContribution, DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger, event_damage_identity_ids
 from .action_event_contract import ActionWindowExpectedScope
 from .dot_formula import DotFormula, DotFormulaInput
 from .elation import resolve_elation_damage_context
@@ -127,19 +129,6 @@ HIT_ALL_CALLBACK_EVENTS = frozenset({
 
 # Windows whose GameEvent source and target are the attacker and defender of
 # one damage request; other events never supply the damage target aliases.
-_DAMAGE_ROLE_EVENT_TYPES = frozenset({
-    "damage.before_hit",
-    "damage.hit",
-    "damage.attacker_hit",
-    "damage.hit_sequence.before",
-    "damage.hit_sequence.after",
-    "damage.target_attack.before",
-    "damage.target_attack.after",
-    "damage.target_hit_sequence.before",
-    "damage.target_hit_sequence.after",
-})
-
-
 @dataclass(frozen=True)
 class StatusCallbackExecutionResult:
     ok: bool
@@ -292,12 +281,6 @@ class QueueEventConditionProvider:
         ):
             return TransientConditionOperandResolution.blocked(
                 "queue_event_param_string_fact_missing_or_mismatched",
-                fact_kind=request.fact_kind,
-                invocation_id=request.invocation_id,
-            )
-        if not fact.custom_tag:
-            return TransientConditionOperandResolution.blocked(
-                "queue_event_param_string_custom_tag_fact_missing",
                 fact_kind=request.fact_kind,
                 invocation_id=request.invocation_id,
             )
@@ -1113,6 +1096,12 @@ class StatusCallbackSystem:
         task_graph_continuation: TaskGraphContinuation | None,
         nested_ability_hooks: TaskGraphExecutionHooks | None,
     ) -> StatusCallbackExecutionResult:
+        if processor_replaces_status_callback(self.rules, state, detail, callback.event):
+            return StatusCallbackExecutionResult(ok=True, after_state=state, records=(
+                SettlementRecord(record_type="status_callback_skipped", source="status_callback_system",
+                    process_only=True, payload={"callback_id": callback.callback_id,
+                        "reason": "content_processor_replaces_callback"}).to_json(),
+            ))
         if callback.coverage_status != "executable":
             reason = callback.blocked_reason or f"status_callback_not_executable:{callback.coverage_status}"
             return StatusCallbackExecutionResult(
@@ -1122,6 +1111,16 @@ class StatusCallbackSystem:
                 errors=(reason,),
             )
         lifecycle_fact = trigger_event.status_lifecycle_fact if trigger_event is not None else None
+        if callback.event == "OnAfterBeingHeal" and trigger_event is not None:
+            from .mutation_events import HealEventFact
+
+            heal_fact = trigger_event.heal_event_fact
+            if type(heal_fact) is HealEventFact and heal_fact.matches_heal_after(trigger_event):
+                # Being-healed callbacks receive the healer; deal-heal callbacks
+                # retain the victim. Both use the same committed healing fact.
+                trigger_event = replace(trigger_event, payload={
+                    **trigger_event.payload, "param_entity_id": heal_fact.healer_id,
+                })
         # Ability-property watchers are their own change producer: they pass the
         # resolved status detail and may execute from any state-mutating event.
         if callback.scope_kind == "ability_property_range":
@@ -1135,6 +1134,14 @@ class StatusCallbackSystem:
                 callback.event, lifecycle_fact.callback_event)
             and (
                 lifecycle_fact.matches(state, trigger_event)
+                or (
+                    # Observer notifications describe a produced occurrence,
+                    # even if a synchronous sibling replaced that instance.
+                    # Own OnCreate/OnStack callbacks still require a live owner.
+                    callback.event in {"OnModifierAdd", "OnListenModifierAdd", "OnAddModifierSuc",
+                                       "OnModifierOnStack", "OnListenModifierOnStack", "OnModifierDotAdd"}
+                    and lifecycle_fact.matches_event(trigger_event)
+                )
                 or (
                     # A synchronous listener retired this instance while the
                     # remaining lifecycle notifications of the same batch were
@@ -3788,6 +3795,9 @@ class StatusCallbackSystem:
             event_payload,
             ("actor_id", "attacker_id", "damage_attacker_id"),
         ) or (str(trigger_event.source_id or "") if trigger_event is not None else "")
+        change_fact = trigger_event.ability_property_change_fact if trigger_event else None
+        if change_fact is not None and change_fact.matches_event(trigger_event):
+            actor_id = change_fact.unit_id
         turn_owner_id = str(state.global_flags.get("turn_owner_id") or "")
         if not owner_id or actor_id != owner_id or turn_owner_id != owner_id:
             reason = "current_skill_delay_cost_actor_not_active_owner"
@@ -4246,6 +4256,10 @@ class StatusCallbackSystem:
                     )
             else:
                 target_ids = resolution.target_ids
+                # A resolved relationship may currently have no member (for
+                # example a servant before birth). A list effect then does
+                # nothing; unresolved relationships still fail above.
+                empty_group_admitted = not target_ids
         else:
             target_ids = _list_alias_targets(state, detail, trigger_event, str(alias))
         if not target_ids:
@@ -5975,6 +5989,22 @@ class StatusCallbackSystem:
             )
             if not target_resolution.ok:
                 reason = target_resolution.blocked_reason or "queue_target_resolution_failed"
+                # An after-attack listener can outlive its caster within the
+                # lethal hit. An ordinary alive-only insert then has no actor;
+                # do not roll back the hit or stop the remaining callback tasks.
+                if (intent.owner_alive_state == "alive_only"
+                        and deathrattle_admission is None and not limbo_unit_id
+                        and reason in {
+                            f"queue_actor_unit_{status}:{target_resolution.actor_id}"
+                            for status in ("defeated", "removed", "departed")
+                        }):
+                    records.append(SettlementRecord(
+                        record_type="queue_intent_skipped", source="status_callback_system",
+                        process_only=True,
+                        payload={"reason": reason, "queue_intent_id": intent.queue_intent_id,
+                                 "task_id": task.task_id, "actor_id": target_resolution.actor_id},
+                    ).to_json())
+                    continue
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
@@ -7308,6 +7338,9 @@ def _without_unit_scoped_slots(
 
     if not isinstance(dynamic_values, dict) or not unit_hashes:
         return dynamic_values, frozenset()
+    cached = getattr(dynamic_values, "_unit_slot_filter", None) if type(dynamic_values) is FrozenJSONDict else None
+    if cached is not None and cached[0] == unit_hashes:
+        return cached[1]
     filtered: dict[str, object] = {}
     dropped: set[str] = set()
     for key, value in dynamic_values.items():
@@ -7345,6 +7378,11 @@ def _without_unit_scoped_slots(
     ):
         if meta in dynamic_values:
             filtered[meta] = dynamic_values[meta]
+    if type(dynamic_values) is FrozenJSONDict:
+        filtered = freeze_json(filtered)
+        # Ponytail: retain only the latest scope projection per immutable value.
+        # A different unit writer set replaces it instead of growing a history.
+        dynamic_values._unit_slot_filter = (unit_hashes, (filtered, frozenset(dropped)))
     return filtered, frozenset(dropped)
 
 
@@ -7385,23 +7423,6 @@ def _strip_hashes_from_binding_source(
         "by_hash": {key: value for key, value in sorted(by_hash.items())},
         "by_name": {key: value for key, value in sorted(by_name.items())},
     }
-
-
-def _event_damage_identity_ids(
-    state: BattleState,
-    event: GameEvent | None,
-) -> tuple[str | None, str | None]:
-    """Damage roles from a damage window's own typed event identities."""
-
-    if event is None or event.event_type not in _DAMAGE_ROLE_EVENT_TYPES:
-        return None, None
-    # A committed hit's event source is the damage-source owner, not necessarily
-    # the attacker, so those windows name only the defender.
-    attacker_known = event.event_type not in {"damage.hit", "damage.attacker_hit"}
-    return (
-        event.source_id if attacker_known and event.source_id in state.units else None,
-        event.target_id if event.target_id in state.units else None,
-    )
 
 
 def _event_passive_entity_ids(
@@ -7449,6 +7470,10 @@ def _condition_context(
 ) -> EvaluationContext:
     detail = _current_status_detail(state, detail)
     payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
+    if event is not None and event.action_definition is not None:
+        from .action_event_contract import condition_skill_type
+
+        payload["SkillType"] = condition_skill_type(event.action_definition)
     if event is not None:
         payload.setdefault("event_id", event.event_id)
         payload.setdefault("event_source_id", event.source_id)
@@ -7532,7 +7557,7 @@ def _condition_context(
         )
     callback_binding_sources = with_template_binding_sources(callback_binding_sources, template_binding_sources)
     if condition is not None and targets is not None:
-        damage_attacker_id, damage_defender_id = _event_damage_identity_ids(state, event)
+        damage_attacker_id, damage_defender_id = event_damage_identity_ids(state, event)
         context = targets.condition_evaluation_context(
             state,
             condition,
@@ -7689,6 +7714,7 @@ def _effect_context(
         current_action_target_id=target_id or None,
         event_payload=payload,
         trigger_event=event,
+        action_definition=event.action_definition if event is not None else None,
         heal_event_fact=(
             event.heal_event_fact if event is not None else None
         ),
@@ -8377,6 +8403,7 @@ def _stage_damage_window_ledger(
     if ledger is None:
         return None
     staged = DamageWindowLedger()
+    staged.target_status_instances = dict(ledger.target_status_instances)
     staged.defeated_targets = {
         target_id: dict(record)
         for target_id, record in ledger.defeated_targets.items()
@@ -8389,6 +8416,7 @@ def _commit_damage_window_ledger(
     staged: DamageWindowLedger | None,
 ) -> None:
     if ledger is not None and staged is not None:
+        ledger.target_status_instances = dict(staged.target_status_instances)
         ledger.defeated_targets = {
             target_id: dict(record)
             for target_id, record in staged.defeated_targets.items()

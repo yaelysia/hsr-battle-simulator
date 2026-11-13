@@ -4,6 +4,8 @@ from __future__ import annotations
 _ABILITY_PROPERTY_STATS: dict[str, str] = {
     "Attack": "attack",
     "BreakDamageAddedRatio": "break_damage_added_ratio",
+    # Same native BE pool as the static-build and battle-event property maps.
+    "BreakDamageAddedRatioBase": "break_damage_added_ratio",
     "CriticalChance": "critical_chance",
     "CriticalChanceBase": "critical_chance",
     "CriticalDamage": "critical_damage",

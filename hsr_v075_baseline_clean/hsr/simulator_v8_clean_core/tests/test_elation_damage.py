@@ -32,6 +32,7 @@ class ElationDamageTest(unittest.TestCase):
             flags={"status_details": [{"instance_id": "elation-buff", "modifiers": [
                 {"bucket": "damage_bonus", "key": "elation_damage_added_ratio", "value": .3},
                 {"bucket": "damage_bonus", "key": "elation_damage_extra_added_ratio", "value": .1},
+                {"bucket": "weaken", "key": "weaken_ratio", "scope": "actor", "value": .9},
             ]}]})
         target = UnitState("target", "enemy", "fixture:target", hp=10000, max_hp=10000,
             defense=200, toughness=30, max_toughness=30,

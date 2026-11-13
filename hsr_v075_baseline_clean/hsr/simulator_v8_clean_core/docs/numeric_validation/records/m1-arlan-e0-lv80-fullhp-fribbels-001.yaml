@@ -1,0 +1,71 @@
+comparison_record:
+  id: m1-arlan-e0-lv80-fullhp-fribbels-001
+  game_version: "外部计算器未标明游戏版本；固定其源码提交，限本记录中的满血普通攻击与构筑面板"
+  data_version: "14c1d18f91a8101d610e6c523447a7517de3fae1"
+  simulator_version:
+    git_commit: "0369005，附本轮未提交修复"
+    modified_runtime_sha256:
+      systems/status_callbacks.py: 2a07539872817f51f8038b6493ad019818920864e1797ba1ca409f2a73a4a565
+      tbgd/monster_cards.py: 76b4b80b55808b43c75b1e10a11fb5bd7a7701a7e2da76f1a0818af63a27aa27
+    rules_fingerprint: 63ec39c62d870391a8c1d4a0796105b1f3f425cba31b6881a589cef054a7e38d
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    vitest: 4.1.12
+    package_lock_sha256: cc985997bc77a3dde3dc54addb5697d2f0c5a6fe0f3c28742fe896f86fc83138
+    invocation: "原生 generateFullDefaultForm → generateContext → runStatSimulations；未修改外部公式、角色或装备代码"
+    driver: ../reports/fribbels_v1_reference.test.ts
+  build:
+    avatar: 1008
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10，三大行迹及全部属性节点"
+    light_cone: {id: 23002, name: 无可取代的东西, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, name: 野穗伴行的快枪手, pieces: 4, level: 15, mains: [HP, ATK, ATK_percent, SPD], sub_affixes: []}
+    relics_inner: {set: 302, name: 不老者的仙舟, pieces: 2, level: 15, mains: [Thunder_damage, ATK_percent], sub_affixes: []}
+    input: "examples/cli/arlan_lv80_full_traces_two_waves.json 的完整构筑；仅改 stage_ref=307214 和场景说明"
+    initial_hp: full
+    light_cone_conditional_damage_buff: false
+    teammate: "娜塔莎80/P6/E0、空装备；此次普攻前未行动、无队友增益"
+  target: {stage: 307214, wave: 0, monster: 2013010, monster_level: 44, hard_level_group: 2, thunder_resistance: 0, weakness_broken: false, toughness: 300}
+  operations: [advance, "submit arlan avatar_skill:100801 level6 → enemy:stage:307214:wave:0:pos:0", "advance 后仍有合法选择"]
+  rng:
+    mode: deterministic
+    rolls: [0.546047980908691, 0.7740093172132197]
+    is_crit: [false, false]
+    calculator_condition: "给计算器输入 CR 补正 -0.05 固定非暴击分支；阿兰和本构筑没有暴击率阈值行为，其他伤害输入不变。另运行 +0.95 的暴击分支，未用于本次 PASS。"
+  reference_values:
+    - {event: basic_hit_1, reference: 835.0261981175565, simulator: 835.0278919559541, relative_error: 0.00000202848533547, source: "Fribbels basic_hit1_noncrit", independent: true}
+    - {event: basic_hit_2, reference: 1948.3944622742986, simulator: 1948.3984145638933, relative_error: 0.00000202848533562, source: "Fribbels basic_hit2_noncrit", independent: true}
+  panel_comparison:
+    hp: {reference: 3589.38720703125, simulator: 3589.3872}
+    attack: {reference: 3312.2275390625, simulator: 3312.22752}
+    defense: {reference: 727.6500244140625, simulator: 727.65}
+    speed: {reference: 133.15199279785156, simulator: 133.152}
+  tolerance: {max_relative_error: 0.01, actual: 0.00000202848533562, verdict: PASS}
+  game_comparison: {status: "成熟计算器对照通过（限定满血普攻及面板）", scope: "M1-4 方法收口；不代表阿兰条目全部分支验收"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 原生计算引擎输出"
+    - "TBGD Config/ConfigAbility/Avatar/Avatar_Arlan_00_Ability.json — 普攻两段系数0.3/0.7，作为外部计算器输入"
+    - "TBGD ExcelOutput/StageConfig.json stage307214 与 MonsterConfig.json monster2013010 — 目标身份、等级、雷弱点/抗性"
+  unverified_params:
+    - "Fribbels 将普攻合并为一次伤害；分段系数来自固定 TBGD，在计算器原生 hit 输入上分别乘0.3/0.7，再由其引擎出值。分段系数不算独立核对。"
+    - "暴击结果作为给定条件；未对照游戏 RNG 算法。"
+  known_reference_discrepancies:
+    - "85%HP战技：同构筑、Lv10敌人/20%抗性/未击破，Fribbels期望伤害7142.50008010717；模拟器非暴击6778.114314249444，按5%暴击率/50%暴伤换算期望6947.56717210568，差2.7292%，不通过。"
+    - "外部 Arlan.ts 使用 min(0.72, 1-HP比例)，固定TBGD被动表达式使用0.72*(1-HP比例)。此次不修改任一公式迎合对照，不将这个计算器版本用于损血天赋分支验收。"
+  notes:
+    - "用户于2026-11-12批准下载隔离计算器。它位于/tmp/hsr-v1-fribbels-d60f0375；依赖按lockfile用npm ci --ignore-scripts安装，未加入模拟器运行环境。"
+    - "外部复现：将driver复制到该提交的src/v1-reference.test.ts，使用Node26运行vitest run src/v1-reference.test.ts；输出/tmp/hsr_v1_fribbels_references.json。"
+    - "模拟器复现：复制上述构筑场景，stage_ref改为307214，query后提交普攻100801等级6。保存输入、命令及归档分别为/tmp/hsr_v1_arlan_basic.scenario.json、/tmp/hsr_v1_arlan_basic.commands.json、/tmp/hsr_v1_arlan_basic.json.gz。"
+    - "本记录新增当前外部证据；未回填或更改两份旧公式复算记录的历史身份。"
+  follow_up_validation:
+    reason: "金人合法动作与默认状态时机修正后，重建雷击破路线；原满血数值实验及其指纹保留。"
+    rules_fingerprint: b6fd201277782c640bc8aaeb370ebdd3404351e639141a66e39de1eca434eea1
+    operations: "arlan_lv80_thunder_break 当前26次选择，娜塔莎改用已验23013/101/302构筑维持续航；阿兰构筑不变。"
+    result: "两条龙鱼均由阿兰触发雷击破，随后自然恢复并继续操作；不是原53步旧脚本。"
+    validation: "/tmp/hsr_v1_arlan_sustain_test.log，1 passed；本条不把新队伍的增伤外推为原满血数值样本。"

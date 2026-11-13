@@ -1,0 +1,140 @@
+{
+  "commands": [
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:c5eadbc4baa8ab3e": "not_applied",
+          "rng:status_apply:31d66d122b7bc4b3": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:f3fdc67c8c55a43a": "not_applied",
+          "rng:status_apply:9ba583346b027a13": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:1015d19bfe7b:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:282ba8f9c35e:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:4ef1d21fad26:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:4ef1d21fad26:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:567f9f206098:0"
+      ]
+    },
+    {
+      "actor_id": "seele",
+      "action_id": "avatar_skill:1110202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    }
+  ]
+}

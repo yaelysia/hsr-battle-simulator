@@ -44,6 +44,24 @@ def command_to_json(command: ActionCommand) -> dict[str, Any]:
     }
 
 
+def rule_assumption_records(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Read persisted notices, including restored history; never feed combat rules.
+
+    Ponytail: presentation scans O(history); index on append only if long UI
+    histories make this material. It is outside command execution.
+    """
+    records = {}
+    for operation in operations:
+        transitions = ([operation['transition']] if operation['kind'] == 'submit'
+                       else operation.get('transitions', ()))
+        for transition in transitions:
+            for record in transition.get('settlement', {}).get('records', ()):
+                if record.get('record_type') == 'rule_assumption':
+                    payload = record['payload']
+                    records[(payload['assumption_id'], payload.get('target_id', ''))] = record
+    return list(records.values())
+
+
 class BattleSession:
     """Own session history; all combat decisions and mutations stay in the core."""
 

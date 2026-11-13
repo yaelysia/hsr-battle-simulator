@@ -1,0 +1,134 @@
+{
+  "commands": [
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:c37cbc97c2cce3e4": "not_applied",
+          "rng:status_apply:c5eadbc4baa8ab3e": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100203",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": [],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:44e5833fb1618aa8": "not_applied",
+          "rng:status_apply:fd2dead4d58f289c": "not_applied"
+        }
+      }
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "danheng"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:506bb141956d:0",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:summon:506bb141956d:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:summon:3685ee3eea2f:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "danheng",
+      "action_id": "avatar_skill:100202",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    }
+  ]
+}

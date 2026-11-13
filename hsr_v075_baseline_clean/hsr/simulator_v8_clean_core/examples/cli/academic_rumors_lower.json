@@ -1,0 +1,425 @@
+{
+  "battle_setup": {
+    "metadata": {
+      "challenge_cycles_used": 12,
+      "scope": "V1 environment route",
+      "stage_scope": "full_stage"
+    },
+    "timeline": {
+      "mode": "runtime_initialize"
+    }
+  },
+  "route": [],
+  "scenario_id": "v1:environment:30123062:full_stage",
+  "stage_ref": "30123062",
+  "units": [
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "seele:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1102",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "seele:equipment:20000-102-302",
+          "character_card_id": "character_data_card:avatar:1102",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "20000",
+            "instance_id": "seele:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:seele:relic:body",
+              "level": 15,
+              "main_affix_key": "53:4",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:seele:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:seele:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:seele:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:seele:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:9",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:seele:relic:object",
+              "level": 15,
+              "main_affix_key": "56:4",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1102:11102001:6",
+          "character_trace_node:character_data_card:avatar:1102:11102002:10",
+          "character_trace_node:character_data_card:avatar:1102:11102003:10",
+          "character_trace_node:character_data_card:avatar:1102:11102004:10",
+          "character_trace_node:character_data_card:avatar:1102:11102101:1",
+          "character_trace_node:character_data_card:avatar:1102:11102102:1",
+          "character_trace_node:character_data_card:avatar:1102:11102103:1",
+          "character_trace_node:character_data_card:avatar:1102:11102201:1",
+          "character_trace_node:character_data_card:avatar:1102:11102202:1",
+          "character_trace_node:character_data_card:avatar:1102:11102203:1",
+          "character_trace_node:character_data_card:avatar:1102:11102204:1",
+          "character_trace_node:character_data_card:avatar:1102:11102205:1",
+          "character_trace_node:character_data_card:avatar:1102:11102206:1",
+          "character_trace_node:character_data_card:avatar:1102:11102207:1",
+          "character_trace_node:character_data_card:avatar:1102:11102208:1",
+          "character_trace_node:character_data_card:avatar:1102:11102209:1",
+          "character_trace_node:character_data_card:avatar:1102:11102210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1102",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "120",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 0,
+      "side": "ally",
+      "unit_id": "seele"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "danheng:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1002",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "danheng:equipment:20000-102-302",
+          "character_card_id": "character_data_card:avatar:1002",
+          "identity_labels": {},
+          "light_cone": {
+            "definition_key": "20000",
+            "instance_id": "danheng:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "m2:danheng:relic:body",
+              "level": 15,
+              "main_affix_key": "53:4",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61023"
+            },
+            {
+              "instance_id": "m2:danheng:relic:foot",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61024"
+            },
+            {
+              "instance_id": "m2:danheng:relic:hand",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61022"
+            },
+            {
+              "instance_id": "m2:danheng:relic:head",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61021"
+            },
+            {
+              "instance_id": "m2:danheng:relic:neck",
+              "level": 15,
+              "main_affix_key": "55:8",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "m2:danheng:relic:object",
+              "level": 15,
+              "main_affix_key": "56:4",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1002:1002001:6",
+          "character_trace_node:character_data_card:avatar:1002:1002002:10",
+          "character_trace_node:character_data_card:avatar:1002:1002003:10",
+          "character_trace_node:character_data_card:avatar:1002:1002004:10",
+          "character_trace_node:character_data_card:avatar:1002:1002101:1",
+          "character_trace_node:character_data_card:avatar:1002:1002102:1",
+          "character_trace_node:character_data_card:avatar:1002:1002103:1",
+          "character_trace_node:character_data_card:avatar:1002:1002201:1",
+          "character_trace_node:character_data_card:avatar:1002:1002202:1",
+          "character_trace_node:character_data_card:avatar:1002:1002203:1",
+          "character_trace_node:character_data_card:avatar:1002:1002204:1",
+          "character_trace_node:character_data_card:avatar:1002:1002205:1",
+          "character_trace_node:character_data_card:avatar:1002:1002206:1",
+          "character_trace_node:character_data_card:avatar:1002:1002207:1",
+          "character_trace_node:character_data_card:avatar:1002:1002208:1",
+          "character_trace_node:character_data_card:avatar:1002:1002209:1",
+          "character_trace_node:character_data_card:avatar:1002:1002210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1002",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "100",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 1,
+      "side": "ally",
+      "unit_id": "danheng"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "march:lv80-p6-e0-full-traces",
+        "character_card_id": "character_data_card:avatar:1001",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "v1:march:equipment",
+          "character_card_id": "character_data_card:avatar:1001",
+          "light_cone": {
+            "definition_key": "20003",
+            "instance_id": "march:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "march:relic:HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61031"
+            },
+            {
+              "instance_id": "march:relic:HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61032"
+            },
+            {
+              "instance_id": "march:relic:BODY",
+              "level": 15,
+              "main_affix_key": "53:3",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61033"
+            },
+            {
+              "instance_id": "march:relic:FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61034"
+            },
+            {
+              "instance_id": "march:relic:NECK",
+              "level": 15,
+              "main_affix_key": "55:3",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63045"
+            },
+            {
+              "instance_id": "march:relic:OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63046"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1001:1001001:6",
+          "character_trace_node:character_data_card:avatar:1001:1001002:10",
+          "character_trace_node:character_data_card:avatar:1001:1001003:10",
+          "character_trace_node:character_data_card:avatar:1001:1001004:10",
+          "character_trace_node:character_data_card:avatar:1001:1001101:1",
+          "character_trace_node:character_data_card:avatar:1001:1001102:1",
+          "character_trace_node:character_data_card:avatar:1001:1001103:1",
+          "character_trace_node:character_data_card:avatar:1001:1001201:1",
+          "character_trace_node:character_data_card:avatar:1001:1001202:1",
+          "character_trace_node:character_data_card:avatar:1001:1001203:1",
+          "character_trace_node:character_data_card:avatar:1001:1001204:1",
+          "character_trace_node:character_data_card:avatar:1001:1001205:1",
+          "character_trace_node:character_data_card:avatar:1001:1001206:1",
+          "character_trace_node:character_data_card:avatar:1001:1001207:1",
+          "character_trace_node:character_data_card:avatar:1001:1001208:1",
+          "character_trace_node:character_data_card:avatar:1001:1001209:1",
+          "character_trace_node:character_data_card:avatar:1001:1001210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1001",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "120",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 2,
+      "side": "ally",
+      "unit_id": "march"
+    },
+    {
+      "build_mode": "assembled_character_build",
+      "character_build": {
+        "build_id": "ordinary:lynx:e0-lv80-p6",
+        "character_card_id": "character_data_card:avatar:1110",
+        "eidolon_level": 0,
+        "equipment_build": {
+          "build_id": "lynx:equipment:20008-101-302",
+          "character_card_id": "character_data_card:avatar:1110",
+          "light_cone": {
+            "definition_key": "20008",
+            "instance_id": "lynx:cone",
+            "level": 80,
+            "promotion": 6,
+            "superimposition": 1
+          },
+          "relics": [
+            {
+              "instance_id": "lynx:relic:HEAD",
+              "level": 15,
+              "main_affix_key": "51:1",
+              "slot_key": "HEAD",
+              "sub_affix_rolls": [],
+              "template_key": "61011"
+            },
+            {
+              "instance_id": "lynx:relic:HAND",
+              "level": 15,
+              "main_affix_key": "52:1",
+              "slot_key": "HAND",
+              "sub_affix_rolls": [],
+              "template_key": "61012"
+            },
+            {
+              "instance_id": "lynx:relic:BODY",
+              "level": 15,
+              "main_affix_key": "53:6",
+              "slot_key": "BODY",
+              "sub_affix_rolls": [],
+              "template_key": "61013"
+            },
+            {
+              "instance_id": "lynx:relic:FOOT",
+              "level": 15,
+              "main_affix_key": "54:4",
+              "slot_key": "FOOT",
+              "sub_affix_rolls": [],
+              "template_key": "61014"
+            },
+            {
+              "instance_id": "lynx:relic:NECK",
+              "level": 15,
+              "main_affix_key": "55:1",
+              "slot_key": "NECK",
+              "sub_affix_rolls": [],
+              "template_key": "63025"
+            },
+            {
+              "instance_id": "lynx:relic:OBJECT",
+              "level": 15,
+              "main_affix_key": "56:2",
+              "slot_key": "OBJECT",
+              "sub_affix_rolls": [],
+              "template_key": "63026"
+            }
+          ]
+        },
+        "level": 80,
+        "promotion": 6,
+        "unlocked_trace_node_ids": [
+          "character_trace_node:character_data_card:avatar:1110:1110001:6",
+          "character_trace_node:character_data_card:avatar:1110:1110002:10",
+          "character_trace_node:character_data_card:avatar:1110:1110003:10",
+          "character_trace_node:character_data_card:avatar:1110:1110004:10",
+          "character_trace_node:character_data_card:avatar:1110:1110101:1",
+          "character_trace_node:character_data_card:avatar:1110:1110102:1",
+          "character_trace_node:character_data_card:avatar:1110:1110103:1",
+          "character_trace_node:character_data_card:avatar:1110:1110201:1",
+          "character_trace_node:character_data_card:avatar:1110:1110202:1",
+          "character_trace_node:character_data_card:avatar:1110:1110203:1",
+          "character_trace_node:character_data_card:avatar:1110:1110204:1",
+          "character_trace_node:character_data_card:avatar:1110:1110205:1",
+          "character_trace_node:character_data_card:avatar:1110:1110206:1",
+          "character_trace_node:character_data_card:avatar:1110:1110207:1",
+          "character_trace_node:character_data_card:avatar:1110:1110208:1",
+          "character_trace_node:character_data_card:avatar:1110:1110209:1",
+          "character_trace_node:character_data_card:avatar:1110:1110210:1"
+        ]
+      },
+      "eidolon_level": 0,
+      "entity_ref": "avatar:1110",
+      "initial_condition": {
+        "hp_mode": "full",
+        "initial_energy": "94",
+        "initial_resource_values": []
+      },
+      "level": 80,
+      "position": 3,
+      "side": "ally",
+      "unit_id": "lynx"
+    }
+  ],
+  "version": "v0_200",
+  "wave_index": 0
+}

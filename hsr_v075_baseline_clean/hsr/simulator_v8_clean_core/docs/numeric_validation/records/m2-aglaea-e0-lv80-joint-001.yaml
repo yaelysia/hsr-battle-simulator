@@ -1,0 +1,49 @@
+comparison_record:
+  id: m2-aglaea-e0-lv80-joint-001
+  entries_counted: ["阿格莱雅E0满行迹", "阿格莱雅20021/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 1a7dec4b16ef92320c16c34d19c24553830a276285921ea1810796c0d0d34189
+    processor: "avatar:1402 AglaeaProcessor v0.1.0；规则指纹不代替处理器/代码版本"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    samples: [aglaea_basic_enemy80_noncrit, aglaea_basic_enemy80_crit]
+    invocation: "原生generateContext/runStatSimulations；0.2/0.2/0.6段比为固定TBGD输入，非独立验证参数"
+  build:
+    attacker: "80/P6/E0满行迹，衣匠两个技能节点均6级；焚影S1、快枪手4、仙舟2；+15无副词条，攻击衣/速度鞋/雷球/攻击绳"
+    companion: "娜塔莎23013/101/302既验构筑，提供额外仙舟8%攻击"
+    input: examples/cli/aglaea_lv80_joint_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, lightning_resistance: 0, broken: false}
+  operations: "40次公开选择/80操作。首次普攻时无衣匠、无终结技状态，三段非暴击/暴击/非暴击对照；之后终结技、两次连携、衣匠行动、倒计时退场及战技再召唤。"
+  reference_values:
+    - {event: basic_hit_1_noncrit, reference: 390.1958847992479, simulator: 390.1965730262217, independent: true}
+    - {event: basic_hit_2_crit, reference: 585.2938266755783, simulator: 585.2948595393325, independent: true}
+    - {event: basic_hit_3_noncrit, reference: 1170.5876543977435, simulator: 1170.589719078665, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001764, verdict: PASS}
+  game_comparison:
+    status: "普攻及固定构筑独立对照通过"
+    scope: "未把普攻对照外推为连携、速度转攻击、倒计时和衣匠全部分支的独立游戏实测。"
+  behavior_checks:
+    - "终结技产生100速倒计时并开放强化普攻，实际执行两次主人/衣匠连携。"
+    - "衣匠行动积累速度；倒计时退场后可通过战技召唤新实例，共两个衣匠。"
+    - "行迹1402102由衣匠读取主人的参数；重召后保留1层速度提升，当前6级忆灵天赋每层55点。"
+    - "状态被同步替换后，已产生的监听通知继续携带原有类型化事实；更改事件身份仍拒绝。"
+  sources:
+    - "固定AvatarSkillConfig140201/140202/140203/140204/140208及AvatarSkillTreeConfig1402102。"
+    - "Servant_AglaeaServant_00_Config的SkillTreeParam PointB2；MServant_AglaeaServant_Passive.OnBeforeDying及再召唤回调。"
+  assumptions:
+    - "aglaea_countdown_speed_retention：倒计时自毁动作开始时先保留行迹层数，结果标未实证；需游戏实测倒计时、同窗口插队和再召唤的顺序。"
+    - "after_attack_listener_snapshot：沿用受击后监听边界的实测提醒。"
+  unverified_params:
+    - "段比、目标等级/雷抗、队友仙舟加成为对照输入，不是独立实测参数。"
+  execution_checks:
+    - "test_v1_summon_routes.py::test_aglaea_joint_countdown_retained_speed_resummon_and_equipment通过；/tmp/hsr_v1_aglaea_complete_test.log。"
+    - "拥有者行迹参数、模板来源、事件通知组件通过；/tmp/hsr_v1_servant_template_components.log、/tmp/hsr_v1_replacement_observer_checks.log。"
+  performance: {advance_submit_mean_seconds: 3.0167599417676683, verdict: "复杂连携路线未达0.33秒预算，留待V1性能收敛"}
+  artifacts: [/tmp/hsr_v1_aglaea_verified.json.gz, /tmp/hsr_v1_aglaea_complete_test.log, /tmp/hsr_v1_fribbels_aglaea.log]

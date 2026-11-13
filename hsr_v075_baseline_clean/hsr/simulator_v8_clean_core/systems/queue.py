@@ -1431,14 +1431,15 @@ class QueueSystem:
                     drain_order,
                     window,
                 )
+            no_targets = _is_gameplay_abort(state, entry, "action_target_candidates_empty")
             return QueueDrainPlan(
-                True,
-                "drain_candidate",
+                not no_targets,
+                "blocked" if no_targets else "drain_candidate",
                 queue_name,
                 entry,
                 queue_intent_id,
                 resolution.queue_resolution_id,
-                "",
+                "action_target_candidates_empty" if no_targets else "",
                 {"queue_resolution_source": resolution.source.to_json()},
                 queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
                 priority_key=str(priority_source.get("priority_key") or ""),

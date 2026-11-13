@@ -209,7 +209,7 @@ def validate_rng_choice_ledger(
     provided_sequence: list[str] = []
     raw_choices = payload.get("rng_choices")
     if isinstance(raw_choices, dict):
-        provided_sequence.extend(str(key) for key in raw_choices)
+        provided_sequence.extend(sorted(str(key) for key in raw_choices))
     raw_ledger = payload.get("rng_choice_ledger")
     if isinstance(raw_ledger, list):
         provided_sequence.extend(

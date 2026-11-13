@@ -1,0 +1,304 @@
+{
+  "commands": [
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "timeline:select_tied_actor",
+      "action_level": 0,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140208",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "summon:servant:f12698d298e4",
+      "action_id": "servant_skill:1140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "summon:servant:f12698d298e4",
+      "action_id": "servant_skill:1140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140208",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140202",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "summon:servant:8dac1b246abc"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "aglaea"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "summon:servant:8dac1b246abc",
+      "action_id": "servant_skill:1140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "summon:servant:8dac1b246abc",
+      "action_id": "servant_skill:1140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110503",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "aglaea",
+      "action_id": "avatar_skill:140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "summon:servant:8dac1b246abc",
+      "action_id": "servant_skill:1140201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    }
+  ]
+}

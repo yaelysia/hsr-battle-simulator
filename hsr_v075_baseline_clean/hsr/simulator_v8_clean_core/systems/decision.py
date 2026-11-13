@@ -147,6 +147,8 @@ class DecisionSystem:
         phase_operation = (
             "query_timeline_actor_choice"
             if availability.mode == "timeline_actor_selectable"
+            else "resolve_queue_entry"
+            if availability.mode == "queued_selectable"
             else "query_decision"
         )
         phase_reason = self.phases.operation_blocked_reason(state, phase_operation)

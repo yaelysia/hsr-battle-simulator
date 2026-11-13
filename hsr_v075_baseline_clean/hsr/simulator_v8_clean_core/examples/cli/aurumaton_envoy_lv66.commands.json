@@ -1,0 +1,132 @@
+{
+  "commands": [
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302002",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:bb8c1719f7a69e49": "applied"
+        }
+      }
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302006",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:3099044:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302002",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ],
+      "metadata": {
+        "rng_choices": {
+          "rng:status_apply:39df3427a45ee63a": "applied"
+        }
+      }
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110501",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:3099044:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302001",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302004",
+      "action_level": 1,
+      "target_ids": [
+        "natasha"
+      ]
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:3099044:wave:0:pos:0",
+      "action_id": "monster_skill:201302003",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "march",
+      "action_id": "avatar_skill:100102",
+      "action_level": 10,
+      "target_ids": [
+        "march"
+      ]
+    },
+    {
+      "actor_id": "natasha",
+      "action_id": "avatar_skill:110502",
+      "action_level": 10,
+      "target_ids": [
+        "natasha"
+      ]
+    }
+  ]
+}

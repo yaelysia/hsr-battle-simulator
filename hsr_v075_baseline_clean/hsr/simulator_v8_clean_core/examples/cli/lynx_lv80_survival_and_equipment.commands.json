@@ -1,0 +1,352 @@
+{
+  "commands": [
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111002",
+      "action_level": 10,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:3685ee3eea2f:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:summon:3685ee3eea2f:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:summon:506bb141956d:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:3685ee3eea2f:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:3685ee3eea2f:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:summon:506bb141956d:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:506bb141956d:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:506bb141956d:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:summon:506bb141956d:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:01ce65b75ee2:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:summon:01ce65b75ee2:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:123af58371f9:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:123af58371f9:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111002",
+      "action_level": 10,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301002",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:402120485:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:019c032e41af:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111001",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:summon:019c032e41af:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:summon:b67b6969261a:0",
+      "action_id": "monster_skill:201201001",
+      "action_level": 1,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:summon:019c032e41af:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:402120485:wave:0:pos:0",
+      "action_id": "monster_skill:201301003",
+      "action_level": 1,
+      "target_ids": [
+        "lynx"
+      ]
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lynx",
+      "action_id": "avatar_skill:111003",
+      "action_level": 10,
+      "target_ids": []
+    }
+  ]
+}

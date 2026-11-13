@@ -11,6 +11,12 @@ from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, PassiveMechanismS
 
 
 MONSTER_CONFIG_PATH = "ExcelOutput/MonsterConfig.json"
+# Pinned TBGD 14c1d18f: the Spectral Envoy applies MCommon_Unstable and
+# MCommon_Shake, whose shared definitions live in the Wraith Warden file.
+# Compile this declared content dependency without admitting the other monster.
+MONSTER_SHARED_ABILITY_SOURCES = {
+    "2013020": ("Config/ConfigAbility/Monster/Monster_W2_Valkyrie01_00_Ability.json",),
+}
 MONSTER_ROW_PATHS: tuple[str, ...] = (
     MONSTER_CONFIG_PATH,
     "ExcelOutput/MonsterUniqueConfig.json",
@@ -108,9 +114,10 @@ def exclude_presentation_passives(
 
 
 def _presentation_controller_tokens(definition: dict[str, Any]) -> set[str]:
-    if set(definition) != {"Name", "TargetInfo", "Modifiers", "OnAdd"}:
+    callback = "OnStart" if "OnStart" in definition else "OnAdd"
+    if set(definition) != {"Name", "TargetInfo", "Modifiers", callback}:
         return set()
-    modifiers, roots = definition["Modifiers"], definition["OnAdd"]
+    modifiers, roots = definition["Modifiers"], definition[callback]
     if not isinstance(modifiers, dict) or not modifiers or not isinstance(roots, list) or not roots:
         return set()
     names = set(modifiers)
@@ -138,7 +145,7 @@ def _presentation_controller_tokens(definition: dict[str, Any]) -> set[str]:
             for callback in modifier["_CallbackList"]
         ):
             return set()
-    allowed = {"TriggerEffect", "RemoveEffect", "SetAttachEffectTimeSlow", "PredicateTaskList",
+    allowed = {"TriggerEffect", "RemoveEffect", "AnimSetParameter", "SetAttachEffectTimeSlow", "PredicateTaskList",
                "ByCompareDynamicValue", "ByContainBehaviorFlag", "ByAny", "TargetAlias", "DefineDynamicValue"}
     tokens = set(names)
     for node in _objects(modifiers):
@@ -556,8 +563,10 @@ def _passive_slots_for_monster(
             else:
                 position, definition = definitions[0]
                 declaration_only = (
-                    not blocked_reason and set(definition) == {"Name", "TargetInfo"}
+                    not blocked_reason and {"Name", "TargetInfo"} <= set(definition)
                     and definition["TargetInfo"] == {"TargetType": "Caster"}
+                    and all(key in {"Name", "TargetInfo"} or key.startswith("On") and value == []
+                            for key, value in definition.items())
                 )
                 for callback, tasks in definition.items():
                     if not callback.startswith("On"):
@@ -567,7 +576,7 @@ def _passive_slots_for_monster(
                     callback_sources.append({"source_path": paths[0], "ability_name": ability_name,
                                              "raw_path": f"AbilityList[{position}].{callback}",
                                              "callback_kind": callback})
-                if not callback_sources and not declaration_only:
+                if not any(definition[item['callback_kind']] for item in callback_sources) and not declaration_only:
                     blocked_reason = blocked_reason or "monster_passive_root_callback_missing"
         callbacks = tuple(item["callback_kind"] for item in callback_sources)
         first_source = source_edges[0]
@@ -692,6 +701,7 @@ def _skill_formula_bindings_for_monster(
                         "skill_index": skill_index,
                         "skill_trigger_key": trigger_key,
                         "action_source_kind": action_source_kind,
+                        "action_id": f"monster_skill:{skill_id}",
                         "standalone_ability_name": standalone_ability_name,
                         "param_ref": f"ParamList[{param_index}]",
                         "param_value": _json_safe(param_value),
@@ -724,6 +734,8 @@ def _skill_formula_bindings_for_monster(
                         "raw_opcode": "DamageByAttackProperty",
                         "source_trace": source.to_json(),
                     }
+                    if isinstance(row.get("AttackType"), str) and row["AttackType"]:
+                        scaling_basis_expr["attack_type"] = row["AttackType"]
                 bindings.append(
                     SkillFormulaBindingIR(
                         binding_id=(

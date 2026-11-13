@@ -300,8 +300,8 @@ def _admit_bound_character_dynamic_roots(
                 blockers[root.dynamic_graph_ref_id] = reason
             continue
         if root.root_kind == "source_graph":
-            # Global modifier branches already execute in their attached status
-            # graph; admitting their build selectors must not execute them again.
+            # Global branches run in their consuming status or ability graph;
+            # they are not additional startup abilities.
             selected = tuple(item for item in specializations
                              if item.parent_dynamic_graph_ref_id == root.dynamic_graph_ref_id
                              and item.selected_subtree_path)
@@ -313,6 +313,25 @@ def _admit_bound_character_dynamic_roots(
                         or relation.location_kind != "source_root"):
                     resolved = False
                     break
+                additions = [effect for effect in rules.ir.effects
+                    if effect.source.source_path == relation.selector_source.source_path
+                    and effect.source.evidence.get("json_path") == relation.branch_root_path
+                    and effect.source.raw_type == "ModifierAdditionConfig"
+                    and effect.coverage_status == "executable"
+                    and effect.payload.get("standard", {}).get("addition_condition_id")]
+                if len(additions) == 1 and any(additions[0].effect_id in entity.fields.get("addition_effect_ids", ())
+                                             for entity in rules.ir.entities if entity.entity_type == "modifier_definition"):
+                    continue
+                ability_tasks = tuple(task for task in rules.ir.ability_tasks
+                    if task.source.source_path == relation.selector_source.source_path
+                    and task.source.evidence.get("json_path") == relation.branch_root_path
+                    and task.condition_id and task.coverage_status == "executable" and not task.blocked_reason)
+                if any(rules.query_formal_task_graph(
+                    "ability_phase_callback", task.phase_id, task.callback_kind,
+                    (candidate.task_id for candidate in rules.ability_tasks_for_phase(task.phase_id)
+                     if candidate.callback_kind == task.callback_kind),
+                ).status == "resolved" for task in ability_tasks):
+                    continue
                 tasks = tuple(task for task in rules.ir.status_callback_tasks
                               if task.source.source_path == relation.selector_source.source_path
                               and task.source.evidence.get("json_path") == relation.branch_root_path
@@ -357,7 +376,7 @@ def _admit_bound_character_dynamic_roots(
             phase = phases[0]
             tasks = rules.ability_tasks_for_phase(phase.phase_id)
             callbacks = {task.callback_kind for task in tasks}
-            if callbacks and callbacks <= {"OnStart", "OnAttack", "OnHit", "OnEnd"} and all(rules.query_formal_task_graph(
+            if callbacks and callbacks <= {"OnAdd", "OnStart", "OnAttack", "OnHit", "OnEnd"} and all(rules.query_formal_task_graph(
                 "ability_phase_callback", phase.phase_id, callback,
                 (task.task_id for task in tasks if task.callback_kind == callback),
             ).status == "resolved" for callback in callbacks):
@@ -372,7 +391,7 @@ def character_startup_bindings(
     card: CharacterDataCardIR,
     skill_levels: tuple[CharacterSkillLevelResolution, ...],
 ) -> tuple[tuple[ActionAbilityBindingIR, ...], tuple[CharacterMechanismDiagnostic, ...]]:
-    """Close every source-declared passive against the selected skill level."""
+    """Close passive entries and owned combat abilities' installation callbacks."""
     catalog = rules.ir.character_ability_source_graph_catalog
     if catalog is None:
         return (), ()
@@ -380,29 +399,37 @@ def character_startup_bindings(
     bindings: list[ActionAbilityBindingIR] = []
     diagnostics: list[CharacterMechanismDiagnostic] = []
     for source in catalog.action_sources:
-        if source.action_kind != "passive" or card.entity_ref != f"avatar:{source.owner_avatar_id}":
+        if card.entity_ref != f"avatar:{source.owner_avatar_id}":
             continue
         level = levels.get(source.action_id)
         binding = rules.action_ability_binding(source.action_id, level) if level is not None else None
+        passive = source.action_kind == "passive"
+        phases = rules.ability_phases_for_binding(binding.binding_id) if binding is not None else ()
+        initializers = tuple(phase for phase in phases if phase.invocation_role in {"action_root", "nested_only"}
+            and any(t.callback_kind == "OnAdd" for t in rules.ability_tasks_for_phase(phase.phase_id)))
+        definition = rules.action_definition(source.action_id, level) if level is not None else None
+        if not passive and (not initializers or definition is None or definition.attack_type == "Maze"):
+            continue
         reason = ""
         if binding is None or binding.coverage_status != "executable" or binding.blocked_reason:
             reason = "character_passive_startup_binding_not_executable"
-        elif binding.config_source.get("use_type") != "Passive" or not binding.entry_ability:
+        elif (passive and binding.config_source.get("use_type") != "Passive") or not binding.entry_ability:
             reason = "character_passive_startup_role_not_source_closed"
         else:
-            phases = rules.ability_phases_for_binding(binding.binding_id)
             roots = tuple(phase for phase in phases
                           if phase.invocation_role == "action_root"
-                          and phase.ability_name == binding.entry_ability)
-            if len(roots) != 1:
+                          and phase.ability_name == binding.entry_ability) if passive else initializers
+            callback_kind = "OnStart" if passive else "OnAdd"
+            if not roots or passive and len(roots) != 1:
                 reason = "character_passive_startup_root_missing"
             for phase in roots:
-                tasks = rules.ability_tasks_for_phase(phase.phase_id)
-                if any(task.callback_kind != "OnStart" for task in tasks):
+                tasks = tuple(task for task in rules.ability_tasks_for_phase(phase.phase_id)
+                              if passive or task.callback_kind == callback_kind)
+                if any(task.callback_kind != callback_kind for task in tasks):
                     reason = "character_passive_startup_lifecycle_not_admitted"
                     break
                 graph = rules.query_formal_task_graph(
-                    "ability_phase_callback", phase.phase_id, "OnStart",
+                    "ability_phase_callback", phase.phase_id, callback_kind,
                     (task.task_id for task in tasks),
                 )
                 if graph.status != "resolved":
@@ -1236,6 +1263,14 @@ def _selected_build_bindings(
     )
     if any(
         not selection.build_bindings
+        and not (
+            isinstance(selection, CharacterTraceNodeIR)
+            and selection.linked_mechanism_slot_ids
+            and all((slot := rules.character_mechanism_slot(slot_id)) is not None
+                    and slot.mechanism_kind == "trace_skill_point_param"
+                    and slot.coverage_status == "executable" and not slot.blocked_reason
+                    for slot_id in selection.linked_mechanism_slot_ids)
+        )
         and not rules.character_build_selector_relations_for_selection(
             selection.trace_node_id
             if isinstance(selection, CharacterTraceNodeIR)

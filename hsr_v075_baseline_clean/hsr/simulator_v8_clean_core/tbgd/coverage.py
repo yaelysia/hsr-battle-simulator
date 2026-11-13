@@ -65,10 +65,16 @@ KNOWN_AUDIT_CONDITIONS = {
 # AbilityTaskIR; runtime never infers it from the opcode.
 PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
     {
+        "TaskConfig",
+        "CreateTeamFormationSnapshot",
+        "RestoreTeamFormationSnapshot",
         "CharacterPlayVO",
         "LookAt",
         "DamagePerformFinish",
+        "AbortModifierPhasePerform",
         "DebugLog",
+        # Achievement bookkeeping has no battle-state consumer in V1.
+        "SetBattleAchievement",
         "GlobalMainIntensityEffect",
         "GlobalTimeSlow",
         "MoveToTargetPosition",

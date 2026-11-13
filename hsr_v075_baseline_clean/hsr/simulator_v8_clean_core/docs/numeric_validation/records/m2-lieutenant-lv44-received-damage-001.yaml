@@ -1,0 +1,42 @@
+comparison_record:
+  id: m2-lieutenant-lv44-received-damage-001
+  game_version: "计算器未声明游戏版本；固定源码提交，限承伤对照"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 92b88f653f044b027f36a9f7eef83409421950f30d0692f4b5eaa0ea3dbd93dd
+    processor: "monster:1003010 v0.4.0"
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: natasha_enemy44_res0_noncrit
+    invocation: "原生generateContext/runStatSimulations；娜塔莎普攻，无倍率改写"
+  build:
+    attacker: "娜塔莎80/P6/E0满行迹；23013时节不居80/P6/S1、101四件/302两件；治疗衣/速度鞋/生命球/充能绳，15级无副词条"
+    companion: "存护三月七80/P6/E0，20003/103/304既验构筑，仅自盾"
+    input: examples/cli/silvermane_lieutenant_lv44.json
+  target: {monster: 1003010, name: 银鬃尉官, stage: 307311, level: 44, physical_resistance: 0, broken: false}
+  operations: "同名commands共20次公开选择：普通攻击、举盾、受击自动反击、普通穿刺、召唤、两名近卫各行动；另由公开fork选择治疗后主动穿刺，验证未反击时姿态解除"
+  rng: {mode: deterministic_seed, note: "首个对照命中非暴击；外部CR补正-0.05"}
+  reference_values:
+    - {event: received_physical_basic, reference: 758.1757971217147, simulator: 758.1758095010719, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.000000016328, verdict: PASS}
+  game_comparison: {status: "承伤对照通过", scope: "等级、防御、抗性与未击破减伤参与的承伤；不代表敌方输出已独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 娜塔莎与固定构筑原生模型"
+    - "固定TBGD Monster_W1_Soldier03_00_Config/Ability、MonsterSkillConfig：Skill06普通体与反击体、ListenBeingAttacked回调、Skill08召唤"
+  unverified_params:
+    - "目标等级和抗性取固定TBGD作为计算器输入；计算器未独立提供这张怪物卡参数。"
+    - "敌方输出与HP上限未独立对照；五段比例、受击回能20、反击仅一次、姿态解除、行动延后和召唤以正式源路线检查。"
+  notes:
+    - "test_v1_basic_enemy_routes.py::test_lieutenant_counter_thrust_and_summoned_guards 通过；包含主动穿刺分支，41次操作主线归档由测试写出。"
+    - "归档 /tmp/hsr-v1-lieutenant-verified/test_lieutenant_counter_thrust0/lieutenant_v1_complete.json.gz；处理器只接管评分混入回调、反击包装与普通穿刺执行体，不实现敌方AI或表现。"
+  follow_up_validation:
+    reason: "同回合续行动与默认状态时机修正后，加入召唤后的合法续行动；原指纹保留。"
+    rules_fingerprint: baae1aca9476c309d3f33125c8b0bffeb978624001ba4eeefc86ef0f4e601d0a
+    operations: "当前21次公开选择，归档43次操作；五段顺序/回能、反击一次、普通穿刺清姿态、两名召唤近卫行动及fork分支再次通过。"
+    result: "首个承伤758.175809501不变。"
+    validation: /tmp/hsr_v1_three_refreshed_tests.log

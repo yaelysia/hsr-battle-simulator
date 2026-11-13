@@ -13,7 +13,7 @@ from ..rules.engine_rule_registry import (
     evaluate_defense_multiplier,
     evaluate_resistance_multiplier,
 )
-from .damage_formula import damage_reduction_residuals, status_modifier_terms, toughness_state_multiplier
+from .damage_formula import damage_reduction_residuals, status_modifier_terms, toughness_state_multiplier, weaken_bucket
 from .unit_stats import effective_unit_stat
 from .elation import ElationDamageContext
 from .toughness_state import read_toughness_segments
@@ -28,14 +28,15 @@ DAMAGE_STAGE_ORDER = (
     "resistance",
     "damage_taken",
     "damage_reduction",
+    "weaken",
     "toughness_state",
     "toughness_bonus",
 )
 
 DAMAGE_FAMILY_STAGE_MATRIX: dict[str, tuple[str, ...]] = {
     "elation": ("critical", "elation_bonus", "punchline", "merrymake", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
-    "additional": ("critical", "damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
-    "dot": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
+    "additional": ("critical", "damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "weaken", "toughness_state"),
+    "dot": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "weaken", "toughness_state"),
     "break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
     "super_break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
     "true_damage": (),
@@ -176,6 +177,7 @@ class DamageStagePipeline:
             applicable -= {
                 "critical",
                 "damage_bonus",
+                "weaken",
                 "break_bonus",
                 "toughness_bonus",
                 "elation_bonus",
@@ -419,6 +421,10 @@ class DamageStagePipeline:
             pen = (_resource(actor, pen_key) if pen_key else 0.0) + _resource(actor, "all_res_pen")
             transient = _transient_terms(modifier_terms, stage, (pen_key, "all_res_pen"))
             transient_pen = sum(float(term["value"]) for term in transient)
+            status_pen, pen_terms, pen_skipped = _status_terms(
+                actor, source_type="actor.status", stage=stage,
+                keys=(pen_key, "all_res_pen") if pen_key else ("all_res_pen",),
+            )
             status_resistance, status_terms, status_skipped = _status_terms(
                 target,
                 source_type="target.status",
@@ -434,7 +440,7 @@ class DamageStagePipeline:
             )
             multiplier, engine_rule = evaluate_resistance_multiplier(
                 resistance=resistance + status_resistance,
-                penetration=pen + transient_pen,
+                penetration=pen + transient_pen + status_pen,
                 registry=self.engine_rules,
             )
             return DamageStageBucket(
@@ -445,9 +451,10 @@ class DamageStagePipeline:
                     _applied(stage, element_key if has_element else "all_resistance", resistance, "target.resources"),
                     _applied(stage, pen_key or "all_res_pen", pen, "actor.resources"),
                     *status_terms,
+                    *pen_terms,
                     *transient,
                 ),
-                skipped_terms=(skipped, *status_skipped, *(
+                skipped_terms=(skipped, *status_skipped, *pen_skipped, *(
                     {**term, "applied": False, "skipped_reason": "different_element_penetration"}
                     for term in modifier_terms if term.get("bucket") == stage and term.get("key") not in {pen_key, "all_res_pen"}
                 )),
@@ -503,6 +510,14 @@ class DamageStagePipeline:
                     "aggregation": "independent_reduction_product",
                     "reduction_residuals": list(residuals),
                 },
+            )
+        if stage == "weaken":
+            bucket = weaken_bucket(actor)
+            return DamageStageBucket(
+                stage, True, bucket.multiplier,
+                applied_terms=tuple(term.to_json() for term in bucket.applied_terms),
+                skipped_terms=tuple(term.to_json() for term in bucket.skipped_terms),
+                metadata=bucket.metadata,
             )
         if stage == "toughness_state":
             broken = bool(target.flags.get("broken", False))

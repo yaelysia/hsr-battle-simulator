@@ -1,0 +1,47 @@
+comparison_record:
+  id: m2-danhengpt-e0-lv80-dragon-001
+  entries_counted: ["丹恒·腾荒E0满行迹", "丹恒·腾荒20003/102/302固定构筑"]
+  game_version: "计算器未声明游戏版本；固定源码提交"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附本轮V1修复，未提交"
+    rules_fingerprint: 065290822884634f786411ec3ca78b691aa886c216b3ddecea867e16cc35666f
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: danhengpt_basic_enemy80_noncrit
+    invocation: "原生generateContext/runStatSimulations；对照整次普攻总和，不修改倍率"
+  build:
+    attacker: "80/P6/E0满行迹，琥珀S1、快枪手4、仙舟2；+15无副词条，攻击衣/速度鞋/攻击球/攻击绳"
+    companion: "娜塔莎23013/101/302既验构筑，提供额外仙舟8%攻击"
+    input: examples/cli/danhengpt_lv80_dragon_and_equipment.json
+  target: {monster: 8002010, stage: 30123061, level: 80, physical_resistance: 0, broken: false}
+  operations: "36次公开选择/72操作。首次普攻独立对照；交替对自己和娜塔莎施放战技，终结技强化龙灵，执行龙灵自动行动。"
+  reference_values:
+    - {event: basic_noncrit_total, reference: 1371.6610033195775, simulator: 1371.660964108476, independent: true}
+  tolerance: {max_relative_error: 0.01, actual: 0.0000000286, verdict: PASS}
+  game_comparison:
+    status: "普攻及固定构筑独立对照通过"
+    scope: "未把普攻对照外推为全部龙灵伤害、护盾、净化或时序的独立游戏实测。"
+  behavior_checks:
+    - "单个165速龙灵，同袍/owner在丹恒腾荒与娜塔莎之间转移。"
+    - "强化次数实际观察到2、1、0；原生追击24个命中，附加伤害10个命中。"
+    - "附加伤害归属随同袍变化，两名同袍均产生0.8终结技附伤及0.4行迹附伤。"
+    - "双方护盾有效，攻击力随同袍转移变化而降低上限时按已标记边界处理；未猜测护盾增益参与上限的公式。"
+    - "重复物理击破使用本次击破参数，不受既有裂伤快照同名值干扰。"
+  sources:
+    - "固定AvatarSkillConfig141401/141402/141403/141404、AvatarSkillTreeConfig1414101/102/103及Avatar_DanHengPT_00_Ability。"
+  assumptions:
+    - "shield_falling_cap_retains_existing：上限降低时保留已有盾量、本次不再增加；结果标未实证。需游戏实测同袍转移和攻击增益到期的叠盾边界。"
+    - "after_attack_listener_snapshot：沿用已记录的受击后监听边界，需游戏实测多段中途施加状态的响应时机。"
+  unverified_params:
+    - "目标等级、物抗、队友仙舟加成均为对照输入，非独立实测参数。"
+    - "103四件盾量加成是否参与叠盾上限存在数值争议；本次固定构筑选102，不使用该争议分支。"
+  execution_checks:
+    - "test_v1_summon_routes.py::test_danhengpt_dragon_owner_transfer_enhancement_cap_and_equipment通过；/tmp/hsr_v1_danhengpt_complete_test.log。"
+    - "护盾/事件/继承/处理器组件43项通过，/tmp/hsr_v1_summon_boundaries_checks.log。"
+  performance: {advance_submit_mean_seconds: 2.5715569196359462, verdict: "复杂召唤路线未达0.33秒预算，留待V1性能收敛"}
+  artifacts: [/tmp/hsr_v1_danhengpt_verified.json.gz, /tmp/hsr_v1_danhengpt_complete_test.log, /tmp/hsr_v1_fribbels_aglaea.log]

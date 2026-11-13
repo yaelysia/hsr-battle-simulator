@@ -1,0 +1,362 @@
+{
+  "commands": [
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:0",
+      "action_id": "monster_skill:800201001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122202",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:0"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100803",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100803",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122202",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122201",
+      "action_level": 6,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "arlan",
+      "action_id": "avatar_skill:100802",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:stage:30123061:wave:0:pos:1"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "lingsha"
+      ]
+    },
+    {
+      "actor_id": "enemy:stage:30123061:wave:0:pos:1",
+      "action_id": "monster_skill:102302001",
+      "action_level": 1,
+      "target_ids": [
+        "arlan"
+      ]
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122202",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    },
+    {
+      "actor_id": "lingsha",
+      "action_id": "avatar_skill:122203",
+      "action_level": 10,
+      "target_ids": []
+    }
+  ]
+}

@@ -113,6 +113,10 @@ def test_before_attack_modifier_reaches_the_first_formal_onstart_damage():
             after, transition = executor.execute(ActionCommand('actor', 'action', 1, ('target',),
                 metadata={'crit_mode': 'noncrit'}), state, target_selection_context=context)
         assert transition.outcome.successor_eligible, transition.outcome.to_json()
+        after_attack = [event for event in transition.transaction.events
+                        if event.event_type == 'damage.target_attack.after']
+        assert len(after_attack) == 1 and after_attack[0].target_id == 'target'
+        assert after_attack[0].hit_window_invocation_fact.target_status_instance_ids == ()
         records = transition.transaction.settlement.records
         damage_index = next(i for i, row in enumerate(records) if row['record_type'] == 'damage')
         for window in ('before_skill_use', 'before_attack'):

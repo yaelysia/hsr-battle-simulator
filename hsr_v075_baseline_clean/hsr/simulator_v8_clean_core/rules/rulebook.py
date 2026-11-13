@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, TypeVar
+from ..immutable_json import freeze_json
 
 if TYPE_CHECKING:
     from ..core.content_hooks import MountedProcessor
@@ -2414,17 +2415,17 @@ class RuleBook:
     def character_data_card_for_entity(self, entity_ref: str) -> CharacterDataCardIR | None:
         return self._character_data_cards_by_entity_ref.get(entity_ref)
 
-    def character_dynamic_value_bindings_for_card(self, card_id: str) -> dict[str, JSONValue]:
+    def character_dynamic_value_bindings_for_card(self, card_id: str, *, detach: bool = True) -> dict[str, JSONValue]:
         card = self.character_data_card(card_id)
         if card is None:
             return {}
         bindings = card.dynamic_value_bindings
         if not isinstance(bindings, dict):
             return {}
-        return _json_object_copy(bindings)
+        return _json_object_copy(bindings) if detach else freeze_json(bindings)
 
     def ability_phase_dynamic_value_bindings(
-        self, ability_name: str,
+        self, ability_name: str, *, detach: bool = True,
     ) -> dict[str, JSONValue]:
         """Declared ability-local mutable slots of the named ability phase."""
         if not isinstance(ability_name, str) or not ability_name:
@@ -2433,7 +2434,7 @@ class RuleBook:
             if phase.ability_name != ability_name:
                 continue
             if isinstance(phase.dynamic_value_bindings, dict) and phase.dynamic_value_bindings:
-                return _json_object_copy(phase.dynamic_value_bindings)
+                return _json_object_copy(phase.dynamic_value_bindings) if detach else freeze_json(phase.dynamic_value_bindings)
         return {}
 
     def monster_data_card(self, card_id: str) -> MonsterDataCardIR | None:

@@ -17,6 +17,7 @@ from hsr.simulator_v8_clean_core.rules.ir import (
     IRSource,
     QueueIntentIR,
     QueueResolutionIR,
+    QueueWindowIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
 )
@@ -31,6 +32,7 @@ from hsr.simulator_v8_clean_core.systems.queue import (
     _is_gameplay_abort,
 )
 from hsr.simulator_v8_clean_core.systems.status_callbacks import (
+    StatusCallbackSystem,
     _deathrattle_queue_admission,
 )
 from hsr.simulator_v8_clean_core.systems.unit_lifecycle import UnitLifecycleSystem
@@ -270,6 +272,29 @@ def test_other_defeated_units_and_plain_entries_stay_blocked():
     assert _resolve(defeated, death_event, replace(admission, unit_id="other")).blocked_reason == (
         "queue_actor_deathrattle_unit_mismatch:child"
     )
+
+
+def test_counter_requested_after_actor_death_is_skipped_without_rolling_back_the_hit():
+    _, defeated, _, _, rules, _, _ = _case()
+    _, callback, task, intent, _ = _rules()
+    callback = replace(callback, event="OnAfterAttack")
+    task = replace(task, event=callback.event)
+    intent = replace(intent, actor_target_alias="Caster", ability_target_alias="ModifierOwnerEntity",
+                     owner_alive_state="alive_only", target_alive_state="alive_only")
+    window = QueueWindowIR("window:counter", intent.queue_intent_id, intent.queue_kind,
+                          "insert_ability", "AvatarInsertAttackSelf", 1., {}, intent.source,
+                          coverage_status="executable")
+    rules = RuleBook(replace(rules.ir, status_callbacks=(callback,), status_callback_tasks=(task,),
+                             queue_intents=(intent,), queue_windows=(window,)))
+    result = StatusCallbackSystem(rules)._execute_queue_intents(
+        defeated, callback, task, {"caster_id": "child", "owner_id": "owner"},
+        GameEvent("action.after_attack", source_id="owner", target_id="child"), (intent,),
+    )
+    assert result.ok, result.errors
+    assert result.after_state == defeated
+    assert not result.mutations and not result.rng_events
+    assert result.records[0]["record_type"] == "queue_intent_skipped"
+    assert result.records[0]["payload"]["reason"] == "queue_actor_unit_defeated:child"
 
 
 

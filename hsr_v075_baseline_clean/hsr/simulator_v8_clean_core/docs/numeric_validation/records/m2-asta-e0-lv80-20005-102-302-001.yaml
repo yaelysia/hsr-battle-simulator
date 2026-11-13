@@ -1,0 +1,50 @@
+comparison_record:
+  id: m2-asta-e0-lv80-20005-102-302-001
+  game_version: "计算器未注明游戏版本，固定源码提交；限本构筑首个普攻"
+  data_version: 14c1d18f91a8101d610e6c523447a7517de3fae1
+  simulator_version:
+    git_commit: "0369005，附佩拉批次修复、固定弹射削韧绑定、艾丝妲回能处理器及H2事件去重"
+    rules_fingerprint: 8f956f15c1cd7ec7d13fe5b41bc56d93f9ef3854a5330e346eea37dc016e5436
+    processor: "avatar:1009:0.1.0"
+    scenario: v0_200
+  calculator:
+    name: Fribbels HSR Optimizer
+    repository: https://github.com/fribbels/hsr-optimizer
+    commit: d60f0375e6649cebbc82dc6f34b34d64fb0869d2
+    node: 26.1.0
+    driver: ../reports/fribbels_v1_reference.test.ts
+    sample: asta_basic_noncrit
+    invocation: "原生 generateContext/runStatSimulations，未修改外部公式"
+  build:
+    avatar: 1009
+    level: 80
+    promotion: 6
+    eidolon: 0
+    traces: "普攻6/战技10/终结技10/天赋10、全部属性及大行迹"
+    light_cone: {id: 20005, name: 齐颂, level: 80, promotion: 6, superimposition: 1}
+    relics_outer: {set: 102, pieces: 4, level: 15, mains: [HP, ATK, ATK_percent, SPD], sub_affixes: []}
+    relics_inner: {set: 302, pieces: 2, level: 15, mains: [Fire_damage, ERR], sub_affixes: []}
+    input: examples/cli/asta_lv80_bounce_and_equipment.json
+    teammate: "娜塔莎80/P6/E0满行迹、空装备"
+  target: {stage: 201210016, wave: 0, monster: 1002020, monster_level: 74, fire_resistance: 0, weakness_broken: false}
+  operations: "同名commands文件16条公开选择，含同速选择；普攻、灼烧、五段战技、蓄能增减与上限、全队加速和到期、后续提交"
+  rng: {note: "首次普攻非暴击；外部CR补正-0.117消除满行迹11.7%暴击率，仅用于固定非暴击分支"}
+  reference_values:
+    - {event: first_basic_noncrit_zero_charging_stacks, reference: 1556.161046323466, simulator: 1556.163653350234, relative_error: 0.000001675295, source: "Fribbels BASIC", independent: true}
+  panel_comparison:
+    hp: {reference: 2799.82080078125, simulator: 2799.8208}
+    attack: {reference: 1639.5321044921875, simulator: 1639.53216}
+    defense: {reference: 891.3712768554688, simulator: 891.37125}
+    speed: {reference: 137.39199829101562, simulator: 137.392}
+  tolerance: {max_relative_error: 0.01, actual: 0.000001675295, verdict: PASS}
+  game_comparison: {status: "成熟计算器普攻与面板对照通过", scope: "未把首击对照外推为所有弹射、DOT与随机分布的独立对照"}
+  sources:
+    - "https://github.com/fribbels/hsr-optimizer/tree/d60f0375e6649cebbc82dc6f34b34d64fb0869d2 — 艾丝妲、齐颂和遗器原生模型"
+    - "https://srl.keqingmains.com/characters/fire/asta — 战技主段削韧30、弹射15（旧单位），每段回能6；版本未注明，满级倍率以固定数据对应等级为准"
+    - "固定TBGD Avatar_Asta_00_Skill02_Phase02：主段StanceValue、循环四次的0.5×StanceValue；AvatarSkillConfig 100902 SPBase=6"
+  unverified_params:
+    - "数值对照采用零蓄能层数与A4火伤光环；首次命中后才产生两层蓄能。"
+    - "完整路线检查实际五段与逐段回能，不用固定30点补齐。原动作资源计划给主段，处理器只给实际执行的弹射段；E0/齐颂在本次攻击内没有充能效率变化。"
+  notes:
+    - "首个战技实际回能35.83182045=30×充能效率；最后一次技能在120上限截断。此项是规则检查，不冒充计算器独立输出。"
+    - "原生归档/tmp/hsr_v1_asta_complete.json.gz，日志/tmp/hsr_v1_asta.log。"

@@ -443,6 +443,7 @@ def parallel_attack_window_event(
         event_type=f"action.window.{window}", source_id=command.actor_id,
         target_id=primary, event_id=scope.event_id, window=scope.window, process_only=True,
         admitted_action_target_fact=fact, expected_action_window_scope=scope,
+        action_definition=definition,
         payload={
             "tbgd_event": step.tbgd_event, "phase": step.phase,
             "action_id": command.action_id, "action_level": command.action_level,
@@ -813,11 +814,13 @@ def damage_listener_window_event(
     damage_custom_name: str = "",
     damage_tags: tuple[str, ...] = (),
     sequence_id: str = "",
+    target_status_instance_ids: tuple[str, ...] | None = None,
 ) -> GameEvent:
     event_token = event_type.replace(".", "_")
     sequence_token = f":{sequence_id}" if sequence_id else ""
     event = GameEvent(
         event_type=event_type,
+        action_definition=action_definition,
         source_id=command.actor_id,
         target_id=target_id,
         event_id=(
@@ -862,4 +865,5 @@ def damage_listener_window_event(
     # An action's own hit window is the outer window of its callback stack.
     return with_hit_window_invocation_fact(
         event, sequence_id=sequence_id, in_callback_stack=False,
+        target_status_instance_ids=target_status_instance_ids,
     )

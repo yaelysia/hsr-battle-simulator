@@ -620,31 +620,22 @@ class TimelineSystem:
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:turn_window:{actor_id}:{state.event_index}:idle",
                 ),
-            Mutation(
-                op="delete",
-                path=("global_flags", "active_turn"),
-                before=state.global_flags.get("active_turn"),
-                after=None,
-                reason="clear active turn",
-                source="timeline_system",
-                after_exists=False,
-                metadata=metadata,
-                mutation_id=f"mutation:timeline:active_turn_clear:{actor_id}:{state.event_index}",
-                ),
-            Mutation(
-                op="delete",
-                path=("global_flags", "turn_owner_id"),
-                before=state.global_flags.get("turn_owner_id"),
-                after=None,
-                reason="consume active decision owner at turn end",
-                source="timeline_system",
-                before_exists="turn_owner_id" in state.global_flags,
-                after_exists=False,
-                metadata=metadata,
-                mutation_id=f"mutation:timeline:turn_owner_clear:{actor_id}:{state.event_index}",
-                ),
             )
         )
+        # A departing actor may already have relinquished its decision owner.
+        # Only emit deletes for fields still present in this committed state.
+        for key, reason, identity in (
+            ("active_turn", "clear active turn", "active_turn_clear"),
+            ("turn_owner_id", "consume active decision owner at turn end", "turn_owner_clear"),
+        ):
+            if key in state.global_flags:
+                mutations.append(Mutation(
+                    op="delete", path=("global_flags", key),
+                    before=state.global_flags[key], after=None, reason=reason,
+                    source="timeline_system", before_exists=True, after_exists=False,
+                    metadata=metadata,
+                    mutation_id=f"mutation:timeline:{identity}:{actor_id}:{state.event_index}",
+                ))
         return TurnAdvanceResult(plan, tuple(mutations), ())
 
     def open_decision_window(self, state: BattleState, plan: TurnAdvancePlan) -> TurnAdvanceResult:

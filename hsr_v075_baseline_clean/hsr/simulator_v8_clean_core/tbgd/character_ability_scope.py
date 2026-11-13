@@ -232,7 +232,7 @@ _SEMANTIC_OPCODE_GROUPS: dict[CharacterAbilitySemanticKind, frozenset[str]] = {
         "SetTeamFormation SetTeamRootOffset SetUltraSkillAssetPreload "
         "SetViewModeEnabled ShowActionBarEffect ShowAttackTime "
         "ShowAvatarHUDSpecialEffect ShowBattleAvatarPanel ShowBattleQTEUI "
-        "ShowBattleScreenEffect ShowBattleSkillEnhanced ShowBattleUI "
+        "ShowBattleScreenEffect ShowBattleSkillEnhanced ShowBattleUI ShowBattleAlert "
         "ShowBonusUIEffect ShowEntityFloatMessage ShowSkillReadyCamera "
         "ShowSkillTextDialog ShowUIPage ShowUltraSkillAlternative "
         "SkipPopupUIOffset StackSkillDesc StackStatusDesc StartAim "
@@ -249,7 +249,7 @@ _SEMANTIC_OPCODE_GROUPS: dict[CharacterAbilitySemanticKind, frozenset[str]] = {
     ),
     "simulation_sequence": _names(
         "ByDieAnimFinished DamagePerformFinish PauseToTurnEnd PerformDelayExecute "
-        "SkillPerformFinish WaitAnimState WaitFor WaitFrame "
+        "SkillPerformFinish AbortModifierPhasePerform WaitAnimState WaitFor WaitFrame "
         "WaitFrameForBattleServer WaitParallelTimeStamp WaitSecond "
         "WaitCustomString WaitForTurnEnd WaitSkillPerformAbilityFinish "
         "WaitTimelineFinish"
